@@ -11,7 +11,7 @@ For project-wide conventions and architecture details, see:
 
 Terraform provider for the NordicLight (Frostmoln) Cloud Platform. Enables infrastructure-as-code management of compute instances, VPCs, subnets, security groups, floating IPs, volumes, buckets, snapshots, SSH keys, S3 credentials, and API keys.
 
-Provider name: `frostmoln`. Resource prefix: `fm_`.
+Provider name: `frostmoln`. Resource prefix: `frostmoln_` (e.g., `frostmoln_vpc`, `frostmoln_instance`).
 
 ## Architecture
 
@@ -50,8 +50,8 @@ terraform-provider-frostmoln/
 │           └── datasource_test.go
 ├── examples/
 │   ├── provider/provider.tf
-│   ├── resources/fm_*/resource.tf
-│   └── data-sources/fm_*/data-source.tf
+│   ├── resources/frostmoln_*/resource.tf
+│   └── data-sources/frostmoln_*/data-source.tf
 ├── templates/index.md.tmpl
 ├── tools/tools.go
 ├── .gitea/workflows/
@@ -115,7 +115,7 @@ Unit tests use `httptest` for HTTP mocking. Each resource test should:
 3. Create `resource.go` implementing `resource.Resource` interface (Metadata, Schema, Create, Read, Update, Delete)
 4. Create `resource_test.go` with unit tests
 5. Register the resource in `internal/provider/provider.go` `Resources()` method
-6. Add example HCL in `examples/resources/fm_<name>/resource.tf`
+6. Add example HCL in `examples/resources/frostmoln_<name>/resource.tf`
 
 ### Adding New Data Sources
 
@@ -123,7 +123,7 @@ Unit tests use `httptest` for HTTP mocking. Each resource test should:
 2. Create `datasource.go` implementing `datasource.DataSource` interface
 3. Create `datasource_test.go` with unit tests
 4. Register in `internal/provider/provider.go` `DataSources()` method
-5. Add example HCL in `examples/data-sources/fm_<name>/data-source.tf`
+5. Add example HCL in `examples/data-sources/frostmoln_<name>/data-source.tf`
 
 ### API Client
 

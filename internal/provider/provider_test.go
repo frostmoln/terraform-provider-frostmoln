@@ -60,10 +60,10 @@ func TestProviderMetadata(t *testing.T) {
 
 	// Verify expected resources exist
 	expectedResources := []string{
-		"fm_ssh_key", "fm_bucket", "fm_s3_credential",
-		"fm_vpc", "fm_subnet", "fm_security_group", "fm_security_group_rule",
-		"fm_floating_ip", "fm_volume", "fm_volume_attachment", "fm_snapshot",
-		"fm_instance", "fm_api_key",
+		"frostmoln_ssh_key", "frostmoln_bucket", "frostmoln_s3_credential",
+		"frostmoln_vpc", "frostmoln_subnet", "frostmoln_security_group", "frostmoln_security_group_rule",
+		"frostmoln_floating_ip", "frostmoln_volume", "frostmoln_volume_attachment", "frostmoln_snapshot",
+		"frostmoln_instance", "frostmoln_api_key",
 	}
 	for _, name := range expectedResources {
 		if _, ok := resp.ResourceSchemas[name]; !ok {
@@ -73,8 +73,8 @@ func TestProviderMetadata(t *testing.T) {
 
 	// Verify expected data sources exist
 	expectedDataSources := []string{
-		"fm_image", "fm_images", "fm_flavor", "fm_flavors",
-		"fm_vpc", "fm_subnet", "fm_instance",
+		"frostmoln_image", "frostmoln_images", "frostmoln_flavor", "frostmoln_flavors",
+		"frostmoln_vpc", "frostmoln_subnet", "frostmoln_instance",
 	}
 	for _, name := range expectedDataSources {
 		if _, ok := resp.DataSourceSchemas[name]; !ok {

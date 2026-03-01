@@ -22,11 +22,11 @@ func TestNewDataSource(t *testing.T) {
 
 func TestMetadata(t *testing.T) {
 	ds := NewDataSource()
-	req := datasource.MetadataRequest{ProviderTypeName: "fm"}
+	req := datasource.MetadataRequest{ProviderTypeName: "frostmoln"}
 	var resp datasource.MetadataResponse
 	ds.Metadata(context.Background(), req, &resp)
-	if resp.TypeName != "fm_subnet" {
-		t.Errorf("expected type name fm_subnet, got %s", resp.TypeName)
+	if resp.TypeName != "frostmoln_subnet" {
+		t.Errorf("expected type name frostmoln_subnet, got %s", resp.TypeName)
 	}
 }
 

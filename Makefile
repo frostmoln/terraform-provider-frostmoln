@@ -70,9 +70,19 @@ deps:
 	$(GOMOD) tidy
 
 # Generate documentation
-generate:
+TFGEN_DIR = /tmp/tfgen-frostmoln
+generate: install
 	@echo "Generating documentation..."
-	$(GOCMD) generate ./...
+	@rm -rf $(TFGEN_DIR) && mkdir -p $(TFGEN_DIR)
+	@printf 'terraform {\n  required_providers {\n    frostmoln = {\n      source = "$(HOSTNAME)/$(NAMESPACE)/$(NAME)"\n    }\n  }\n}\n' > $(TFGEN_DIR)/main.tf
+	@cd $(TFGEN_DIR) && terraform init -plugin-dir=$$HOME/.terraform.d/plugins > /dev/null 2>&1
+	@cd $(TFGEN_DIR) && terraform providers schema -json > $(TFGEN_DIR)/raw-schema.json
+	@jq '(.provider_schemas["registry.terraform.io/hashicorp/frostmoln"] = .provider_schemas["registry.terraform.io/nordiclight/frostmoln"]) | del(.provider_schemas["registry.terraform.io/nordiclight/frostmoln"])' $(TFGEN_DIR)/raw-schema.json > $(TFGEN_DIR)/schema.json
+	$(GOCMD) run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs generate \
+		-provider-name frostmoln \
+		-providers-schema $(TFGEN_DIR)/schema.json \
+		-rendered-provider-name "Frostmoln"
+	@rm -rf $(TFGEN_DIR)
 
 # Clean build artifacts
 clean:

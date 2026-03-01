@@ -57,7 +57,7 @@ func New(version string) func() provider.Provider {
 }
 
 func (p *FrostmolnProvider) Metadata(_ context.Context, _ provider.MetadataRequest, resp *provider.MetadataResponse) {
-	resp.TypeName = "fm"
+	resp.TypeName = "frostmoln"
 	resp.Version = p.version
 }
 
