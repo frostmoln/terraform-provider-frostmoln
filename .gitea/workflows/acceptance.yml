@@ -1,0 +1,59 @@
+name: Acceptance Tests
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: '0 2 * * *'
+
+concurrency:
+  group: tf-acceptance-tests
+  cancel-in-progress: true
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    env:
+      GOPRIVATE: git.nl.cloud/*
+      GONOSUMCHECK: git.nl.cloud/*
+      GOINSECURE: git.nl.cloud
+      API_ENDPOINT: http://10.0.10.183/api/v1
+      PORTAL_URL: http://10.0.10.183
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure Go private modules
+        run: git config --global url."http://gitea:3000/".insteadOf "https://git.nl.cloud/"
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Create test user and API key
+        run: |
+          RUN_ID="${{ gitea.run_id }}"
+          EMAIL="tf-acctest-${RUN_ID}@test.nl.cloud"
+          RESP=$(curl -sf -X POST "${API_ENDPOINT}/auth/register" \
+            -H "Content-Type: application/json" \
+            -H "Origin: ${PORTAL_URL}" \
+            -d "{\"email\":\"${EMAIL}\",\"password\":\"AccTest!Secure2026#\",\"name\":\"TF AccTest ${RUN_ID}\"}")
+          BEARER=$(echo "$RESP" | jq -r '.accessToken')
+          KEY_RESP=$(curl -sf -X POST "${API_ENDPOINT}/api-keys" \
+            -H "Authorization: Bearer ${BEARER}" \
+            -H "Content-Type: application/json" \
+            -H "Origin: ${PORTAL_URL}" \
+            -d '{"name":"tf-acctest-key","scopes":["*"]}')
+          API_KEY=$(echo "$KEY_RESP" | jq -r '.key')
+          echo "FROSTMOLN_API_KEY=${API_KEY}" >> $GITHUB_ENV
+          echo "FROSTMOLN_API_ENDPOINT=${API_ENDPOINT}" >> $GITHUB_ENV
+          echo "TEST_BEARER_TOKEN=${BEARER}" >> $GITHUB_ENV
+
+      - name: Run acceptance tests
+        run: TF_ACC=1 go test -v -timeout 30m -count=1 ./internal/...
+        env:
+          FROSTMOLN_TEST_IMAGE_NAME: "Ubuntu 24.04"
+          FROSTMOLN_TEST_FLAVOR_NAME: "nl.small"
+
+      - name: Cleanup test user
+        if: always()
+        run: |
+          curl -sf -X DELETE "${API_ENDPOINT}/me" \
+            -H "Authorization: Bearer ${TEST_BEARER_TOKEN}" \
+            -H "Origin: ${PORTAL_URL}" || echo "Cleanup: user may already be deleted"
