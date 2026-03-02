@@ -97,7 +97,7 @@ func (r *sshKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 	}
 
 	apiReq := plan.toCreateRequest()
-	apiResp, err := r.client.Post(ctx, r.client.UserPath("/sshkeys"), apiReq)
+	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/sshkeys"), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create SSH key", err.Error())
 		return
@@ -120,7 +120,7 @@ func (r *sshKeyResource) Read(ctx context.Context, req resource.ReadRequest, res
 		return
 	}
 
-	apiResp, err := r.client.Get(ctx, r.client.UserPath("/sshkeys/"+state.ID.ValueString()), nil)
+	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/sshkeys/"+state.ID.ValueString()), nil)
 	if err != nil {
 		if client.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
@@ -154,7 +154,7 @@ func (r *sshKeyResource) Delete(ctx context.Context, req resource.DeleteRequest,
 		return
 	}
 
-	_, err := r.client.Delete(ctx, r.client.UserPath("/sshkeys/"+state.ID.ValueString()))
+	_, err := r.client.Delete(ctx, r.client.TenantPath("/sshkeys/"+state.ID.ValueString()))
 	if err != nil {
 		if client.IsNotFound(err) {
 			return

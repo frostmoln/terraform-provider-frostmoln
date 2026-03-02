@@ -18,7 +18,7 @@ func TestAccSSHKey_basic(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { acctest.TestAccPreCheck(t) },
 		ProtoV6ProviderFactories: acctest.TestAccProtoV6ProviderFactories,
-		CheckDestroy:             acctest.CheckDestroyByUserPath("frostmoln_ssh_key", "/sshkeys"),
+		CheckDestroy:             acctest.CheckDestroyByTenantPath("frostmoln_ssh_key", "/sshkeys"),
 		Steps: []resource.TestStep{
 			{
 				Config: testAccSSHKeyConfig(name),
