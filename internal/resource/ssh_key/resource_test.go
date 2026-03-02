@@ -65,7 +65,7 @@ func TestSSHKeyCreate(t *testing.T) {
 				"tenantId": "tenant-456",
 				"email":    "test@example.com",
 			})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/users/user-123/sshkeys":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/sshkeys":
 			var req apiCreateSSHKeyRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatalf("failed to decode request: %v", err)
@@ -98,7 +98,7 @@ func TestSSHKeyCreate(t *testing.T) {
 
 	// Simulate the create flow
 	apiReq := apiCreateSSHKeyRequest{Name: "test-key", PublicKey: "ssh-ed25519 AAAA..."}
-	resp, err := c.Post(context.Background(), c.UserPath("/sshkeys"), apiReq)
+	resp, err := c.Post(context.Background(), c.TenantPath("/sshkeys"), apiReq)
 	if err != nil {
 		t.Fatalf("post failed: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestSSHKeyRead(t *testing.T) {
 				"id":       "user-123",
 				"tenantId": "tenant-456",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/users/user-123/sshkeys/key-abc":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/sshkeys/key-abc":
 			json.NewEncoder(w).Encode(apiSSHKey{
 				ID:          "key-abc",
 				Name:        "test-key",
@@ -144,7 +144,7 @@ func TestSSHKeyRead(t *testing.T) {
 		t.Fatalf("configure failed: %v", err)
 	}
 
-	resp, err := c.Get(context.Background(), c.UserPath("/sshkeys/key-abc"), nil)
+	resp, err := c.Get(context.Background(), c.TenantPath("/sshkeys/key-abc"), nil)
 	if err != nil {
 		t.Fatalf("get failed: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestSSHKeyReadNotFound(t *testing.T) {
 				"id":       "user-123",
 				"tenantId": "tenant-456",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/users/user-123/sshkeys/nonexistent":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/sshkeys/nonexistent":
 			w.WriteHeader(http.StatusNotFound)
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{
@@ -190,7 +190,7 @@ func TestSSHKeyReadNotFound(t *testing.T) {
 		t.Fatalf("configure failed: %v", err)
 	}
 
-	_, err := c.Get(context.Background(), c.UserPath("/sshkeys/nonexistent"), nil)
+	_, err := c.Get(context.Background(), c.TenantPath("/sshkeys/nonexistent"), nil)
 	if err == nil {
 		t.Fatal("expected error for not found")
 	}
@@ -208,7 +208,7 @@ func TestSSHKeyDelete(t *testing.T) {
 				"id":       "user-123",
 				"tenantId": "tenant-456",
 			})
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1/users/user-123/sshkeys/key-abc":
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-456/sshkeys/key-abc":
 			deleted = true
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -223,7 +223,7 @@ func TestSSHKeyDelete(t *testing.T) {
 		t.Fatalf("configure failed: %v", err)
 	}
 
-	_, err := c.Delete(context.Background(), c.UserPath("/sshkeys/key-abc"))
+	_, err := c.Delete(context.Background(), c.TenantPath("/sshkeys/key-abc"))
 	if err != nil {
 		t.Fatalf("delete failed: %v", err)
 	}

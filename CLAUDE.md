@@ -146,7 +146,7 @@ provider "frostmoln" {
 
 | Resource | Base Path | Notes |
 |----------|-----------|-------|
-| SSH Keys | `/v1/users/{user_id}/sshkeys` | User-scoped |
+| SSH Keys | `/v1/tenants/{t}/sshkeys` | Tenant-scoped |
 | Buckets | `/v1/tenants/{t}/buckets` | Name-based ID |
 | S3 Credentials | `/v1/tenants/{t}/credentials` | Secret only on create |
 | VPCs | `/v1/tenants/{t}/vpcs` | Async create (HTTP 202) |
