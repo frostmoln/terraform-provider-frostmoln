@@ -28,19 +28,37 @@ jobs:
 
       - name: Create test user and API key
         run: |
+          set -euo pipefail
           RUN_ID="${{ gitea.run_id }}"
           EMAIL="tf-acctest-${RUN_ID}@test.nl.cloud"
-          RESP=$(curl -sf -X POST "${API_ENDPOINT}/auth/register" \
+
+          echo "Registering test user: ${EMAIL}"
+          RESP=$(curl -s --fail-with-body -X POST "${API_ENDPOINT}/auth/register" \
             -H "Content-Type: application/json" \
             -H "Origin: ${PORTAL_URL}" \
             -d "{\"email\":\"${EMAIL}\",\"password\":\"AccTest!Secure2026#\",\"name\":\"TF AccTest ${RUN_ID}\"}")
+
           BEARER=$(echo "$RESP" | jq -r '.accessToken')
-          KEY_RESP=$(curl -sf -X POST "${API_ENDPOINT}/api-keys" \
+          if [ -z "$BEARER" ] || [ "$BEARER" = "null" ]; then
+            echo "::error::Registration failed. Response: ${RESP}"
+            exit 1
+          fi
+          echo "Test user registered successfully"
+
+          echo "Creating API key"
+          KEY_RESP=$(curl -s --fail-with-body -X POST "${API_ENDPOINT}/api-keys" \
             -H "Authorization: Bearer ${BEARER}" \
             -H "Content-Type: application/json" \
             -H "Origin: ${PORTAL_URL}" \
             -d '{"name":"tf-acctest-key","scopes":["*"]}')
+
           API_KEY=$(echo "$KEY_RESP" | jq -r '.key')
+          if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ]; then
+            echo "::error::API key creation failed. Response: ${KEY_RESP}"
+            exit 1
+          fi
+          echo "API key created successfully"
+
           echo "FROSTMOLN_API_KEY=${API_KEY}" >> $GITHUB_ENV
           echo "FROSTMOLN_API_ENDPOINT=${API_ENDPOINT}" >> $GITHUB_ENV
           echo "TEST_BEARER_TOKEN=${BEARER}" >> $GITHUB_ENV
