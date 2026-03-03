@@ -9,6 +9,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
 )
@@ -201,6 +203,213 @@ func TestReadNotFound(t *testing.T) {
 	}
 	if found {
 		t.Error("expected flavor not to be found")
+	}
+}
+
+// --- tfsdk-level Read tests ---
+
+func configureFlavorDS(t *testing.T, ds datasource.DataSource, c *client.Client) {
+	t.Helper()
+	dc, ok := ds.(datasource.DataSourceWithConfigure)
+	if !ok {
+		t.Fatal("datasource does not implement DataSourceWithConfigure")
+	}
+	configReq := datasource.ConfigureRequest{ProviderData: c}
+	var configResp datasource.ConfigureResponse
+	dc.Configure(context.Background(), configReq, &configResp)
+	if configResp.Diagnostics.HasError() {
+		t.Fatalf("configure failed: %v", configResp.Diagnostics.Errors())
+	}
+}
+
+func getFlavorDSSchema(t *testing.T) datasource.SchemaResponse {
+	t.Helper()
+	ds := NewDataSource()
+	var schemaResp datasource.SchemaResponse
+	ds.Schema(context.Background(), datasource.SchemaRequest{}, &schemaResp)
+	return schemaResp
+}
+
+func TestTFSDK_ReadFlavorByID(t *testing.T) {
+	flavors := []apiFlavor{
+		{ID: "flv-1", Name: "nl.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general"},
+		{ID: "flv-2", Name: "nl.medium", VCPUs: 2, RAMMB: 2048, DiskGB: 40, Category: "general"},
+	}
+	server := newTestServer(t, flavors)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureFlavorDS(t, ds, c)
+	schemaResp := getFlavorDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":       tftypes.NewValue(tftypes.String, "flv-1"),
+		"name":     tftypes.NewValue(tftypes.String, nil),
+		"vcpus":    tftypes.NewValue(tftypes.Number, nil),
+		"ram_mb":   tftypes.NewValue(tftypes.Number, nil),
+		"disk_gb":  tftypes.NewValue(tftypes.Number, nil),
+		"category": tftypes.NewValue(tftypes.String, nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	var state flavorModel
+	readResp.State.Get(ctx, &state)
+
+	if state.ID.ValueString() != "flv-1" {
+		t.Errorf("expected ID flv-1, got %s", state.ID.ValueString())
+	}
+	if state.Name.ValueString() != "nl.small" {
+		t.Errorf("expected Name nl.small, got %s", state.Name.ValueString())
+	}
+	if state.VCPUs.ValueInt64() != 1 {
+		t.Errorf("expected VCPUs 1, got %d", state.VCPUs.ValueInt64())
+	}
+	if state.RAMMB.ValueInt64() != 1024 {
+		t.Errorf("expected RAMMB 1024, got %d", state.RAMMB.ValueInt64())
+	}
+}
+
+func TestTFSDK_ReadFlavorByName(t *testing.T) {
+	flavors := []apiFlavor{
+		{ID: "flv-1", Name: "nl.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general"},
+		{ID: "flv-2", Name: "nl.medium", VCPUs: 2, RAMMB: 2048, DiskGB: 40, Category: "general"},
+	}
+	server := newTestServer(t, flavors)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureFlavorDS(t, ds, c)
+	schemaResp := getFlavorDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":       tftypes.NewValue(tftypes.String, nil),
+		"name":     tftypes.NewValue(tftypes.String, "nl.medium"),
+		"vcpus":    tftypes.NewValue(tftypes.Number, nil),
+		"ram_mb":   tftypes.NewValue(tftypes.Number, nil),
+		"disk_gb":  tftypes.NewValue(tftypes.Number, nil),
+		"category": tftypes.NewValue(tftypes.String, nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	var state flavorModel
+	readResp.State.Get(ctx, &state)
+
+	if state.ID.ValueString() != "flv-2" {
+		t.Errorf("expected ID flv-2, got %s", state.ID.ValueString())
+	}
+}
+
+func TestTFSDK_ReadFlavorBothIDAndName(t *testing.T) {
+	server := newTestServer(t, []apiFlavor{{ID: "flv-1", Name: "nl.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20}})
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureFlavorDS(t, ds, c)
+	schemaResp := getFlavorDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":       tftypes.NewValue(tftypes.String, "flv-1"),
+		"name":     tftypes.NewValue(tftypes.String, "nl.small"),
+		"vcpus":    tftypes.NewValue(tftypes.Number, nil),
+		"ram_mb":   tftypes.NewValue(tftypes.Number, nil),
+		"disk_gb":  tftypes.NewValue(tftypes.Number, nil),
+		"category": tftypes.NewValue(tftypes.String, nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+
+	if !readResp.Diagnostics.HasError() {
+		t.Error("expected error when both id and name are specified")
+	}
+}
+
+func TestTFSDK_ReadFlavorNotFound(t *testing.T) {
+	server := newTestServer(t, []apiFlavor{{ID: "flv-1", Name: "nl.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20}})
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureFlavorDS(t, ds, c)
+	schemaResp := getFlavorDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":       tftypes.NewValue(tftypes.String, nil),
+		"name":     tftypes.NewValue(tftypes.String, "nonexistent"),
+		"vcpus":    tftypes.NewValue(tftypes.Number, nil),
+		"ram_mb":   tftypes.NewValue(tftypes.Number, nil),
+		"disk_gb":  tftypes.NewValue(tftypes.Number, nil),
+		"category": tftypes.NewValue(tftypes.String, nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+
+	if !readResp.Diagnostics.HasError() {
+		t.Error("expected error when flavor name not found")
 	}
 }
 

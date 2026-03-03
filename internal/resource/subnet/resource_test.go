@@ -3,12 +3,17 @@ package subnet
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
 )
@@ -283,3 +288,455 @@ func TestSubnetReadNotFound(t *testing.T) {
 		t.Errorf("expected not found error, got %v", err)
 	}
 }
+
+// --- tfsdk-level resource method tests ---
+
+func subnetSchemaHelper(t *testing.T) schema.Schema {
+	t.Helper()
+	r := NewResource()
+	resp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
+	return resp.Schema
+}
+
+func subnetObjectType() tftypes.Object {
+	return tftypes.Object{
+		AttributeTypes: map[string]tftypes.Type{
+			"id":            tftypes.String,
+			"name":          tftypes.String,
+			"description":   tftypes.String,
+			"cidr":          tftypes.String,
+			"vpc_id":        tftypes.String,
+			"zone":          tftypes.String,
+			"gateway_ip":    tftypes.String,
+			"dns_servers":   tftypes.List{ElementType: tftypes.String},
+			"is_public":     tftypes.Bool,
+			"tags":          tftypes.Map{ElementType: tftypes.String},
+			"status":        tftypes.String,
+			"available_ips": tftypes.Number,
+			"created_at":    tftypes.String,
+		},
+	}
+}
+
+func TestSubnetNewResource(t *testing.T) {
+	r := NewResource()
+	if r == nil {
+		t.Fatal("expected non-nil resource")
+	}
+}
+
+func TestSubnetMetadata(t *testing.T) {
+	r := NewResource()
+	req := resource.MetadataRequest{ProviderTypeName: "frostmoln"}
+	resp := &resource.MetadataResponse{}
+	r.Metadata(context.Background(), req, resp)
+
+	if resp.TypeName != "frostmoln_subnet" {
+		t.Errorf("expected type name frostmoln_subnet, got %s", resp.TypeName)
+	}
+}
+
+func TestSubnetSchema(t *testing.T) {
+	r := NewResource()
+	resp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
+
+	for _, attr := range []string{"id", "name", "description", "cidr", "vpc_id", "zone", "gateway_ip", "dns_servers", "is_public", "tags", "status", "available_ips", "created_at"} {
+		if _, ok := resp.Schema.Attributes[attr]; !ok {
+			t.Errorf("expected attribute %s in schema", attr)
+		}
+	}
+}
+
+func TestSubnetConfigureNilProviderData(t *testing.T) {
+	r := NewResource()
+	resp := &resource.ConfigureResponse{}
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: nil}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Errorf("expected no errors, got %v", resp.Diagnostics)
+	}
+}
+
+func TestSubnetConfigureWrongType(t *testing.T) {
+	r := NewResource()
+	resp := &resource.ConfigureResponse{}
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: 3.14}, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Error("expected error for wrong type")
+	}
+}
+
+func TestSubnetConfigureValidClient(t *testing.T) {
+	r := NewResource()
+	c := client.NewClient("http://localhost", "test-key") // pragma: allowlist secret
+	resp := &resource.ConfigureResponse{}
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Errorf("expected no errors, got %v", resp.Diagnostics)
+	}
+}
+
+func TestSubnetResourceCreate(t *testing.T) {
+	subnetResp := apiSubnet{
+		ID:           "subnet-new-1",
+		Name:         "web-subnet",
+		CIDR:         "10.0.1.0/24",
+		VPCID:        "vpc-123",
+		Zone:         "eu-north-1a",
+		GatewayIP:    "10.0.1.1",
+		IsPublic:     false,
+		Status:       "active",
+		AvailableIPs: 250,
+		CreatedAt:    "2025-06-01T12:00:00Z",
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/subnets" {
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(subnetResp)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := subnetSchemaHelper(t)
+	planVal := tftypes.NewValue(subnetObjectType(), map[string]tftypes.Value{
+		"id":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":          tftypes.NewValue(tftypes.String, "web-subnet"),
+		"description":   tftypes.NewValue(tftypes.String, nil),
+		"cidr":          tftypes.NewValue(tftypes.String, "10.0.1.0/24"),
+		"vpc_id":        tftypes.NewValue(tftypes.String, "vpc-123"),
+		"zone":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"gateway_ip":    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"is_public":     tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
+		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"available_ips": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"created_at":    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+
+	plan := tfsdk.Plan{Schema: s, Raw: planVal}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	var state SubnetModel
+	resp.State.Get(context.Background(), &state)
+
+	if state.ID.ValueString() != "subnet-new-1" {
+		t.Errorf("expected ID subnet-new-1, got %s", state.ID.ValueString())
+	}
+	if state.Name.ValueString() != "web-subnet" {
+		t.Errorf("expected Name web-subnet, got %s", state.Name.ValueString())
+	}
+	if state.CIDR.ValueString() != "10.0.1.0/24" {
+		t.Errorf("expected CIDR 10.0.1.0/24, got %s", state.CIDR.ValueString())
+	}
+	if state.Zone.ValueString() != "eu-north-1a" {
+		t.Errorf("expected Zone eu-north-1a, got %s", state.Zone.ValueString())
+	}
+	if state.AvailableIPs.ValueInt64() != 250 {
+		t.Errorf("expected AvailableIPs 250, got %d", state.AvailableIPs.ValueInt64())
+	}
+}
+
+func TestSubnetResourceRead(t *testing.T) {
+	subnetResp := apiSubnet{
+		ID:           "subnet-read-1",
+		Name:         "read-subnet",
+		Description:  "a test",
+		CIDR:         "10.0.2.0/24",
+		VPCID:        "vpc-456",
+		Status:       "active",
+		AvailableIPs: 200,
+		CreatedAt:    "2025-06-01T12:00:00Z",
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/subnets/subnet-read-1" {
+			json.NewEncoder(w).Encode(subnetResp)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := subnetSchemaHelper(t)
+	stateVal := tftypes.NewValue(subnetObjectType(), map[string]tftypes.Value{
+		"id":            tftypes.NewValue(tftypes.String, "subnet-read-1"),
+		"name":          tftypes.NewValue(tftypes.String, "read-subnet"),
+		"description":   tftypes.NewValue(tftypes.String, nil),
+		"cidr":          tftypes.NewValue(tftypes.String, "10.0.2.0/24"),
+		"vpc_id":        tftypes.NewValue(tftypes.String, "vpc-456"),
+		"zone":          tftypes.NewValue(tftypes.String, nil),
+		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
+		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"is_public":     tftypes.NewValue(tftypes.Bool, false),
+		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":        tftypes.NewValue(tftypes.String, "active"),
+		"available_ips": tftypes.NewValue(tftypes.Number, 200),
+		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	state := tfsdk.State{Schema: s, Raw: stateVal}
+	resp := &resource.ReadResponse{State: state}
+	r.Read(context.Background(), resource.ReadRequest{State: state}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	var model SubnetModel
+	resp.State.Get(context.Background(), &model)
+	if model.Name.ValueString() != "read-subnet" {
+		t.Errorf("expected Name read-subnet, got %s", model.Name.ValueString())
+	}
+	if model.Description.ValueString() != "a test" {
+		t.Errorf("expected Description 'a test', got %s", model.Description.ValueString())
+	}
+}
+
+func TestSubnetResourceReadNotFoundRemovesState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := subnetSchemaHelper(t)
+	stateVal := tftypes.NewValue(subnetObjectType(), map[string]tftypes.Value{
+		"id":            tftypes.NewValue(tftypes.String, "subnet-gone"),
+		"name":          tftypes.NewValue(tftypes.String, "gone"),
+		"description":   tftypes.NewValue(tftypes.String, nil),
+		"cidr":          tftypes.NewValue(tftypes.String, "10.0.0.0/24"),
+		"vpc_id":        tftypes.NewValue(tftypes.String, "vpc-123"),
+		"zone":          tftypes.NewValue(tftypes.String, nil),
+		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
+		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"is_public":     tftypes.NewValue(tftypes.Bool, false),
+		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":        tftypes.NewValue(tftypes.String, "active"),
+		"available_ips": tftypes.NewValue(tftypes.Number, 250),
+		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+	})
+
+	state := tfsdk.State{Schema: s, Raw: stateVal}
+	resp := &resource.ReadResponse{State: state}
+	r.Read(context.Background(), resource.ReadRequest{State: state}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	if !resp.State.Raw.IsNull() {
+		t.Error("expected state to be null after not found")
+	}
+}
+
+func TestSubnetResourceUpdate(t *testing.T) {
+	subnetResp := apiSubnet{
+		ID:           "subnet-upd-1",
+		Name:         "upd-subnet",
+		CIDR:         "10.0.1.0/24",
+		VPCID:        "vpc-123",
+		Status:       "active",
+		AvailableIPs: 250,
+		Tags:         map[string]string{"env": "prod"},
+		CreatedAt:    "2025-06-01T12:00:00Z",
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/subnets/subnet-upd-1" {
+			json.NewEncoder(w).Encode(subnetResp)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := subnetSchemaHelper(t)
+
+	stateVal := tftypes.NewValue(subnetObjectType(), map[string]tftypes.Value{
+		"id":            tftypes.NewValue(tftypes.String, "subnet-upd-1"),
+		"name":          tftypes.NewValue(tftypes.String, "upd-subnet"),
+		"description":   tftypes.NewValue(tftypes.String, nil),
+		"cidr":          tftypes.NewValue(tftypes.String, "10.0.1.0/24"),
+		"vpc_id":        tftypes.NewValue(tftypes.String, "vpc-123"),
+		"zone":          tftypes.NewValue(tftypes.String, nil),
+		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
+		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"is_public":     tftypes.NewValue(tftypes.Bool, false),
+		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":        tftypes.NewValue(tftypes.String, "active"),
+		"available_ips": tftypes.NewValue(tftypes.Number, 250),
+		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	planVal := tftypes.NewValue(subnetObjectType(), map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "subnet-upd-1"),
+		"name":        tftypes.NewValue(tftypes.String, "upd-subnet"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"cidr":        tftypes.NewValue(tftypes.String, "10.0.1.0/24"),
+		"vpc_id":      tftypes.NewValue(tftypes.String, "vpc-123"),
+		"zone":        tftypes.NewValue(tftypes.String, nil),
+		"gateway_ip":  tftypes.NewValue(tftypes.String, nil),
+		"dns_servers": tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"is_public":   tftypes.NewValue(tftypes.Bool, false),
+		"tags": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{
+			"env": tftypes.NewValue(tftypes.String, "prod"),
+		}),
+		"status":        tftypes.NewValue(tftypes.String, "active"),
+		"available_ips": tftypes.NewValue(tftypes.Number, 250),
+		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	state := tfsdk.State{Schema: s, Raw: stateVal}
+	plan := tfsdk.Plan{Schema: s, Raw: planVal}
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s}}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	var model SubnetModel
+	resp.State.Get(context.Background(), &model)
+	if model.Name.ValueString() != "upd-subnet" {
+		t.Errorf("expected Name upd-subnet, got %s", model.Name.ValueString())
+	}
+}
+
+func TestSubnetResourceDelete(t *testing.T) {
+	deleted := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/subnets/subnet-del-1" {
+			deleted = true
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := subnetSchemaHelper(t)
+	stateVal := tftypes.NewValue(subnetObjectType(), map[string]tftypes.Value{
+		"id":            tftypes.NewValue(tftypes.String, "subnet-del-1"),
+		"name":          tftypes.NewValue(tftypes.String, "delete-me"),
+		"description":   tftypes.NewValue(tftypes.String, nil),
+		"cidr":          tftypes.NewValue(tftypes.String, "10.0.0.0/24"),
+		"vpc_id":        tftypes.NewValue(tftypes.String, "vpc-123"),
+		"zone":          tftypes.NewValue(tftypes.String, nil),
+		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
+		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"is_public":     tftypes.NewValue(tftypes.Bool, false),
+		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":        tftypes.NewValue(tftypes.String, "active"),
+		"available_ips": tftypes.NewValue(tftypes.Number, 250),
+		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+	})
+
+	state := tfsdk.State{Schema: s, Raw: stateVal}
+	resp := &resource.DeleteResponse{}
+	r.Delete(context.Background(), resource.DeleteRequest{State: state}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	if !deleted {
+		t.Error("expected delete to be called")
+	}
+}
+
+func TestSubnetResourceDeleteAlreadyGone(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := subnetSchemaHelper(t)
+	stateVal := tftypes.NewValue(subnetObjectType(), map[string]tftypes.Value{
+		"id":            tftypes.NewValue(tftypes.String, "subnet-gone"),
+		"name":          tftypes.NewValue(tftypes.String, "gone"),
+		"description":   tftypes.NewValue(tftypes.String, nil),
+		"cidr":          tftypes.NewValue(tftypes.String, "10.0.0.0/24"),
+		"vpc_id":        tftypes.NewValue(tftypes.String, "vpc-123"),
+		"zone":          tftypes.NewValue(tftypes.String, nil),
+		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
+		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"is_public":     tftypes.NewValue(tftypes.Bool, false),
+		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":        tftypes.NewValue(tftypes.String, "active"),
+		"available_ips": tftypes.NewValue(tftypes.Number, 250),
+		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+	})
+
+	state := tfsdk.State{Schema: s, Raw: stateVal}
+	resp := &resource.DeleteResponse{}
+	r.Delete(context.Background(), resource.DeleteRequest{State: state}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Errorf("expected no errors when deleting already-gone subnet, got %v", resp.Diagnostics)
+	}
+}
+
+// Ensure fmt is used.
+var _ = fmt.Sprintf

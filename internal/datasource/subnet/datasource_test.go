@@ -9,6 +9,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
 )
@@ -230,6 +232,250 @@ func TestReadNotFound(t *testing.T) {
 	}
 	if found {
 		t.Error("expected subnet not to be found")
+	}
+}
+
+// --- tfsdk-level Read tests ---
+
+func configureSubnetDS(t *testing.T, ds datasource.DataSource, c *client.Client) {
+	t.Helper()
+	dc, ok := ds.(datasource.DataSourceWithConfigure)
+	if !ok {
+		t.Fatal("datasource does not implement DataSourceWithConfigure")
+	}
+	configReq := datasource.ConfigureRequest{ProviderData: c}
+	var configResp datasource.ConfigureResponse
+	dc.Configure(context.Background(), configReq, &configResp)
+	if configResp.Diagnostics.HasError() {
+		t.Fatalf("configure failed: %v", configResp.Diagnostics.Errors())
+	}
+}
+
+func getSubnetDSSchema(t *testing.T) datasource.SchemaResponse {
+	t.Helper()
+	ds := NewDataSource()
+	var schemaResp datasource.SchemaResponse
+	ds.Schema(context.Background(), datasource.SchemaRequest{}, &schemaResp)
+	return schemaResp
+}
+
+func TestTFSDK_ReadSubnetByID(t *testing.T) {
+	subnets := []apiSubnet{
+		{
+			ID:           "sub-1",
+			Name:         "web-subnet",
+			VPCID:        "vpc-1",
+			Description:  "Web tier",
+			CIDR:         "10.0.1.0/24",
+			Zone:         "eu-north-1a",
+			GatewayIP:    "10.0.1.1",
+			IsPublic:     true,
+			Status:       "active",
+			AvailableIPs: 250,
+			Tags:         map[string]string{"tier": "web"},
+			CreatedAt:    "2025-01-01T00:00:00Z",
+		},
+	}
+	server := newTestServer(t, subnets)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureSubnetDS(t, ds, c)
+	schemaResp := getSubnetDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":            tftypes.NewValue(tftypes.String, "sub-1"),
+		"name":          tftypes.NewValue(tftypes.String, nil),
+		"vpc_id":        tftypes.NewValue(tftypes.String, nil),
+		"description":   tftypes.NewValue(tftypes.String, nil),
+		"cidr":          tftypes.NewValue(tftypes.String, nil),
+		"zone":          tftypes.NewValue(tftypes.String, nil),
+		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
+		"is_public":     tftypes.NewValue(tftypes.Bool, nil),
+		"status":        tftypes.NewValue(tftypes.String, nil),
+		"available_ips": tftypes.NewValue(tftypes.Number, nil),
+		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"created_at":    tftypes.NewValue(tftypes.String, nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	var state subnetModel
+	readResp.State.Get(ctx, &state)
+
+	if state.ID.ValueString() != "sub-1" {
+		t.Errorf("expected ID sub-1, got %s", state.ID.ValueString())
+	}
+	if state.VPCID.ValueString() != "vpc-1" {
+		t.Errorf("expected VPCID vpc-1, got %s", state.VPCID.ValueString())
+	}
+	if state.AvailableIPs.ValueInt64() != 250 {
+		t.Errorf("expected AvailableIPs 250, got %d", state.AvailableIPs.ValueInt64())
+	}
+	if state.IsPublic.ValueBool() != true {
+		t.Error("expected IsPublic true")
+	}
+}
+
+func TestTFSDK_ReadSubnetByNameWithVPCFilter(t *testing.T) {
+	subnets := []apiSubnet{
+		{ID: "sub-1", Name: "web-subnet", VPCID: "vpc-1", CIDR: "10.0.1.0/24", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"},
+		{ID: "sub-2", Name: "web-subnet", VPCID: "vpc-2", CIDR: "10.1.1.0/24", Status: "active", CreatedAt: "2025-01-02T00:00:00Z"},
+	}
+	server := newTestServer(t, subnets)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureSubnetDS(t, ds, c)
+	schemaResp := getSubnetDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":            tftypes.NewValue(tftypes.String, nil),
+		"name":          tftypes.NewValue(tftypes.String, "web-subnet"),
+		"vpc_id":        tftypes.NewValue(tftypes.String, "vpc-2"),
+		"description":   tftypes.NewValue(tftypes.String, nil),
+		"cidr":          tftypes.NewValue(tftypes.String, nil),
+		"zone":          tftypes.NewValue(tftypes.String, nil),
+		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
+		"is_public":     tftypes.NewValue(tftypes.Bool, nil),
+		"status":        tftypes.NewValue(tftypes.String, nil),
+		"available_ips": tftypes.NewValue(tftypes.Number, nil),
+		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"created_at":    tftypes.NewValue(tftypes.String, nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	var state subnetModel
+	readResp.State.Get(ctx, &state)
+
+	if state.ID.ValueString() != "sub-2" {
+		t.Errorf("expected ID sub-2 (from vpc-2), got %s", state.ID.ValueString())
+	}
+}
+
+func TestTFSDK_ReadSubnetBothIDAndName(t *testing.T) {
+	subnets := []apiSubnet{{ID: "sub-1", Name: "test", VPCID: "vpc-1", CIDR: "10.0.1.0/24", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"}}
+	server := newTestServer(t, subnets)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureSubnetDS(t, ds, c)
+	schemaResp := getSubnetDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":            tftypes.NewValue(tftypes.String, "sub-1"),
+		"name":          tftypes.NewValue(tftypes.String, "test"),
+		"vpc_id":        tftypes.NewValue(tftypes.String, nil),
+		"description":   tftypes.NewValue(tftypes.String, nil),
+		"cidr":          tftypes.NewValue(tftypes.String, nil),
+		"zone":          tftypes.NewValue(tftypes.String, nil),
+		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
+		"is_public":     tftypes.NewValue(tftypes.Bool, nil),
+		"status":        tftypes.NewValue(tftypes.String, nil),
+		"available_ips": tftypes.NewValue(tftypes.Number, nil),
+		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"created_at":    tftypes.NewValue(tftypes.String, nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+
+	if !readResp.Diagnostics.HasError() {
+		t.Error("expected error when both id and name are specified")
+	}
+}
+
+func TestTFSDK_ReadSubnetNeitherIDNorName(t *testing.T) {
+	server := newTestServer(t, nil)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureSubnetDS(t, ds, c)
+	schemaResp := getSubnetDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":            tftypes.NewValue(tftypes.String, nil),
+		"name":          tftypes.NewValue(tftypes.String, nil),
+		"vpc_id":        tftypes.NewValue(tftypes.String, nil),
+		"description":   tftypes.NewValue(tftypes.String, nil),
+		"cidr":          tftypes.NewValue(tftypes.String, nil),
+		"zone":          tftypes.NewValue(tftypes.String, nil),
+		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
+		"is_public":     tftypes.NewValue(tftypes.Bool, nil),
+		"status":        tftypes.NewValue(tftypes.String, nil),
+		"available_ips": tftypes.NewValue(tftypes.Number, nil),
+		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"created_at":    tftypes.NewValue(tftypes.String, nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+
+	if !readResp.Diagnostics.HasError() {
+		t.Error("expected error when neither id nor name is specified")
 	}
 }
 

@@ -9,6 +9,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
 )
@@ -182,6 +184,165 @@ func TestReadNotFound(t *testing.T) {
 		// The test server returns 404 for unregistered paths
 		// which the client interprets as an error
 		t.Log("Server returned success for non-existent instance (path matched catch-all)")
+	}
+}
+
+// --- tfsdk-level Read tests ---
+
+func configureInstanceDS(t *testing.T, ds datasource.DataSource, c *client.Client) {
+	t.Helper()
+	dc, ok := ds.(datasource.DataSourceWithConfigure)
+	if !ok {
+		t.Fatal("datasource does not implement DataSourceWithConfigure")
+	}
+	configReq := datasource.ConfigureRequest{ProviderData: c}
+	var configResp datasource.ConfigureResponse
+	dc.Configure(context.Background(), configReq, &configResp)
+	if configResp.Diagnostics.HasError() {
+		t.Fatalf("configure failed: %v", configResp.Diagnostics.Errors())
+	}
+}
+
+func getInstanceDSSchema(t *testing.T) datasource.SchemaResponse {
+	t.Helper()
+	ds := NewDataSource()
+	var schemaResp datasource.SchemaResponse
+	ds.Schema(context.Background(), datasource.SchemaRequest{}, &schemaResp)
+	return schemaResp
+}
+
+func TestTFSDK_ReadInstanceByID(t *testing.T) {
+	instances := map[string]apiInstance{
+		"inst-1": {
+			ID:         "inst-1",
+			Name:       "web-server-1",
+			Status:     "active",
+			FlavorID:   "flv-1",
+			FlavorName: "nl.small",
+			ImageID:    "img-1",
+			ImageName:  "Ubuntu 22.04",
+			Region:     "eu-north-1",
+			Zone:       "eu-north-1a",
+			VPCID:      "vpc-1",
+			SubnetID:   "sub-1",
+			PrivateIP:  "10.0.1.10",
+			PublicIP:   "203.0.113.10",
+			Tags:       map[string]string{"env": "prod"},
+			CreatedAt:  "2025-01-01T00:00:00Z",
+		},
+	}
+	server := newTestServer(t, instances)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureInstanceDS(t, ds, c)
+	schemaResp := getInstanceDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "inst-1"),
+		"name":        tftypes.NewValue(tftypes.String, nil),
+		"flavor_id":   tftypes.NewValue(tftypes.String, nil),
+		"flavor_name": tftypes.NewValue(tftypes.String, nil),
+		"image_id":    tftypes.NewValue(tftypes.String, nil),
+		"image_name":  tftypes.NewValue(tftypes.String, nil),
+		"region":      tftypes.NewValue(tftypes.String, nil),
+		"zone":        tftypes.NewValue(tftypes.String, nil),
+		"vpc_id":      tftypes.NewValue(tftypes.String, nil),
+		"subnet_id":   tftypes.NewValue(tftypes.String, nil),
+		"private_ip":  tftypes.NewValue(tftypes.String, nil),
+		"public_ip":   tftypes.NewValue(tftypes.String, nil),
+		"status":      tftypes.NewValue(tftypes.String, nil),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	var state instanceModel
+	readResp.State.Get(ctx, &state)
+
+	if state.ID.ValueString() != "inst-1" {
+		t.Errorf("expected ID inst-1, got %s", state.ID.ValueString())
+	}
+	if state.Name.ValueString() != "web-server-1" {
+		t.Errorf("expected Name web-server-1, got %s", state.Name.ValueString())
+	}
+	if state.FlavorID.ValueString() != "flv-1" {
+		t.Errorf("expected FlavorID flv-1, got %s", state.FlavorID.ValueString())
+	}
+	if state.FlavorName.ValueString() != "nl.small" {
+		t.Errorf("expected FlavorName nl.small, got %s", state.FlavorName.ValueString())
+	}
+	if state.PrivateIP.ValueString() != "10.0.1.10" {
+		t.Errorf("expected PrivateIP 10.0.1.10, got %s", state.PrivateIP.ValueString())
+	}
+	if state.PublicIP.ValueString() != "203.0.113.10" {
+		t.Errorf("expected PublicIP 203.0.113.10, got %s", state.PublicIP.ValueString())
+	}
+}
+
+func TestTFSDK_ReadInstanceNotFound(t *testing.T) {
+	server := newTestServer(t, map[string]apiInstance{})
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureInstanceDS(t, ds, c)
+	schemaResp := getInstanceDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "inst-nonexistent"),
+		"name":        tftypes.NewValue(tftypes.String, nil),
+		"flavor_id":   tftypes.NewValue(tftypes.String, nil),
+		"flavor_name": tftypes.NewValue(tftypes.String, nil),
+		"image_id":    tftypes.NewValue(tftypes.String, nil),
+		"image_name":  tftypes.NewValue(tftypes.String, nil),
+		"region":      tftypes.NewValue(tftypes.String, nil),
+		"zone":        tftypes.NewValue(tftypes.String, nil),
+		"vpc_id":      tftypes.NewValue(tftypes.String, nil),
+		"subnet_id":   tftypes.NewValue(tftypes.String, nil),
+		"private_ip":  tftypes.NewValue(tftypes.String, nil),
+		"public_ip":   tftypes.NewValue(tftypes.String, nil),
+		"status":      tftypes.NewValue(tftypes.String, nil),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+
+	if !readResp.Diagnostics.HasError() {
+		t.Error("expected error for nonexistent instance")
 	}
 }
 

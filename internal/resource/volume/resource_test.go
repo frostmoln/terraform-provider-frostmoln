@@ -3,13 +3,17 @@ package volume
 import (
 	"context"
 	"encoding/json"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
 )
@@ -472,5 +476,1294 @@ func TestVolumeResource_ReadNotFound(t *testing.T) {
 	}
 	if !client.IsNotFound(err) {
 		t.Errorf("expected not found error, got %v", err)
+	}
+}
+
+// --- tfsdk-level CRUD tests ---
+
+func getVolumeSchema(t *testing.T) resource.SchemaResponse {
+	t.Helper()
+	r := NewResource()
+	var schemaResp resource.SchemaResponse
+	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
+	return schemaResp
+}
+
+func configureVolumeResource(t *testing.T, r resource.Resource, c *client.Client) {
+	t.Helper()
+	rc, ok := r.(resource.ResourceWithConfigure)
+	if !ok {
+		t.Fatal("resource does not implement ResourceWithConfigure")
+	}
+	configReq := resource.ConfigureRequest{ProviderData: c}
+	var configResp resource.ConfigureResponse
+	rc.Configure(context.Background(), configReq, &configResp)
+	if configResp.Diagnostics.HasError() {
+		t.Fatalf("configure failed: %v", configResp.Diagnostics.Errors())
+	}
+}
+
+func TestVolumeResource_TFSDKCreate(t *testing.T) {
+	pollCount := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes":
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(apiVolume{
+				ID:         "vol-new-1",
+				Name:       "new-volume",
+				SizeGB:     100,
+				VolumeType: "ssd",
+				Encrypted:  true,
+				Status:     "creating",
+				Region:     "eu-north-1",
+				CreatedAt:  "2025-01-01T00:00:00Z",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-new-1":
+			pollCount++
+			status := "creating"
+			if pollCount >= 2 {
+				status = "available"
+			}
+			json.NewEncoder(w).Encode(apiVolume{
+				ID:         "vol-new-1",
+				Name:       "new-volume",
+				SizeGB:     100,
+				VolumeType: "ssd",
+				Encrypted:  true,
+				Status:     status,
+				IOPS:       3000,
+				Throughput: 125,
+				Region:     "eu-north-1",
+				CreatedAt:  "2025-01-01T00:00:00Z",
+			})
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := NewResource()
+	configureVolumeResource(t, r, c)
+	schemaResp := getVolumeSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":        tftypes.NewValue(tftypes.String, "new-volume"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
+		"zone":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, true),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"iops":        tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"throughput":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"region":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"attached_to": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"device_path": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+	}
+	var createResp resource.CreateResponse
+	createResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Create(ctx, createReq, &createResp)
+
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("Create failed: %v", createResp.Diagnostics.Errors())
+	}
+
+	var model VolumeModel
+	createResp.State.Get(ctx, &model)
+
+	if model.ID.ValueString() != "vol-new-1" {
+		t.Errorf("expected ID vol-new-1, got %s", model.ID.ValueString())
+	}
+	if model.Name.ValueString() != "new-volume" {
+		t.Errorf("expected Name new-volume, got %s", model.Name.ValueString())
+	}
+	if model.SizeGB.ValueInt64() != 100 {
+		t.Errorf("expected SizeGB 100, got %d", model.SizeGB.ValueInt64())
+	}
+	if model.Status.ValueString() != "available" {
+		t.Errorf("expected Status available, got %s", model.Status.ValueString())
+	}
+	if model.IOPS.ValueInt64() != 3000 {
+		t.Errorf("expected IOPS 3000, got %d", model.IOPS.ValueInt64())
+	}
+	if model.Region.ValueString() != "eu-north-1" {
+		t.Errorf("expected Region eu-north-1, got %s", model.Region.ValueString())
+	}
+}
+
+func TestVolumeResource_TFSDKRead(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-read-1":
+			json.NewEncoder(w).Encode(apiVolume{
+				ID:         "vol-read-1",
+				Name:       "read-vol",
+				SizeGB:     200,
+				VolumeType: "nvme",
+				Encrypted:  false,
+				Status:     "available",
+				IOPS:       5000,
+				Throughput: 250,
+				Region:     "eu-west-1",
+				Zone:       "eu-west-1a",
+				Tags:       map[string]string{"team": "backend"},
+				CreatedAt:  "2025-02-01T00:00:00Z",
+			})
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := NewResource()
+	configureVolumeResource(t, r, c)
+	schemaResp := getVolumeSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "vol-read-1"),
+		"name":        tftypes.NewValue(tftypes.String, "read-vol"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(200)),
+		"volume_type": tftypes.NewValue(tftypes.String, "nvme"),
+		"zone":        tftypes.NewValue(tftypes.String, nil),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "available"),
+		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(5000)),
+		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(250)),
+		"region":      tftypes.NewValue(tftypes.String, "eu-west-1"),
+		"attached_to": tftypes.NewValue(tftypes.String, nil),
+		"device_path": tftypes.NewValue(tftypes.String, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-02-01T00:00:00Z"),
+	})
+
+	readReq := resource.ReadRequest{
+		State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal},
+	}
+	var readResp resource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Read(ctx, readReq, &readResp)
+
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	var model VolumeModel
+	readResp.State.Get(ctx, &model)
+
+	if model.ID.ValueString() != "vol-read-1" {
+		t.Errorf("expected ID vol-read-1, got %s", model.ID.ValueString())
+	}
+	if model.Zone.ValueString() != "eu-west-1a" {
+		t.Errorf("expected Zone eu-west-1a, got %s", model.Zone.ValueString())
+	}
+	if model.IOPS.ValueInt64() != 5000 {
+		t.Errorf("expected IOPS 5000, got %d", model.IOPS.ValueInt64())
+	}
+}
+
+func TestVolumeResource_TFSDKReadNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := NewResource()
+	configureVolumeResource(t, r, c)
+	schemaResp := getVolumeSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "vol-gone"),
+		"name":        tftypes.NewValue(tftypes.String, "gone-vol"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(50)),
+		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
+		"zone":        tftypes.NewValue(tftypes.String, nil),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "available"),
+		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
+		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"attached_to": tftypes.NewValue(tftypes.String, nil),
+		"device_path": tftypes.NewValue(tftypes.String, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+	})
+
+	readReq := resource.ReadRequest{
+		State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal},
+	}
+	var readResp resource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Read(ctx, readReq, &readResp)
+
+	// Should not error - just remove the resource from state
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read should not error for 404, got: %v", readResp.Diagnostics.Errors())
+	}
+}
+
+func TestVolumeResource_TFSDKUpdate_PatchAndResize(t *testing.T) {
+	var patchCalled, resizeCalled bool
+
+	currentVol := apiVolume{
+		ID:         "vol-upd-1",
+		Name:       "updated-vol",
+		SizeGB:     200,
+		VolumeType: "ssd",
+		Encrypted:  true,
+		Status:     "available",
+		IOPS:       3000,
+		Throughput: 125,
+		Region:     "eu-north-1",
+		CreatedAt:  "2025-01-01T00:00:00Z",
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-upd-1":
+			patchCalled = true
+			currentVol.Name = "updated-vol"
+			currentVol.Description = "new desc"
+			json.NewEncoder(w).Encode(currentVol)
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-upd-1/resize":
+			resizeCalled = true
+			currentVol.SizeGB = 200
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(currentVol)
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-upd-1":
+			json.NewEncoder(w).Encode(currentVol)
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := NewResource()
+	configureVolumeResource(t, r, c)
+	schemaResp := getVolumeSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "vol-upd-1"),
+		"name":        tftypes.NewValue(tftypes.String, "old-vol"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
+		"zone":        tftypes.NewValue(tftypes.String, nil),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, true),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "available"),
+		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
+		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
+		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"attached_to": tftypes.NewValue(tftypes.String, nil),
+		"device_path": tftypes.NewValue(tftypes.String, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+	})
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "vol-upd-1"),
+		"name":        tftypes.NewValue(tftypes.String, "updated-vol"),
+		"description": tftypes.NewValue(tftypes.String, "new desc"),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(200)),
+		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
+		"zone":        tftypes.NewValue(tftypes.String, nil),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, true),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "available"),
+		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
+		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
+		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"attached_to": tftypes.NewValue(tftypes.String, nil),
+		"device_path": tftypes.NewValue(tftypes.String, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+	})
+
+	updateReq := resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+		State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal},
+	}
+	var updateResp resource.UpdateResponse
+	updateResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Update(ctx, updateReq, &updateResp)
+
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("Update failed: %v", updateResp.Diagnostics.Errors())
+	}
+
+	if !patchCalled {
+		t.Error("expected PATCH to be called for name/description change")
+	}
+	if !resizeCalled {
+		t.Error("expected resize POST to be called for size increase")
+	}
+
+	var model VolumeModel
+	updateResp.State.Get(ctx, &model)
+
+	if model.Name.ValueString() != "updated-vol" {
+		t.Errorf("expected Name updated-vol, got %s", model.Name.ValueString())
+	}
+	if model.SizeGB.ValueInt64() != 200 {
+		t.Errorf("expected SizeGB 200, got %d", model.SizeGB.ValueInt64())
+	}
+}
+
+func TestVolumeResource_TFSDKDelete(t *testing.T) {
+	var deleteCalled bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-del-1":
+			deleteCalled = true
+			w.WriteHeader(http.StatusNoContent)
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := NewResource()
+	configureVolumeResource(t, r, c)
+	schemaResp := getVolumeSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "vol-del-1"),
+		"name":        tftypes.NewValue(tftypes.String, "del-vol"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(50)),
+		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
+		"zone":        tftypes.NewValue(tftypes.String, nil),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "available"),
+		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
+		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"attached_to": tftypes.NewValue(tftypes.String, nil),
+		"device_path": tftypes.NewValue(tftypes.String, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+	})
+
+	deleteReq := resource.DeleteRequest{
+		State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal},
+	}
+	var deleteResp resource.DeleteResponse
+	deleteResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Delete(ctx, deleteReq, &deleteResp)
+
+	if deleteResp.Diagnostics.HasError() {
+		t.Fatalf("Delete failed: %v", deleteResp.Diagnostics.Errors())
+	}
+
+	if !deleteCalled {
+		t.Error("expected DELETE to be called")
+	}
+}
+
+// --- Additional tests for coverage gaps ---
+
+func TestVolumeResource_Metadata(t *testing.T) {
+	r := NewResource()
+	req := resource.MetadataRequest{ProviderTypeName: "frostmoln"}
+	resp := &resource.MetadataResponse{}
+	r.Metadata(context.Background(), req, resp)
+
+	if resp.TypeName != "frostmoln_volume" {
+		t.Errorf("expected type name frostmoln_volume, got %s", resp.TypeName)
+	}
+}
+
+func TestVolumeResource_ConfigureNilProviderData(t *testing.T) {
+	r := NewResource()
+	resp := &resource.ConfigureResponse{}
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: nil}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Errorf("expected no errors, got %v", resp.Diagnostics)
+	}
+}
+
+func TestVolumeResource_ConfigureWrongType(t *testing.T) {
+	r := NewResource()
+	resp := &resource.ConfigureResponse{}
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: "bad"}, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Error("expected error for wrong type")
+	}
+}
+
+func TestVolumeResource_TFSDKCreateAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes":
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "server error"},
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := NewResource()
+	configureVolumeResource(t, r, c)
+	schemaResp := getVolumeSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":        tftypes.NewValue(tftypes.String, "fail-vol"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
+		"zone":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"iops":        tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"throughput":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"region":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"attached_to": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"device_path": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+	}
+	var createResp resource.CreateResponse
+	createResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Create(ctx, createReq, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Error("expected error for API failure on create")
+	}
+}
+
+func TestVolumeResource_TFSDKCreateBadResponseBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes":
+			w.WriteHeader(http.StatusAccepted)
+			w.Write([]byte("not json"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := NewResource()
+	configureVolumeResource(t, r, c)
+	schemaResp := getVolumeSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":        tftypes.NewValue(tftypes.String, "bad-vol"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(50)),
+		"volume_type": tftypes.NewValue(tftypes.String, nil),
+		"zone":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"iops":        tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"throughput":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"region":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"attached_to": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"device_path": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+	}
+	var createResp resource.CreateResponse
+	createResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Create(ctx, createReq, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Error("expected error for bad response body on create")
+	}
+}
+
+func TestVolumeResource_TFSDKCreatePollingErrorState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes":
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(apiVolume{
+				ID:     "vol-err-1",
+				Name:   "error-vol",
+				SizeGB: 100,
+				Status: "creating",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-err-1":
+			json.NewEncoder(w).Encode(apiVolume{
+				ID:     "vol-err-1",
+				Name:   "error-vol",
+				SizeGB: 100,
+				Status: "error",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := NewResource()
+	configureVolumeResource(t, r, c)
+	schemaResp := getVolumeSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":        tftypes.NewValue(tftypes.String, "error-vol"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"volume_type": tftypes.NewValue(tftypes.String, nil),
+		"zone":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"iops":        tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"throughput":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"region":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"attached_to": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"device_path": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+	}
+	var createResp resource.CreateResponse
+	createResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Create(ctx, createReq, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Error("expected error when volume enters error state during polling")
+	}
+}
+
+func TestVolumeResource_TFSDKCreateFinalReadError(t *testing.T) {
+	var getCount atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes":
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(apiVolume{
+				ID:     "vol-fre-1",
+				Name:   "fre-vol",
+				SizeGB: 100,
+				Status: "creating",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-fre-1":
+			n := getCount.Add(1)
+			if n == 1 {
+				// First GET (poll): return available so polling finishes
+				json.NewEncoder(w).Encode(apiVolume{
+					ID:     "vol-fre-1",
+					Name:   "fre-vol",
+					SizeGB: 100,
+					Status: "available",
+				})
+			} else {
+				// Second GET (final read): return error
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"error": map[string]string{"code": "INTERNAL_ERROR", "message": "read failed"},
+				})
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := NewResource()
+	configureVolumeResource(t, r, c)
+	schemaResp := getVolumeSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":        tftypes.NewValue(tftypes.String, "fre-vol"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"volume_type": tftypes.NewValue(tftypes.String, nil),
+		"zone":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"iops":        tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"throughput":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"region":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"attached_to": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"device_path": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+	}
+	var createResp resource.CreateResponse
+	createResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Create(ctx, createReq, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Error("expected error when final read fails after creation")
+	}
+}
+
+func TestVolumeResource_TFSDKReadAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "server error"},
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := NewResource()
+	configureVolumeResource(t, r, c)
+	schemaResp := getVolumeSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "vol-err-r"),
+		"name":        tftypes.NewValue(tftypes.String, "err-vol"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(50)),
+		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
+		"zone":        tftypes.NewValue(tftypes.String, nil),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "available"),
+		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
+		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"attached_to": tftypes.NewValue(tftypes.String, nil),
+		"device_path": tftypes.NewValue(tftypes.String, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+	})
+
+	readReq := resource.ReadRequest{
+		State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal},
+	}
+	var readResp resource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Read(ctx, readReq, &readResp)
+
+	if !readResp.Diagnostics.HasError() {
+		t.Error("expected error for API failure on read")
+	}
+}
+
+func TestVolumeResource_TFSDKReadBadJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-bj-r":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("not json"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := NewResource()
+	configureVolumeResource(t, r, c)
+	schemaResp := getVolumeSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "vol-bj-r"),
+		"name":        tftypes.NewValue(tftypes.String, "bj-vol"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(50)),
+		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
+		"zone":        tftypes.NewValue(tftypes.String, nil),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "available"),
+		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
+		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"attached_to": tftypes.NewValue(tftypes.String, nil),
+		"device_path": tftypes.NewValue(tftypes.String, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+	})
+
+	readReq := resource.ReadRequest{
+		State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal},
+	}
+	var readResp resource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Read(ctx, readReq, &readResp)
+
+	if !readResp.Diagnostics.HasError() {
+		t.Error("expected error for bad JSON in read response")
+	}
+}
+
+func TestVolumeResource_TFSDKUpdatePatchError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-pe-1":
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "patch failed"},
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := NewResource()
+	configureVolumeResource(t, r, c)
+	schemaResp := getVolumeSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "vol-pe-1"),
+		"name":        tftypes.NewValue(tftypes.String, "old-name"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
+		"zone":        tftypes.NewValue(tftypes.String, nil),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, true),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "available"),
+		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
+		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
+		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"attached_to": tftypes.NewValue(tftypes.String, nil),
+		"device_path": tftypes.NewValue(tftypes.String, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+	})
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "vol-pe-1"),
+		"name":        tftypes.NewValue(tftypes.String, "new-name"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
+		"zone":        tftypes.NewValue(tftypes.String, nil),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, true),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "available"),
+		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
+		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
+		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"attached_to": tftypes.NewValue(tftypes.String, nil),
+		"device_path": tftypes.NewValue(tftypes.String, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+	})
+
+	updateReq := resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+		State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal},
+	}
+	var updateResp resource.UpdateResponse
+	updateResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Update(ctx, updateReq, &updateResp)
+
+	if !updateResp.Diagnostics.HasError() {
+		t.Error("expected error for PATCH failure")
+	}
+}
+
+func TestVolumeResource_TFSDKUpdateResizeError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-re-1/resize":
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "resize failed"},
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := NewResource()
+	configureVolumeResource(t, r, c)
+	schemaResp := getVolumeSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "vol-re-1"),
+		"name":        tftypes.NewValue(tftypes.String, "same-name"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
+		"zone":        tftypes.NewValue(tftypes.String, nil),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, true),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "available"),
+		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
+		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
+		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"attached_to": tftypes.NewValue(tftypes.String, nil),
+		"device_path": tftypes.NewValue(tftypes.String, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+	})
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "vol-re-1"),
+		"name":        tftypes.NewValue(tftypes.String, "same-name"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(200)),
+		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
+		"zone":        tftypes.NewValue(tftypes.String, nil),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, true),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "available"),
+		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
+		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
+		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"attached_to": tftypes.NewValue(tftypes.String, nil),
+		"device_path": tftypes.NewValue(tftypes.String, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+	})
+
+	updateReq := resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+		State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal},
+	}
+	var updateResp resource.UpdateResponse
+	updateResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Update(ctx, updateReq, &updateResp)
+
+	if !updateResp.Diagnostics.HasError() {
+		t.Error("expected error for resize failure")
+	}
+}
+
+func TestVolumeResource_TFSDKUpdateReadError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-ure-1":
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "read failed"},
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := NewResource()
+	configureVolumeResource(t, r, c)
+	schemaResp := getVolumeSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	// No changes - just the final read will fail
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "vol-ure-1"),
+		"name":        tftypes.NewValue(tftypes.String, "same"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
+		"zone":        tftypes.NewValue(tftypes.String, nil),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, true),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "available"),
+		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
+		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
+		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"attached_to": tftypes.NewValue(tftypes.String, nil),
+		"device_path": tftypes.NewValue(tftypes.String, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+	})
+
+	updateReq := resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: schemaResp.Schema, Raw: stateVal},
+		State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal},
+	}
+	var updateResp resource.UpdateResponse
+	updateResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Update(ctx, updateReq, &updateResp)
+
+	if !updateResp.Diagnostics.HasError() {
+		t.Error("expected error for read failure during update")
+	}
+}
+
+func TestVolumeResource_TFSDKDeleteNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := NewResource()
+	configureVolumeResource(t, r, c)
+	schemaResp := getVolumeSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "vol-gone"),
+		"name":        tftypes.NewValue(tftypes.String, "gone-vol"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(50)),
+		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
+		"zone":        tftypes.NewValue(tftypes.String, nil),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "available"),
+		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
+		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"attached_to": tftypes.NewValue(tftypes.String, nil),
+		"device_path": tftypes.NewValue(tftypes.String, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+	})
+
+	deleteReq := resource.DeleteRequest{
+		State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal},
+	}
+	var deleteResp resource.DeleteResponse
+
+	r.Delete(ctx, deleteReq, &deleteResp)
+
+	if deleteResp.Diagnostics.HasError() {
+		t.Fatalf("Delete should not error for already-gone volume, got: %v", deleteResp.Diagnostics.Errors())
+	}
+}
+
+func TestVolumeResource_TFSDKDeleteAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "server error"},
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := NewResource()
+	configureVolumeResource(t, r, c)
+	schemaResp := getVolumeSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "vol-del-err"),
+		"name":        tftypes.NewValue(tftypes.String, "err-vol"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(50)),
+		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
+		"zone":        tftypes.NewValue(tftypes.String, nil),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "available"),
+		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
+		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"attached_to": tftypes.NewValue(tftypes.String, nil),
+		"device_path": tftypes.NewValue(tftypes.String, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+	})
+
+	deleteReq := resource.DeleteRequest{
+		State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal},
+	}
+	var deleteResp resource.DeleteResponse
+
+	r.Delete(ctx, deleteReq, &deleteResp)
+
+	if !deleteResp.Diagnostics.HasError() {
+		t.Error("expected error for API failure on delete")
+	}
+}
+
+func TestVolumeResource_TFSDKImportState(t *testing.T) {
+	r := NewResource()
+	schemaResp := getVolumeSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	emptyState := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, nil),
+		"name":        tftypes.NewValue(tftypes.String, nil),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, nil),
+		"volume_type": tftypes.NewValue(tftypes.String, nil),
+		"zone":        tftypes.NewValue(tftypes.String, nil),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, nil),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, nil),
+		"iops":        tftypes.NewValue(tftypes.Number, nil),
+		"throughput":  tftypes.NewValue(tftypes.Number, nil),
+		"region":      tftypes.NewValue(tftypes.String, nil),
+		"attached_to": tftypes.NewValue(tftypes.String, nil),
+		"device_path": tftypes.NewValue(tftypes.String, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, nil),
+	})
+
+	importReq := resource.ImportStateRequest{ID: "vol-import-1"}
+	importResp := &resource.ImportStateResponse{
+		State: tfsdk.State{Schema: schemaResp.Schema, Raw: emptyState},
+	}
+
+	r.(resource.ResourceWithImportState).ImportState(ctx, importReq, importResp)
+
+	if importResp.Diagnostics.HasError() {
+		t.Fatalf("ImportState failed: %v", importResp.Diagnostics.Errors())
+	}
+
+	var model VolumeModel
+	importResp.State.Get(ctx, &model)
+
+	if model.ID.ValueString() != "vol-import-1" {
+		t.Errorf("expected ID vol-import-1, got %s", model.ID.ValueString())
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestNewClient(t *testing.T) {
@@ -245,5 +246,156 @@ func TestParseResponse(t *testing.T) {
 	}
 	if result.Name != "test" {
 		t.Errorf("expected name test, got %s", result.Name)
+	}
+}
+
+func TestPatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			t.Errorf("expected PATCH, got %s", r.Method)
+		}
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Error("expected Content-Type application/json")
+		}
+		if r.URL.Path != "/v1/tenants/t-1/vpcs/vpc-1" {
+			t.Errorf("expected path /v1/tenants/t-1/vpcs/vpc-1, got %s", r.URL.Path)
+		}
+
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		if body["name"] != "updated" {
+			t.Errorf("expected body name 'updated', got %q", body["name"])
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"vpc-1","name":"updated"}`))
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "key")
+	resp, err := c.Patch(context.Background(), "/v1/tenants/t-1/vpcs/vpc-1", map[string]string{"name": "updated"})
+	if err != nil {
+		t.Fatalf("Patch failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected status 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestPut(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Errorf("expected PUT, got %s", r.Method)
+		}
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Error("expected Content-Type application/json")
+		}
+		if r.URL.Path != "/v1/tenants/t-1/instances/i-1" {
+			t.Errorf("expected path /v1/tenants/t-1/instances/i-1, got %s", r.URL.Path)
+		}
+
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		if body["flavor"] != "m1.large" {
+			t.Errorf("expected body flavor 'm1.large', got %q", body["flavor"])
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"i-1","flavor":"m1.large"}`))
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "key")
+	resp, err := c.Put(context.Background(), "/v1/tenants/t-1/instances/i-1", map[string]string{"flavor": "m1.large"})
+	if err != nil {
+		t.Fatalf("Put failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected status 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestDeleteWithQuery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Errorf("expected DELETE, got %s", r.Method)
+		}
+		if r.URL.Path != "/v1/tenants/t-1/resources/r-1" {
+			t.Errorf("expected path /v1/tenants/t-1/resources/r-1, got %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("force") != "true" {
+			t.Errorf("expected query param force=true, got %q", r.URL.Query().Get("force"))
+		}
+		if r.URL.Query().Get("cascade") != "yes" {
+			t.Errorf("expected query param cascade=yes, got %q", r.URL.Query().Get("cascade"))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "key")
+	query := make(map[string][]string)
+	query["force"] = []string{"true"}
+	query["cascade"] = []string{"yes"}
+	resp, err := c.DeleteWithQuery(context.Background(), "/v1/tenants/t-1/resources/r-1", query)
+	if err != nil {
+		t.Fatalf("DeleteWithQuery failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("expected status 204, got %d", resp.StatusCode)
+	}
+}
+
+func TestSetTenantIDForTest(t *testing.T) {
+	c := NewClient("https://api.example.com", "key")
+	if c.TenantID() != "" {
+		t.Errorf("expected empty tenant ID initially, got %s", c.TenantID())
+	}
+	c.SetTenantIDForTest("tenant-abc")
+	if c.TenantID() != "tenant-abc" {
+		t.Errorf("expected tenant ID tenant-abc, got %s", c.TenantID())
+	}
+	// Verify it works with TenantPath
+	path := c.TenantPath("/vpcs")
+	if path != "/v1/tenants/tenant-abc/vpcs" {
+		t.Errorf("expected /v1/tenants/tenant-abc/vpcs, got %s", path)
+	}
+}
+
+func TestSetUserIDForTest(t *testing.T) {
+	c := NewClient("https://api.example.com", "key")
+	if c.UserID() != "" {
+		t.Errorf("expected empty user ID initially, got %s", c.UserID())
+	}
+	c.SetUserIDForTest("user-xyz")
+	if c.UserID() != "user-xyz" {
+		t.Errorf("expected user ID user-xyz, got %s", c.UserID())
+	}
+	// Verify it works with UserPath
+	path := c.UserPath("/sshkeys")
+	if path != "/v1/users/user-xyz/sshkeys" {
+		t.Errorf("expected /v1/users/user-xyz/sshkeys, got %s", path)
+	}
+}
+
+func TestDefaultPollConfig(t *testing.T) {
+	cfg := DefaultPollConfig()
+	if cfg.Interval != 2*time.Second {
+		t.Errorf("expected interval 2s, got %v", cfg.Interval)
+	}
+	if cfg.Timeout != 5*time.Minute {
+		t.Errorf("expected timeout 5m, got %v", cfg.Timeout)
+	}
+	if cfg.PollFunc != nil {
+		t.Error("expected PollFunc to be nil by default")
+	}
+	if len(cfg.TargetStates) != 0 {
+		t.Errorf("expected empty TargetStates, got %v", cfg.TargetStates)
+	}
+	if len(cfg.ErrorStates) != 0 {
+		t.Errorf("expected empty ErrorStates, got %v", cfg.ErrorStates)
+	}
+	if cfg.ResourceName != "" {
+		t.Errorf("expected empty ResourceName, got %s", cfg.ResourceName)
 	}
 }
