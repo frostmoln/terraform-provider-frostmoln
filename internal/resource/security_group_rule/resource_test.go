@@ -3,13 +3,18 @@ package security_group_rule
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
-
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
+
+	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
 )
 
 func TestSecurityGroupRuleModelFromAPI(t *testing.T) {
@@ -264,3 +269,474 @@ func TestSecurityGroupRuleReadRuleNotFoundInSG(t *testing.T) {
 		t.Error("expected rule to not be found")
 	}
 }
+
+// --- tfsdk-level resource method tests ---
+
+func sgrSchema(t *testing.T) schema.Schema {
+	t.Helper()
+	r := NewResource()
+	resp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
+	return resp.Schema
+}
+
+func sgrObjectType() tftypes.Object {
+	return tftypes.Object{
+		AttributeTypes: map[string]tftypes.Type{
+			"id":                tftypes.String,
+			"security_group_id": tftypes.String,
+			"direction":         tftypes.String,
+			"protocol":          tftypes.String,
+			"port_range_min":    tftypes.Number,
+			"port_range_max":    tftypes.Number,
+			"remote_cidr":       tftypes.String,
+			"remote_group_id":   tftypes.String,
+			"description":       tftypes.String,
+		},
+	}
+}
+
+func TestRuleNewResource(t *testing.T) {
+	r := NewResource()
+	if r == nil {
+		t.Fatal("expected non-nil resource")
+	}
+}
+
+func TestRuleMetadata(t *testing.T) {
+	r := NewResource()
+	req := resource.MetadataRequest{ProviderTypeName: "frostmoln"}
+	resp := &resource.MetadataResponse{}
+	r.Metadata(context.Background(), req, resp)
+
+	if resp.TypeName != "frostmoln_security_group_rule" {
+		t.Errorf("expected type name frostmoln_security_group_rule, got %s", resp.TypeName)
+	}
+}
+
+func TestRuleSchema(t *testing.T) {
+	r := NewResource()
+	resp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
+
+	for _, attr := range []string{"id", "security_group_id", "direction", "protocol", "port_range_min", "port_range_max", "remote_cidr", "remote_group_id", "description"} {
+		if _, ok := resp.Schema.Attributes[attr]; !ok {
+			t.Errorf("expected attribute %s in schema", attr)
+		}
+	}
+}
+
+func TestRuleConfigureNilProviderData(t *testing.T) {
+	r := NewResource()
+	resp := &resource.ConfigureResponse{}
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: nil}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Errorf("expected no errors, got %v", resp.Diagnostics)
+	}
+}
+
+func TestRuleConfigureWrongType(t *testing.T) {
+	r := NewResource()
+	resp := &resource.ConfigureResponse{}
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: 42}, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Error("expected error for wrong type")
+	}
+}
+
+func TestRuleConfigureValidClient(t *testing.T) {
+	r := NewResource()
+	c := client.NewClient("http://localhost", "test-key") // pragma: allowlist secret
+	resp := &resource.ConfigureResponse{}
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Errorf("expected no errors, got %v", resp.Diagnostics)
+	}
+}
+
+func TestRuleResourceCreate(t *testing.T) {
+	portMin := 443
+	portMax := 443
+	ruleResp := apiSecurityGroupRule{
+		ID:           "rule-new-1",
+		Direction:    "ingress",
+		Protocol:     "tcp",
+		PortRangeMin: &portMin,
+		PortRangeMax: &portMax,
+		RemoteCIDR:   "0.0.0.0/0",
+		Description:  "HTTPS",
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-123/rules" {
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(ruleResp)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := sgrSchema(t)
+	planVal := tftypes.NewValue(sgrObjectType(), map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"security_group_id": tftypes.NewValue(tftypes.String, "sg-123"),
+		"direction":         tftypes.NewValue(tftypes.String, "ingress"),
+		"protocol":          tftypes.NewValue(tftypes.String, "tcp"),
+		"port_range_min":    tftypes.NewValue(tftypes.Number, 443),
+		"port_range_max":    tftypes.NewValue(tftypes.Number, 443),
+		"remote_cidr":       tftypes.NewValue(tftypes.String, "0.0.0.0/0"),
+		"remote_group_id":   tftypes.NewValue(tftypes.String, nil),
+		"description":       tftypes.NewValue(tftypes.String, "HTTPS"),
+	})
+
+	plan := tfsdk.Plan{Schema: s, Raw: planVal}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	var state SecurityGroupRuleModel
+	resp.State.Get(context.Background(), &state)
+
+	if state.ID.ValueString() != "rule-new-1" {
+		t.Errorf("expected ID rule-new-1, got %s", state.ID.ValueString())
+	}
+	if state.SecurityGroupID.ValueString() != "sg-123" {
+		t.Errorf("expected SecurityGroupID sg-123, got %s", state.SecurityGroupID.ValueString())
+	}
+	if state.PortRangeMin.ValueInt64() != 443 {
+		t.Errorf("expected PortRangeMin 443, got %d", state.PortRangeMin.ValueInt64())
+	}
+}
+
+func TestRuleResourceRead(t *testing.T) {
+	portMin := 80
+	portMax := 80
+	sgWithRules := apiSecurityGroupWithRules{
+		ID: "sg-123",
+		Rules: []apiSecurityGroupRule{
+			{
+				ID:           "rule-read-1",
+				Direction:    "ingress",
+				Protocol:     "tcp",
+				PortRangeMin: &portMin,
+				PortRangeMax: &portMax,
+				RemoteCIDR:   "10.0.0.0/8",
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-123" {
+			json.NewEncoder(w).Encode(sgWithRules)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := sgrSchema(t)
+	stateVal := tftypes.NewValue(sgrObjectType(), map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, "rule-read-1"),
+		"security_group_id": tftypes.NewValue(tftypes.String, "sg-123"),
+		"direction":         tftypes.NewValue(tftypes.String, "ingress"),
+		"protocol":          tftypes.NewValue(tftypes.String, "tcp"),
+		"port_range_min":    tftypes.NewValue(tftypes.Number, 80),
+		"port_range_max":    tftypes.NewValue(tftypes.Number, 80),
+		"remote_cidr":       tftypes.NewValue(tftypes.String, "10.0.0.0/8"),
+		"remote_group_id":   tftypes.NewValue(tftypes.String, nil),
+		"description":       tftypes.NewValue(tftypes.String, nil),
+	})
+
+	state := tfsdk.State{Schema: s, Raw: stateVal}
+	resp := &resource.ReadResponse{State: state}
+	r.Read(context.Background(), resource.ReadRequest{State: state}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	var model SecurityGroupRuleModel
+	resp.State.Get(context.Background(), &model)
+	if model.ID.ValueString() != "rule-read-1" {
+		t.Errorf("expected ID rule-read-1, got %s", model.ID.ValueString())
+	}
+	if model.RemoteCIDR.ValueString() != "10.0.0.0/8" {
+		t.Errorf("expected RemoteCIDR 10.0.0.0/8, got %s", model.RemoteCIDR.ValueString())
+	}
+}
+
+func TestRuleResourceReadRuleNotFoundRemovesState(t *testing.T) {
+	// SG exists but rule is not in it
+	sgWithRules := apiSecurityGroupWithRules{
+		ID:    "sg-123",
+		Rules: []apiSecurityGroupRule{},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-123" {
+			json.NewEncoder(w).Encode(sgWithRules)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := sgrSchema(t)
+	stateVal := tftypes.NewValue(sgrObjectType(), map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, "rule-missing"),
+		"security_group_id": tftypes.NewValue(tftypes.String, "sg-123"),
+		"direction":         tftypes.NewValue(tftypes.String, "ingress"),
+		"protocol":          tftypes.NewValue(tftypes.String, "tcp"),
+		"port_range_min":    tftypes.NewValue(tftypes.Number, nil),
+		"port_range_max":    tftypes.NewValue(tftypes.Number, nil),
+		"remote_cidr":       tftypes.NewValue(tftypes.String, nil),
+		"remote_group_id":   tftypes.NewValue(tftypes.String, nil),
+		"description":       tftypes.NewValue(tftypes.String, nil),
+	})
+
+	state := tfsdk.State{Schema: s, Raw: stateVal}
+	resp := &resource.ReadResponse{State: state}
+	r.Read(context.Background(), resource.ReadRequest{State: state}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	if !resp.State.Raw.IsNull() {
+		t.Error("expected state to be null when rule is not found")
+	}
+}
+
+func TestRuleResourceReadSGNotFoundRemovesState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := sgrSchema(t)
+	stateVal := tftypes.NewValue(sgrObjectType(), map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, "rule-orphan"),
+		"security_group_id": tftypes.NewValue(tftypes.String, "sg-gone"),
+		"direction":         tftypes.NewValue(tftypes.String, "ingress"),
+		"protocol":          tftypes.NewValue(tftypes.String, "tcp"),
+		"port_range_min":    tftypes.NewValue(tftypes.Number, nil),
+		"port_range_max":    tftypes.NewValue(tftypes.Number, nil),
+		"remote_cidr":       tftypes.NewValue(tftypes.String, nil),
+		"remote_group_id":   tftypes.NewValue(tftypes.String, nil),
+		"description":       tftypes.NewValue(tftypes.String, nil),
+	})
+
+	state := tfsdk.State{Schema: s, Raw: stateVal}
+	resp := &resource.ReadResponse{State: state}
+	r.Read(context.Background(), resource.ReadRequest{State: state}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	if !resp.State.Raw.IsNull() {
+		t.Error("expected state to be null when parent SG is not found")
+	}
+}
+
+func TestRuleResourceUpdateUnsupported(t *testing.T) {
+	r := NewResource()
+	resp := &resource.UpdateResponse{}
+	r.Update(context.Background(), resource.UpdateRequest{}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Error("expected error for unsupported update")
+	}
+}
+
+func TestRuleResourceDelete(t *testing.T) {
+	deleted := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-123/rules/rule-del-1" {
+			deleted = true
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := sgrSchema(t)
+	stateVal := tftypes.NewValue(sgrObjectType(), map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, "rule-del-1"),
+		"security_group_id": tftypes.NewValue(tftypes.String, "sg-123"),
+		"direction":         tftypes.NewValue(tftypes.String, "ingress"),
+		"protocol":          tftypes.NewValue(tftypes.String, "tcp"),
+		"port_range_min":    tftypes.NewValue(tftypes.Number, nil),
+		"port_range_max":    tftypes.NewValue(tftypes.Number, nil),
+		"remote_cidr":       tftypes.NewValue(tftypes.String, nil),
+		"remote_group_id":   tftypes.NewValue(tftypes.String, nil),
+		"description":       tftypes.NewValue(tftypes.String, nil),
+	})
+
+	state := tfsdk.State{Schema: s, Raw: stateVal}
+	resp := &resource.DeleteResponse{}
+	r.Delete(context.Background(), resource.DeleteRequest{State: state}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	if !deleted {
+		t.Error("expected delete to be called")
+	}
+}
+
+func TestRuleResourceDeleteAlreadyGone(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := sgrSchema(t)
+	stateVal := tftypes.NewValue(sgrObjectType(), map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, "rule-gone"),
+		"security_group_id": tftypes.NewValue(tftypes.String, "sg-123"),
+		"direction":         tftypes.NewValue(tftypes.String, "egress"),
+		"protocol":          tftypes.NewValue(tftypes.String, "any"),
+		"port_range_min":    tftypes.NewValue(tftypes.Number, nil),
+		"port_range_max":    tftypes.NewValue(tftypes.Number, nil),
+		"remote_cidr":       tftypes.NewValue(tftypes.String, nil),
+		"remote_group_id":   tftypes.NewValue(tftypes.String, nil),
+		"description":       tftypes.NewValue(tftypes.String, nil),
+	})
+
+	state := tfsdk.State{Schema: s, Raw: stateVal}
+	resp := &resource.DeleteResponse{}
+	r.Delete(context.Background(), resource.DeleteRequest{State: state}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Errorf("expected no errors when deleting already-gone rule, got %v", resp.Diagnostics)
+	}
+}
+
+func TestRuleImportStateCompositeID(t *testing.T) {
+	r := NewResource()
+	s := sgrSchema(t)
+
+	// Initialize state with null values so SetAttribute works.
+	initVal := tftypes.NewValue(sgrObjectType(), map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, nil),
+		"security_group_id": tftypes.NewValue(tftypes.String, nil),
+		"direction":         tftypes.NewValue(tftypes.String, nil),
+		"protocol":          tftypes.NewValue(tftypes.String, nil),
+		"port_range_min":    tftypes.NewValue(tftypes.Number, nil),
+		"port_range_max":    tftypes.NewValue(tftypes.Number, nil),
+		"remote_cidr":       tftypes.NewValue(tftypes.String, nil),
+		"remote_group_id":   tftypes.NewValue(tftypes.String, nil),
+		"description":       tftypes.NewValue(tftypes.String, nil),
+	})
+
+	resp := &resource.ImportStateResponse{
+		State: tfsdk.State{Schema: s, Raw: initVal},
+	}
+
+	r.(resource.ResourceWithImportState).ImportState(context.Background(), resource.ImportStateRequest{ID: "sg-abc/rule-xyz"}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	var model SecurityGroupRuleModel
+	resp.State.Get(context.Background(), &model)
+
+	if model.SecurityGroupID.ValueString() != "sg-abc" {
+		t.Errorf("expected SecurityGroupID sg-abc, got %s", model.SecurityGroupID.ValueString())
+	}
+	if model.ID.ValueString() != "rule-xyz" {
+		t.Errorf("expected ID rule-xyz, got %s", model.ID.ValueString())
+	}
+}
+
+func TestRuleImportStateInvalidID(t *testing.T) {
+	r := NewResource()
+	s := sgrSchema(t)
+
+	// Initialize state with null values so SetAttribute works.
+	initVal := tftypes.NewValue(sgrObjectType(), map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, nil),
+		"security_group_id": tftypes.NewValue(tftypes.String, nil),
+		"direction":         tftypes.NewValue(tftypes.String, nil),
+		"protocol":          tftypes.NewValue(tftypes.String, nil),
+		"port_range_min":    tftypes.NewValue(tftypes.Number, nil),
+		"port_range_max":    tftypes.NewValue(tftypes.Number, nil),
+		"remote_cidr":       tftypes.NewValue(tftypes.String, nil),
+		"remote_group_id":   tftypes.NewValue(tftypes.String, nil),
+		"description":       tftypes.NewValue(tftypes.String, nil),
+	})
+
+	resp := &resource.ImportStateResponse{
+		State: tfsdk.State{Schema: s, Raw: initVal},
+	}
+
+	r.(resource.ResourceWithImportState).ImportState(context.Background(), resource.ImportStateRequest{ID: "no-slash"}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Error("expected error for invalid import ID format")
+	}
+}
+
+// Ensure fmt is used.
+var _ = fmt.Sprintf

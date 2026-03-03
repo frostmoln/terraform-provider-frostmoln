@@ -7,7 +7,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
 )
@@ -323,5 +327,534 @@ func TestS3CredentialDelete(t *testing.T) {
 
 	if !deleted {
 		t.Error("expected delete to be called")
+	}
+}
+
+// --- Resource method tests (tfsdk-level) ---
+
+func s3CredMeServer(t *testing.T, handler func(w http.ResponseWriter, r *http.Request)) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/me" {
+			json.NewEncoder(w).Encode(map[string]string{
+				"id":       "user-123",
+				"tenantId": "tenant-456",
+			})
+			return
+		}
+		handler(w, r)
+	}))
+}
+
+func configuredS3CredResource(t *testing.T, serverURL string) *s3CredentialResource {
+	t.Helper()
+	c := client.NewClient(serverURL, "test-key")
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("configure failed: %v", err)
+	}
+	return &s3CredentialResource{client: c}
+}
+
+func s3CredSchema(t *testing.T) schema.Schema {
+	t.Helper()
+	r := &s3CredentialResource{}
+	resp := resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, &resp)
+	return resp.Schema
+}
+
+func s3CredTFType(t *testing.T) tftypes.Type {
+	t.Helper()
+	s := s3CredSchema(t)
+	return s.Type().TerraformType(context.Background())
+}
+
+func TestS3CredentialResource_NewResource(t *testing.T) {
+	r := NewResource()
+	if r == nil {
+		t.Fatal("expected non-nil resource")
+	}
+	if _, ok := r.(*s3CredentialResource); !ok {
+		t.Fatalf("expected *s3CredentialResource, got %T", r)
+	}
+}
+
+func TestS3CredentialResource_Metadata(t *testing.T) {
+	r := &s3CredentialResource{}
+	req := resource.MetadataRequest{ProviderTypeName: "frostmoln"}
+	resp := resource.MetadataResponse{}
+	r.Metadata(context.Background(), req, &resp)
+
+	if resp.TypeName != "frostmoln_s3_credential" {
+		t.Errorf("expected type name frostmoln_s3_credential, got %s", resp.TypeName)
+	}
+}
+
+func TestS3CredentialResource_Schema_Attributes(t *testing.T) {
+	s := s3CredSchema(t)
+	if s.Description == "" {
+		t.Error("expected non-empty schema description")
+	}
+	for _, name := range []string{"id", "name", "description", "secret_access_key", "status", "created_at"} {
+		if _, ok := s.Attributes[name]; !ok {
+			t.Errorf("expected attribute %s in schema", name)
+		}
+	}
+}
+
+func TestS3CredentialResource_Configure_NilProviderData(t *testing.T) {
+	r := &s3CredentialResource{}
+	req := resource.ConfigureRequest{ProviderData: nil}
+	resp := resource.ConfigureResponse{}
+	r.Configure(context.Background(), req, &resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("expected no errors, got %v", resp.Diagnostics.Errors())
+	}
+	if r.client != nil {
+		t.Error("expected nil client")
+	}
+}
+
+func TestS3CredentialResource_Configure_ValidClient(t *testing.T) {
+	r := &s3CredentialResource{}
+	c := client.NewClient("http://localhost", "test-key")
+	req := resource.ConfigureRequest{ProviderData: c}
+	resp := resource.ConfigureResponse{}
+	r.Configure(context.Background(), req, &resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("expected no errors, got %v", resp.Diagnostics.Errors())
+	}
+	if r.client != c {
+		t.Error("expected client to be set")
+	}
+}
+
+func TestS3CredentialResource_Configure_WrongType(t *testing.T) {
+	r := &s3CredentialResource{}
+	req := resource.ConfigureRequest{ProviderData: 42}
+	resp := resource.ConfigureResponse{}
+	r.Configure(context.Background(), req, &resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error for wrong type")
+	}
+}
+
+func TestS3CredentialResource_Create_TFSDK(t *testing.T) {
+	server := s3CredMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/credentials":
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(apiS3Credential{
+				ID:              "cred-abc",
+				Name:            "test-cred",
+				Description:     "test",
+				SecretAccessKey: "generated-secret", // pragma: allowlist secret
+				Status:          "active",
+				CreatedAt:       "2025-06-01T12:00:00Z",
+			})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredS3CredResource(t, server.URL)
+	s := s3CredSchema(t)
+	tfType := s3CredTFType(t)
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":              tftypes.NewValue(tftypes.String, "test-cred"),
+		"description":       tftypes.NewValue(tftypes.String, "test"),
+		"secret_access_key": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"status":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: s, Raw: planVal},
+	}
+	createResp := &resource.CreateResponse{
+		State: tfsdk.State{Schema: s},
+	}
+
+	res.Create(ctx, createReq, createResp)
+
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", createResp.Diagnostics.Errors())
+	}
+
+	var model S3CredentialModel
+	createResp.State.Get(ctx, &model)
+	if model.ID.ValueString() != "cred-abc" {
+		t.Errorf("expected ID cred-abc, got %s", model.ID.ValueString())
+	}
+	if model.SecretAccessKey.ValueString() != "generated-secret" { // pragma: allowlist secret
+		t.Errorf("expected secret access key, got %s", model.SecretAccessKey.ValueString())
+	}
+	if model.Status.ValueString() != "active" {
+		t.Errorf("expected status active, got %s", model.Status.ValueString())
+	}
+}
+
+func TestS3CredentialResource_Create_APIError(t *testing.T) {
+	server := s3CredMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "INTERNAL", "message": "server error"},
+		})
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredS3CredResource(t, server.URL)
+	s := s3CredSchema(t)
+	tfType := s3CredTFType(t)
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":              tftypes.NewValue(tftypes.String, "test-cred"),
+		"description":       tftypes.NewValue(tftypes.String, nil),
+		"secret_access_key": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"status":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: s, Raw: planVal},
+	}
+	createResp := &resource.CreateResponse{
+		State: tfsdk.State{Schema: s},
+	}
+
+	res.Create(ctx, createReq, createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("expected error from API failure")
+	}
+}
+
+func TestS3CredentialResource_Read_TFSDK(t *testing.T) {
+	server := s3CredMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/credentials":
+			json.NewEncoder(w).Encode(apiS3CredentialList{
+				Credentials: []apiS3Credential{
+					{
+						ID:        "cred-other",
+						Name:      "other-cred",
+						Status:    "active",
+						CreatedAt: "2025-05-01T10:00:00Z",
+					},
+					{
+						ID:        "cred-abc",
+						Name:      "test-cred",
+						Status:    "active",
+						CreatedAt: "2025-06-01T12:00:00Z",
+					},
+				},
+			})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredS3CredResource(t, server.URL)
+	s := s3CredSchema(t)
+	tfType := s3CredTFType(t)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, "cred-abc"),
+		"name":              tftypes.NewValue(tftypes.String, "test-cred"),
+		"description":       tftypes.NewValue(tftypes.String, nil),
+		"secret_access_key": tftypes.NewValue(tftypes.String, "saved-secret"), // pragma: allowlist secret
+		"status":            tftypes.NewValue(tftypes.String, "active"),
+		"created_at":        tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	readReq := resource.ReadRequest{
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}
+	readResp := &resource.ReadResponse{
+		State: tfsdk.State{Schema: s},
+	}
+
+	res.Read(ctx, readReq, readResp)
+
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", readResp.Diagnostics.Errors())
+	}
+
+	var model S3CredentialModel
+	readResp.State.Get(ctx, &model)
+	if model.ID.ValueString() != "cred-abc" {
+		t.Errorf("expected ID cred-abc, got %s", model.ID.ValueString())
+	}
+	if model.Name.ValueString() != "test-cred" {
+		t.Errorf("expected name test-cred, got %s", model.Name.ValueString())
+	}
+	// Secret should be preserved from state since the API doesn't return it on read.
+	if model.SecretAccessKey.ValueString() != "saved-secret" { // pragma: allowlist secret
+		t.Errorf("expected secret to be preserved from state, got %s", model.SecretAccessKey.ValueString())
+	}
+}
+
+func TestS3CredentialResource_Read_NotFoundInList_TFSDK(t *testing.T) {
+	server := s3CredMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/credentials":
+			json.NewEncoder(w).Encode(apiS3CredentialList{
+				Credentials: []apiS3Credential{
+					{ID: "cred-other", Name: "other", Status: "active", CreatedAt: "2025-05-01T10:00:00Z"},
+				},
+			})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredS3CredResource(t, server.URL)
+	s := s3CredSchema(t)
+	tfType := s3CredTFType(t)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, "cred-nonexistent"),
+		"name":              tftypes.NewValue(tftypes.String, "gone-cred"),
+		"description":       tftypes.NewValue(tftypes.String, nil),
+		"secret_access_key": tftypes.NewValue(tftypes.String, "old-secret"), // pragma: allowlist secret
+		"status":            tftypes.NewValue(tftypes.String, "active"),
+		"created_at":        tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	readReq := resource.ReadRequest{
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}
+	readResp := &resource.ReadResponse{
+		State: tfsdk.State{Schema: s},
+	}
+
+	res.Read(ctx, readReq, readResp)
+
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("expected no errors, got %v", readResp.Diagnostics.Errors())
+	}
+	// State should be removed since the credential was not found in the list.
+	if !readResp.State.Raw.IsNull() {
+		t.Error("expected null state after credential not found in list")
+	}
+}
+
+func TestS3CredentialResource_Read_APIError(t *testing.T) {
+	server := s3CredMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "INTERNAL", "message": "server error"},
+		})
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredS3CredResource(t, server.URL)
+	s := s3CredSchema(t)
+	tfType := s3CredTFType(t)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, "cred-abc"),
+		"name":              tftypes.NewValue(tftypes.String, "test-cred"),
+		"description":       tftypes.NewValue(tftypes.String, nil),
+		"secret_access_key": tftypes.NewValue(tftypes.String, "secret"), // pragma: allowlist secret
+		"status":            tftypes.NewValue(tftypes.String, "active"),
+		"created_at":        tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	readReq := resource.ReadRequest{
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}
+	readResp := &resource.ReadResponse{
+		State: tfsdk.State{Schema: s},
+	}
+
+	res.Read(ctx, readReq, readResp)
+
+	if !readResp.Diagnostics.HasError() {
+		t.Fatal("expected error from API failure")
+	}
+}
+
+func TestS3CredentialResource_Update_TFSDK(t *testing.T) {
+	r := &s3CredentialResource{}
+	resp := &resource.UpdateResponse{}
+	r.Update(context.Background(), resource.UpdateRequest{}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error from unsupported update")
+	}
+
+	found := false
+	for _, d := range resp.Diagnostics.Errors() {
+		if d.Summary() == "Update Not Supported" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected 'Update Not Supported' error")
+	}
+}
+
+func TestS3CredentialResource_Delete_TFSDK(t *testing.T) {
+	deleted := false
+	server := s3CredMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-456/credentials/cred-abc":
+			deleted = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredS3CredResource(t, server.URL)
+	s := s3CredSchema(t)
+	tfType := s3CredTFType(t)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, "cred-abc"),
+		"name":              tftypes.NewValue(tftypes.String, "test-cred"),
+		"description":       tftypes.NewValue(tftypes.String, nil),
+		"secret_access_key": tftypes.NewValue(tftypes.String, "secret"), // pragma: allowlist secret
+		"status":            tftypes.NewValue(tftypes.String, "active"),
+		"created_at":        tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	deleteReq := resource.DeleteRequest{
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}
+	deleteResp := &resource.DeleteResponse{}
+
+	res.Delete(ctx, deleteReq, deleteResp)
+
+	if deleteResp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", deleteResp.Diagnostics.Errors())
+	}
+	if !deleted {
+		t.Error("expected delete API call")
+	}
+}
+
+func TestS3CredentialResource_Delete_NotFound_TFSDK(t *testing.T) {
+	server := s3CredMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredS3CredResource(t, server.URL)
+	s := s3CredSchema(t)
+	tfType := s3CredTFType(t)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, "gone"),
+		"name":              tftypes.NewValue(tftypes.String, "cred"),
+		"description":       tftypes.NewValue(tftypes.String, nil),
+		"secret_access_key": tftypes.NewValue(tftypes.String, "secret"), // pragma: allowlist secret
+		"status":            tftypes.NewValue(tftypes.String, "active"),
+		"created_at":        tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	deleteReq := resource.DeleteRequest{
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}
+	deleteResp := &resource.DeleteResponse{}
+
+	res.Delete(ctx, deleteReq, deleteResp)
+
+	if deleteResp.Diagnostics.HasError() {
+		t.Fatalf("expected no errors on delete of nonexistent resource, got %v", deleteResp.Diagnostics.Errors())
+	}
+}
+
+func TestS3CredentialResource_Delete_APIError(t *testing.T) {
+	server := s3CredMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "INTERNAL", "message": "server error"},
+		})
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredS3CredResource(t, server.URL)
+	s := s3CredSchema(t)
+	tfType := s3CredTFType(t)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, "cred-abc"),
+		"name":              tftypes.NewValue(tftypes.String, "test-cred"),
+		"description":       tftypes.NewValue(tftypes.String, nil),
+		"secret_access_key": tftypes.NewValue(tftypes.String, "secret"), // pragma: allowlist secret
+		"status":            tftypes.NewValue(tftypes.String, "active"),
+		"created_at":        tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	deleteReq := resource.DeleteRequest{
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}
+	deleteResp := &resource.DeleteResponse{}
+
+	res.Delete(ctx, deleteReq, deleteResp)
+
+	if !deleteResp.Diagnostics.HasError() {
+		t.Fatal("expected error from API failure")
+	}
+}
+
+func TestS3CredentialResource_ImportState_TFSDK(t *testing.T) {
+	r := &s3CredentialResource{}
+	s := s3CredSchema(t)
+	tfType := s3CredTFType(t)
+
+	// Initialize state with null values so the schema type is set.
+	initVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, nil),
+		"name":              tftypes.NewValue(tftypes.String, nil),
+		"description":       tftypes.NewValue(tftypes.String, nil),
+		"secret_access_key": tftypes.NewValue(tftypes.String, nil),
+		"status":            tftypes.NewValue(tftypes.String, nil),
+		"created_at":        tftypes.NewValue(tftypes.String, nil),
+	})
+
+	importReq := resource.ImportStateRequest{ID: "cred-abc"}
+	importResp := &resource.ImportStateResponse{
+		State: tfsdk.State{Schema: s, Raw: initVal},
+	}
+
+	r.ImportState(context.Background(), importReq, importResp)
+
+	if importResp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", importResp.Diagnostics.Errors())
+	}
+
+	var model S3CredentialModel
+	importResp.State.Get(context.Background(), &model)
+	if model.ID.ValueString() != "cred-abc" {
+		t.Errorf("expected imported ID cred-abc, got %s", model.ID.ValueString())
 	}
 }

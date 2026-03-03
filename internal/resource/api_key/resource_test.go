@@ -8,7 +8,11 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
 )
@@ -511,5 +515,593 @@ func TestAPIKeyDeleteAlreadyGone(t *testing.T) {
 	}
 	if !client.IsNotFound(err) {
 		t.Errorf("expected not found error, got %v", err)
+	}
+}
+
+// --- Resource method tests (tfsdk-level) ---
+
+func apiKeySchema(t *testing.T) schema.Schema {
+	t.Helper()
+	r := &apiKeyResource{}
+	resp := resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, &resp)
+	return resp.Schema
+}
+
+func apiKeyTFType(t *testing.T) tftypes.Type {
+	t.Helper()
+	s := apiKeySchema(t)
+	return s.Type().TerraformType(context.Background())
+}
+
+func configuredAPIKeyResource(t *testing.T, serverURL string) *apiKeyResource {
+	t.Helper()
+	realClient := client.NewClient(serverURL, "test-key") // pragma: allowlist secret
+	if err := realClient.Configure(context.Background()); err != nil {
+		t.Fatalf("configure failed: %v", err)
+	}
+	return &apiKeyResource{client: realClient}
+}
+
+func apiKeyMeServer(t *testing.T, handler func(w http.ResponseWriter, r *http.Request)) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/me" {
+			meHandler(w, r)
+			return
+		}
+		handler(w, r)
+	}))
+}
+
+func TestAPIKeyResource_NewResource(t *testing.T) {
+	r := NewResource()
+	if r == nil {
+		t.Fatal("expected non-nil resource")
+	}
+	if _, ok := r.(*apiKeyResource); !ok {
+		t.Fatalf("expected *apiKeyResource, got %T", r)
+	}
+}
+
+func TestAPIKeyResource_Metadata(t *testing.T) {
+	r := &apiKeyResource{}
+	req := resource.MetadataRequest{ProviderTypeName: "frostmoln"}
+	resp := resource.MetadataResponse{}
+	r.Metadata(context.Background(), req, &resp)
+
+	if resp.TypeName != "frostmoln_api_key" {
+		t.Errorf("expected type name frostmoln_api_key, got %s", resp.TypeName)
+	}
+}
+
+func TestAPIKeyResource_Schema_Attributes(t *testing.T) {
+	s := apiKeySchema(t)
+	if s.Description == "" {
+		t.Error("expected non-empty schema description")
+	}
+	for _, name := range []string{"id", "name", "description", "scopes", "expires_at", "rate_limit", "key", "key_prefix", "status", "created_at"} {
+		if _, ok := s.Attributes[name]; !ok {
+			t.Errorf("expected attribute %s in schema", name)
+		}
+	}
+}
+
+func TestAPIKeyResource_Configure_NilProviderData(t *testing.T) {
+	r := &apiKeyResource{}
+	req := resource.ConfigureRequest{ProviderData: nil}
+	resp := resource.ConfigureResponse{}
+	r.Configure(context.Background(), req, &resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("expected no errors with nil provider data, got %v", resp.Diagnostics.Errors())
+	}
+	if r.client != nil {
+		t.Error("expected nil client")
+	}
+}
+
+func TestAPIKeyResource_Configure_ValidClient(t *testing.T) {
+	r := &apiKeyResource{}
+	c := client.NewClient("http://localhost", "test-key") // pragma: allowlist secret
+	req := resource.ConfigureRequest{ProviderData: c}
+	resp := resource.ConfigureResponse{}
+	r.Configure(context.Background(), req, &resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("expected no errors, got %v", resp.Diagnostics.Errors())
+	}
+	if r.client != c {
+		t.Error("expected client to be set")
+	}
+}
+
+func TestAPIKeyResource_Configure_WrongType(t *testing.T) {
+	r := &apiKeyResource{}
+	req := resource.ConfigureRequest{ProviderData: "wrong"}
+	resp := resource.ConfigureResponse{}
+	r.Configure(context.Background(), req, &resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error for wrong type")
+	}
+}
+
+func TestAPIKeyResource_Create_TFSDK(t *testing.T) {
+	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/api-keys":
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(apiAPIKey{
+				ID:        "ak-new",
+				Name:      "test-key",
+				Key:       "nlak_secret123", // pragma: allowlist secret
+				KeyPrefix: "nlak_secr",
+				Status:    "active",
+				CreatedAt: "2025-06-01T12:00:00Z",
+			})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredAPIKeyResource(t, server.URL)
+	s := apiKeySchema(t)
+	tfType := apiKeyTFType(t)
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":        tftypes.NewValue(tftypes.String, "test-key"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"expires_at":  tftypes.NewValue(tftypes.String, nil),
+		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
+		"key":         tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"key_prefix":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: s, Raw: planVal},
+	}
+	createResp := &resource.CreateResponse{
+		State: tfsdk.State{Schema: s},
+	}
+
+	res.Create(ctx, createReq, createResp)
+
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", createResp.Diagnostics.Errors())
+	}
+
+	var model APIKeyModel
+	createResp.State.Get(ctx, &model)
+	if model.ID.ValueString() != "ak-new" {
+		t.Errorf("expected ID ak-new, got %s", model.ID.ValueString())
+	}
+	if model.Key.ValueString() != "nlak_secret123" { // pragma: allowlist secret
+		t.Errorf("expected key nlak_secret123, got %s", model.Key.ValueString())
+	}
+	if model.KeyPrefix.ValueString() != "nlak_secr" {
+		t.Errorf("expected key_prefix nlak_secr, got %s", model.KeyPrefix.ValueString())
+	}
+	if model.Status.ValueString() != "active" {
+		t.Errorf("expected status active, got %s", model.Status.ValueString())
+	}
+}
+
+func TestAPIKeyResource_Create_APIError(t *testing.T) {
+	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "INTERNAL", "message": "server error"},
+		})
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredAPIKeyResource(t, server.URL)
+	s := apiKeySchema(t)
+	tfType := apiKeyTFType(t)
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":        tftypes.NewValue(tftypes.String, "test-key"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"expires_at":  tftypes.NewValue(tftypes.String, nil),
+		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
+		"key":         tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"key_prefix":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: s, Raw: planVal},
+	}
+	createResp := &resource.CreateResponse{
+		State: tfsdk.State{Schema: s},
+	}
+
+	res.Create(ctx, createReq, createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("expected error from API failure")
+	}
+}
+
+func TestAPIKeyResource_Read_TFSDK(t *testing.T) {
+	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/api-keys/ak-123":
+			json.NewEncoder(w).Encode(apiAPIKey{
+				ID:        "ak-123",
+				Name:      "my-key",
+				KeyPrefix: "nlak_test",
+				Scopes:    []string{"compute:read"},
+				Status:    "active",
+				CreatedAt: "2025-06-01T12:00:00Z",
+			})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredAPIKeyResource(t, server.URL)
+	s := apiKeySchema(t)
+	tfType := apiKeyTFType(t)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "ak-123"),
+		"name":        tftypes.NewValue(tftypes.String, "my-key"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, []tftypes.Value{tftypes.NewValue(tftypes.String, "compute:read")}),
+		"expires_at":  tftypes.NewValue(tftypes.String, nil),
+		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
+		"key":         tftypes.NewValue(tftypes.String, "nlak_savedkey"), // pragma: allowlist secret
+		"key_prefix":  tftypes.NewValue(tftypes.String, "nlak_test"),
+		"status":      tftypes.NewValue(tftypes.String, "active"),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	readReq := resource.ReadRequest{
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}
+	readResp := &resource.ReadResponse{
+		State: tfsdk.State{Schema: s},
+	}
+
+	res.Read(ctx, readReq, readResp)
+
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", readResp.Diagnostics.Errors())
+	}
+
+	var model APIKeyModel
+	readResp.State.Get(ctx, &model)
+	if model.ID.ValueString() != "ak-123" {
+		t.Errorf("expected ID ak-123, got %s", model.ID.ValueString())
+	}
+	// Key should be preserved from state since API does not return it.
+	if model.Key.ValueString() != "nlak_savedkey" { // pragma: allowlist secret
+		t.Errorf("expected key to be preserved from state, got %s", model.Key.ValueString())
+	}
+	if model.KeyPrefix.ValueString() != "nlak_test" {
+		t.Errorf("expected key_prefix nlak_test, got %s", model.KeyPrefix.ValueString())
+	}
+}
+
+func TestAPIKeyResource_Read_NotFound_TFSDK(t *testing.T) {
+	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredAPIKeyResource(t, server.URL)
+	s := apiKeySchema(t)
+	tfType := apiKeyTFType(t)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "nonexistent"),
+		"name":        tftypes.NewValue(tftypes.String, "key"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"expires_at":  tftypes.NewValue(tftypes.String, nil),
+		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
+		"key":         tftypes.NewValue(tftypes.String, "saved"), // pragma: allowlist secret
+		"key_prefix":  tftypes.NewValue(tftypes.String, "nlak"),
+		"status":      tftypes.NewValue(tftypes.String, "active"),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	readReq := resource.ReadRequest{
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}
+	readResp := &resource.ReadResponse{
+		State: tfsdk.State{Schema: s},
+	}
+
+	res.Read(ctx, readReq, readResp)
+
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("expected no errors on not-found, got %v", readResp.Diagnostics.Errors())
+	}
+	if !readResp.State.Raw.IsNull() {
+		t.Error("expected null state after not-found read")
+	}
+}
+
+func TestAPIKeyResource_Update_TFSDK(t *testing.T) {
+	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/api-keys/ak-123":
+			json.NewEncoder(w).Encode(apiAPIKey{
+				ID:        "ak-123",
+				Name:      "updated-key",
+				KeyPrefix: "nlak_test",
+				Status:    "active",
+				CreatedAt: "2025-06-01T12:00:00Z",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/api-keys/ak-123":
+			json.NewEncoder(w).Encode(apiAPIKey{
+				ID:        "ak-123",
+				Name:      "updated-key",
+				KeyPrefix: "nlak_test",
+				Status:    "active",
+				CreatedAt: "2025-06-01T12:00:00Z",
+			})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredAPIKeyResource(t, server.URL)
+	s := apiKeySchema(t)
+	tfType := apiKeyTFType(t)
+
+	// State (current)
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "ak-123"),
+		"name":        tftypes.NewValue(tftypes.String, "old-key"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"expires_at":  tftypes.NewValue(tftypes.String, nil),
+		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
+		"key":         tftypes.NewValue(tftypes.String, "nlak_saved"), // pragma: allowlist secret
+		"key_prefix":  tftypes.NewValue(tftypes.String, "nlak_test"),
+		"status":      tftypes.NewValue(tftypes.String, "active"),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	// Plan (desired)
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "ak-123"),
+		"name":        tftypes.NewValue(tftypes.String, "updated-key"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"expires_at":  tftypes.NewValue(tftypes.String, nil),
+		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
+		"key":         tftypes.NewValue(tftypes.String, "nlak_saved"), // pragma: allowlist secret
+		"key_prefix":  tftypes.NewValue(tftypes.String, "nlak_test"),
+		"status":      tftypes.NewValue(tftypes.String, "active"),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	updateReq := resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: s, Raw: planVal},
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}
+	updateResp := &resource.UpdateResponse{
+		State: tfsdk.State{Schema: s},
+	}
+
+	res.Update(ctx, updateReq, updateResp)
+
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", updateResp.Diagnostics.Errors())
+	}
+
+	var model APIKeyModel
+	updateResp.State.Get(ctx, &model)
+	if model.Name.ValueString() != "updated-key" {
+		t.Errorf("expected name updated-key, got %s", model.Name.ValueString())
+	}
+	// Key should be preserved from state.
+	if model.Key.ValueString() != "nlak_saved" { // pragma: allowlist secret
+		t.Errorf("expected key to be preserved, got %s", model.Key.ValueString())
+	}
+}
+
+func TestAPIKeyResource_Update_APIError(t *testing.T) {
+	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "INTERNAL", "message": "server error"},
+		})
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredAPIKeyResource(t, server.URL)
+	s := apiKeySchema(t)
+	tfType := apiKeyTFType(t)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "ak-123"),
+		"name":        tftypes.NewValue(tftypes.String, "old-key"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"expires_at":  tftypes.NewValue(tftypes.String, nil),
+		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
+		"key":         tftypes.NewValue(tftypes.String, "nlak_saved"), // pragma: allowlist secret
+		"key_prefix":  tftypes.NewValue(tftypes.String, "nlak_test"),
+		"status":      tftypes.NewValue(tftypes.String, "active"),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "ak-123"),
+		"name":        tftypes.NewValue(tftypes.String, "updated-key"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"expires_at":  tftypes.NewValue(tftypes.String, nil),
+		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
+		"key":         tftypes.NewValue(tftypes.String, "nlak_saved"), // pragma: allowlist secret
+		"key_prefix":  tftypes.NewValue(tftypes.String, "nlak_test"),
+		"status":      tftypes.NewValue(tftypes.String, "active"),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	updateReq := resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: s, Raw: planVal},
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}
+	updateResp := &resource.UpdateResponse{
+		State: tfsdk.State{Schema: s},
+	}
+
+	res.Update(ctx, updateReq, updateResp)
+
+	if !updateResp.Diagnostics.HasError() {
+		t.Fatal("expected error from API failure")
+	}
+}
+
+func TestAPIKeyResource_Delete_TFSDK(t *testing.T) {
+	deleted := false
+	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/api-keys/ak-123":
+			deleted = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredAPIKeyResource(t, server.URL)
+	s := apiKeySchema(t)
+	tfType := apiKeyTFType(t)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "ak-123"),
+		"name":        tftypes.NewValue(tftypes.String, "my-key"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"expires_at":  tftypes.NewValue(tftypes.String, nil),
+		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
+		"key":         tftypes.NewValue(tftypes.String, "nlak_key"), // pragma: allowlist secret
+		"key_prefix":  tftypes.NewValue(tftypes.String, "nlak"),
+		"status":      tftypes.NewValue(tftypes.String, "active"),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	deleteReq := resource.DeleteRequest{
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}
+	deleteResp := &resource.DeleteResponse{}
+
+	res.Delete(ctx, deleteReq, deleteResp)
+
+	if deleteResp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", deleteResp.Diagnostics.Errors())
+	}
+	if !deleted {
+		t.Error("expected delete API call")
+	}
+}
+
+func TestAPIKeyResource_Delete_NotFound_TFSDK(t *testing.T) {
+	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredAPIKeyResource(t, server.URL)
+	s := apiKeySchema(t)
+	tfType := apiKeyTFType(t)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "gone"),
+		"name":        tftypes.NewValue(tftypes.String, "key"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"expires_at":  tftypes.NewValue(tftypes.String, nil),
+		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
+		"key":         tftypes.NewValue(tftypes.String, "nlak"), // pragma: allowlist secret
+		"key_prefix":  tftypes.NewValue(tftypes.String, "nlak"),
+		"status":      tftypes.NewValue(tftypes.String, "active"),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	deleteReq := resource.DeleteRequest{
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}
+	deleteResp := &resource.DeleteResponse{}
+
+	res.Delete(ctx, deleteReq, deleteResp)
+
+	// Deleting a resource that is already gone should succeed silently.
+	if deleteResp.Diagnostics.HasError() {
+		t.Fatalf("expected no errors on delete of nonexistent resource, got %v", deleteResp.Diagnostics.Errors())
+	}
+}
+
+func TestAPIKeyResource_ImportState_TFSDK(t *testing.T) {
+	r := &apiKeyResource{}
+	s := apiKeySchema(t)
+	tfType := apiKeyTFType(t)
+
+	// Initialize state with null values so the schema type is set.
+	initVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, nil),
+		"name":        tftypes.NewValue(tftypes.String, nil),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"expires_at":  tftypes.NewValue(tftypes.String, nil),
+		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
+		"key":         tftypes.NewValue(tftypes.String, nil),
+		"key_prefix":  tftypes.NewValue(tftypes.String, nil),
+		"status":      tftypes.NewValue(tftypes.String, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, nil),
+	})
+
+	importReq := resource.ImportStateRequest{ID: "ak-123"}
+	importResp := &resource.ImportStateResponse{
+		State: tfsdk.State{Schema: s, Raw: initVal},
+	}
+
+	r.ImportState(context.Background(), importReq, importResp)
+
+	if importResp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", importResp.Diagnostics.Errors())
+	}
+
+	var model APIKeyModel
+	importResp.State.Get(context.Background(), &model)
+	if model.ID.ValueString() != "ak-123" {
+		t.Errorf("expected imported ID ak-123, got %s", model.ID.ValueString())
 	}
 }

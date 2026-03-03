@@ -3,11 +3,16 @@ package bucket
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
 )
@@ -403,3 +408,427 @@ func TestBucketReadNotFound(t *testing.T) {
 		t.Errorf("expected not found error, got %v", err)
 	}
 }
+
+// --- tfsdk-level resource method tests ---
+
+func bucketSchema(t *testing.T) schema.Schema {
+	t.Helper()
+	r := NewResource()
+	resp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
+	return resp.Schema
+}
+
+func bucketObjectType() tftypes.Object {
+	return tftypes.Object{
+		AttributeTypes: map[string]tftypes.Type{
+			"name":          tftypes.String,
+			"region":        tftypes.String,
+			"storage_class": tftypes.String,
+			"versioning":    tftypes.String,
+			"tags":          tftypes.Map{ElementType: tftypes.String},
+			"object_count":  tftypes.Number,
+			"size_bytes":    tftypes.Number,
+			"endpoint":      tftypes.String,
+			"access_key":    tftypes.String,
+			"created_at":    tftypes.String,
+		},
+	}
+}
+
+func TestBucketNewResource(t *testing.T) {
+	r := NewResource()
+	if r == nil {
+		t.Fatal("expected non-nil resource")
+	}
+}
+
+func TestBucketMetadata(t *testing.T) {
+	r := NewResource()
+	req := resource.MetadataRequest{ProviderTypeName: "frostmoln"}
+	resp := &resource.MetadataResponse{}
+	r.Metadata(context.Background(), req, resp)
+
+	if resp.TypeName != "frostmoln_bucket" {
+		t.Errorf("expected type name frostmoln_bucket, got %s", resp.TypeName)
+	}
+}
+
+func TestBucketSchema(t *testing.T) {
+	r := NewResource()
+	resp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
+
+	for _, attr := range []string{"name", "region", "storage_class", "versioning", "tags", "object_count", "size_bytes", "endpoint", "access_key", "created_at"} {
+		if _, ok := resp.Schema.Attributes[attr]; !ok {
+			t.Errorf("expected attribute %s in schema", attr)
+		}
+	}
+}
+
+func TestBucketConfigureNilProviderData(t *testing.T) {
+	r := NewResource()
+	resp := &resource.ConfigureResponse{}
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: nil}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Errorf("expected no errors, got %v", resp.Diagnostics)
+	}
+}
+
+func TestBucketConfigureWrongType(t *testing.T) {
+	r := NewResource()
+	resp := &resource.ConfigureResponse{}
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: true}, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Error("expected error for wrong type")
+	}
+}
+
+func TestBucketConfigureValidClient(t *testing.T) {
+	r := NewResource()
+	c := client.NewClient("http://localhost", "test-key") // pragma: allowlist secret
+	resp := &resource.ConfigureResponse{}
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Errorf("expected no errors, got %v", resp.Diagnostics)
+	}
+}
+
+func TestBucketResourceCreate(t *testing.T) {
+	bucketResp := apiBucket{
+		Name:         "my-bucket",
+		Region:       "eu-north-1",
+		StorageClass: "standard",
+		Versioning:   "enabled",
+		ObjectCount:  0,
+		SizeBytes:    0,
+		Endpoint:     "https://s3.eu-north-1.nordiclight.cloud",
+		AccessKey:    "AKIAEXAMPLE",
+		CreatedAt:    "2025-06-01T12:00:00Z",
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/buckets" {
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(bucketResp)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := bucketSchema(t)
+	planVal := tftypes.NewValue(bucketObjectType(), map[string]tftypes.Value{
+		"name":          tftypes.NewValue(tftypes.String, "my-bucket"),
+		"region":        tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
+		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
+		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"object_count":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"size_bytes":    tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"endpoint":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"access_key":    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+
+	plan := tfsdk.Plan{Schema: s, Raw: planVal}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	var state BucketModel
+	resp.State.Get(context.Background(), &state)
+
+	if state.Name.ValueString() != "my-bucket" {
+		t.Errorf("expected Name my-bucket, got %s", state.Name.ValueString())
+	}
+	if state.AccessKey.ValueString() != "AKIAEXAMPLE" {
+		t.Errorf("expected AccessKey AKIAEXAMPLE, got %s", state.AccessKey.ValueString())
+	}
+	if state.Endpoint.ValueString() != "https://s3.eu-north-1.nordiclight.cloud" {
+		t.Errorf("expected Endpoint, got %s", state.Endpoint.ValueString())
+	}
+}
+
+func TestBucketResourceRead(t *testing.T) {
+	bucketResp := apiBucket{
+		Name:         "read-bucket",
+		Region:       "eu-north-1",
+		StorageClass: "standard",
+		Versioning:   "enabled",
+		ObjectCount:  42,
+		SizeBytes:    1024000,
+		Endpoint:     "https://s3.eu-north-1.nordiclight.cloud",
+		CreatedAt:    "2025-06-01T12:00:00Z",
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/buckets/read-bucket" {
+			json.NewEncoder(w).Encode(bucketResp)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := bucketSchema(t)
+	stateVal := tftypes.NewValue(bucketObjectType(), map[string]tftypes.Value{
+		"name":          tftypes.NewValue(tftypes.String, "read-bucket"),
+		"region":        tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
+		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
+		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"object_count":  tftypes.NewValue(tftypes.Number, 0),
+		"size_bytes":    tftypes.NewValue(tftypes.Number, 0),
+		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.eu-north-1.nordiclight.cloud"),
+		"access_key":    tftypes.NewValue(tftypes.String, "AKIAOLD"),
+		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	state := tfsdk.State{Schema: s, Raw: stateVal}
+	resp := &resource.ReadResponse{State: state}
+	r.Read(context.Background(), resource.ReadRequest{State: state}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	var model BucketModel
+	resp.State.Get(context.Background(), &model)
+	if model.ObjectCount.ValueInt64() != 42 {
+		t.Errorf("expected ObjectCount 42, got %d", model.ObjectCount.ValueInt64())
+	}
+	// AccessKey should be preserved from state when API returns empty
+	if model.AccessKey.ValueString() != "AKIAOLD" {
+		t.Errorf("expected AccessKey to be preserved as AKIAOLD, got %s", model.AccessKey.ValueString())
+	}
+}
+
+func TestBucketResourceReadNotFoundRemovesState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := bucketSchema(t)
+	stateVal := tftypes.NewValue(bucketObjectType(), map[string]tftypes.Value{
+		"name":          tftypes.NewValue(tftypes.String, "gone-bucket"),
+		"region":        tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
+		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
+		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"object_count":  tftypes.NewValue(tftypes.Number, 0),
+		"size_bytes":    tftypes.NewValue(tftypes.Number, 0),
+		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.nordiclight.cloud"),
+		"access_key":    tftypes.NewValue(tftypes.String, nil),
+		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+	})
+
+	state := tfsdk.State{Schema: s, Raw: stateVal}
+	resp := &resource.ReadResponse{State: state}
+	r.Read(context.Background(), resource.ReadRequest{State: state}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	if !resp.State.Raw.IsNull() {
+		t.Error("expected state to be null after not found")
+	}
+}
+
+func TestBucketResourceUpdate(t *testing.T) {
+	bucketResp := apiBucket{
+		Name:         "upd-bucket",
+		Region:       "eu-north-1",
+		StorageClass: "standard",
+		Versioning:   "suspended",
+		ObjectCount:  10,
+		SizeBytes:    5000,
+		Endpoint:     "https://s3.eu-north-1.nordiclight.cloud",
+		CreatedAt:    "2025-06-01T12:00:00Z",
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/buckets/upd-bucket" {
+			json.NewEncoder(w).Encode(bucketResp)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := bucketSchema(t)
+
+	stateVal := tftypes.NewValue(bucketObjectType(), map[string]tftypes.Value{
+		"name":          tftypes.NewValue(tftypes.String, "upd-bucket"),
+		"region":        tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
+		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
+		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"object_count":  tftypes.NewValue(tftypes.Number, 10),
+		"size_bytes":    tftypes.NewValue(tftypes.Number, 5000),
+		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.eu-north-1.nordiclight.cloud"),
+		"access_key":    tftypes.NewValue(tftypes.String, "AKIAOLD"),
+		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	planVal := tftypes.NewValue(bucketObjectType(), map[string]tftypes.Value{
+		"name":          tftypes.NewValue(tftypes.String, "upd-bucket"),
+		"region":        tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
+		"versioning":    tftypes.NewValue(tftypes.String, "suspended"),
+		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"object_count":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"size_bytes":    tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.eu-north-1.nordiclight.cloud"),
+		"access_key":    tftypes.NewValue(tftypes.String, "AKIAOLD"),
+		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	state := tfsdk.State{Schema: s, Raw: stateVal}
+	plan := tfsdk.Plan{Schema: s, Raw: planVal}
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s}}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	var model BucketModel
+	resp.State.Get(context.Background(), &model)
+	if model.Versioning.ValueString() != "suspended" {
+		t.Errorf("expected Versioning suspended, got %s", model.Versioning.ValueString())
+	}
+	// AccessKey should be preserved from state when API returns empty
+	if model.AccessKey.ValueString() != "AKIAOLD" {
+		t.Errorf("expected AccessKey AKIAOLD preserved, got %s", model.AccessKey.ValueString())
+	}
+}
+
+func TestBucketResourceDelete(t *testing.T) {
+	deleted := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/buckets/del-bucket" {
+			deleted = true
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := bucketSchema(t)
+	stateVal := tftypes.NewValue(bucketObjectType(), map[string]tftypes.Value{
+		"name":          tftypes.NewValue(tftypes.String, "del-bucket"),
+		"region":        tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
+		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
+		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"object_count":  tftypes.NewValue(tftypes.Number, 0),
+		"size_bytes":    tftypes.NewValue(tftypes.Number, 0),
+		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.nordiclight.cloud"),
+		"access_key":    tftypes.NewValue(tftypes.String, nil),
+		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+	})
+
+	state := tfsdk.State{Schema: s, Raw: stateVal}
+	resp := &resource.DeleteResponse{}
+	r.Delete(context.Background(), resource.DeleteRequest{State: state}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	if !deleted {
+		t.Error("expected delete to be called")
+	}
+}
+
+func TestBucketResourceDeleteAlreadyGone(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := bucketSchema(t)
+	stateVal := tftypes.NewValue(bucketObjectType(), map[string]tftypes.Value{
+		"name":          tftypes.NewValue(tftypes.String, "gone-bucket"),
+		"region":        tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
+		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
+		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"object_count":  tftypes.NewValue(tftypes.Number, 0),
+		"size_bytes":    tftypes.NewValue(tftypes.Number, 0),
+		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.nordiclight.cloud"),
+		"access_key":    tftypes.NewValue(tftypes.String, nil),
+		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+	})
+
+	state := tfsdk.State{Schema: s, Raw: stateVal}
+	resp := &resource.DeleteResponse{}
+	r.Delete(context.Background(), resource.DeleteRequest{State: state}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Errorf("expected no errors when deleting already-gone bucket, got %v", resp.Diagnostics)
+	}
+}
+
+// Ensure fmt is used.
+var _ = fmt.Sprintf

@@ -10,6 +10,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
 )
@@ -164,6 +166,182 @@ func TestFilterByNameRegex(t *testing.T) {
 
 	if len(filtered) != 2 {
 		t.Fatalf("expected 2 Ubuntu images, got %d", len(filtered))
+	}
+}
+
+// --- tfsdk-level Read tests ---
+
+func configureImagesDS(t *testing.T, ds datasource.DataSource, c *client.Client) {
+	t.Helper()
+	dc, ok := ds.(datasource.DataSourceWithConfigure)
+	if !ok {
+		t.Fatal("datasource does not implement DataSourceWithConfigure")
+	}
+	configReq := datasource.ConfigureRequest{ProviderData: c}
+	var configResp datasource.ConfigureResponse
+	dc.Configure(context.Background(), configReq, &configResp)
+	if configResp.Diagnostics.HasError() {
+		t.Fatalf("configure failed: %v", configResp.Diagnostics.Errors())
+	}
+}
+
+func getImagesDSSchema(t *testing.T) datasource.SchemaResponse {
+	t.Helper()
+	ds := NewDataSource()
+	var schemaResp datasource.SchemaResponse
+	ds.Schema(context.Background(), datasource.SchemaRequest{}, &schemaResp)
+	return schemaResp
+}
+
+func TestTFSDK_ReadAllImages(t *testing.T) {
+	images := []apiImage{
+		{ID: "img-1", Name: "Ubuntu 22.04", OSDistro: "ubuntu", OSVersion: "22.04", MinDiskGB: 10, MinRAMMB: 512, Status: "active"},
+		{ID: "img-2", Name: "Debian 12", OSDistro: "debian", OSVersion: "12", MinDiskGB: 8, MinRAMMB: 256, Status: "active"},
+	}
+	server := newTestServer(t, images)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureImagesDS(t, ds, c)
+	schemaResp := getImagesDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"os_distro":  tftypes.NewValue(tftypes.String, nil),
+		"name_regex": tftypes.NewValue(tftypes.String, nil),
+		"images":     tftypes.NewValue(schemaResp.Schema.Attributes["images"].GetType().TerraformType(ctx), nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	var state imagesModel
+	readResp.State.Get(ctx, &state)
+
+	var items []imageItemModel
+	state.Images.ElementsAs(ctx, &items, false)
+
+	if len(items) != 2 {
+		t.Errorf("expected 2 images, got %d", len(items))
+	}
+}
+
+func TestTFSDK_ReadImagesFilterByOSDistro(t *testing.T) {
+	images := []apiImage{
+		{ID: "img-1", Name: "Ubuntu 22.04", OSDistro: "ubuntu", OSVersion: "22.04", MinDiskGB: 10, MinRAMMB: 512, Status: "active"},
+		{ID: "img-2", Name: "Debian 12", OSDistro: "debian", OSVersion: "12", MinDiskGB: 8, MinRAMMB: 256, Status: "active"},
+		{ID: "img-3", Name: "Ubuntu 24.04", OSDistro: "ubuntu", OSVersion: "24.04", MinDiskGB: 12, MinRAMMB: 1024, Status: "active"},
+	}
+	server := newTestServer(t, images)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureImagesDS(t, ds, c)
+	schemaResp := getImagesDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"os_distro":  tftypes.NewValue(tftypes.String, "ubuntu"),
+		"name_regex": tftypes.NewValue(tftypes.String, nil),
+		"images":     tftypes.NewValue(schemaResp.Schema.Attributes["images"].GetType().TerraformType(ctx), nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	var state imagesModel
+	readResp.State.Get(ctx, &state)
+
+	var items []imageItemModel
+	state.Images.ElementsAs(ctx, &items, false)
+
+	if len(items) != 2 {
+		t.Errorf("expected 2 ubuntu images, got %d", len(items))
+	}
+}
+
+func TestTFSDK_ReadImagesFilterByNameRegex(t *testing.T) {
+	images := []apiImage{
+		{ID: "img-1", Name: "Ubuntu 22.04", OSDistro: "ubuntu", OSVersion: "22.04", MinDiskGB: 10, MinRAMMB: 512, Status: "active"},
+		{ID: "img-2", Name: "Debian 12", OSDistro: "debian", OSVersion: "12", MinDiskGB: 8, MinRAMMB: 256, Status: "active"},
+		{ID: "img-3", Name: "Ubuntu 24.04", OSDistro: "ubuntu", OSVersion: "24.04", MinDiskGB: 12, MinRAMMB: 1024, Status: "active"},
+	}
+	server := newTestServer(t, images)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureImagesDS(t, ds, c)
+	schemaResp := getImagesDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"os_distro":  tftypes.NewValue(tftypes.String, nil),
+		"name_regex": tftypes.NewValue(tftypes.String, `^Debian`),
+		"images":     tftypes.NewValue(schemaResp.Schema.Attributes["images"].GetType().TerraformType(ctx), nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	var state imagesModel
+	readResp.State.Get(ctx, &state)
+
+	var items []imageItemModel
+	state.Images.ElementsAs(ctx, &items, false)
+
+	if len(items) != 1 {
+		t.Errorf("expected 1 Debian image, got %d", len(items))
+	}
+	if len(items) > 0 && items[0].Name.ValueString() != "Debian 12" {
+		t.Errorf("expected name Debian 12, got %s", items[0].Name.ValueString())
 	}
 }
 

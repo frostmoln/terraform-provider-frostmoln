@@ -9,6 +9,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
 )
@@ -226,6 +228,287 @@ func TestReadNotFound(t *testing.T) {
 	}
 	if found {
 		t.Error("expected VPC not to be found")
+	}
+}
+
+// --- tfsdk-level Read tests ---
+
+func configureVPCDS(t *testing.T, ds datasource.DataSource, c *client.Client) {
+	t.Helper()
+	dc, ok := ds.(datasource.DataSourceWithConfigure)
+	if !ok {
+		t.Fatal("datasource does not implement DataSourceWithConfigure")
+	}
+	configReq := datasource.ConfigureRequest{ProviderData: c}
+	var configResp datasource.ConfigureResponse
+	dc.Configure(context.Background(), configReq, &configResp)
+	if configResp.Diagnostics.HasError() {
+		t.Fatalf("configure failed: %v", configResp.Diagnostics.Errors())
+	}
+}
+
+func getVPCDSSchema(t *testing.T) datasource.SchemaResponse {
+	t.Helper()
+	ds := NewDataSource()
+	var schemaResp datasource.SchemaResponse
+	ds.Schema(context.Background(), datasource.SchemaRequest{}, &schemaResp)
+	return schemaResp
+}
+
+func TestTFSDK_ReadByID(t *testing.T) {
+	vpcs := []apiVPC{
+		{
+			ID:          "vpc-1",
+			Name:        "prod-vpc",
+			Description: "Production VPC",
+			CIDR:        "10.0.0.0/16",
+			Region:      "eu-north-1",
+			Status:      "active",
+			IsDefault:   false,
+			SubnetCount: 3,
+			Tags:        map[string]string{"env": "prod"},
+			CreatedAt:   "2025-01-01T00:00:00Z",
+		},
+	}
+	server := newTestServer(t, vpcs)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureVPCDS(t, ds, c)
+	schemaResp := getVPCDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":           tftypes.NewValue(tftypes.String, "vpc-1"),
+		"name":         tftypes.NewValue(tftypes.String, nil),
+		"description":  tftypes.NewValue(tftypes.String, nil),
+		"cidr":         tftypes.NewValue(tftypes.String, nil),
+		"region":       tftypes.NewValue(tftypes.String, nil),
+		"status":       tftypes.NewValue(tftypes.String, nil),
+		"is_default":   tftypes.NewValue(tftypes.Bool, nil),
+		"subnet_count": tftypes.NewValue(tftypes.Number, nil),
+		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"created_at":   tftypes.NewValue(tftypes.String, nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	var state vpcModel
+	readResp.State.Get(ctx, &state)
+
+	if state.ID.ValueString() != "vpc-1" {
+		t.Errorf("expected ID vpc-1, got %s", state.ID.ValueString())
+	}
+	if state.Name.ValueString() != "prod-vpc" {
+		t.Errorf("expected Name prod-vpc, got %s", state.Name.ValueString())
+	}
+	if state.CIDR.ValueString() != "10.0.0.0/16" {
+		t.Errorf("expected CIDR 10.0.0.0/16, got %s", state.CIDR.ValueString())
+	}
+	if state.SubnetCount.ValueInt64() != 3 {
+		t.Errorf("expected SubnetCount 3, got %d", state.SubnetCount.ValueInt64())
+	}
+}
+
+func TestTFSDK_ReadByName(t *testing.T) {
+	vpcs := []apiVPC{
+		{ID: "vpc-1", Name: "prod-vpc", CIDR: "10.0.0.0/16", Region: "eu-north-1", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"},
+		{ID: "vpc-2", Name: "staging-vpc", CIDR: "10.1.0.0/16", Region: "eu-north-1", Status: "active", CreatedAt: "2025-01-02T00:00:00Z"},
+	}
+	server := newTestServer(t, vpcs)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureVPCDS(t, ds, c)
+	schemaResp := getVPCDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":           tftypes.NewValue(tftypes.String, nil),
+		"name":         tftypes.NewValue(tftypes.String, "staging-vpc"),
+		"description":  tftypes.NewValue(tftypes.String, nil),
+		"cidr":         tftypes.NewValue(tftypes.String, nil),
+		"region":       tftypes.NewValue(tftypes.String, nil),
+		"status":       tftypes.NewValue(tftypes.String, nil),
+		"is_default":   tftypes.NewValue(tftypes.Bool, nil),
+		"subnet_count": tftypes.NewValue(tftypes.Number, nil),
+		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"created_at":   tftypes.NewValue(tftypes.String, nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	var state vpcModel
+	readResp.State.Get(ctx, &state)
+
+	if state.ID.ValueString() != "vpc-2" {
+		t.Errorf("expected ID vpc-2, got %s", state.ID.ValueString())
+	}
+	if state.Name.ValueString() != "staging-vpc" {
+		t.Errorf("expected Name staging-vpc, got %s", state.Name.ValueString())
+	}
+}
+
+func TestTFSDK_ReadBothIDAndName(t *testing.T) {
+	vpcs := []apiVPC{{ID: "vpc-1", Name: "test", CIDR: "10.0.0.0/16", Region: "eu-north-1", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"}}
+	server := newTestServer(t, vpcs)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureVPCDS(t, ds, c)
+	schemaResp := getVPCDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":           tftypes.NewValue(tftypes.String, "vpc-1"),
+		"name":         tftypes.NewValue(tftypes.String, "test"),
+		"description":  tftypes.NewValue(tftypes.String, nil),
+		"cidr":         tftypes.NewValue(tftypes.String, nil),
+		"region":       tftypes.NewValue(tftypes.String, nil),
+		"status":       tftypes.NewValue(tftypes.String, nil),
+		"is_default":   tftypes.NewValue(tftypes.Bool, nil),
+		"subnet_count": tftypes.NewValue(tftypes.Number, nil),
+		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"created_at":   tftypes.NewValue(tftypes.String, nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+
+	if !readResp.Diagnostics.HasError() {
+		t.Error("expected error when both id and name are specified")
+	}
+}
+
+func TestTFSDK_ReadNeitherIDNorName(t *testing.T) {
+	vpcs := []apiVPC{{ID: "vpc-1", Name: "test", CIDR: "10.0.0.0/16", Region: "eu-north-1", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"}}
+	server := newTestServer(t, vpcs)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureVPCDS(t, ds, c)
+	schemaResp := getVPCDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":           tftypes.NewValue(tftypes.String, nil),
+		"name":         tftypes.NewValue(tftypes.String, nil),
+		"description":  tftypes.NewValue(tftypes.String, nil),
+		"cidr":         tftypes.NewValue(tftypes.String, nil),
+		"region":       tftypes.NewValue(tftypes.String, nil),
+		"status":       tftypes.NewValue(tftypes.String, nil),
+		"is_default":   tftypes.NewValue(tftypes.Bool, nil),
+		"subnet_count": tftypes.NewValue(tftypes.Number, nil),
+		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"created_at":   tftypes.NewValue(tftypes.String, nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+
+	if !readResp.Diagnostics.HasError() {
+		t.Error("expected error when neither id nor name is specified")
+	}
+}
+
+func TestTFSDK_ReadNameNotFound(t *testing.T) {
+	vpcs := []apiVPC{{ID: "vpc-1", Name: "existing", CIDR: "10.0.0.0/16", Region: "eu-north-1", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"}}
+	server := newTestServer(t, vpcs)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureVPCDS(t, ds, c)
+	schemaResp := getVPCDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":           tftypes.NewValue(tftypes.String, nil),
+		"name":         tftypes.NewValue(tftypes.String, "nonexistent"),
+		"description":  tftypes.NewValue(tftypes.String, nil),
+		"cidr":         tftypes.NewValue(tftypes.String, nil),
+		"region":       tftypes.NewValue(tftypes.String, nil),
+		"status":       tftypes.NewValue(tftypes.String, nil),
+		"is_default":   tftypes.NewValue(tftypes.Bool, nil),
+		"subnet_count": tftypes.NewValue(tftypes.Number, nil),
+		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"created_at":   tftypes.NewValue(tftypes.String, nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+
+	if !readResp.Diagnostics.HasError() {
+		t.Error("expected error when VPC name not found")
 	}
 }
 

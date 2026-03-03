@@ -9,6 +9,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
 )
@@ -145,6 +147,131 @@ func TestFlavorItemAttrTypes(t *testing.T) {
 		if _, ok := flavorItemAttrTypes[key]; !ok {
 			t.Errorf("expected key %q in flavorItemAttrTypes", key)
 		}
+	}
+}
+
+// --- tfsdk-level Read tests ---
+
+func configureFlavorsDS(t *testing.T, ds datasource.DataSource, c *client.Client) {
+	t.Helper()
+	dc, ok := ds.(datasource.DataSourceWithConfigure)
+	if !ok {
+		t.Fatal("datasource does not implement DataSourceWithConfigure")
+	}
+	configReq := datasource.ConfigureRequest{ProviderData: c}
+	var configResp datasource.ConfigureResponse
+	dc.Configure(context.Background(), configReq, &configResp)
+	if configResp.Diagnostics.HasError() {
+		t.Fatalf("configure failed: %v", configResp.Diagnostics.Errors())
+	}
+}
+
+func getFlavorsDSSchema(t *testing.T) datasource.SchemaResponse {
+	t.Helper()
+	ds := NewDataSource()
+	var schemaResp datasource.SchemaResponse
+	ds.Schema(context.Background(), datasource.SchemaRequest{}, &schemaResp)
+	return schemaResp
+}
+
+func TestTFSDK_ReadAllFlavors(t *testing.T) {
+	flavors := []apiFlavor{
+		{ID: "flv-1", Name: "nl.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general"},
+		{ID: "flv-2", Name: "nl.medium", VCPUs: 2, RAMMB: 2048, DiskGB: 40, Category: "general"},
+		{ID: "flv-3", Name: "nl.compute.large", VCPUs: 8, RAMMB: 4096, DiskGB: 80, Category: "compute"},
+	}
+	server := newTestServer(t, flavors)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureFlavorsDS(t, ds, c)
+	schemaResp := getFlavorsDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"category": tftypes.NewValue(tftypes.String, nil),
+		"flavors":  tftypes.NewValue(schemaResp.Schema.Attributes["flavors"].GetType().TerraformType(ctx), nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	var state flavorsModel
+	readResp.State.Get(ctx, &state)
+
+	var items []flavorItemModel
+	state.Flavors.ElementsAs(ctx, &items, false)
+
+	if len(items) != 3 {
+		t.Errorf("expected 3 flavors, got %d", len(items))
+	}
+}
+
+func TestTFSDK_ReadFlavorsFilterByCategory(t *testing.T) {
+	flavors := []apiFlavor{
+		{ID: "flv-1", Name: "nl.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general"},
+		{ID: "flv-2", Name: "nl.medium", VCPUs: 2, RAMMB: 2048, DiskGB: 40, Category: "general"},
+		{ID: "flv-3", Name: "nl.compute.large", VCPUs: 8, RAMMB: 4096, DiskGB: 80, Category: "compute"},
+	}
+	server := newTestServer(t, flavors)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureFlavorsDS(t, ds, c)
+	schemaResp := getFlavorsDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"category": tftypes.NewValue(tftypes.String, "compute"),
+		"flavors":  tftypes.NewValue(schemaResp.Schema.Attributes["flavors"].GetType().TerraformType(ctx), nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	var state flavorsModel
+	readResp.State.Get(ctx, &state)
+
+	var items []flavorItemModel
+	state.Flavors.ElementsAs(ctx, &items, false)
+
+	if len(items) != 1 {
+		t.Errorf("expected 1 compute flavor, got %d", len(items))
+	}
+	if len(items) > 0 && items[0].Name.ValueString() != "nl.compute.large" {
+		t.Errorf("expected name nl.compute.large, got %s", items[0].Name.ValueString())
 	}
 }
 

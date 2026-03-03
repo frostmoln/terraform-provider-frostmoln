@@ -9,7 +9,11 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
 )
@@ -304,5 +308,564 @@ func TestSnapshotResource_ReadNotFound(t *testing.T) {
 	}
 	if !client.IsNotFound(err) {
 		t.Errorf("expected not found error, got %v", err)
+	}
+}
+
+// --- Resource method tests (tfsdk-level) ---
+
+func snapMeServer(t *testing.T, handler func(w http.ResponseWriter, r *http.Request)) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/me" {
+			json.NewEncoder(w).Encode(client.UserProfile{
+				ID: "user-1", TenantID: "tenant-1",
+			})
+			return
+		}
+		handler(w, r)
+	}))
+}
+
+func configuredSnapshotResource(t *testing.T, serverURL string) *snapshotResource {
+	t.Helper()
+	c := client.NewClient(serverURL, "test-key", client.WithHTTPClient(http.DefaultClient))
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("configure failed: %v", err)
+	}
+	return &snapshotResource{client: c}
+}
+
+func snapshotSchema(t *testing.T) schema.Schema {
+	t.Helper()
+	r := &snapshotResource{}
+	resp := resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, &resp)
+	return resp.Schema
+}
+
+func snapshotTFType(t *testing.T) tftypes.Type {
+	t.Helper()
+	s := snapshotSchema(t)
+	return s.Type().TerraformType(context.Background())
+}
+
+func TestSnapshotResource_NewResource(t *testing.T) {
+	r := NewResource()
+	if r == nil {
+		t.Fatal("expected non-nil resource")
+	}
+	if _, ok := r.(*snapshotResource); !ok {
+		t.Fatalf("expected *snapshotResource, got %T", r)
+	}
+}
+
+func TestSnapshotResource_Metadata(t *testing.T) {
+	r := &snapshotResource{}
+	req := resource.MetadataRequest{ProviderTypeName: "frostmoln"}
+	resp := resource.MetadataResponse{}
+	r.Metadata(context.Background(), req, &resp)
+
+	if resp.TypeName != "frostmoln_snapshot" {
+		t.Errorf("expected type name frostmoln_snapshot, got %s", resp.TypeName)
+	}
+}
+
+func TestSnapshotResource_Schema_Attributes(t *testing.T) {
+	s := snapshotSchema(t)
+	if s.Description == "" {
+		t.Error("expected non-empty schema description")
+	}
+	for _, name := range []string{"id", "name", "description", "volume_id", "tags", "status", "size_gb", "region", "created_at"} {
+		if _, ok := s.Attributes[name]; !ok {
+			t.Errorf("expected attribute %s in schema", name)
+		}
+	}
+}
+
+func TestSnapshotResource_Configure_NilProviderData(t *testing.T) {
+	r := &snapshotResource{}
+	req := resource.ConfigureRequest{ProviderData: nil}
+	resp := resource.ConfigureResponse{}
+	r.Configure(context.Background(), req, &resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("expected no errors, got %v", resp.Diagnostics.Errors())
+	}
+	if r.client != nil {
+		t.Error("expected nil client")
+	}
+}
+
+func TestSnapshotResource_Configure_ValidClient(t *testing.T) {
+	r := &snapshotResource{}
+	c := client.NewClient("http://localhost", "test-key")
+	req := resource.ConfigureRequest{ProviderData: c}
+	resp := resource.ConfigureResponse{}
+	r.Configure(context.Background(), req, &resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("expected no errors, got %v", resp.Diagnostics.Errors())
+	}
+	if r.client != c {
+		t.Error("expected client to be set")
+	}
+}
+
+func TestSnapshotResource_Configure_WrongType(t *testing.T) {
+	r := &snapshotResource{}
+	req := resource.ConfigureRequest{ProviderData: "wrong"}
+	resp := resource.ConfigureResponse{}
+	r.Configure(context.Background(), req, &resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error for wrong type")
+	}
+}
+
+func TestSnapshotResource_Create_TFSDK(t *testing.T) {
+	var pollCount atomic.Int32
+
+	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-1/snapshots":
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(apiSnapshot{
+				ID:       "snap-abc",
+				Name:     "test-snap",
+				VolumeID: "vol-123",
+				Status:   "creating",
+				SizeGB:   100,
+				Region:   "eu-north-1",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/snapshots/snap-abc":
+			n := pollCount.Add(1)
+			status := "creating"
+			if n >= 2 {
+				status = "available"
+			}
+			json.NewEncoder(w).Encode(apiSnapshot{
+				ID:        "snap-abc",
+				Name:      "test-snap",
+				VolumeID:  "vol-123",
+				Status:    status,
+				SizeGB:    100,
+				Region:    "eu-north-1",
+				CreatedAt: "2025-06-01T12:00:00Z",
+			})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredSnapshotResource(t, server.URL)
+	s := snapshotSchema(t)
+	tfType := snapshotTFType(t)
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":        tftypes.NewValue(tftypes.String, "test-snap"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"size_gb":     tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"region":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: s, Raw: planVal},
+	}
+	createResp := &resource.CreateResponse{
+		State: tfsdk.State{Schema: s},
+	}
+
+	res.Create(ctx, createReq, createResp)
+
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", createResp.Diagnostics.Errors())
+	}
+
+	var model SnapshotModel
+	createResp.State.Get(ctx, &model)
+	if model.ID.ValueString() != "snap-abc" {
+		t.Errorf("expected ID snap-abc, got %s", model.ID.ValueString())
+	}
+	if model.Status.ValueString() != "available" {
+		t.Errorf("expected status available, got %s", model.Status.ValueString())
+	}
+	if model.VolumeID.ValueString() != "vol-123" {
+		t.Errorf("expected volume_id vol-123, got %s", model.VolumeID.ValueString())
+	}
+	if model.SizeGB.ValueInt64() != 100 {
+		t.Errorf("expected size_gb 100, got %d", model.SizeGB.ValueInt64())
+	}
+	if model.Region.ValueString() != "eu-north-1" {
+		t.Errorf("expected region eu-north-1, got %s", model.Region.ValueString())
+	}
+}
+
+func TestSnapshotResource_Create_APIError(t *testing.T) {
+	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "INTERNAL", "message": "server error"},
+		})
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredSnapshotResource(t, server.URL)
+	s := snapshotSchema(t)
+	tfType := snapshotTFType(t)
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":        tftypes.NewValue(tftypes.String, "test-snap"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"size_gb":     tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"region":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: s, Raw: planVal},
+	}
+	createResp := &resource.CreateResponse{
+		State: tfsdk.State{Schema: s},
+	}
+
+	res.Create(ctx, createReq, createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("expected error from API failure")
+	}
+}
+
+func TestSnapshotResource_Read_TFSDK(t *testing.T) {
+	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/snapshots/snap-abc":
+			json.NewEncoder(w).Encode(apiSnapshot{
+				ID:        "snap-abc",
+				Name:      "test-snap",
+				VolumeID:  "vol-123",
+				Status:    "available",
+				SizeGB:    100,
+				Region:    "eu-north-1",
+				CreatedAt: "2025-06-01T12:00:00Z",
+			})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredSnapshotResource(t, server.URL)
+	s := snapshotSchema(t)
+	tfType := snapshotTFType(t)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "snap-abc"),
+		"name":        tftypes.NewValue(tftypes.String, "test-snap"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "available"),
+		"size_gb":     tftypes.NewValue(tftypes.Number, int64(100)),
+		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	readReq := resource.ReadRequest{
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}
+	readResp := &resource.ReadResponse{
+		State: tfsdk.State{Schema: s},
+	}
+
+	res.Read(ctx, readReq, readResp)
+
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", readResp.Diagnostics.Errors())
+	}
+
+	var model SnapshotModel
+	readResp.State.Get(ctx, &model)
+	if model.ID.ValueString() != "snap-abc" {
+		t.Errorf("expected ID snap-abc, got %s", model.ID.ValueString())
+	}
+	if model.Status.ValueString() != "available" {
+		t.Errorf("expected status available, got %s", model.Status.ValueString())
+	}
+}
+
+func TestSnapshotResource_Read_NotFound_TFSDK(t *testing.T) {
+	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredSnapshotResource(t, server.URL)
+	s := snapshotSchema(t)
+	tfType := snapshotTFType(t)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "nonexistent"),
+		"name":        tftypes.NewValue(tftypes.String, "snap"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "available"),
+		"size_gb":     tftypes.NewValue(tftypes.Number, int64(50)),
+		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	readReq := resource.ReadRequest{
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}
+	readResp := &resource.ReadResponse{
+		State: tfsdk.State{Schema: s},
+	}
+
+	res.Read(ctx, readReq, readResp)
+
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("expected no errors on not-found, got %v", readResp.Diagnostics.Errors())
+	}
+	if !readResp.State.Raw.IsNull() {
+		t.Error("expected null state after not-found read")
+	}
+}
+
+func TestSnapshotResource_Read_APIError(t *testing.T) {
+	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "INTERNAL", "message": "server error"},
+		})
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredSnapshotResource(t, server.URL)
+	s := snapshotSchema(t)
+	tfType := snapshotTFType(t)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "snap-abc"),
+		"name":        tftypes.NewValue(tftypes.String, "snap"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "available"),
+		"size_gb":     tftypes.NewValue(tftypes.Number, int64(50)),
+		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	readReq := resource.ReadRequest{
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}
+	readResp := &resource.ReadResponse{
+		State: tfsdk.State{Schema: s},
+	}
+
+	res.Read(ctx, readReq, readResp)
+
+	if !readResp.Diagnostics.HasError() {
+		t.Fatal("expected error from API failure")
+	}
+}
+
+func TestSnapshotResource_Update_TFSDK(t *testing.T) {
+	r := &snapshotResource{}
+	resp := &resource.UpdateResponse{}
+	r.Update(context.Background(), resource.UpdateRequest{}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error from unsupported update")
+	}
+
+	found := false
+	for _, d := range resp.Diagnostics.Errors() {
+		if d.Summary() == "Update Not Supported" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected 'Update Not Supported' error")
+	}
+}
+
+func TestSnapshotResource_Delete_TFSDK(t *testing.T) {
+	deleted := false
+	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-1/snapshots/snap-abc":
+			deleted = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredSnapshotResource(t, server.URL)
+	s := snapshotSchema(t)
+	tfType := snapshotTFType(t)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "snap-abc"),
+		"name":        tftypes.NewValue(tftypes.String, "test-snap"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "available"),
+		"size_gb":     tftypes.NewValue(tftypes.Number, int64(100)),
+		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	deleteReq := resource.DeleteRequest{
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}
+	deleteResp := &resource.DeleteResponse{}
+
+	res.Delete(ctx, deleteReq, deleteResp)
+
+	if deleteResp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", deleteResp.Diagnostics.Errors())
+	}
+	if !deleted {
+		t.Error("expected delete API call")
+	}
+}
+
+func TestSnapshotResource_Delete_NotFound_TFSDK(t *testing.T) {
+	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+		})
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredSnapshotResource(t, server.URL)
+	s := snapshotSchema(t)
+	tfType := snapshotTFType(t)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "gone"),
+		"name":        tftypes.NewValue(tftypes.String, "snap"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "available"),
+		"size_gb":     tftypes.NewValue(tftypes.Number, int64(50)),
+		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	deleteReq := resource.DeleteRequest{
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}
+	deleteResp := &resource.DeleteResponse{}
+
+	res.Delete(ctx, deleteReq, deleteResp)
+
+	if deleteResp.Diagnostics.HasError() {
+		t.Fatalf("expected no errors on delete of nonexistent resource, got %v", deleteResp.Diagnostics.Errors())
+	}
+}
+
+func TestSnapshotResource_Delete_APIError(t *testing.T) {
+	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{"code": "INTERNAL", "message": "server error"},
+		})
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredSnapshotResource(t, server.URL)
+	s := snapshotSchema(t)
+	tfType := snapshotTFType(t)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "snap-abc"),
+		"name":        tftypes.NewValue(tftypes.String, "snap"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "available"),
+		"size_gb":     tftypes.NewValue(tftypes.Number, int64(50)),
+		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	deleteReq := resource.DeleteRequest{
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}
+	deleteResp := &resource.DeleteResponse{}
+
+	res.Delete(ctx, deleteReq, deleteResp)
+
+	if !deleteResp.Diagnostics.HasError() {
+		t.Fatal("expected error from API failure")
+	}
+}
+
+func TestSnapshotResource_ImportState_TFSDK(t *testing.T) {
+	r := &snapshotResource{}
+	s := snapshotSchema(t)
+	tfType := snapshotTFType(t)
+
+	// Initialize state with null values so the schema type is set.
+	initVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, nil),
+		"name":        tftypes.NewValue(tftypes.String, nil),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"volume_id":   tftypes.NewValue(tftypes.String, nil),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, nil),
+		"region":      tftypes.NewValue(tftypes.String, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, nil),
+	})
+
+	importReq := resource.ImportStateRequest{ID: "snap-abc"}
+	importResp := &resource.ImportStateResponse{
+		State: tfsdk.State{Schema: s, Raw: initVal},
+	}
+
+	r.ImportState(context.Background(), importReq, importResp)
+
+	if importResp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", importResp.Diagnostics.Errors())
+	}
+
+	var model SnapshotModel
+	importResp.State.Get(context.Background(), &model)
+	if model.ID.ValueString() != "snap-abc" {
+		t.Errorf("expected imported ID snap-abc, got %s", model.ID.ValueString())
 	}
 }
