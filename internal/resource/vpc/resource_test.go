@@ -717,11 +717,11 @@ func TestVPCResource_TFSDKUpdate(t *testing.T) {
 	})
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, "vpc-upd-1"),
-		"name":         tftypes.NewValue(tftypes.String, "updated-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, "Updated desc"),
-		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"region":       tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"id":          tftypes.NewValue(tftypes.String, "vpc-upd-1"),
+		"name":        tftypes.NewValue(tftypes.String, "updated-vpc"),
+		"description": tftypes.NewValue(tftypes.String, "Updated desc"),
+		"cidr":        tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
 		"tags": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{
 			"env": tftypes.NewValue(tftypes.String, "prod"),
 		}),
