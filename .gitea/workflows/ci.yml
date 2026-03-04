@@ -22,10 +22,15 @@ jobs:
           go-version-file: 'go.mod'
       - name: Test
         run: go test ./... -race -coverprofile=coverage.out
+      - name: Filter generated code from coverage
+        run: |
+          grep -v -E '\.pb\.go:|/mocks?/' coverage.out > coverage.filtered.out
+          mv coverage.filtered.out coverage.out
       - name: Check coverage
+        id: coverage
         run: |
           go install github.com/vladopajic/go-test-coverage/v2@latest
-          go-test-coverage --config ./.testcoverage.yml
+          go-test-coverage --config ./.testcoverage.yml --github-action-output
       - name: Download baseline coverage
         if: gitea.event_name == 'pull_request'
         uses: actions/download-artifact@v3
@@ -64,7 +69,8 @@ jobs:
           GITEA_URL: ${{ gitea.server_url }}
         run: |
           COVERAGE=$(go tool cover -func=coverage.out | grep "^total:" | awk '{print $NF}')
+          TOOL_COVERAGE="${{ steps.coverage.outputs.total-coverage }}"
           curl -X POST "${GITEA_URL}/api/v1/repos/${{ gitea.repository }}/issues/${{ gitea.event.pull_request.number }}/comments" \
             -H "Authorization: token ${GITEA_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"body\": \"## Coverage Report\n\nTotal coverage: **${COVERAGE}**\"}"
+            -d "{\"body\": \"## Coverage Report\n\nTotal coverage: **${COVERAGE}**\nTool coverage: **${TOOL_COVERAGE}%**\"}"
