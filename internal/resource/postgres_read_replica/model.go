@@ -10,23 +10,23 @@ import (
 
 // PostgresReadReplicaModel is the Terraform state model for a PostgreSQL read replica.
 type PostgresReadReplicaModel struct {
-	ID                types.String `tfsdk:"id"`
-	InstanceID        types.String `tfsdk:"instance_id"`
-	Name              types.String `tfsdk:"name"`
-	Status            types.String `tfsdk:"status"`
-	PrivateIP         types.String `tfsdk:"private_ip"`
-	Port              types.Int64  `tfsdk:"port"`
+	ID                  types.String `tfsdk:"id"`
+	InstanceID          types.String `tfsdk:"instance_id"`
+	Name                types.String `tfsdk:"name"`
+	Status              types.String `tfsdk:"status"`
+	PrivateIP           types.String `tfsdk:"private_ip"`
+	Port                types.Int64  `tfsdk:"port"`
 	ReplicationLagBytes types.Int64  `tfsdk:"replication_lag_bytes"`
 }
 
 // apiPostgresReadReplica is the API representation of a PostgreSQL read replica.
 type apiPostgresReadReplica struct {
-	ID                string `json:"id"`
-	InstanceID        string `json:"instanceId"`
-	Name              string `json:"name"`
-	Status            string `json:"status"`
-	PrivateIP         string `json:"privateIp,omitempty"`
-	Port              int    `json:"port,omitempty"`
+	ID                  string `json:"id"`
+	InstanceID          string `json:"instanceId"`
+	Name                string `json:"name"`
+	Status              string `json:"status"`
+	PrivateIP           string `json:"privateIp,omitempty"`
+	Port                int    `json:"port,omitempty"`
 	ReplicationLagBytes int64  `json:"replicationLagBytes,omitempty"`
 }
 

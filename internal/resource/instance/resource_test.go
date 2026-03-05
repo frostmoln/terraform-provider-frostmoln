@@ -1022,8 +1022,8 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	planVal := instanceTFValue(t, tfType, map[string]tftypes.Value{
-		"name":     tftypes.NewValue(tftypes.String, "web-1"),
-		"image_id": tftypes.NewValue(tftypes.String, "img-ubuntu"),
+		"name":      tftypes.NewValue(tftypes.String, "web-1"),
+		"image_id":  tftypes.NewValue(tftypes.String, "img-ubuntu"),
 		"user_data": tftypes.NewValue(tftypes.String, "#!/bin/bash\necho hello"),
 		"security_groups": tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, []tftypes.Value{
 			tftypes.NewValue(tftypes.String, "sg-default"),

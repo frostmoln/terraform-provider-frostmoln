@@ -10,76 +10,76 @@ import (
 
 // PostgresInstanceModel is the Terraform state model for a managed PostgreSQL instance.
 type PostgresInstanceModel struct {
-	ID                 types.String `tfsdk:"id"`
-	Name               types.String `tfsdk:"name"`
-	PostgresVersion    types.String `tfsdk:"postgres_version"`
-	Flavor             types.String `tfsdk:"flavor"`
-	StorageGB          types.Int64  `tfsdk:"storage_gb"`
-	VPCID              types.String `tfsdk:"vpc_id"`
-	SubnetID           types.String `tfsdk:"subnet_id"`
-	HAEnabled          types.Bool   `tfsdk:"ha_enabled"`
-	BackupEnabled      types.Bool   `tfsdk:"backup_enabled"`
-	BackupSchedule     types.String `tfsdk:"backup_schedule"`
+	ID                  types.String `tfsdk:"id"`
+	Name                types.String `tfsdk:"name"`
+	PostgresVersion     types.String `tfsdk:"postgres_version"`
+	Flavor              types.String `tfsdk:"flavor"`
+	StorageGB           types.Int64  `tfsdk:"storage_gb"`
+	VPCID               types.String `tfsdk:"vpc_id"`
+	SubnetID            types.String `tfsdk:"subnet_id"`
+	HAEnabled           types.Bool   `tfsdk:"ha_enabled"`
+	BackupEnabled       types.Bool   `tfsdk:"backup_enabled"`
+	BackupSchedule      types.String `tfsdk:"backup_schedule"`
 	BackupRetentionDays types.Int64  `tfsdk:"backup_retention_days"`
-	ParameterGroupID   types.String `tfsdk:"parameter_group_id"`
-	Status             types.String `tfsdk:"status"`
-	PrivateIP          types.String `tfsdk:"private_ip"`
-	Port               types.Int64  `tfsdk:"port"`
-	FloatingIP         types.String `tfsdk:"floating_ip"`
-	AdminUsername      types.String `tfsdk:"admin_username"`
-	CreatedAt          types.String `tfsdk:"created_at"`
-	UpdatedAt          types.String `tfsdk:"updated_at"`
-	TenantID           types.String `tfsdk:"tenant_id"`
+	ParameterGroupID    types.String `tfsdk:"parameter_group_id"`
+	Status              types.String `tfsdk:"status"`
+	PrivateIP           types.String `tfsdk:"private_ip"`
+	Port                types.Int64  `tfsdk:"port"`
+	FloatingIP          types.String `tfsdk:"floating_ip"`
+	AdminUsername       types.String `tfsdk:"admin_username"`
+	CreatedAt           types.String `tfsdk:"created_at"`
+	UpdatedAt           types.String `tfsdk:"updated_at"`
+	TenantID            types.String `tfsdk:"tenant_id"`
 }
 
 // apiPostgresInstance is the API representation of a managed PostgreSQL instance.
 type apiPostgresInstance struct {
-	ID                 string `json:"id"`
-	Name               string `json:"name"`
-	PostgresVersion    string `json:"postgresVersion"`
-	Flavor             string `json:"flavor"`
-	StorageGB          int    `json:"storageGb"`
-	VPCID              string `json:"vpcId"`
-	SubnetID           string `json:"subnetId"`
-	HAEnabled          bool   `json:"haEnabled"`
-	BackupEnabled      bool   `json:"backupEnabled"`
-	BackupSchedule     string `json:"backupSchedule,omitempty"`
+	ID                  string `json:"id"`
+	Name                string `json:"name"`
+	PostgresVersion     string `json:"postgresVersion"`
+	Flavor              string `json:"flavor"`
+	StorageGB           int    `json:"storageGb"`
+	VPCID               string `json:"vpcId"`
+	SubnetID            string `json:"subnetId"`
+	HAEnabled           bool   `json:"haEnabled"`
+	BackupEnabled       bool   `json:"backupEnabled"`
+	BackupSchedule      string `json:"backupSchedule,omitempty"`
 	BackupRetentionDays int    `json:"backupRetentionDays,omitempty"`
-	ParameterGroupID   string `json:"parameterGroupId,omitempty"`
-	Status             string `json:"status"`
-	PrivateIP          string `json:"privateIp,omitempty"`
-	Port               int    `json:"port,omitempty"`
-	FloatingIP         string `json:"floatingIp,omitempty"`
-	AdminUsername      string `json:"adminUsername,omitempty"`
-	CreatedAt          string `json:"createdAt"`
-	UpdatedAt          string `json:"updatedAt,omitempty"`
-	TenantID           string `json:"tenantId,omitempty"`
+	ParameterGroupID    string `json:"parameterGroupId,omitempty"`
+	Status              string `json:"status"`
+	PrivateIP           string `json:"privateIp,omitempty"`
+	Port                int    `json:"port,omitempty"`
+	FloatingIP          string `json:"floatingIp,omitempty"`
+	AdminUsername       string `json:"adminUsername,omitempty"`
+	CreatedAt           string `json:"createdAt"`
+	UpdatedAt           string `json:"updatedAt,omitempty"`
+	TenantID            string `json:"tenantId,omitempty"`
 }
 
 // apiCreatePostgresInstanceRequest is the API request to create a managed PostgreSQL instance.
 type apiCreatePostgresInstanceRequest struct {
-	Name               string `json:"name"`
-	PostgresVersion    string `json:"postgresVersion"`
-	Flavor             string `json:"flavor"`
-	StorageGB          int    `json:"storageGb"`
-	VPCID              string `json:"vpcId"`
-	SubnetID           string `json:"subnetId"`
-	HAEnabled          *bool  `json:"haEnabled,omitempty"`
-	BackupEnabled      *bool  `json:"backupEnabled,omitempty"`
-	BackupSchedule     string `json:"backupSchedule,omitempty"`
+	Name                string `json:"name"`
+	PostgresVersion     string `json:"postgresVersion"`
+	Flavor              string `json:"flavor"`
+	StorageGB           int    `json:"storageGb"`
+	VPCID               string `json:"vpcId"`
+	SubnetID            string `json:"subnetId"`
+	HAEnabled           *bool  `json:"haEnabled,omitempty"`
+	BackupEnabled       *bool  `json:"backupEnabled,omitempty"`
+	BackupSchedule      string `json:"backupSchedule,omitempty"`
 	BackupRetentionDays *int   `json:"backupRetentionDays,omitempty"`
-	ParameterGroupID   string `json:"parameterGroupId,omitempty"`
+	ParameterGroupID    string `json:"parameterGroupId,omitempty"`
 }
 
 // apiUpdatePostgresInstanceRequest is the API request to update a managed PostgreSQL instance.
 type apiUpdatePostgresInstanceRequest struct {
-	Name               *string `json:"name,omitempty"`
-	Flavor             *string `json:"flavor,omitempty"`
-	StorageGB          *int    `json:"storageGb,omitempty"`
-	BackupEnabled      *bool   `json:"backupEnabled,omitempty"`
-	BackupSchedule     *string `json:"backupSchedule,omitempty"`
+	Name                *string `json:"name,omitempty"`
+	Flavor              *string `json:"flavor,omitempty"`
+	StorageGB           *int    `json:"storageGb,omitempty"`
+	BackupEnabled       *bool   `json:"backupEnabled,omitempty"`
+	BackupSchedule      *string `json:"backupSchedule,omitempty"`
 	BackupRetentionDays *int    `json:"backupRetentionDays,omitempty"`
-	ParameterGroupID   *string `json:"parameterGroupId,omitempty"`
+	ParameterGroupID    *string `json:"parameterGroupId,omitempty"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
