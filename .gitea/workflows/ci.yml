@@ -22,10 +22,6 @@ jobs:
           go-version-file: 'go.mod'
       - name: Test
         run: go test ./... -race -coverprofile=coverage.out
-      - name: Filter generated code from coverage
-        run: |
-          grep -v -E '\.pb\.go:|/mocks?/' coverage.out > coverage.filtered.out
-          mv coverage.filtered.out coverage.out
       - name: Check coverage
         id: coverage
         run: |
@@ -41,9 +37,9 @@ jobs:
       - name: Compare coverage
         if: gitea.event_name == 'pull_request'
         run: |
-          CURRENT=$(go tool cover -func=coverage.out | grep "^total:" | awk '{print $NF}' | tr -d '%')
-          if [ -f ./baseline/coverage.out ]; then
-            BASE=$(go tool cover -func=./baseline/coverage.out | grep "^total:" | awk '{print $NF}' | tr -d '%')
+          CURRENT="${{ steps.coverage.outputs.total-coverage }}"
+          if [ -f ./baseline/coverage.txt ]; then
+            BASE=$(cat ./baseline/coverage.txt)
             echo "Base coverage: ${BASE}%"
             echo "Current coverage: ${CURRENT}%"
             if [ "$(echo "$CURRENT < $BASE" | bc -l)" -eq 1 ]; then
@@ -55,12 +51,15 @@ jobs:
             echo "No baseline coverage found, skipping comparison"
             echo "Current coverage: ${CURRENT}%"
           fi
+      - name: Save coverage baseline
+        if: gitea.ref == 'refs/heads/main'
+        run: echo "${{ steps.coverage.outputs.total-coverage }}" > coverage.txt
       - name: Upload coverage baseline
         if: gitea.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v3
         with:
           name: coverage-baseline
-          path: coverage.out
+          path: coverage.txt
           retention-days: 90
       - name: Post coverage comment
         if: gitea.event_name == 'pull_request'
@@ -68,9 +67,8 @@ jobs:
           GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
           GITEA_URL: ${{ gitea.server_url }}
         run: |
-          COVERAGE=$(go tool cover -func=coverage.out | grep "^total:" | awk '{print $NF}')
-          TOOL_COVERAGE="${{ steps.coverage.outputs.total-coverage }}"
+          COVERAGE="${{ steps.coverage.outputs.total-coverage }}"
           curl -X POST "${GITEA_URL}/api/v1/repos/${{ gitea.repository }}/issues/${{ gitea.event.pull_request.number }}/comments" \
             -H "Authorization: token ${GITEA_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"body\": \"## Coverage Report\n\nTotal coverage: **${COVERAGE}**\nTool coverage: **${TOOL_COVERAGE}%**\"}"
+            -d "{\"body\": \"## Coverage Report\n\nTotal coverage: **${COVERAGE}%**\"}"
