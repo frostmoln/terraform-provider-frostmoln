@@ -27,22 +27,34 @@ type flavorDataSource struct {
 
 // flavorModel is the Terraform state model for a single flavor lookup.
 type flavorModel struct {
-	ID       types.String `tfsdk:"id"`
-	Name     types.String `tfsdk:"name"`
-	VCPUs    types.Int64  `tfsdk:"vcpus"`
-	RAMMB    types.Int64  `tfsdk:"ram_mb"`
-	DiskGB   types.Int64  `tfsdk:"disk_gb"`
-	Category types.String `tfsdk:"category"`
+	ID             types.String  `tfsdk:"id"`
+	Name           types.String  `tfsdk:"name"`
+	VCPUs          types.Int64   `tfsdk:"vcpus"`
+	RAMMB          types.Int64   `tfsdk:"ram_mb"`
+	DiskGB         types.Int64   `tfsdk:"disk_gb"`
+	Category       types.String  `tfsdk:"category"`
+	Family         types.String  `tfsdk:"family"`
+	Generation     types.Int64   `tfsdk:"generation"`
+	Status         types.String  `tfsdk:"status"`
+	SuccessorID    types.String  `tfsdk:"successor_id"`
+	BaseVCPURatio  types.Float64 `tfsdk:"base_vcpu_ratio"`
+	VCPUMultiplier types.Float64 `tfsdk:"vcpu_multiplier"`
 }
 
 // apiFlavor is the API representation of a flavor.
 type apiFlavor struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	VCPUs    int    `json:"vcpus"`
-	RAMMB    int    `json:"ramMb"`
-	DiskGB   int    `json:"diskGb"`
-	Category string `json:"category,omitempty"`
+	ID             string  `json:"id"`
+	Name           string  `json:"name"`
+	VCPUs          int     `json:"vcpus"`
+	RAMMB          int     `json:"ramMb"`
+	DiskGB         int     `json:"diskGb"`
+	Category       string  `json:"category,omitempty"`
+	Family         string  `json:"family"`
+	Generation     int     `json:"generation"`
+	Status         string  `json:"status"`
+	SuccessorID    string  `json:"successorId"`
+	BaseVCPURatio  float64 `json:"baseVcpuRatio"`
+	VCPUMultiplier float64 `json:"vcpuMultiplier"`
 }
 
 // apiFlavorList is the API response for listing flavors.
@@ -83,6 +95,32 @@ func (d *flavorDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 			"category": schema.StringAttribute{
 				Description: "The category of the flavor.",
 				Computed:    true,
+			},
+			"family": schema.StringAttribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Filter by or computed flavor family (e.g. gp, co, mo, so)",
+			},
+			"generation": schema.Int64Attribute{
+				Computed:    true,
+				Description: "Flavor generation number",
+			},
+			"status": schema.StringAttribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Filter by or computed flavor lifecycle status (preview, active, deprecated, retired)",
+			},
+			"successor_id": schema.StringAttribute{
+				Computed:    true,
+				Description: "ID of the successor flavor when deprecated or retired",
+			},
+			"base_vcpu_ratio": schema.Float64Attribute{
+				Computed:    true,
+				Description: "Base vCPU to physical CPU ratio",
+			},
+			"vcpu_multiplier": schema.Float64Attribute{
+				Computed:    true,
+				Description: "vCPU multiplier relative to base ratio",
 			},
 		},
 	}
@@ -170,6 +208,26 @@ func (d *flavorDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 	state.RAMMB = types.Int64Value(int64(found.RAMMB))
 	state.DiskGB = types.Int64Value(int64(found.DiskGB))
 	state.Category = types.StringValue(found.Category)
+	state.Family = types.StringValue(found.Family)
+	state.Generation = types.Int64Value(int64(found.Generation))
+	state.Status = types.StringValue(found.Status)
+	state.SuccessorID = types.StringValue(found.SuccessorID)
+	state.BaseVCPURatio = types.Float64Value(found.BaseVCPURatio)
+	state.VCPUMultiplier = types.Float64Value(found.VCPUMultiplier)
+
+	if found.Status == "deprecated" {
+		resp.Diagnostics.AddWarning(
+			"Deprecated Flavor",
+			fmt.Sprintf("Flavor %q is deprecated. Consider migrating to successor: %s", found.Name, found.SuccessorID),
+		)
+	}
+	if found.Status == "retired" {
+		resp.Diagnostics.AddError(
+			"Retired Flavor",
+			fmt.Sprintf("Flavor %q is retired and cannot be used for new instances.", found.Name),
+		)
+		return
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
