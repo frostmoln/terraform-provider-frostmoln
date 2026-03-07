@@ -60,7 +60,7 @@ jobs:
           echo "API key created successfully"
 
           echo "FROSTMOLN_API_KEY=${API_KEY}" >> $GITHUB_ENV
-          echo "FROSTMOLN_API_ENDPOINT=${API_ENDPOINT}" >> $GITHUB_ENV
+          echo "FROSTMOLN_API_ENDPOINT=${PORTAL_URL}/api" >> $GITHUB_ENV
           echo "TEST_BEARER_TOKEN=${BEARER}" >> $GITHUB_ENV
 
       - name: Run acceptance tests
