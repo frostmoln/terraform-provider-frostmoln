@@ -354,7 +354,9 @@ func TestVolumeResource_Update(t *testing.T) {
 			json.NewDecoder(r.Body).Decode(&resizeReq)
 			currentVolume.SizeGB = resizeReq.SizeGB
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(currentVolume)
+			json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-resize-1", "status": "accepted", "resourceType": "volume",
+			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-abc":
 			w.WriteHeader(http.StatusOK)
@@ -797,7 +799,9 @@ func TestVolumeResource_TFSDKUpdate_PatchAndResize(t *testing.T) {
 			resizeCalled = true
 			currentVol.SizeGB = 200
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(currentVol)
+			json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-resize-1", "status": "accepted", "resourceType": "volume",
+			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-upd-1":
 			json.NewEncoder(w).Encode(currentVol)

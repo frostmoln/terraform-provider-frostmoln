@@ -117,8 +117,10 @@ func TestVolumeAttachmentResource_Attach(t *testing.T) {
 			volume.AttachedTo = req.InstanceID
 			volume.DevicePath = "/dev/vdb"
 			volume.Status = "in-use"
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(volume)
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-attach-1", "status": "accepted", "resourceType": "volume",
+			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-123":
 			w.WriteHeader(http.StatusOK)
@@ -189,8 +191,10 @@ func TestVolumeAttachmentResource_Detach(t *testing.T) {
 			volume.AttachedTo = ""
 			volume.DevicePath = ""
 			volume.Status = "available"
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(volume)
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-detach-1", "status": "accepted", "resourceType": "volume",
+			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-123":
 			w.WriteHeader(http.StatusOK)
@@ -377,7 +381,10 @@ func TestVolumeAttachment_TFSDKCreate(t *testing.T) {
 			volume.AttachedTo = req.InstanceID
 			volume.DevicePath = "/dev/vdb"
 			volume.Status = "in-use"
-			json.NewEncoder(w).Encode(volume)
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-attach-1", "status": "accepted", "resourceType": "volume",
+			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-att-1":
 			json.NewEncoder(w).Encode(volume)
@@ -580,7 +587,10 @@ func TestVolumeAttachment_TFSDKDelete(t *testing.T) {
 			volume.AttachedTo = ""
 			volume.DevicePath = ""
 			volume.Status = "available"
-			json.NewEncoder(w).Encode(volume)
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-detach-1", "status": "accepted", "resourceType": "volume",
+			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-d-1":
 			json.NewEncoder(w).Encode(volume)
@@ -804,7 +814,10 @@ func TestVolumeAttachment_TFSDKCreatePollErrorState(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-pe-1/attach":
-			json.NewEncoder(w).Encode(apiVolume{ID: "vol-pe-1", Status: "attaching"})
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-attach-pe-1", "status": "accepted", "resourceType": "volume",
+			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-pe-1":
 			json.NewEncoder(w).Encode(apiVolume{ID: "vol-pe-1", Status: "error"})
 		default:
@@ -856,7 +869,10 @@ func TestVolumeAttachment_TFSDKCreateFinalReadError(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-fre-1/attach":
-			json.NewEncoder(w).Encode(apiVolume{ID: "vol-fre-1", Status: "attaching"})
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-attach-fre-1", "status": "accepted", "resourceType": "volume",
+			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-fre-1":
 			n := getCount.Add(1)
 			if n == 1 {
@@ -921,7 +937,10 @@ func TestVolumeAttachment_TFSDKCreateInstanceMismatch(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-mm-1/attach":
-			json.NewEncoder(w).Encode(apiVolume{ID: "vol-mm-1", Status: "attaching"})
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-attach-mm-1", "status": "accepted", "resourceType": "volume",
+			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-mm-1":
 			// Return in-use but attached to a DIFFERENT instance
 			json.NewEncoder(w).Encode(apiVolume{
@@ -1217,7 +1236,10 @@ func TestVolumeAttachment_TFSDKDeletePollErrorState(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-dpe-1/detach":
-			json.NewEncoder(w).Encode(apiVolume{ID: "vol-dpe-1", Status: "detaching"})
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-detach-dpe-1", "status": "accepted", "resourceType": "volume",
+			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-dpe-1":
 			json.NewEncoder(w).Encode(apiVolume{ID: "vol-dpe-1", Status: "error"})
 		default:
