@@ -141,11 +141,24 @@ func IsNotFound(err error) bool {
 	return false
 }
 
+// OperationResponse represents an async operation accepted by the API (HTTP 202).
+// Actions like volume detach, resize, and attach return this instead of the full resource.
+type OperationResponse struct {
+	OperationID  string `json:"operationId"`
+	Status       string `json:"status"`
+	ResourceType string `json:"resourceType"`
+}
+
 // Response represents an API response.
 type Response struct {
 	StatusCode int
 	Headers    http.Header
 	Body       []byte
+}
+
+// IsAccepted returns true if the response has HTTP status 202 Accepted.
+func (r *Response) IsAccepted() bool {
+	return r.StatusCode == http.StatusAccepted
 }
 
 // Do sends an API request and returns the response.
