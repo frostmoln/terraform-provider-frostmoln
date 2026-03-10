@@ -12,11 +12,13 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
+	databaseenginesds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/database_engines"
 	flavords "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/flavor"
 	flavorsds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/flavors"
 	imageds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/image"
 	imagesds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/images"
 	instanceds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/instance"
+	mysqlversionsds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/mysql_versions"
 	postgresversionsds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/postgres_versions"
 	subnetds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/subnet"
 	vpcds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/vpc"
@@ -24,6 +26,9 @@ import (
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/bucket"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/floating_ip"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/instance"
+	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/mysql_backup"
+	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/mysql_instance"
+	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/mysql_read_replica"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/postgres_backup"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/postgres_instance"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/postgres_read_replica"
@@ -147,6 +152,9 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		postgres_instance.NewResource,
 		postgres_backup.NewResource,
 		postgres_read_replica.NewResource,
+		mysql_instance.NewResource,
+		mysql_backup.NewResource,
+		mysql_read_replica.NewResource,
 		api_key.NewResource,
 	}
 }
@@ -161,5 +169,7 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		subnetds.NewDataSource,
 		instanceds.NewDataSource,
 		postgresversionsds.NewDataSource,
+		mysqlversionsds.NewDataSource,
+		databaseenginesds.NewDataSource,
 	}
 }
