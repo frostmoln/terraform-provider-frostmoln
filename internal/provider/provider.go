@@ -20,6 +20,7 @@ import (
 	instanceds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/instance"
 	mysqlversionsds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/mysql_versions"
 	postgresversionsds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/postgres_versions"
+	redisinstanceds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/redis_instance"
 	subnetds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/subnet"
 	vpcds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/vpc"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/api_key"
@@ -32,6 +33,7 @@ import (
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/postgres_backup"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/postgres_instance"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/postgres_read_replica"
+	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/redis_instance"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/s3_credential"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/security_group"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/security_group_rule"
@@ -155,6 +157,7 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		mysql_instance.NewResource,
 		mysql_backup.NewResource,
 		mysql_read_replica.NewResource,
+		redis_instance.NewResource,
 		api_key.NewResource,
 	}
 }
@@ -171,5 +174,6 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		postgresversionsds.NewDataSource,
 		mysqlversionsds.NewDataSource,
 		databaseenginesds.NewDataSource,
+		redisinstanceds.NewDataSource,
 	}
 }
