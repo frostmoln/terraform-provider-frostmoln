@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
+	apacheinstanceds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/apache_instance"
 	databaseenginesds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/database_engines"
 	flavords "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/flavor"
 	flavorsds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/flavors"
@@ -19,10 +20,12 @@ import (
 	imagesds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/images"
 	instanceds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/instance"
 	mysqlversionsds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/mysql_versions"
+	nginxinstanceds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/nginx_instance"
 	postgresversionsds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/postgres_versions"
 	redisinstanceds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/redis_instance"
 	subnetds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/subnet"
 	vpcds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/vpc"
+	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/apache_instance"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/api_key"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/bucket"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/floating_ip"
@@ -30,6 +33,7 @@ import (
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/mysql_backup"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/mysql_instance"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/mysql_read_replica"
+	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/nginx_instance"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/postgres_backup"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/postgres_instance"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/postgres_read_replica"
@@ -43,6 +47,7 @@ import (
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/volume"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/volume_attachment"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/vpc"
+	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/webserver_domain"
 )
 
 var _ provider.Provider = &FrostmolnProvider{}
@@ -159,6 +164,9 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		mysql_read_replica.NewResource,
 		redis_instance.NewResource,
 		api_key.NewResource,
+		apache_instance.NewResource,
+		nginx_instance.NewResource,
+		webserver_domain.NewResource,
 	}
 }
 
@@ -175,5 +183,7 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		mysqlversionsds.NewDataSource,
 		databaseenginesds.NewDataSource,
 		redisinstanceds.NewDataSource,
+		apacheinstanceds.NewDataSource,
+		nginxinstanceds.NewDataSource,
 	}
 }
