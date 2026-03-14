@@ -96,7 +96,7 @@ func newTestServer(t *testing.T, instances map[string]apiRedisInstance) *httptes
 
 	for id, inst := range instances {
 		i := inst
-		mux.HandleFunc("/v1/tenants/tenant-1/redis-instances/"+id, func(w http.ResponseWriter, _ *http.Request) {
+		mux.HandleFunc("/v1/tenants/tenant-1/caches/"+id, func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(i)
 		})

@@ -1,4 +1,4 @@
-package redis_instance
+package valkey_instance
 
 import (
 	"context"
@@ -17,108 +17,108 @@ import (
 )
 
 var (
-	_ resource.Resource                = &redisInstanceResource{}
-	_ resource.ResourceWithImportState = &redisInstanceResource{}
+	_ resource.Resource                = &valkeyInstanceResource{}
+	_ resource.ResourceWithImportState = &valkeyInstanceResource{}
 )
 
-// NewResource returns a new redis_instance resource factory.
+// NewResource returns a new valkey_instance resource factory.
 func NewResource() resource.Resource {
-	return &redisInstanceResource{}
+	return &valkeyInstanceResource{}
 }
 
-type redisInstanceResource struct {
+type valkeyInstanceResource struct {
 	client       *client.Client
 	pollInterval time.Duration
 	pollTimeout  time.Duration
 }
 
-func (r *redisInstanceResource) getPollInterval() time.Duration {
+func (r *valkeyInstanceResource) getPollInterval() time.Duration {
 	if r.pollInterval > 0 {
 		return r.pollInterval
 	}
 	return 5 * time.Second
 }
 
-func (r *redisInstanceResource) getPollTimeout() time.Duration {
+func (r *valkeyInstanceResource) getPollTimeout() time.Duration {
 	if r.pollTimeout > 0 {
 		return r.pollTimeout
 	}
 	return 15 * time.Minute
 }
 
-func (r *redisInstanceResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_redis_instance"
+func (r *valkeyInstanceResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_valkey_instance"
 }
 
-func (r *redisInstanceResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *valkeyInstanceResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a managed Redis instance in the NordicLight platform.",
+		Description: "Manages a managed Valkey instance in the NordicLight platform.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
-				Description: "The unique identifier of the Redis instance.",
+				Description: "The unique identifier of the Valkey instance.",
 				Computed:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
 			"name": schema.StringAttribute{
-				Description: "The name of the Redis instance.",
+				Description: "The name of the Valkey instance.",
 				Required:    true,
 			},
 			"engine_version": schema.StringAttribute{
-				Description: "The Redis version (e.g. \"7.2\", \"7.4\").",
+				Description: "The Valkey version (e.g. \"8.0\").",
 				Required:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"flavor_id": schema.StringAttribute{
-				Description: "The flavor/size for the Redis instance (e.g. \"cache.small\", \"cache.medium\").",
+				Description: "The flavor/size for the Valkey instance (e.g. \"cache.small\", \"cache.medium\").",
 				Required:    true,
 			},
 			"vpc_id": schema.StringAttribute{
-				Description: "The VPC ID where the Redis instance will be deployed.",
+				Description: "The VPC ID where the Valkey instance will be deployed.",
 				Required:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"subnet_id": schema.StringAttribute{
-				Description: "The subnet ID where the Redis instance will be deployed.",
+				Description: "The subnet ID where the Valkey instance will be deployed.",
 				Required:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"persistence_mode": schema.StringAttribute{
-				Description: "The persistence mode for the Redis instance (\"rdb\", \"aof\", or \"none\"). Defaults to \"rdb\".",
+				Description: "The persistence mode for the Valkey instance (\"rdb\", \"aof\", or \"none\"). Defaults to \"rdb\".",
 				Optional:    true,
 				Computed:    true,
 				Default:     stringdefault.StaticString("rdb"),
 			},
 			"eviction_policy": schema.StringAttribute{
-				Description: "The eviction policy for the Redis instance (e.g. \"noeviction\", \"allkeys-lru\"). Defaults to \"noeviction\".",
+				Description: "The eviction policy for the Valkey instance (e.g. \"noeviction\", \"allkeys-lru\"). Defaults to \"noeviction\".",
 				Optional:    true,
 				Computed:    true,
 				Default:     stringdefault.StaticString("noeviction"),
 			},
 			"status": schema.StringAttribute{
-				Description: "The current status of the Redis instance.",
+				Description: "The current status of the Valkey instance.",
 				Computed:    true,
 			},
 			"private_ip": schema.StringAttribute{
-				Description: "The private IP address of the Redis instance.",
+				Description: "The private IP address of the Valkey instance.",
 				Computed:    true,
 			},
 			"port": schema.Int64Attribute{
-				Description: "The port number the Redis instance is listening on.",
+				Description: "The port number the Valkey instance is listening on.",
 				Computed:    true,
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.UseStateForUnknown(),
 				},
 			},
 			"admin_username": schema.StringAttribute{
-				Description: "The admin username for the Redis instance.",
+				Description: "The admin username for the Valkey instance.",
 				Computed:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
@@ -139,7 +139,7 @@ func (r *redisInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 	}
 }
 
-func (r *redisInstanceResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+func (r *valkeyInstanceResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -154,8 +154,8 @@ func (r *redisInstanceResource) Configure(_ context.Context, req resource.Config
 	r.client = c
 }
 
-func (r *redisInstanceResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan RedisInstanceModel
+func (r *valkeyInstanceResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan ValkeyInstanceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -168,13 +168,13 @@ func (r *redisInstanceResource) Create(ctx context.Context, req resource.CreateR
 
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/caches"), apiReq)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to create Redis instance", err.Error())
+		resp.Diagnostics.AddError("Failed to create Valkey instance", err.Error())
 		return
 	}
 
-	inst, err := client.ParseResponse[apiRedisInstance](apiResp)
+	inst, err := client.ParseResponse[apiValkeyInstance](apiResp)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to parse Redis instance response", err.Error())
+		resp.Diagnostics.AddError("Failed to parse Valkey instance response", err.Error())
 		return
 	}
 
@@ -195,13 +195,13 @@ func (r *redisInstanceResource) Create(ctx context.Context, req resource.CreateR
 		Timeout:      r.getPollTimeout(),
 		TargetStates: []string{"running"},
 		ErrorStates:  []string{"error", "failed"},
-		ResourceName: "redis_instance",
+		ResourceName: "valkey_instance",
 		PollFunc: func(pollCtx context.Context) (string, error) {
 			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/caches/"+inst.ID), nil)
 			if pollErr != nil {
 				return "", pollErr
 			}
-			current, parseErr := client.ParseResponse[apiRedisInstance](pollResp)
+			current, parseErr := client.ParseResponse[apiValkeyInstance](pollResp)
 			if parseErr != nil {
 				return "", parseErr
 			}
@@ -209,19 +209,19 @@ func (r *redisInstanceResource) Create(ctx context.Context, req resource.CreateR
 		},
 	})
 	if err != nil {
-		resp.Diagnostics.AddError("Redis instance failed to reach running state", err.Error())
+		resp.Diagnostics.AddError("Valkey instance failed to reach running state", err.Error())
 		return
 	}
 
 	// Refresh state after polling completes to get final status, IPs, etc.
 	readResp, err := r.client.Get(ctx, r.client.TenantPath("/caches/"+inst.ID), nil)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to read Redis instance after creation", err.Error())
+		resp.Diagnostics.AddError("Failed to read Valkey instance after creation", err.Error())
 		return
 	}
-	finalInst, err := client.ParseResponse[apiRedisInstance](readResp)
+	finalInst, err := client.ParseResponse[apiValkeyInstance](readResp)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to parse Redis instance response", err.Error())
+		resp.Diagnostics.AddError("Failed to parse Valkey instance response", err.Error())
 		return
 	}
 
@@ -229,8 +229,8 @@ func (r *redisInstanceResource) Create(ctx context.Context, req resource.CreateR
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *redisInstanceResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	var state RedisInstanceModel
+func (r *valkeyInstanceResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var state ValkeyInstanceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -242,13 +242,13 @@ func (r *redisInstanceResource) Read(ctx context.Context, req resource.ReadReque
 			resp.State.RemoveResource(ctx)
 			return
 		}
-		resp.Diagnostics.AddError("Failed to read Redis instance", err.Error())
+		resp.Diagnostics.AddError("Failed to read Valkey instance", err.Error())
 		return
 	}
 
-	inst, err := client.ParseResponse[apiRedisInstance](apiResp)
+	inst, err := client.ParseResponse[apiValkeyInstance](apiResp)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to parse Redis instance response", err.Error())
+		resp.Diagnostics.AddError("Failed to parse Valkey instance response", err.Error())
 		return
 	}
 
@@ -256,9 +256,9 @@ func (r *redisInstanceResource) Read(ctx context.Context, req resource.ReadReque
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-func (r *redisInstanceResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan RedisInstanceModel
-	var state RedisInstanceModel
+func (r *valkeyInstanceResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan ValkeyInstanceModel
+	var state ValkeyInstanceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
@@ -270,7 +270,7 @@ func (r *redisInstanceResource) Update(ctx context.Context, req resource.UpdateR
 	updateReq := plan.toUpdateRequest(&state)
 	_, err := r.client.Put(ctx, r.client.TenantPath("/caches/"+id), updateReq)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to update Redis instance", err.Error())
+		resp.Diagnostics.AddError("Failed to update Valkey instance", err.Error())
 		return
 	}
 
@@ -280,13 +280,13 @@ func (r *redisInstanceResource) Update(ctx context.Context, req resource.UpdateR
 		Timeout:      r.getPollTimeout(),
 		TargetStates: []string{"running"},
 		ErrorStates:  []string{"error", "failed"},
-		ResourceName: "redis_instance",
+		ResourceName: "valkey_instance",
 		PollFunc: func(pollCtx context.Context) (string, error) {
 			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/caches/"+id), nil)
 			if pollErr != nil {
 				return "", pollErr
 			}
-			current, parseErr := client.ParseResponse[apiRedisInstance](pollResp)
+			current, parseErr := client.ParseResponse[apiValkeyInstance](pollResp)
 			if parseErr != nil {
 				return "", parseErr
 			}
@@ -294,20 +294,20 @@ func (r *redisInstanceResource) Update(ctx context.Context, req resource.UpdateR
 		},
 	})
 	if err != nil {
-		resp.Diagnostics.AddError("Redis instance failed to reach running state after update", err.Error())
+		resp.Diagnostics.AddError("Valkey instance failed to reach running state after update", err.Error())
 		return
 	}
 
 	// Refresh state from API.
 	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/caches/"+id), nil)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to read Redis instance after update", err.Error())
+		resp.Diagnostics.AddError("Failed to read Valkey instance after update", err.Error())
 		return
 	}
 
-	inst, err := client.ParseResponse[apiRedisInstance](apiResp)
+	inst, err := client.ParseResponse[apiValkeyInstance](apiResp)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to parse Redis instance response", err.Error())
+		resp.Diagnostics.AddError("Failed to parse Valkey instance response", err.Error())
 		return
 	}
 
@@ -315,8 +315,8 @@ func (r *redisInstanceResource) Update(ctx context.Context, req resource.UpdateR
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *redisInstanceResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var state RedisInstanceModel
+func (r *valkeyInstanceResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state ValkeyInstanceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -329,7 +329,7 @@ func (r *redisInstanceResource) Delete(ctx context.Context, req resource.DeleteR
 		if client.IsNotFound(err) {
 			return
 		}
-		resp.Diagnostics.AddError("Failed to delete Redis instance", err.Error())
+		resp.Diagnostics.AddError("Failed to delete Valkey instance", err.Error())
 		return
 	}
 
@@ -339,7 +339,7 @@ func (r *redisInstanceResource) Delete(ctx context.Context, req resource.DeleteR
 		Timeout:      r.getPollTimeout(),
 		TargetStates: []string{"deleted"},
 		ErrorStates:  []string{"error"},
-		ResourceName: "redis_instance",
+		ResourceName: "valkey_instance",
 		PollFunc: func(pollCtx context.Context) (string, error) {
 			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/caches/"+id), nil)
 			if pollErr != nil {
@@ -348,7 +348,7 @@ func (r *redisInstanceResource) Delete(ctx context.Context, req resource.DeleteR
 				}
 				return "", pollErr
 			}
-			current, parseErr := client.ParseResponse[apiRedisInstance](pollResp)
+			current, parseErr := client.ParseResponse[apiValkeyInstance](pollResp)
 			if parseErr != nil {
 				return "", parseErr
 			}
@@ -356,10 +356,10 @@ func (r *redisInstanceResource) Delete(ctx context.Context, req resource.DeleteR
 		},
 	})
 	if err != nil {
-		resp.Diagnostics.AddError("Redis instance failed to delete", err.Error())
+		resp.Diagnostics.AddError("Valkey instance failed to delete", err.Error())
 	}
 }
 
-func (r *redisInstanceResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+func (r *valkeyInstanceResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }

@@ -1,5 +1,5 @@
-// Package redis_instance implements the frostmoln_redis_instance Terraform data source.
-package redis_instance
+// Package valkey_instance implements the frostmoln_valkey_instance Terraform data source.
+package valkey_instance
 
 import (
 	"context"
@@ -13,19 +13,19 @@ import (
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
 )
 
-var _ datasource.DataSource = &redisInstanceDataSource{}
+var _ datasource.DataSource = &valkeyInstanceDataSource{}
 
-// NewDataSource returns a new frostmoln_redis_instance data source factory.
+// NewDataSource returns a new frostmoln_valkey_instance data source factory.
 func NewDataSource() datasource.DataSource {
-	return &redisInstanceDataSource{}
+	return &valkeyInstanceDataSource{}
 }
 
-type redisInstanceDataSource struct {
+type valkeyInstanceDataSource struct {
 	client *client.Client
 }
 
-// redisInstanceModel is the Terraform state model for a Redis instance data source.
-type redisInstanceModel struct {
+// valkeyInstanceModel is the Terraform state model for a Valkey instance data source.
+type valkeyInstanceModel struct {
 	ID              types.String `tfsdk:"id"`
 	Name            types.String `tfsdk:"name"`
 	EngineVersion   types.String `tfsdk:"engine_version"`
@@ -42,10 +42,11 @@ type redisInstanceModel struct {
 	UpdatedAt       types.String `tfsdk:"updated_at"`
 }
 
-// apiRedisInstance is the API representation of a managed Redis instance.
-type apiRedisInstance struct {
+// apiValkeyInstance is the API representation of a managed Valkey instance.
+type apiValkeyInstance struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
+	Engine          string `json:"engine"`
 	EngineVersion   string `json:"engineVersion"`
 	FlavorID        string `json:"flavorId"`
 	VPCID           string `json:"vpcId"`
@@ -60,60 +61,60 @@ type apiRedisInstance struct {
 	UpdatedAt       string `json:"updatedAt,omitempty"`
 }
 
-func (d *redisInstanceDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_redis_instance"
+func (d *valkeyInstanceDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_valkey_instance"
 }
 
-func (d *redisInstanceDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *valkeyInstanceDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Look up a managed Redis instance by ID.",
+		Description: "Look up a managed Valkey instance by ID.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
-				Description: "The unique identifier of the Redis instance.",
+				Description: "The unique identifier of the Valkey instance.",
 				Required:    true,
 			},
 			"name": schema.StringAttribute{
-				Description: "The name of the Redis instance.",
+				Description: "The name of the Valkey instance.",
 				Computed:    true,
 			},
 			"engine_version": schema.StringAttribute{
-				Description: "The Redis version.",
+				Description: "The Valkey version.",
 				Computed:    true,
 			},
 			"flavor_id": schema.StringAttribute{
-				Description: "The flavor/size of the Redis instance.",
+				Description: "The flavor/size of the Valkey instance.",
 				Computed:    true,
 			},
 			"vpc_id": schema.StringAttribute{
-				Description: "The VPC ID where the Redis instance is deployed.",
+				Description: "The VPC ID where the Valkey instance is deployed.",
 				Computed:    true,
 			},
 			"subnet_id": schema.StringAttribute{
-				Description: "The subnet ID where the Redis instance is deployed.",
+				Description: "The subnet ID where the Valkey instance is deployed.",
 				Computed:    true,
 			},
 			"persistence_mode": schema.StringAttribute{
-				Description: "The persistence mode of the Redis instance.",
+				Description: "The persistence mode of the Valkey instance.",
 				Computed:    true,
 			},
 			"eviction_policy": schema.StringAttribute{
-				Description: "The eviction policy of the Redis instance.",
+				Description: "The eviction policy of the Valkey instance.",
 				Computed:    true,
 			},
 			"status": schema.StringAttribute{
-				Description: "The current status of the Redis instance.",
+				Description: "The current status of the Valkey instance.",
 				Computed:    true,
 			},
 			"private_ip": schema.StringAttribute{
-				Description: "The private IP address of the Redis instance.",
+				Description: "The private IP address of the Valkey instance.",
 				Computed:    true,
 			},
 			"port": schema.Int64Attribute{
-				Description: "The port number the Redis instance is listening on.",
+				Description: "The port number the Valkey instance is listening on.",
 				Computed:    true,
 			},
 			"admin_username": schema.StringAttribute{
-				Description: "The admin username for the Redis instance.",
+				Description: "The admin username for the Valkey instance.",
 				Computed:    true,
 			},
 			"created_at": schema.StringAttribute{
@@ -128,7 +129,7 @@ func (d *redisInstanceDataSource) Schema(_ context.Context, _ datasource.SchemaR
 	}
 }
 
-func (d *redisInstanceDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+func (d *valkeyInstanceDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -143,8 +144,8 @@ func (d *redisInstanceDataSource) Configure(_ context.Context, req datasource.Co
 	d.client = c
 }
 
-func (d *redisInstanceDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	var state redisInstanceModel
+func (d *valkeyInstanceDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var state valkeyInstanceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -152,13 +153,13 @@ func (d *redisInstanceDataSource) Read(ctx context.Context, req datasource.ReadR
 
 	apiResp, err := d.client.Get(ctx, d.client.TenantPath("/caches/"+state.ID.ValueString()), nil)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to read Redis instance", err.Error())
+		resp.Diagnostics.AddError("Failed to read Valkey instance", err.Error())
 		return
 	}
 
-	var inst apiRedisInstance
+	var inst apiValkeyInstance
 	if err := json.Unmarshal(apiResp.Body, &inst); err != nil {
-		resp.Diagnostics.AddError("Failed to parse Redis instance response", err.Error())
+		resp.Diagnostics.AddError("Failed to parse Valkey instance response", err.Error())
 		return
 	}
 

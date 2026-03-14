@@ -40,6 +40,9 @@ func TestRedisInstanceModelToCreateRequest(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
 
+	if req.Engine != "redis" {
+		t.Errorf("expected engine redis, got %s", req.Engine)
+	}
 	if req.Name != "my-redis" {
 		t.Errorf("expected name my-redis, got %s", req.Name)
 	}
@@ -82,6 +85,9 @@ func TestRedisInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
 
+	if req.Engine != "redis" {
+		t.Errorf("expected engine redis, got %s", req.Engine)
+	}
 	if req.PersistenceMode != "aof" {
 		t.Errorf("expected persistenceMode aof, got %s", req.PersistenceMode)
 	}
@@ -335,10 +341,13 @@ func TestCreate(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/redis-instances":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/caches":
 			var body apiCreateRedisInstanceRequest
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Errorf("failed to decode request: %v", err)
+			}
+			if body.Engine != "redis" {
+				t.Errorf("expected engine redis, got %s", body.Engine)
 			}
 			if body.EngineVersion != "7.2" {
 				t.Errorf("expected engineVersion 7.2, got %s", body.EngineVersion)
@@ -356,7 +365,7 @@ func TestCreate(t *testing.T) {
 				Status:          "provisioning",
 				CreatedAt:       "2025-01-01T00:00:00Z",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/redis-instances/redis-new":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/caches/redis-new":
 			count := callCount.Add(1)
 			status := "provisioning"
 			if count >= 2 {
@@ -425,7 +434,7 @@ func TestCreate(t *testing.T) {
 
 func TestRead(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/redis-instances/redis-123" {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/caches/redis-123" {
 			_ = json.NewEncoder(w).Encode(apiRedisInstance{
 				ID:              "redis-123",
 				Name:            "my-redis",
@@ -526,10 +535,10 @@ func TestDelete(t *testing.T) {
 	deleted := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-1/redis-instances/redis-123":
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-1/caches/redis-123":
 			deleted = true
 			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/redis-instances/redis-123":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/caches/redis-123":
 			if deleted {
 				w.WriteHeader(http.StatusNotFound)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -581,11 +590,11 @@ func TestUpdate(t *testing.T) {
 	var updatedBody apiUpdateRedisInstanceRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-1/redis-instances/redis-123":
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-1/caches/redis-123":
 			_ = json.NewDecoder(r.Body).Decode(&updatedBody)
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprint(w, `{}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/redis-instances/redis-123":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/caches/redis-123":
 			_ = json.NewEncoder(w).Encode(apiRedisInstance{
 				ID:              "redis-123",
 				Name:            "updated-redis",

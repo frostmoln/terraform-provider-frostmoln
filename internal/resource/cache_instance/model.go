@@ -1,5 +1,5 @@
-// Package redis_instance implements the frostmoln_redis_instance Terraform resource.
-package redis_instance
+// Package cache_instance implements the frostmoln_cache_instance Terraform resource.
+package cache_instance
 
 import (
 	"context"
@@ -8,10 +8,11 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// RedisInstanceModel is the Terraform state model for a managed Redis instance.
-type RedisInstanceModel struct {
+// CacheInstanceModel is the Terraform state model for a managed cache instance.
+type CacheInstanceModel struct {
 	ID              types.String `tfsdk:"id"`
 	Name            types.String `tfsdk:"name"`
+	Engine          types.String `tfsdk:"engine"`
 	EngineVersion   types.String `tfsdk:"engine_version"`
 	FlavorID        types.String `tfsdk:"flavor_id"`
 	VPCID           types.String `tfsdk:"vpc_id"`
@@ -26,10 +27,11 @@ type RedisInstanceModel struct {
 	UpdatedAt       types.String `tfsdk:"updated_at"`
 }
 
-// apiRedisInstance is the API representation of a managed Redis instance.
-type apiRedisInstance struct {
+// apiCacheInstance is the API representation of a managed cache instance.
+type apiCacheInstance struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
+	Engine          string `json:"engine"`
 	EngineVersion   string `json:"engineVersion"`
 	FlavorID        string `json:"flavorId"`
 	VPCID           string `json:"vpcId"`
@@ -44,8 +46,8 @@ type apiRedisInstance struct {
 	UpdatedAt       string `json:"updatedAt,omitempty"`
 }
 
-// apiCreateRedisInstanceRequest is the API request to create a managed Redis instance.
-type apiCreateRedisInstanceRequest struct {
+// apiCreateCacheInstanceRequest is the API request to create a managed cache instance.
+type apiCreateCacheInstanceRequest struct {
 	Name            string `json:"name"`
 	Engine          string `json:"engine"`
 	EngineVersion   string `json:"engineVersion"`
@@ -56,8 +58,8 @@ type apiCreateRedisInstanceRequest struct {
 	EvictionPolicy  string `json:"evictionPolicy,omitempty"`
 }
 
-// apiUpdateRedisInstanceRequest is the API request to update a managed Redis instance.
-type apiUpdateRedisInstanceRequest struct {
+// apiUpdateCacheInstanceRequest is the API request to update a managed cache instance.
+type apiUpdateCacheInstanceRequest struct {
 	Name            *string `json:"name,omitempty"`
 	FlavorID        *string `json:"flavorId,omitempty"`
 	PersistenceMode *string `json:"persistenceMode,omitempty"`
@@ -65,10 +67,10 @@ type apiUpdateRedisInstanceRequest struct {
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
-func (m *RedisInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnostics) apiCreateRedisInstanceRequest {
-	req := apiCreateRedisInstanceRequest{
+func (m *CacheInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnostics) apiCreateCacheInstanceRequest {
+	req := apiCreateCacheInstanceRequest{
 		Name:          m.Name.ValueString(),
-		Engine:        "redis",
+		Engine:        m.Engine.ValueString(),
 		EngineVersion: m.EngineVersion.ValueString(),
 		FlavorID:      m.FlavorID.ValueString(),
 		VPCID:         m.VPCID.ValueString(),
@@ -86,8 +88,8 @@ func (m *RedisInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnost
 }
 
 // toUpdateRequest converts the Terraform model to an API update request, comparing with current state.
-func (m *RedisInstanceModel) toUpdateRequest(state *RedisInstanceModel) apiUpdateRedisInstanceRequest {
-	req := apiUpdateRedisInstanceRequest{}
+func (m *CacheInstanceModel) toUpdateRequest(state *CacheInstanceModel) apiUpdateCacheInstanceRequest {
+	req := apiUpdateCacheInstanceRequest{}
 
 	if !m.Name.Equal(state.Name) {
 		v := m.Name.ValueString()
@@ -110,9 +112,10 @@ func (m *RedisInstanceModel) toUpdateRequest(state *RedisInstanceModel) apiUpdat
 }
 
 // fromAPI populates the Terraform model from an API response.
-func (m *RedisInstanceModel) fromAPI(_ context.Context, inst *apiRedisInstance, _ *diag.Diagnostics) {
+func (m *CacheInstanceModel) fromAPI(_ context.Context, inst *apiCacheInstance, _ *diag.Diagnostics) {
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
+	m.Engine = types.StringValue(inst.Engine)
 	m.EngineVersion = types.StringValue(inst.EngineVersion)
 	m.FlavorID = types.StringValue(inst.FlavorID)
 	m.VPCID = types.StringValue(inst.VPCID)

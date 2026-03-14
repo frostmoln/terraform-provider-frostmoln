@@ -1,5 +1,5 @@
-// Package redis_instance implements the frostmoln_redis_instance Terraform data source.
-package redis_instance
+// Package cache_instance implements the frostmoln_cache_instance Terraform data source.
+package cache_instance
 
 import (
 	"context"
@@ -13,21 +13,22 @@ import (
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
 )
 
-var _ datasource.DataSource = &redisInstanceDataSource{}
+var _ datasource.DataSource = &cacheInstanceDataSource{}
 
-// NewDataSource returns a new frostmoln_redis_instance data source factory.
+// NewDataSource returns a new frostmoln_cache_instance data source factory.
 func NewDataSource() datasource.DataSource {
-	return &redisInstanceDataSource{}
+	return &cacheInstanceDataSource{}
 }
 
-type redisInstanceDataSource struct {
+type cacheInstanceDataSource struct {
 	client *client.Client
 }
 
-// redisInstanceModel is the Terraform state model for a Redis instance data source.
-type redisInstanceModel struct {
+// cacheInstanceModel is the Terraform state model for a cache instance data source.
+type cacheInstanceModel struct {
 	ID              types.String `tfsdk:"id"`
 	Name            types.String `tfsdk:"name"`
+	Engine          types.String `tfsdk:"engine"`
 	EngineVersion   types.String `tfsdk:"engine_version"`
 	FlavorID        types.String `tfsdk:"flavor_id"`
 	VPCID           types.String `tfsdk:"vpc_id"`
@@ -42,10 +43,11 @@ type redisInstanceModel struct {
 	UpdatedAt       types.String `tfsdk:"updated_at"`
 }
 
-// apiRedisInstance is the API representation of a managed Redis instance.
-type apiRedisInstance struct {
+// apiCacheInstance is the API representation of a managed cache instance.
+type apiCacheInstance struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
+	Engine          string `json:"engine"`
 	EngineVersion   string `json:"engineVersion"`
 	FlavorID        string `json:"flavorId"`
 	VPCID           string `json:"vpcId"`
@@ -60,60 +62,64 @@ type apiRedisInstance struct {
 	UpdatedAt       string `json:"updatedAt,omitempty"`
 }
 
-func (d *redisInstanceDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_redis_instance"
+func (d *cacheInstanceDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_cache_instance"
 }
 
-func (d *redisInstanceDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *cacheInstanceDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Look up a managed Redis instance by ID.",
+		Description: "Look up a managed cache instance by ID.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
-				Description: "The unique identifier of the Redis instance.",
+				Description: "The unique identifier of the cache instance.",
 				Required:    true,
 			},
 			"name": schema.StringAttribute{
-				Description: "The name of the Redis instance.",
+				Description: "The name of the cache instance.",
+				Computed:    true,
+			},
+			"engine": schema.StringAttribute{
+				Description: "The cache engine type (e.g. \"redis\", \"valkey\").",
 				Computed:    true,
 			},
 			"engine_version": schema.StringAttribute{
-				Description: "The Redis version.",
+				Description: "The engine version.",
 				Computed:    true,
 			},
 			"flavor_id": schema.StringAttribute{
-				Description: "The flavor/size of the Redis instance.",
+				Description: "The flavor/size of the cache instance.",
 				Computed:    true,
 			},
 			"vpc_id": schema.StringAttribute{
-				Description: "The VPC ID where the Redis instance is deployed.",
+				Description: "The VPC ID where the cache instance is deployed.",
 				Computed:    true,
 			},
 			"subnet_id": schema.StringAttribute{
-				Description: "The subnet ID where the Redis instance is deployed.",
+				Description: "The subnet ID where the cache instance is deployed.",
 				Computed:    true,
 			},
 			"persistence_mode": schema.StringAttribute{
-				Description: "The persistence mode of the Redis instance.",
+				Description: "The persistence mode of the cache instance.",
 				Computed:    true,
 			},
 			"eviction_policy": schema.StringAttribute{
-				Description: "The eviction policy of the Redis instance.",
+				Description: "The eviction policy of the cache instance.",
 				Computed:    true,
 			},
 			"status": schema.StringAttribute{
-				Description: "The current status of the Redis instance.",
+				Description: "The current status of the cache instance.",
 				Computed:    true,
 			},
 			"private_ip": schema.StringAttribute{
-				Description: "The private IP address of the Redis instance.",
+				Description: "The private IP address of the cache instance.",
 				Computed:    true,
 			},
 			"port": schema.Int64Attribute{
-				Description: "The port number the Redis instance is listening on.",
+				Description: "The port number the cache instance is listening on.",
 				Computed:    true,
 			},
 			"admin_username": schema.StringAttribute{
-				Description: "The admin username for the Redis instance.",
+				Description: "The admin username for the cache instance.",
 				Computed:    true,
 			},
 			"created_at": schema.StringAttribute{
@@ -128,7 +134,7 @@ func (d *redisInstanceDataSource) Schema(_ context.Context, _ datasource.SchemaR
 	}
 }
 
-func (d *redisInstanceDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+func (d *cacheInstanceDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -143,8 +149,8 @@ func (d *redisInstanceDataSource) Configure(_ context.Context, req datasource.Co
 	d.client = c
 }
 
-func (d *redisInstanceDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	var state redisInstanceModel
+func (d *cacheInstanceDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var state cacheInstanceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -152,18 +158,19 @@ func (d *redisInstanceDataSource) Read(ctx context.Context, req datasource.ReadR
 
 	apiResp, err := d.client.Get(ctx, d.client.TenantPath("/caches/"+state.ID.ValueString()), nil)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to read Redis instance", err.Error())
+		resp.Diagnostics.AddError("Failed to read cache instance", err.Error())
 		return
 	}
 
-	var inst apiRedisInstance
+	var inst apiCacheInstance
 	if err := json.Unmarshal(apiResp.Body, &inst); err != nil {
-		resp.Diagnostics.AddError("Failed to parse Redis instance response", err.Error())
+		resp.Diagnostics.AddError("Failed to parse cache instance response", err.Error())
 		return
 	}
 
 	state.ID = types.StringValue(inst.ID)
 	state.Name = types.StringValue(inst.Name)
+	state.Engine = types.StringValue(inst.Engine)
 	state.EngineVersion = types.StringValue(inst.EngineVersion)
 	state.FlavorID = types.StringValue(inst.FlavorID)
 	state.VPCID = types.StringValue(inst.VPCID)

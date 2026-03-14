@@ -13,6 +13,7 @@ import (
 
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
 	apacheinstanceds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/apache_instance"
+	cacheinstanceds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/cache_instance"
 	databaseenginesds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/database_engines"
 	flavords "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/flavor"
 	flavorsds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/flavors"
@@ -24,10 +25,12 @@ import (
 	postgresversionsds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/postgres_versions"
 	redisinstanceds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/redis_instance"
 	subnetds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/subnet"
+	valkeyinstanceds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/valkey_instance"
 	vpcds "git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/datasource/vpc"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/apache_instance"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/api_key"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/bucket"
+	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/cache_instance"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/floating_ip"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/instance"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/mysql_backup"
@@ -44,6 +47,7 @@ import (
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/snapshot"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/ssh_key"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/subnet"
+	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/valkey_instance"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/volume"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/volume_attachment"
 	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/resource/vpc"
@@ -163,6 +167,8 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		mysql_backup.NewResource,
 		mysql_read_replica.NewResource,
 		redis_instance.NewResource,
+		cache_instance.NewResource,
+		valkey_instance.NewResource,
 		api_key.NewResource,
 		apache_instance.NewResource,
 		nginx_instance.NewResource,
@@ -183,6 +189,8 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		mysqlversionsds.NewDataSource,
 		databaseenginesds.NewDataSource,
 		redisinstanceds.NewDataSource,
+		cacheinstanceds.NewDataSource,
+		valkeyinstanceds.NewDataSource,
 		apacheinstanceds.NewDataSource,
 		nginxinstanceds.NewDataSource,
 	}
