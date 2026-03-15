@@ -1,6 +1,6 @@
 module git.nl.cloud/NordicLight/terraform-provider-frostmoln
 
-go 1.25.7
+go 1.26.1
 
 require (
 	github.com/hashicorp/terraform-plugin-docs v0.24.0
