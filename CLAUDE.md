@@ -127,7 +127,7 @@ Unit tests use `httptest` for HTTP mocking. Each resource test should:
 
 ### API Client
 
-The client in `internal/client/client.go` is self-contained (no dependency on nlctl or servicekit). Auth is via `X-API-Key` header. Tenant ID is resolved once via `GET /v1/me` and cached.
+The client in `internal/client/client.go` is self-contained (no dependency on fm CLI or servicekit). Auth is via `X-API-Key` header. Tenant ID is resolved once via `GET /v1/me` and cached.
 
 ### Async Resources
 
