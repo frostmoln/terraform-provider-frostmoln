@@ -3,12 +3,12 @@
 page_title: "frostmoln_security_group_rule Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a security group rule in the NordicLight Cloud Platform.
+  Manages a security group rule in the Frostmoln Cloud Platform.
 ---
 
 # frostmoln_security_group_rule (Resource)
 
-Manages a security group rule in the NordicLight Cloud Platform.
+Manages a security group rule in the Frostmoln Cloud Platform.
 
 ## Example Usage
 

@@ -33,7 +33,7 @@ func (r *sshKeyResource) Metadata(_ context.Context, req resource.MetadataReques
 
 func (r *sshKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages an SSH key in the NordicLight platform.",
+		Description: "Manages an SSH key in the Frostmoln platform.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the SSH key.",

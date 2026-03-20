@@ -3,12 +3,12 @@
 page_title: "frostmoln_vpc Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a VPC in the NordicLight Cloud Platform.
+  Manages a VPC in the Frostmoln Cloud Platform.
 ---
 
 # frostmoln_vpc (Resource)
 
-Manages a VPC in the NordicLight Cloud Platform.
+Manages a VPC in the Frostmoln Cloud Platform.
 
 ## Example Usage
 

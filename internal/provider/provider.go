@@ -83,7 +83,7 @@ func (p *FrostmolnProvider) Metadata(_ context.Context, _ provider.MetadataReque
 
 func (p *FrostmolnProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Terraform provider for the NordicLight (Frostmoln) Cloud Platform.",
+		Description: "Terraform provider for the Frostmoln Cloud Platform.",
 		Attributes: map[string]schema.Attribute{
 			"api_endpoint": schema.StringAttribute{
 				Description: "The API endpoint URL. Can also be set via the FROSTMOLN_API_ENDPOINT environment variable. Defaults to https://api.nordiclight.cloud.",
@@ -137,7 +137,7 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 	if err := c.Configure(ctx); err != nil {
 		resp.Diagnostics.AddError(
 			"Failed to Configure Provider",
-			"Unable to authenticate with the NordicLight API: "+err.Error(),
+			"Unable to authenticate with the Frostmoln API: "+err.Error(),
 		)
 		return
 	}

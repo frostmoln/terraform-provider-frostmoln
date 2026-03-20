@@ -37,7 +37,7 @@ func (r *securityGroupResource) Metadata(_ context.Context, req resource.Metadat
 
 func (r *securityGroupResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a security group in the NordicLight Cloud Platform.",
+		Description: "Manages a security group in the Frostmoln Cloud Platform.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the security group.",

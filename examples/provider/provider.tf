@@ -12,7 +12,7 @@ provider "frostmoln" {
 }
 
 variable "frostmoln_api_key" {
-  description = "API key for the NordicLight Cloud Platform"
+  description = "API key for the Frostmoln Cloud Platform"
   type        = string
   sensitive   = true
 }

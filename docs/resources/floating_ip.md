@@ -3,12 +3,12 @@
 page_title: "frostmoln_floating_ip Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a floating IP in the NordicLight Cloud Platform.
+  Manages a floating IP in the Frostmoln Cloud Platform.
 ---
 
 # frostmoln_floating_ip (Resource)
 
-Manages a floating IP in the NordicLight Cloud Platform.
+Manages a floating IP in the Frostmoln Cloud Platform.
 
 ## Example Usage
 

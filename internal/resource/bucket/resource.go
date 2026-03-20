@@ -35,7 +35,7 @@ func (r *bucketResource) Metadata(_ context.Context, req resource.MetadataReques
 
 func (r *bucketResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages an object storage bucket in the NordicLight platform.",
+		Description: "Manages an object storage bucket in the Frostmoln platform.",
 		Attributes: map[string]schema.Attribute{
 			"name": schema.StringAttribute{
 				Description: "The name of the bucket. Also serves as the unique identifier.",

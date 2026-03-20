@@ -39,7 +39,7 @@ func (r *subnetResource) Metadata(_ context.Context, req resource.MetadataReques
 
 func (r *subnetResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a subnet in the NordicLight Cloud Platform.",
+		Description: "Manages a subnet in the Frostmoln Cloud Platform.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the subnet.",

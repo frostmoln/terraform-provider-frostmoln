@@ -3,12 +3,12 @@
 page_title: "frostmoln_bucket Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages an object storage bucket in the NordicLight platform.
+  Manages an object storage bucket in the Frostmoln platform.
 ---
 
 # frostmoln_bucket (Resource)
 
-Manages an object storage bucket in the NordicLight platform.
+Manages an object storage bucket in the Frostmoln platform.
 
 ## Example Usage
 

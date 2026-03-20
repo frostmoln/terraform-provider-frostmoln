@@ -3,12 +3,12 @@
 page_title: "frostmoln_s3_credential Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages an S3 credential in the NordicLight platform.
+  Manages an S3 credential in the Frostmoln platform.
 ---
 
 # frostmoln_s3_credential (Resource)
 
-Manages an S3 credential in the NordicLight platform.
+Manages an S3 credential in the Frostmoln platform.
 
 ## Example Usage
 

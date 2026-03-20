@@ -52,7 +52,7 @@ func (r *postgresInstanceResource) Metadata(_ context.Context, req resource.Meta
 
 func (r *postgresInstanceResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a managed PostgreSQL database instance in the NordicLight platform.",
+		Description: "Manages a managed PostgreSQL database instance in the Frostmoln platform.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the PostgreSQL instance.",

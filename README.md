@@ -1,6 +1,6 @@
 # Terraform Provider for Frostmoln Cloud
 
-Terraform provider for the [NordicLight (Frostmoln) Cloud Platform](https://nordiclight.cloud), enabling infrastructure-as-code management of cloud resources with full data sovereignty in EU/EEA datacenters.
+Terraform provider for the [Frostmoln Cloud Platform](https://nordiclight.cloud), enabling infrastructure-as-code management of cloud resources with full data sovereignty in EU/EEA datacenters.
 
 ## Requirements
 

@@ -3,12 +3,12 @@
 page_title: "frostmoln_volume_attachment Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a volume attachment to a compute instance in the NordicLight platform.
+  Manages a volume attachment to a compute instance in the Frostmoln platform.
 ---
 
 # frostmoln_volume_attachment (Resource)
 
-Manages a volume attachment to a compute instance in the NordicLight platform.
+Manages a volume attachment to a compute instance in the Frostmoln platform.
 
 ## Example Usage
 

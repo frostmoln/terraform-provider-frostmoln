@@ -3,12 +3,12 @@
 page_title: "frostmoln_volume Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a block storage volume in the NordicLight platform.
+  Manages a block storage volume in the Frostmoln platform.
 ---
 
 # frostmoln_volume (Resource)
 
-Manages a block storage volume in the NordicLight platform.
+Manages a block storage volume in the Frostmoln platform.
 
 ## Example Usage
 

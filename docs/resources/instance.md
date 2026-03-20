@@ -3,12 +3,12 @@
 page_title: "frostmoln_instance Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a compute instance in the NordicLight platform.
+  Manages a compute instance in the Frostmoln platform.
 ---
 
 # frostmoln_instance (Resource)
 
-Manages a compute instance in the NordicLight platform.
+Manages a compute instance in the Frostmoln platform.
 
 ## Example Usage
 

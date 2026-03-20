@@ -2,12 +2,12 @@
 page_title: "Frostmoln Provider"
 subcategory: ""
 description: |-
-  Terraform provider for the NordicLight (Frostmoln) Cloud Platform.
+  Terraform provider for the Frostmoln Cloud Platform.
 ---
 
 # Frostmoln Provider
 
-The Frostmoln provider enables Terraform to manage resources on the [NordicLight Cloud Platform](https://nordiclight.cloud). NordicLight is a European cloud infrastructure provider offering enterprise-grade cloud services with full data sovereignty in EU/EEA datacenters.
+The Frostmoln provider enables Terraform to manage resources on the [Frostmoln Cloud Platform](https://nordiclight.cloud). Frostmoln is a European cloud infrastructure provider offering enterprise-grade cloud services with full data sovereignty in EU/EEA datacenters.
 
 ## Example Usage
 
@@ -26,7 +26,7 @@ provider "frostmoln" {
 }
 
 variable "frostmoln_api_key" {
-  description = "API key for the NordicLight Cloud Platform"
+  description = "API key for the Frostmoln Cloud Platform"
   type        = string
   sensitive   = true
 }

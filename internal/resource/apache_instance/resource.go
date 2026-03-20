@@ -52,7 +52,7 @@ func (r *apacheInstanceResource) Metadata(_ context.Context, req resource.Metada
 
 func (r *apacheInstanceResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a managed Apache webserver instance in the NordicLight platform.",
+		Description: "Manages a managed Apache webserver instance in the Frostmoln platform.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the Apache instance.",

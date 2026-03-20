@@ -3,12 +3,12 @@
 page_title: "frostmoln_subnet Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a subnet in the NordicLight Cloud Platform.
+  Manages a subnet in the Frostmoln Cloud Platform.
 ---
 
 # frostmoln_subnet (Resource)
 
-Manages a subnet in the NordicLight Cloud Platform.
+Manages a subnet in the Frostmoln Cloud Platform.
 
 ## Example Usage
 

@@ -52,7 +52,7 @@ func (r *cacheInstanceResource) Metadata(_ context.Context, req resource.Metadat
 
 func (r *cacheInstanceResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a managed cache instance in the NordicLight platform.",
+		Description: "Manages a managed cache instance in the Frostmoln platform.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the cache instance.",

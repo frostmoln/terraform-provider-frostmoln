@@ -3,12 +3,12 @@
 page_title: "frostmoln_snapshot Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a volume snapshot in the NordicLight platform. Snapshots are immutable after creation.
+  Manages a volume snapshot in the Frostmoln platform. Snapshots are immutable after creation.
 ---
 
 # frostmoln_snapshot (Resource)
 
-Manages a volume snapshot in the NordicLight platform. Snapshots are immutable after creation.
+Manages a volume snapshot in the Frostmoln platform. Snapshots are immutable after creation.
 
 ## Example Usage
 

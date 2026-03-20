@@ -36,7 +36,7 @@ func (r *floatingIPResource) Metadata(_ context.Context, req resource.MetadataRe
 
 func (r *floatingIPResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a floating IP in the NordicLight Cloud Platform.",
+		Description: "Manages a floating IP in the Frostmoln Cloud Platform.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the floating IP.",

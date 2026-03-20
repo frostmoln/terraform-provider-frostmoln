@@ -79,7 +79,7 @@ func (r *webserverDomainResource) Metadata(_ context.Context, req resource.Metad
 
 func (r *webserverDomainResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a domain binding for a webserver instance in the NordicLight platform. This resource is create/delete only — domains cannot be updated in place.",
+		Description: "Manages a domain binding for a webserver instance in the Frostmoln platform. This resource is create/delete only — domains cannot be updated in place.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the domain binding.",

@@ -9,7 +9,7 @@ For project-wide conventions and architecture details, see:
 
 ## Project Overview
 
-Terraform provider for the NordicLight (Frostmoln) Cloud Platform. Enables infrastructure-as-code management of compute instances, VPCs, subnets, security groups, floating IPs, volumes, buckets, snapshots, SSH keys, S3 credentials, and API keys.
+Terraform provider for the Frostmoln Cloud Platform. Enables infrastructure-as-code management of compute instances, VPCs, subnets, security groups, floating IPs, volumes, buckets, snapshots, SSH keys, S3 credentials, and API keys.
 
 Provider name: `frostmoln`. Resource prefix: `frostmoln_` (e.g., `frostmoln_vpc`, `frostmoln_instance`).
 

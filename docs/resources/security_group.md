@@ -3,12 +3,12 @@
 page_title: "frostmoln_security_group Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a security group in the NordicLight Cloud Platform.
+  Manages a security group in the Frostmoln Cloud Platform.
 ---
 
 # frostmoln_security_group (Resource)
 
-Manages a security group in the NordicLight Cloud Platform.
+Manages a security group in the Frostmoln Cloud Platform.
 
 ## Example Usage
 

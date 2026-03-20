@@ -2,12 +2,12 @@
 page_title: "frostmoln_mysql_instance Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a managed MySQL database instance in the NordicLight platform.
+  Manages a managed MySQL database instance in the Frostmoln platform.
 ---
 
 # frostmoln_mysql_instance (Resource)
 
-Manages a managed MySQL database instance in the NordicLight platform.
+Manages a managed MySQL database instance in the Frostmoln platform.
 
 ## Example Usage
 

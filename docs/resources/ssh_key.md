@@ -3,12 +3,12 @@
 page_title: "frostmoln_ssh_key Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages an SSH key in the NordicLight platform.
+  Manages an SSH key in the Frostmoln platform.
 ---
 
 # frostmoln_ssh_key (Resource)
 
-Manages an SSH key in the NordicLight platform.
+Manages an SSH key in the Frostmoln platform.
 
 ## Example Usage
 

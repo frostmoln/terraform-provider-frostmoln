@@ -3,12 +3,12 @@
 page_title: "frostmoln_api_key Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages an API key in the NordicLight platform.
+  Manages an API key in the Frostmoln platform.
 ---
 
 # frostmoln_api_key (Resource)
 
-Manages an API key in the NordicLight platform.
+Manages an API key in the Frostmoln platform.
 
 ## Example Usage
 

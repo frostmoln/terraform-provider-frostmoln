@@ -1,4 +1,4 @@
-// Package client provides an HTTP client for the NordicLight API.
+// Package client provides an HTTP client for the Frostmoln API.
 package client
 
 import (
@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// Client is the NordicLight API client for the Terraform provider.
+// Client is the Frostmoln API client for the Terraform provider.
 type Client struct {
 	baseURL    string
 	httpClient *http.Client

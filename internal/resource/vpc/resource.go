@@ -41,7 +41,7 @@ func (r *vpcResource) Metadata(_ context.Context, req resource.MetadataRequest, 
 
 func (r *vpcResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a VPC in the NordicLight Cloud Platform.",
+		Description: "Manages a VPC in the Frostmoln Cloud Platform.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the VPC.",
