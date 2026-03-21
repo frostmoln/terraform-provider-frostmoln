@@ -6,7 +6,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 
-	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/acctest"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/acctest"
 )
 
 const testAccSSHKeyPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGwf2tOoGfmCSSeKYxFSS/JRbMbz5BJ5A9xVyXc5Oc/n acctest@test"

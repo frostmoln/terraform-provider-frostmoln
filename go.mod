@@ -1,4 +1,4 @@
-module git.nl.cloud/NordicLight/terraform-provider-frostmoln
+module go.frostmoln.internal/terraform-provider-frostmoln
 
 go 1.26.1
 

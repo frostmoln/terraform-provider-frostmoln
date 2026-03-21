@@ -6,7 +6,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 
-	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/acctest"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/acctest"
 )
 
 func TestAccSubnet_basic(t *testing.T) {

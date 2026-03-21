@@ -7,7 +7,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 
-	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/provider"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/provider"
 )
 
 var version = "dev"

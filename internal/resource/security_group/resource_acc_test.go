@@ -6,7 +6,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 
-	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/acctest"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/acctest"
 )
 
 func TestAccSecurityGroup_basic(t *testing.T) {

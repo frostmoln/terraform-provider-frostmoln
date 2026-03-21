@@ -1,7 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "local>NordicLight/renovate-config"
+    "local>frostmoln/renovate-config"
   ],
   "packageRules": [
     {

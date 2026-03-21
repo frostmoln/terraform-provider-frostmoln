@@ -12,8 +12,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 
-	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
-	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/provider"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/provider"
 )
 
 // TestAccProtoV6ProviderFactories is the standard map of provider factories

@@ -8,8 +8,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 
-	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/acctest"
-	"git.nl.cloud/NordicLight/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/acctest"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
 
 func TestAccBucket_basic(t *testing.T) {
