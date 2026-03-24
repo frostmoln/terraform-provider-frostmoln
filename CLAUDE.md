@@ -5,7 +5,7 @@ For project-wide conventions and architecture details, see:
 - [Architecture & service map](../claude-config/architecture.md)
 
 ## Module
-`git.nl.cloud/NordicLight/terraform-provider-frostmoln`
+`go.frostmoln.internal/terraform-provider-frostmoln`
 
 ## Project Overview
 

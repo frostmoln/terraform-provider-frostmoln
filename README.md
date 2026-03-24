@@ -10,7 +10,7 @@ Terraform provider for the [Frostmoln Cloud Platform](https://nordiclight.cloud)
 ## Building The Provider
 
 ```sh
-git clone git.nl.cloud/NordicLight/terraform-provider-frostmoln
+git clone go.frostmoln.internal/terraform-provider-frostmoln
 cd terraform-provider-frostmoln
 make build
 ```
