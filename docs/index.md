@@ -7,7 +7,7 @@ description: |-
 
 # Frostmoln Provider
 
-The Frostmoln provider enables Terraform to manage resources on the [Frostmoln Cloud Platform](https://nordiclight.cloud). Frostmoln is a European cloud infrastructure provider offering enterprise-grade cloud services with full data sovereignty in EU/EEA datacenters.
+The Frostmoln provider enables Terraform to manage resources on the [Frostmoln Cloud Platform](https://frostmoln.cloud). Frostmoln is a European cloud infrastructure provider offering enterprise-grade cloud services with full data sovereignty in EU/EEA datacenters.
 
 ## Example Usage
 
@@ -15,13 +15,13 @@ The Frostmoln provider enables Terraform to manage resources on the [Frostmoln C
 terraform {
   required_providers {
     frostmoln = {
-      source = "registry.terraform.io/nordiclight/frostmoln"
+      source = "registry.terraform.io/frostmoln/frostmoln"
     }
   }
 }
 
 provider "frostmoln" {
-  api_endpoint = "https://api.nordiclight.cloud"
+  api_endpoint = "https://api.frostmoln.cloud"
   api_key      = var.frostmoln_api_key
 }
 
@@ -37,5 +37,5 @@ variable "frostmoln_api_key" {
 
 ### Optional
 
-- `api_endpoint` (String) The API endpoint URL. Can also be set via the FROSTMOLN_API_ENDPOINT environment variable. Defaults to https://api.nordiclight.cloud.
+- `api_endpoint` (String) The API endpoint URL. Can also be set via the FROSTMOLN_API_ENDPOINT environment variable. Defaults to https://api.frostmoln.cloud.
 - `api_key` (String, Sensitive) The API key for authentication. Can also be set via the FROSTMOLN_API_KEY environment variable.

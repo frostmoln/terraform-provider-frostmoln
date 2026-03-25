@@ -137,7 +137,7 @@ Resources that return HTTP 202 (VPCs, volumes) use the poller in `internal/clien
 
 ```hcl
 provider "frostmoln" {
-  api_endpoint = "https://api.nordiclight.cloud"  # or FROSTMOLN_API_ENDPOINT
+  api_endpoint = "https://api.frostmoln.cloud"  # or FROSTMOLN_API_ENDPOINT
   api_key      = var.frostmoln_api_key             # or FROSTMOLN_API_KEY
 }
 ```

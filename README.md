@@ -1,6 +1,6 @@
 # Terraform Provider for Frostmoln Cloud
 
-Terraform provider for the [Frostmoln Cloud Platform](https://nordiclight.cloud), enabling infrastructure-as-code management of cloud resources with full data sovereignty in EU/EEA datacenters.
+Terraform provider for the [Frostmoln Cloud Platform](https://frostmoln.cloud), enabling infrastructure-as-code management of cloud resources with full data sovereignty in EU/EEA datacenters.
 
 ## Requirements
 
@@ -21,13 +21,13 @@ make build
 terraform {
   required_providers {
     frostmoln = {
-      source = "registry.terraform.io/nordiclight/frostmoln"
+      source = "registry.terraform.io/frostmoln/frostmoln"
     }
   }
 }
 
 provider "frostmoln" {
-  api_endpoint = "https://api.nordiclight.cloud"
+  api_endpoint = "https://api.frostmoln.cloud"
   api_key      = var.frostmoln_api_key
 }
 ```
