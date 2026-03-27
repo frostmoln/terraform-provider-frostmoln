@@ -12,7 +12,8 @@ jobs:
     env:
       GOPRIVATE: go.frostmoln.internal/*
       GONOSUMCHECK: go.frostmoln.internal/*
-      GOINSECURE: go.frostmoln.internal
+      GOINSECURE: go.frostmoln.internal,git.sm.internal
+      GIT_SSL_NO_VERIFY: "true"
     steps:
       - uses: actions/checkout@v6
       - name: Configure Go private modules

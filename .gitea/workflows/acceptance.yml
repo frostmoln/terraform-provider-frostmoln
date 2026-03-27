@@ -15,7 +15,8 @@ jobs:
     env:
       GOPRIVATE: go.frostmoln.internal/*
       GONOSUMCHECK: go.frostmoln.internal/*
-      GOINSECURE: go.frostmoln.internal
+      GOINSECURE: go.frostmoln.internal,git.sm.internal
+      GIT_SSL_NO_VERIFY: "true"
       API_ENDPOINT: http://10.0.10.183/api/v1
       PORTAL_URL: http://10.0.10.183
     steps:
