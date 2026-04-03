@@ -8,6 +8,7 @@ on:
 
 jobs:
   test:
+    if: gitea.event_name == 'pull_request'
     runs-on: ubuntu-latest
     env:
       GOPRIVATE: go.frostmoln.internal/*
