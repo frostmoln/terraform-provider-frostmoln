@@ -24,6 +24,7 @@ import (
 	nginxinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/nginx_instance"
 	postgresversionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/postgres_versions"
 	redisinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/redis_instance"
+	secretds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/secret"
 	subnetds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/subnet"
 	valkeyinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/valkey_instance"
 	vpcds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/vpc"
@@ -42,6 +43,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/postgres_read_replica"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/redis_instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/s3_credential"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/secret"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/security_group"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/security_group_rule"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/snapshot"
@@ -169,6 +171,7 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		redis_instance.NewResource,
 		cache_instance.NewResource,
 		valkey_instance.NewResource,
+		secret.NewResource,
 		api_key.NewResource,
 		apache_instance.NewResource,
 		nginx_instance.NewResource,
@@ -191,6 +194,7 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		redisinstanceds.NewDataSource,
 		cacheinstanceds.NewDataSource,
 		valkeyinstanceds.NewDataSource,
+		secretds.NewDataSource,
 		apacheinstanceds.NewDataSource,
 		nginxinstanceds.NewDataSource,
 	}
