@@ -53,7 +53,7 @@ jobs:
             -H "Authorization: Bearer ${BEARER}" \
             -H "Content-Type: application/json" \
             -H "Origin: ${PORTAL_URL}" \
-            -d '{"name":"tf-acctest-key","scopes":["*"]}')
+            -d '{"name":"tf-acctest-key","scopes":["compute:read","compute:write","storage:read","storage:write","network:read","network:write","billing:read","secrets:read","secrets:write"]}')
 
           API_KEY=$(echo "$KEY_RESP" | jq -r '.key')
           if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ]; then
