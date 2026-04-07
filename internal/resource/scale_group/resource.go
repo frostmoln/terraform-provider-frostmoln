@@ -109,10 +109,10 @@ func (r *scaleGroupResource) Schema(_ context.Context, _ resource.SchemaRequest,
 				},
 			},
 			"health_check_type": schema.StringAttribute{
-				Description: "The type of health check to use (e.g. \"ec2\", \"elb\").",
+				Description: "The type of health check to use: \"instance\", \"lb\", or \"both\".",
 				Optional:    true,
 				Computed:    true,
-				Default:     stringdefault.StaticString("ec2"),
+				Default:     stringdefault.StaticString("instance"),
 			},
 			"health_check_grace_period": schema.Int64Attribute{
 				Description: "The number of seconds to wait before starting health checks on new instances.",
