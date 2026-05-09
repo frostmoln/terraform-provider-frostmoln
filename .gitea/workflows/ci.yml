@@ -24,6 +24,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
+          cache: false
       - name: Test
         run: go test ./... -race -coverprofile=coverage.out
       - name: Check coverage
