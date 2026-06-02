@@ -399,3 +399,71 @@ func TestDefaultPollConfig(t *testing.T) {
 		t.Errorf("expected empty ResourceName, got %s", cfg.ResourceName)
 	}
 }
+
+func TestGetOperation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-1" {
+			json.NewEncoder(w).Encode(Operation{
+				OperationID:  "op-1",
+				Status:       "completed",
+				ResourceType: "load_balancer",
+				ResourceID:   "lb-1",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "test-key") // pragma: allowlist secret
+	op, err := c.GetOperation(context.Background(), "op-1")
+	if err != nil {
+		t.Fatalf("GetOperation failed: %v", err)
+	}
+	if op.ResourceID != "lb-1" || op.Status != "completed" {
+		t.Errorf("unexpected operation: %+v", op)
+	}
+}
+
+func TestWaitForOperationCompleted(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-2" {
+			calls++
+			status := "running"
+			if calls >= 2 {
+				status = "completed"
+			}
+			json.NewEncoder(w).Encode(Operation{OperationID: "op-2", Status: status, ResourceID: "lb-2"})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "test-key") // pragma: allowlist secret
+	op, err := c.WaitForOperation(context.Background(), "op-2", 5*time.Millisecond, 2*time.Second)
+	if err != nil {
+		t.Fatalf("WaitForOperation failed: %v", err)
+	}
+	if op.ResourceID != "lb-2" {
+		t.Errorf("expected resourceId lb-2, got %s", op.ResourceID)
+	}
+}
+
+func TestWaitForOperationFailed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-3" {
+			json.NewEncoder(w).Encode(Operation{OperationID: "op-3", Status: "failed", Error: "boom"})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "test-key") // pragma: allowlist secret
+	_, err := c.WaitForOperation(context.Background(), "op-3", 5*time.Millisecond, 2*time.Second)
+	if err == nil {
+		t.Fatal("expected error for failed operation")
+	}
+}

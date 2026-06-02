@@ -149,6 +149,74 @@ type OperationResponse struct {
 	ResourceType string `json:"resourceType"`
 }
 
+// Operation status values for async provisioning operations (matches the
+// provisioning service's domain.OperationStatus).
+const (
+	OperationStatusPending   = "pending"
+	OperationStatusRunning   = "running"
+	OperationStatusCompleted = "completed"
+	OperationStatusFailed    = "failed"
+	OperationStatusCancelled = "cancelled"
+)
+
+// Operation represents an async provisioning operation. It is returned both as
+// the 202 Accepted body from load-balancer create/delete (status "pending") and
+// from GET /v1/operations/{id} when polling. The field set matches the
+// provisioning service's domain.Operation.
+type Operation struct {
+	OperationID  string `json:"operationId"`
+	Status       string `json:"status"`
+	ResourceType string `json:"resourceType"`
+	ResourceID   string `json:"resourceId,omitempty"`
+	Error        string `json:"error,omitempty"`
+	Progress     int    `json:"progress"`
+	CreatedAt    string `json:"createdAt"`
+	CompletedAt  string `json:"completedAt,omitempty"`
+}
+
+// GetOperation fetches an async provisioning operation by ID.
+//
+// IMPORTANT: the operation endpoint is NOT tenant-scoped — it lives at
+// /v1/operations/{id}, not under /v1/tenants/{tid}/...
+func (c *Client) GetOperation(ctx context.Context, operationID string) (*Operation, error) {
+	resp, err := c.Get(ctx, fmt.Sprintf("/v1/operations/%s", operationID), nil)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResponse[Operation](resp)
+}
+
+// WaitForOperation polls GET /v1/operations/{id} until the operation reaches a
+// terminal state. On "completed" it returns the operation (whose ResourceID is
+// the affected resource's ID). On "failed"/"cancelled" it returns an error that
+// includes the operation's error message. It reuses the generic WaitForState
+// poller for interval/timeout/retry behavior.
+func (c *Client) WaitForOperation(ctx context.Context, operationID string, interval, timeout time.Duration) (*Operation, error) {
+	var lastOp *Operation
+	_, err := WaitForState(ctx, PollConfig{
+		Interval:     interval,
+		Timeout:      timeout,
+		TargetStates: []string{OperationStatusCompleted},
+		ErrorStates:  []string{OperationStatusFailed, OperationStatusCancelled},
+		ResourceName: fmt.Sprintf("operation %s", operationID),
+		PollFunc: func(pollCtx context.Context) (string, error) {
+			op, opErr := c.GetOperation(pollCtx, operationID)
+			if opErr != nil {
+				return "", opErr
+			}
+			lastOp = op
+			return op.Status, nil
+		},
+	})
+	if err != nil {
+		if lastOp != nil && lastOp.Error != "" {
+			return nil, fmt.Errorf("operation %s %s: %s", operationID, lastOp.Status, lastOp.Error)
+		}
+		return nil, err
+	}
+	return lastOp, nil
+}
+
 // Response represents an API response.
 type Response struct {
 	StatusCode int

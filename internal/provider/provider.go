@@ -35,6 +35,11 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/floating_ip"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/launch_template"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/lb_health_monitor"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/lb_listener"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/lb_member"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/lb_pool"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/load_balancer"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/mysql_backup"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/mysql_instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/mysql_read_replica"
@@ -160,6 +165,11 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		security_group.NewResource,
 		security_group_rule.NewResource,
 		floating_ip.NewResource,
+		load_balancer.NewResource,
+		lb_listener.NewResource,
+		lb_pool.NewResource,
+		lb_member.NewResource,
+		lb_health_monitor.NewResource,
 		volume.NewResource,
 		volume_attachment.NewResource,
 		snapshot.NewResource,
