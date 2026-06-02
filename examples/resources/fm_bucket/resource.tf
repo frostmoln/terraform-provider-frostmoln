@@ -1,6 +1,6 @@
 resource "fm_bucket" "example" {
   name          = "my-data-bucket"
-  region        = "eu-north-1"
+  region        = "sweden"
   storage_class = "standard"
   versioning    = "enabled"
 

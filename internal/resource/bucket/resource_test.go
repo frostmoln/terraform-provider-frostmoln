@@ -23,7 +23,7 @@ func TestBucketModelToCreateRequest(t *testing.T) {
 
 	model := BucketModel{
 		Name:         types.StringValue("my-bucket"),
-		Region:       types.StringValue("eu-north-1"),
+		Region:       types.StringValue("sweden"),
 		StorageClass: types.StringValue("standard"),
 		Versioning:   types.StringValue("enabled"),
 		Tags:         tags,
@@ -37,8 +37,8 @@ func TestBucketModelToCreateRequest(t *testing.T) {
 	if req.Name != "my-bucket" {
 		t.Errorf("expected name my-bucket, got %s", req.Name)
 	}
-	if req.Region != "eu-north-1" {
-		t.Errorf("expected region eu-north-1, got %s", req.Region)
+	if req.Region != "sweden" {
+		t.Errorf("expected region sweden, got %s", req.Region)
 	}
 	if req.StorageClass != "standard" {
 		t.Errorf("expected storage_class standard, got %s", req.StorageClass)
@@ -107,12 +107,12 @@ func TestBucketModelFromAPI(t *testing.T) {
 	ctx := context.Background()
 	b := &apiBucket{
 		Name:         "test-bucket",
-		Region:       "eu-north-1",
+		Region:       "sweden",
 		StorageClass: "standard",
 		Versioning:   "enabled",
 		ObjectCount:  42,
 		SizeBytes:    1024000,
-		Endpoint:     "https://s3.eu-north-1.nordiclight.cloud",
+		Endpoint:     "https://s3.sweden.nordiclight.cloud",
 		AccessKey:    "AKIAEXAMPLE",
 		Tags:         map[string]string{"env": "staging"},
 		CreatedAt:    "2025-03-01T10:00:00Z",
@@ -127,8 +127,8 @@ func TestBucketModelFromAPI(t *testing.T) {
 	if model.Name.ValueString() != "test-bucket" {
 		t.Errorf("expected name test-bucket, got %s", model.Name.ValueString())
 	}
-	if model.Region.ValueString() != "eu-north-1" {
-		t.Errorf("expected region eu-north-1, got %s", model.Region.ValueString())
+	if model.Region.ValueString() != "sweden" {
+		t.Errorf("expected region sweden, got %s", model.Region.ValueString())
 	}
 	if model.StorageClass.ValueString() != "standard" {
 		t.Errorf("expected storage class standard, got %s", model.StorageClass.ValueString())
@@ -142,7 +142,7 @@ func TestBucketModelFromAPI(t *testing.T) {
 	if model.SizeBytes.ValueInt64() != 1024000 {
 		t.Errorf("expected size_bytes 1024000, got %d", model.SizeBytes.ValueInt64())
 	}
-	if model.Endpoint.ValueString() != "https://s3.eu-north-1.nordiclight.cloud" {
+	if model.Endpoint.ValueString() != "https://s3.sweden.nordiclight.cloud" {
 		t.Errorf("expected endpoint, got %s", model.Endpoint.ValueString())
 	}
 	if model.AccessKey.ValueString() != "AKIAEXAMPLE" {
@@ -157,7 +157,7 @@ func TestBucketModelFromAPINoAccessKey(t *testing.T) {
 	ctx := context.Background()
 	b := &apiBucket{
 		Name:         "test-bucket",
-		Region:       "eu-north-1",
+		Region:       "sweden",
 		StorageClass: "standard",
 		Versioning:   "enabled",
 		CreatedAt:    "2025-03-01T10:00:00Z",
@@ -198,10 +198,10 @@ func TestBucketCreate(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(apiBucket{
 				Name:         req.Name,
-				Region:       "eu-north-1",
+				Region:       "sweden",
 				StorageClass: "standard",
 				Versioning:   "enabled",
-				Endpoint:     "https://s3.eu-north-1.nordiclight.cloud",
+				Endpoint:     "https://s3.sweden.nordiclight.cloud",
 				AccessKey:    "AKIAEXAMPLE",
 				CreatedAt:    "2025-03-01T10:00:00Z",
 			})
@@ -217,7 +217,7 @@ func TestBucketCreate(t *testing.T) {
 		t.Fatalf("configure failed: %v", err)
 	}
 
-	apiReq := apiCreateBucketRequest{Name: "test-bucket", Region: "eu-north-1"}
+	apiReq := apiCreateBucketRequest{Name: "test-bucket", Region: "sweden"}
 	resp, err := c.Post(context.Background(), c.TenantPath("/buckets"), apiReq)
 	if err != nil {
 		t.Fatalf("post failed: %v", err)
@@ -247,12 +247,12 @@ func TestBucketRead(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/buckets/test-bucket":
 			json.NewEncoder(w).Encode(apiBucket{
 				Name:         "test-bucket",
-				Region:       "eu-north-1",
+				Region:       "sweden",
 				StorageClass: "standard",
 				Versioning:   "enabled",
 				ObjectCount:  10,
 				SizeBytes:    5000,
-				Endpoint:     "https://s3.eu-north-1.nordiclight.cloud",
+				Endpoint:     "https://s3.sweden.nordiclight.cloud",
 				CreatedAt:    "2025-03-01T10:00:00Z",
 			})
 		default:
@@ -303,10 +303,10 @@ func TestBucketUpdate(t *testing.T) {
 			}
 			json.NewEncoder(w).Encode(apiBucket{
 				Name:         "test-bucket",
-				Region:       "eu-north-1",
+				Region:       "sweden",
 				StorageClass: "standard",
 				Versioning:   "suspended",
-				Endpoint:     "https://s3.eu-north-1.nordiclight.cloud",
+				Endpoint:     "https://s3.sweden.nordiclight.cloud",
 				CreatedAt:    "2025-03-01T10:00:00Z",
 			})
 		default:
@@ -497,12 +497,12 @@ func TestBucketConfigureValidClient(t *testing.T) {
 func TestBucketResourceCreate(t *testing.T) {
 	bucketResp := apiBucket{
 		Name:         "my-bucket",
-		Region:       "eu-north-1",
+		Region:       "sweden",
 		StorageClass: "standard",
 		Versioning:   "enabled",
 		ObjectCount:  0,
 		SizeBytes:    0,
-		Endpoint:     "https://s3.eu-north-1.nordiclight.cloud",
+		Endpoint:     "https://s3.sweden.nordiclight.cloud",
 		AccessKey:    "AKIAEXAMPLE",
 		CreatedAt:    "2025-06-01T12:00:00Z",
 	}
@@ -529,7 +529,7 @@ func TestBucketResourceCreate(t *testing.T) {
 	s := bucketSchema(t)
 	planVal := tftypes.NewValue(bucketObjectType(), map[string]tftypes.Value{
 		"name":          tftypes.NewValue(tftypes.String, "my-bucket"),
-		"region":        tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":        tftypes.NewValue(tftypes.String, "sweden"),
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
@@ -557,7 +557,7 @@ func TestBucketResourceCreate(t *testing.T) {
 	if state.AccessKey.ValueString() != "AKIAEXAMPLE" {
 		t.Errorf("expected AccessKey AKIAEXAMPLE, got %s", state.AccessKey.ValueString())
 	}
-	if state.Endpoint.ValueString() != "https://s3.eu-north-1.nordiclight.cloud" {
+	if state.Endpoint.ValueString() != "https://s3.sweden.nordiclight.cloud" {
 		t.Errorf("expected Endpoint, got %s", state.Endpoint.ValueString())
 	}
 }
@@ -565,12 +565,12 @@ func TestBucketResourceCreate(t *testing.T) {
 func TestBucketResourceRead(t *testing.T) {
 	bucketResp := apiBucket{
 		Name:         "read-bucket",
-		Region:       "eu-north-1",
+		Region:       "sweden",
 		StorageClass: "standard",
 		Versioning:   "enabled",
 		ObjectCount:  42,
 		SizeBytes:    1024000,
-		Endpoint:     "https://s3.eu-north-1.nordiclight.cloud",
+		Endpoint:     "https://s3.sweden.nordiclight.cloud",
 		CreatedAt:    "2025-06-01T12:00:00Z",
 	}
 
@@ -595,13 +595,13 @@ func TestBucketResourceRead(t *testing.T) {
 	s := bucketSchema(t)
 	stateVal := tftypes.NewValue(bucketObjectType(), map[string]tftypes.Value{
 		"name":          tftypes.NewValue(tftypes.String, "read-bucket"),
-		"region":        tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":        tftypes.NewValue(tftypes.String, "sweden"),
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 0),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, 0),
-		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.eu-north-1.nordiclight.cloud"),
+		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.sweden.nordiclight.cloud"),
 		"access_key":    tftypes.NewValue(tftypes.String, "AKIAOLD"),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
@@ -643,7 +643,7 @@ func TestBucketResourceReadNotFoundRemovesState(t *testing.T) {
 	s := bucketSchema(t)
 	stateVal := tftypes.NewValue(bucketObjectType(), map[string]tftypes.Value{
 		"name":          tftypes.NewValue(tftypes.String, "gone-bucket"),
-		"region":        tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":        tftypes.NewValue(tftypes.String, "sweden"),
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
@@ -670,12 +670,12 @@ func TestBucketResourceReadNotFoundRemovesState(t *testing.T) {
 func TestBucketResourceUpdate(t *testing.T) {
 	bucketResp := apiBucket{
 		Name:         "upd-bucket",
-		Region:       "eu-north-1",
+		Region:       "sweden",
 		StorageClass: "standard",
 		Versioning:   "suspended",
 		ObjectCount:  10,
 		SizeBytes:    5000,
-		Endpoint:     "https://s3.eu-north-1.nordiclight.cloud",
+		Endpoint:     "https://s3.sweden.nordiclight.cloud",
 		CreatedAt:    "2025-06-01T12:00:00Z",
 	}
 
@@ -701,26 +701,26 @@ func TestBucketResourceUpdate(t *testing.T) {
 
 	stateVal := tftypes.NewValue(bucketObjectType(), map[string]tftypes.Value{
 		"name":          tftypes.NewValue(tftypes.String, "upd-bucket"),
-		"region":        tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":        tftypes.NewValue(tftypes.String, "sweden"),
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 10),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, 5000),
-		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.eu-north-1.nordiclight.cloud"),
+		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.sweden.nordiclight.cloud"),
 		"access_key":    tftypes.NewValue(tftypes.String, "AKIAOLD"),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
 	planVal := tftypes.NewValue(bucketObjectType(), map[string]tftypes.Value{
 		"name":          tftypes.NewValue(tftypes.String, "upd-bucket"),
-		"region":        tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":        tftypes.NewValue(tftypes.String, "sweden"),
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "suspended"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
-		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.eu-north-1.nordiclight.cloud"),
+		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.sweden.nordiclight.cloud"),
 		"access_key":    tftypes.NewValue(tftypes.String, "AKIAOLD"),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
@@ -769,7 +769,7 @@ func TestBucketResourceDelete(t *testing.T) {
 	s := bucketSchema(t)
 	stateVal := tftypes.NewValue(bucketObjectType(), map[string]tftypes.Value{
 		"name":          tftypes.NewValue(tftypes.String, "del-bucket"),
-		"region":        tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":        tftypes.NewValue(tftypes.String, "sweden"),
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
@@ -810,7 +810,7 @@ func TestBucketResourceDeleteAlreadyGone(t *testing.T) {
 	s := bucketSchema(t)
 	stateVal := tftypes.NewValue(bucketObjectType(), map[string]tftypes.Value{
 		"name":          tftypes.NewValue(tftypes.String, "gone-bucket"),
-		"region":        tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":        tftypes.NewValue(tftypes.String, "sweden"),
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),

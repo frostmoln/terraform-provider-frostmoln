@@ -119,7 +119,7 @@ func TestReadByID(t *testing.T) {
 			Name:        "production",
 			Description: "Production VPC",
 			CIDR:        "10.0.0.0/16",
-			Region:      "eu-north-1",
+			Region:      "sweden",
 			Status:      "active",
 			IsDefault:   false,
 			SubnetCount: 3,
@@ -161,8 +161,8 @@ func TestReadByID(t *testing.T) {
 
 func TestReadByName(t *testing.T) {
 	vpcs := []apiVPC{
-		{ID: "vpc-1", Name: "production", CIDR: "10.0.0.0/16", Region: "eu-north-1", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"},
-		{ID: "vpc-2", Name: "staging", CIDR: "10.1.0.0/16", Region: "eu-north-1", Status: "active", CreatedAt: "2025-01-02T00:00:00Z"},
+		{ID: "vpc-1", Name: "production", CIDR: "10.0.0.0/16", Region: "sweden", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"},
+		{ID: "vpc-2", Name: "staging", CIDR: "10.1.0.0/16", Region: "sweden", Status: "active", CreatedAt: "2025-01-02T00:00:00Z"},
 	}
 	server := newTestServer(t, vpcs)
 	defer server.Close()
@@ -200,7 +200,7 @@ func TestReadByName(t *testing.T) {
 
 func TestReadNotFound(t *testing.T) {
 	vpcs := []apiVPC{
-		{ID: "vpc-1", Name: "production", CIDR: "10.0.0.0/16", Region: "eu-north-1", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"},
+		{ID: "vpc-1", Name: "production", CIDR: "10.0.0.0/16", Region: "sweden", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"},
 	}
 	server := newTestServer(t, vpcs)
 	defer server.Close()
@@ -262,7 +262,7 @@ func TestTFSDK_ReadByID(t *testing.T) {
 			Name:        "prod-vpc",
 			Description: "Production VPC",
 			CIDR:        "10.0.0.0/16",
-			Region:      "eu-north-1",
+			Region:      "sweden",
 			Status:      "active",
 			IsDefault:   false,
 			SubnetCount: 3,
@@ -329,8 +329,8 @@ func TestTFSDK_ReadByID(t *testing.T) {
 
 func TestTFSDK_ReadByName(t *testing.T) {
 	vpcs := []apiVPC{
-		{ID: "vpc-1", Name: "prod-vpc", CIDR: "10.0.0.0/16", Region: "eu-north-1", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"},
-		{ID: "vpc-2", Name: "staging-vpc", CIDR: "10.1.0.0/16", Region: "eu-north-1", Status: "active", CreatedAt: "2025-01-02T00:00:00Z"},
+		{ID: "vpc-1", Name: "prod-vpc", CIDR: "10.0.0.0/16", Region: "sweden", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"},
+		{ID: "vpc-2", Name: "staging-vpc", CIDR: "10.1.0.0/16", Region: "sweden", Status: "active", CreatedAt: "2025-01-02T00:00:00Z"},
 	}
 	server := newTestServer(t, vpcs)
 	defer server.Close()
@@ -384,7 +384,7 @@ func TestTFSDK_ReadByName(t *testing.T) {
 }
 
 func TestTFSDK_ReadBothIDAndName(t *testing.T) {
-	vpcs := []apiVPC{{ID: "vpc-1", Name: "test", CIDR: "10.0.0.0/16", Region: "eu-north-1", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"}}
+	vpcs := []apiVPC{{ID: "vpc-1", Name: "test", CIDR: "10.0.0.0/16", Region: "sweden", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"}}
 	server := newTestServer(t, vpcs)
 	defer server.Close()
 
@@ -427,7 +427,7 @@ func TestTFSDK_ReadBothIDAndName(t *testing.T) {
 }
 
 func TestTFSDK_ReadNeitherIDNorName(t *testing.T) {
-	vpcs := []apiVPC{{ID: "vpc-1", Name: "test", CIDR: "10.0.0.0/16", Region: "eu-north-1", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"}}
+	vpcs := []apiVPC{{ID: "vpc-1", Name: "test", CIDR: "10.0.0.0/16", Region: "sweden", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"}}
 	server := newTestServer(t, vpcs)
 	defer server.Close()
 
@@ -470,7 +470,7 @@ func TestTFSDK_ReadNeitherIDNorName(t *testing.T) {
 }
 
 func TestTFSDK_ReadNameNotFound(t *testing.T) {
-	vpcs := []apiVPC{{ID: "vpc-1", Name: "existing", CIDR: "10.0.0.0/16", Region: "eu-north-1", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"}}
+	vpcs := []apiVPC{{ID: "vpc-1", Name: "existing", CIDR: "10.0.0.0/16", Region: "sweden", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"}}
 	server := newTestServer(t, vpcs)
 	defer server.Close()
 
@@ -518,7 +518,7 @@ func TestAPIVPCSerialization(t *testing.T) {
 		Name:        "test",
 		Description: "Test VPC",
 		CIDR:        "10.0.0.0/16",
-		Region:      "eu-north-1",
+		Region:      "sweden",
 		Status:      "active",
 		IsDefault:   true,
 		SubnetCount: 2,

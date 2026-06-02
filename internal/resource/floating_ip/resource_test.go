@@ -22,7 +22,7 @@ func TestFloatingIPModelFromAPI(t *testing.T) {
 	fip := &apiFloatingIP{
 		ID:         "fip-123",
 		Address:    "203.0.113.10",
-		Region:     "eu-north-1",
+		Region:     "sweden",
 		Status:     "active",
 		InstanceID: "inst-456",
 		PrivateIP:  "10.0.1.5",
@@ -44,8 +44,8 @@ func TestFloatingIPModelFromAPI(t *testing.T) {
 	if model.Address.ValueString() != "203.0.113.10" {
 		t.Errorf("expected Address 203.0.113.10, got %s", model.Address.ValueString())
 	}
-	if model.Region.ValueString() != "eu-north-1" {
-		t.Errorf("expected Region eu-north-1, got %s", model.Region.ValueString())
+	if model.Region.ValueString() != "sweden" {
+		t.Errorf("expected Region sweden, got %s", model.Region.ValueString())
 	}
 	if model.Status.ValueString() != "active" {
 		t.Errorf("expected Status active, got %s", model.Status.ValueString())
@@ -96,7 +96,7 @@ func TestFloatingIPModelToAllocateRequest(t *testing.T) {
 	tags, _ := types.MapValueFrom(ctx, types.StringType, map[string]string{"env": "prod"})
 
 	model := FloatingIPModel{
-		Region: types.StringValue("eu-north-1"),
+		Region: types.StringValue("sweden"),
 		Tags:   tags,
 	}
 
@@ -107,8 +107,8 @@ func TestFloatingIPModelToAllocateRequest(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
 
-	if req.Region != "eu-north-1" {
-		t.Errorf("expected Region eu-north-1, got %s", req.Region)
+	if req.Region != "sweden" {
+		t.Errorf("expected Region sweden, got %s", req.Region)
 	}
 	if req.Tags["env"] != "prod" {
 		t.Errorf("expected tag env=prod, got %v", req.Tags)
@@ -140,7 +140,7 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 	fipData := apiFloatingIP{
 		ID:        "fip-test-1",
 		Address:   "203.0.113.50",
-		Region:    "eu-north-1",
+		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}
@@ -148,7 +148,7 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 	fipAssociated := apiFloatingIP{
 		ID:         "fip-test-1",
 		Address:    "203.0.113.50",
-		Region:     "eu-north-1",
+		Region:     "sweden",
 		Status:     "active",
 		InstanceID: "inst-123",
 		PrivateIP:  "10.0.1.5",
@@ -158,7 +158,7 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 	fipDisassociated := apiFloatingIP{
 		ID:        "fip-test-1",
 		Address:   "203.0.113.50",
-		Region:    "eu-north-1",
+		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}
@@ -215,7 +215,7 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 	ctx := context.Background()
 
 	// Test Allocate
-	allocateReq := apiAllocateFloatingIPRequest{Region: "eu-north-1"}
+	allocateReq := apiAllocateFloatingIPRequest{Region: "sweden"}
 	apiResp, err := c.Post(ctx, c.TenantPath("/floating-ips"), allocateReq)
 	if err != nil {
 		t.Fatalf("Allocate failed: %v", err)
@@ -383,7 +383,7 @@ func TestFIPResourceCreate(t *testing.T) {
 	fipResp := apiFloatingIP{
 		ID:        "fip-new-1",
 		Address:   "203.0.113.100",
-		Region:    "eu-north-1",
+		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
@@ -411,7 +411,7 @@ func TestFIPResourceCreate(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"address":     tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -445,7 +445,7 @@ func TestFIPResourceCreateWithAssociation(t *testing.T) {
 	fipAllocated := apiFloatingIP{
 		ID:        "fip-assoc-1",
 		Address:   "203.0.113.101",
-		Region:    "eu-north-1",
+		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
@@ -453,7 +453,7 @@ func TestFIPResourceCreateWithAssociation(t *testing.T) {
 	fipAssociated := apiFloatingIP{
 		ID:         "fip-assoc-1",
 		Address:    "203.0.113.101",
-		Region:     "eu-north-1",
+		Region:     "sweden",
 		Status:     "active",
 		InstanceID: "inst-123",
 		PrivateIP:  "10.0.1.5",
@@ -486,7 +486,7 @@ func TestFIPResourceCreateWithAssociation(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"address":     tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-123"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -517,7 +517,7 @@ func TestFIPResourceRead(t *testing.T) {
 	fipResp := apiFloatingIP{
 		ID:        "fip-read-1",
 		Address:   "203.0.113.50",
-		Region:    "eu-north-1",
+		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
@@ -544,7 +544,7 @@ func TestFIPResourceRead(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-read-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -586,7 +586,7 @@ func TestFIPResourceReadNotFoundRemovesState(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-gone"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.99"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -612,14 +612,14 @@ func TestFIPResourceUpdate(t *testing.T) {
 	fipResp := apiFloatingIP{
 		ID:        "fip-upd-1",
 		Address:   "203.0.113.50",
-		Region:    "eu-north-1",
+		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
 	fipAssocResp := apiFloatingIP{
 		ID:         "fip-upd-1",
 		Address:    "203.0.113.50",
-		Region:     "eu-north-1",
+		Region:     "sweden",
 		Status:     "active",
 		InstanceID: "inst-new",
 		PrivateIP:  "10.0.1.10",
@@ -661,7 +661,7 @@ func TestFIPResourceUpdate(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-upd-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-old"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
@@ -673,7 +673,7 @@ func TestFIPResourceUpdate(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-upd-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-new"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -725,7 +725,7 @@ func TestFIPResourceDelete(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-del-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -764,7 +764,7 @@ func TestFIPResourceDeleteAlreadyGone(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-already-gone"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.99"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -806,7 +806,7 @@ func TestFIPResourceCreateAPIError(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"address":     tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -844,7 +844,7 @@ func TestFIPResourceCreateBadResponseBody(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"address":     tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -865,7 +865,7 @@ func TestFIPResourceCreateAssociationError(t *testing.T) {
 	fipResp := apiFloatingIP{
 		ID:        "fip-ae-1",
 		Address:   "203.0.113.55",
-		Region:    "eu-north-1",
+		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
@@ -899,7 +899,7 @@ func TestFIPResourceCreateAssociationError(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"address":     tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-fail"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -920,7 +920,7 @@ func TestFIPResourceCreateAssociationBadResponseThenReread(t *testing.T) {
 	fipAllocated := apiFloatingIP{
 		ID:        "fip-reread-1",
 		Address:   "203.0.113.60",
-		Region:    "eu-north-1",
+		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
@@ -928,7 +928,7 @@ func TestFIPResourceCreateAssociationBadResponseThenReread(t *testing.T) {
 	fipAssociated := apiFloatingIP{
 		ID:         "fip-reread-1",
 		Address:    "203.0.113.60",
-		Region:     "eu-north-1",
+		Region:     "sweden",
 		Status:     "active",
 		InstanceID: "inst-789",
 		PrivateIP:  "10.0.1.20",
@@ -965,7 +965,7 @@ func TestFIPResourceCreateAssociationBadResponseThenReread(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"address":     tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-789"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -996,7 +996,7 @@ func TestFIPResourceCreateAssocRereadGetError(t *testing.T) {
 	fipAllocated := apiFloatingIP{
 		ID:        "fip-rre-1",
 		Address:   "203.0.113.70",
-		Region:    "eu-north-1",
+		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
@@ -1035,7 +1035,7 @@ func TestFIPResourceCreateAssocRereadGetError(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"address":     tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-fail"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1056,7 +1056,7 @@ func TestFIPResourceCreateAssocRereadBadJSON(t *testing.T) {
 	fipAllocated := apiFloatingIP{
 		ID:        "fip-rbj-1",
 		Address:   "203.0.113.71",
-		Region:    "eu-north-1",
+		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
@@ -1092,7 +1092,7 @@ func TestFIPResourceCreateAssocRereadBadJSON(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"address":     tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-fail"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1128,7 +1128,7 @@ func TestFIPResourceReadAPIError(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-err-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -1162,7 +1162,7 @@ func TestFIPResourceReadBadJSON(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-bad-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -1183,7 +1183,7 @@ func TestFIPResourceUpdateDisassociateOnly(t *testing.T) {
 	fipResp := apiFloatingIP{
 		ID:        "fip-dis-1",
 		Address:   "203.0.113.50",
-		Region:    "eu-north-1",
+		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
@@ -1215,7 +1215,7 @@ func TestFIPResourceUpdateDisassociateOnly(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-dis-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-old"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
@@ -1227,7 +1227,7 @@ func TestFIPResourceUpdateDisassociateOnly(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-dis-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1258,7 +1258,7 @@ func TestFIPResourceUpdateTagsOnly(t *testing.T) {
 	fipResp := apiFloatingIP{
 		ID:        "fip-tags-1",
 		Address:   "203.0.113.50",
-		Region:    "eu-north-1",
+		Region:    "sweden",
 		Status:    "available",
 		Tags:      map[string]string{"env": "prod"},
 		CreatedAt: "2025-06-01T12:00:00Z",
@@ -1293,7 +1293,7 @@ func TestFIPResourceUpdateTagsOnly(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-tags-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -1305,7 +1305,7 @@ func TestFIPResourceUpdateTagsOnly(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-tags-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{
 			"env": tftypes.NewValue(tftypes.String, "prod"),
@@ -1354,7 +1354,7 @@ func TestFIPResourceUpdateDisassociateError(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-de-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-old"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
@@ -1365,7 +1365,7 @@ func TestFIPResourceUpdateDisassociateError(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-de-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1410,7 +1410,7 @@ func TestFIPResourceUpdateAssociateError(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-ae2-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-old"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
@@ -1421,7 +1421,7 @@ func TestFIPResourceUpdateAssociateError(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-ae2-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-new"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1464,7 +1464,7 @@ func TestFIPResourceUpdatePatchError(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-pe-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -1475,7 +1475,7 @@ func TestFIPResourceUpdatePatchError(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-pe-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{
 			"env": tftypes.NewValue(tftypes.String, "prod"),
@@ -1521,7 +1521,7 @@ func TestFIPResourceUpdateReadError(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-re-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -1532,7 +1532,7 @@ func TestFIPResourceUpdateReadError(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-re-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1573,7 +1573,7 @@ func TestFIPResourceUpdateReadBadJSON(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-rbj-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -1584,7 +1584,7 @@ func TestFIPResourceUpdateReadBadJSON(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-rbj-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1621,7 +1621,7 @@ func TestFIPResourceDeleteAPIError(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-del-err"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),

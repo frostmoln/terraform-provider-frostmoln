@@ -32,7 +32,7 @@ func TestVolumeModel_toCreateRequest(t *testing.T) {
 		Description: types.StringValue("test volume"),
 		SizeGB:      types.Int64Value(100),
 		VolumeType:  types.StringValue("ssd"),
-		Zone:        types.StringValue("eu-north-1a"),
+		Zone:        types.StringValue("sweden-a"),
 		SnapshotID:  types.StringNull(),
 		Encrypted:   types.BoolValue(true),
 		Tags:        tags,
@@ -55,8 +55,8 @@ func TestVolumeModel_toCreateRequest(t *testing.T) {
 	if req.VolumeType != "ssd" {
 		t.Errorf("expected volumeType ssd, got %s", req.VolumeType)
 	}
-	if req.Zone != "eu-north-1a" {
-		t.Errorf("expected zone eu-north-1a, got %s", req.Zone)
+	if req.Zone != "sweden-a" {
+		t.Errorf("expected zone sweden-a, got %s", req.Zone)
 	}
 	if req.SnapshotID != "" {
 		t.Errorf("expected empty snapshotId, got %s", req.SnapshotID)
@@ -113,12 +113,12 @@ func TestVolumeModel_fromAPI(t *testing.T) {
 		Description: "test description",
 		SizeGB:      100,
 		VolumeType:  "ssd",
-		Zone:        "eu-north-1a",
+		Zone:        "sweden-a",
 		Encrypted:   true,
 		Status:      "available",
 		IOPS:        3000,
 		Throughput:  125,
-		Region:      "eu-north-1",
+		Region:      "sweden",
 		AttachedTo:  "inst-456",
 		DevicePath:  "/dev/vdb",
 		Tags:        map[string]string{"env": "prod"},
@@ -146,8 +146,8 @@ func TestVolumeModel_fromAPI(t *testing.T) {
 	if model.VolumeType.ValueString() != "ssd" {
 		t.Errorf("expected volumeType ssd, got %s", model.VolumeType.ValueString())
 	}
-	if model.Zone.ValueString() != "eu-north-1a" {
-		t.Errorf("expected zone eu-north-1a, got %s", model.Zone.ValueString())
+	if model.Zone.ValueString() != "sweden-a" {
+		t.Errorf("expected zone sweden-a, got %s", model.Zone.ValueString())
 	}
 	if !model.Encrypted.ValueBool() {
 		t.Error("expected encrypted true")
@@ -161,8 +161,8 @@ func TestVolumeModel_fromAPI(t *testing.T) {
 	if model.Throughput.ValueInt64() != 125 {
 		t.Errorf("expected throughput 125, got %d", model.Throughput.ValueInt64())
 	}
-	if model.Region.ValueString() != "eu-north-1" {
-		t.Errorf("expected region eu-north-1, got %s", model.Region.ValueString())
+	if model.Region.ValueString() != "sweden" {
+		t.Errorf("expected region sweden, got %s", model.Region.ValueString())
 	}
 	if model.AttachedTo.ValueString() != "inst-456" {
 		t.Errorf("expected attachedTo inst-456, got %s", model.AttachedTo.ValueString())
@@ -186,7 +186,7 @@ func TestVolumeModel_fromAPI_nullOptionalFields(t *testing.T) {
 		VolumeType: "hdd",
 		Encrypted:  false,
 		Status:     "available",
-		Region:     "eu-north-1",
+		Region:     "sweden",
 		CreatedAt:  "2025-01-01T00:00:00Z",
 	}
 
@@ -233,7 +233,7 @@ func TestVolumeResource_CreateAndRead(t *testing.T) {
 		Status:     "available",
 		IOPS:       3000,
 		Throughput: 125,
-		Region:     "eu-north-1",
+		Region:     "sweden",
 		CreatedAt:  "2025-01-01T00:00:00Z",
 	}
 
@@ -322,7 +322,7 @@ func TestVolumeResource_Update(t *testing.T) {
 		VolumeType: "ssd",
 		Encrypted:  true,
 		Status:     "available",
-		Region:     "eu-north-1",
+		Region:     "sweden",
 		CreatedAt:  "2025-01-01T00:00:00Z",
 	}
 
@@ -522,7 +522,7 @@ func TestVolumeResource_TFSDKCreate(t *testing.T) {
 				VolumeType: "ssd",
 				Encrypted:  true,
 				Status:     "creating",
-				Region:     "eu-north-1",
+				Region:     "sweden",
 				CreatedAt:  "2025-01-01T00:00:00Z",
 			})
 
@@ -541,7 +541,7 @@ func TestVolumeResource_TFSDKCreate(t *testing.T) {
 				Status:     status,
 				IOPS:       3000,
 				Throughput: 125,
-				Region:     "eu-north-1",
+				Region:     "sweden",
 				CreatedAt:  "2025-01-01T00:00:00Z",
 			})
 
@@ -615,8 +615,8 @@ func TestVolumeResource_TFSDKCreate(t *testing.T) {
 	if model.IOPS.ValueInt64() != 3000 {
 		t.Errorf("expected IOPS 3000, got %d", model.IOPS.ValueInt64())
 	}
-	if model.Region.ValueString() != "eu-north-1" {
-		t.Errorf("expected Region eu-north-1, got %s", model.Region.ValueString())
+	if model.Region.ValueString() != "sweden" {
+		t.Errorf("expected Region sweden, got %s", model.Region.ValueString())
 	}
 }
 
@@ -748,7 +748,7 @@ func TestVolumeResource_TFSDKReadNotFound(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -780,7 +780,7 @@ func TestVolumeResource_TFSDKUpdate_PatchAndResize(t *testing.T) {
 		Status:     "available",
 		IOPS:       3000,
 		Throughput: 125,
-		Region:     "eu-north-1",
+		Region:     "sweden",
 		CreatedAt:  "2025-01-01T00:00:00Z",
 	}
 
@@ -840,7 +840,7 @@ func TestVolumeResource_TFSDKUpdate_PatchAndResize(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -859,7 +859,7 @@ func TestVolumeResource_TFSDKUpdate_PatchAndResize(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -942,7 +942,7 @@ func TestVolumeResource_TFSDKDelete(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1311,7 +1311,7 @@ func TestVolumeResource_TFSDKReadAPIError(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1372,7 +1372,7 @@ func TestVolumeResource_TFSDKReadBadJSON(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1432,7 +1432,7 @@ func TestVolumeResource_TFSDKUpdatePatchError(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1451,7 +1451,7 @@ func TestVolumeResource_TFSDKUpdatePatchError(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1512,7 +1512,7 @@ func TestVolumeResource_TFSDKUpdateResizeError(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1531,7 +1531,7 @@ func TestVolumeResource_TFSDKUpdateResizeError(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1593,7 +1593,7 @@ func TestVolumeResource_TFSDKUpdateReadError(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1652,7 +1652,7 @@ func TestVolumeResource_TFSDKDeleteNotFound(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1709,7 +1709,7 @@ func TestVolumeResource_TFSDKDeleteAPIError(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),

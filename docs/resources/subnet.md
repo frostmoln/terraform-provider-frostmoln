@@ -18,7 +18,7 @@ resource "frostmoln_subnet" "example" {
   description = "Public web tier subnet"
   cidr        = "10.0.1.0/24"
   vpc_id      = frostmoln_vpc.example.id
-  zone        = "eu-north-1a"
+  zone        = "sweden-a"
   gateway_ip  = "10.0.1.1"
   dns_servers = ["10.0.0.2"]
   is_public   = true

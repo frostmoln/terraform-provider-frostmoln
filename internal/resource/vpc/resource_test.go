@@ -24,7 +24,7 @@ func TestVPCModelFromAPI(t *testing.T) {
 		Name:        "test-vpc",
 		Description: "A test VPC",
 		CIDR:        "10.0.0.0/16",
-		Region:      "eu-north-1",
+		Region:      "sweden",
 		Status:      "active",
 		IsDefault:   false,
 		SubnetCount: 3,
@@ -53,8 +53,8 @@ func TestVPCModelFromAPI(t *testing.T) {
 	if model.CIDR.ValueString() != "10.0.0.0/16" {
 		t.Errorf("expected CIDR 10.0.0.0/16, got %s", model.CIDR.ValueString())
 	}
-	if model.Region.ValueString() != "eu-north-1" {
-		t.Errorf("expected Region eu-north-1, got %s", model.Region.ValueString())
+	if model.Region.ValueString() != "sweden" {
+		t.Errorf("expected Region sweden, got %s", model.Region.ValueString())
 	}
 	if model.Status.ValueString() != "active" {
 		t.Errorf("expected Status active, got %s", model.Status.ValueString())
@@ -113,7 +113,7 @@ func TestVPCModelToCreateRequest(t *testing.T) {
 		Name:        types.StringValue("my-vpc"),
 		Description: types.StringValue("My VPC"),
 		CIDR:        types.StringValue("10.0.0.0/16"),
-		Region:      types.StringValue("eu-north-1"),
+		Region:      types.StringValue("sweden"),
 		Tags:        tags,
 	}
 
@@ -133,8 +133,8 @@ func TestVPCModelToCreateRequest(t *testing.T) {
 	if req.CIDR != "10.0.0.0/16" {
 		t.Errorf("expected CIDR 10.0.0.0/16, got %s", req.CIDR)
 	}
-	if req.Region != "eu-north-1" {
-		t.Errorf("expected Region eu-north-1, got %s", req.Region)
+	if req.Region != "sweden" {
+		t.Errorf("expected Region sweden, got %s", req.Region)
 	}
 	if req.Tags["env"] != "prod" {
 		t.Errorf("expected tag env=prod, got %v", req.Tags)
@@ -173,7 +173,7 @@ func TestVPCResourceCRUD(t *testing.T) {
 		ID:        "vpc-test-1",
 		Name:      "test-vpc",
 		CIDR:      "10.0.0.0/16",
-		Region:    "eu-north-1",
+		Region:    "sweden",
 		Status:    "active",
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}
@@ -183,7 +183,7 @@ func TestVPCResourceCRUD(t *testing.T) {
 		Name:        "updated-vpc",
 		Description: "Updated description",
 		CIDR:        "10.0.0.0/16",
-		Region:      "eu-north-1",
+		Region:      "sweden",
 		Status:      "active",
 		CreatedAt:   "2025-01-01T00:00:00Z",
 		UpdatedAt:   "2025-01-02T00:00:00Z",
@@ -288,7 +288,7 @@ func TestVPCResourceAsyncCreate(t *testing.T) {
 				ID:     "vpc-async-1",
 				Name:   "async-vpc",
 				CIDR:   "10.0.0.0/16",
-				Region: "eu-north-1",
+				Region: "sweden",
 				Status: "creating",
 			})
 
@@ -303,7 +303,7 @@ func TestVPCResourceAsyncCreate(t *testing.T) {
 				ID:        "vpc-async-1",
 				Name:      "async-vpc",
 				CIDR:      "10.0.0.0/16",
-				Region:    "eu-north-1",
+				Region:    "sweden",
 				Status:    status,
 				CreatedAt: "2025-01-01T00:00:00Z",
 			})
@@ -420,7 +420,7 @@ func TestVPCResource_TFSDKCreate(t *testing.T) {
 				ID:     "vpc-created-1",
 				Name:   "test-vpc",
 				CIDR:   "10.0.0.0/16",
-				Region: "eu-north-1",
+				Region: "sweden",
 				Status: "creating",
 			})
 
@@ -434,7 +434,7 @@ func TestVPCResource_TFSDKCreate(t *testing.T) {
 				ID:          "vpc-created-1",
 				Name:        "test-vpc",
 				CIDR:        "10.0.0.0/16",
-				Region:      "eu-north-1",
+				Region:      "sweden",
 				Status:      status,
 				IsDefault:   false,
 				SubnetCount: 0,
@@ -500,8 +500,8 @@ func TestVPCResource_TFSDKCreate(t *testing.T) {
 	if model.CIDR.ValueString() != "10.0.0.0/16" {
 		t.Errorf("expected CIDR 10.0.0.0/16, got %s", model.CIDR.ValueString())
 	}
-	if model.Region.ValueString() != "eu-north-1" {
-		t.Errorf("expected Region eu-north-1, got %s", model.Region.ValueString())
+	if model.Region.ValueString() != "sweden" {
+		t.Errorf("expected Region sweden, got %s", model.Region.ValueString())
 	}
 	if model.Status.ValueString() != "active" {
 		t.Errorf("expected Status active, got %s", model.Status.ValueString())
@@ -628,7 +628,7 @@ func TestVPCResource_TFSDKReadNotFound(t *testing.T) {
 		"name":         tftypes.NewValue(tftypes.String, "gone-vpc"),
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"region":       tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":       tftypes.NewValue(tftypes.String, "sweden"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
@@ -672,7 +672,7 @@ func TestVPCResource_TFSDKUpdate(t *testing.T) {
 				Name:        "updated-vpc",
 				Description: "Updated desc",
 				CIDR:        "10.0.0.0/16",
-				Region:      "eu-north-1",
+				Region:      "sweden",
 				Status:      "active",
 				IsDefault:   false,
 				SubnetCount: 1,
@@ -707,7 +707,7 @@ func TestVPCResource_TFSDKUpdate(t *testing.T) {
 		"name":         tftypes.NewValue(tftypes.String, "old-vpc"),
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"region":       tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":       tftypes.NewValue(tftypes.String, "sweden"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
@@ -721,7 +721,7 @@ func TestVPCResource_TFSDKUpdate(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "updated-vpc"),
 		"description": tftypes.NewValue(tftypes.String, "Updated desc"),
 		"cidr":        tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"tags": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{
 			"env": tftypes.NewValue(tftypes.String, "prod"),
 		}),
@@ -799,7 +799,7 @@ func TestVPCResource_TFSDKDelete(t *testing.T) {
 		"name":         tftypes.NewValue(tftypes.String, "del-vpc"),
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"region":       tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":       tftypes.NewValue(tftypes.String, "sweden"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
@@ -860,7 +860,7 @@ func TestVPCResource_TFSDKDeleteAlreadyGone(t *testing.T) {
 		"name":         tftypes.NewValue(tftypes.String, "gone-vpc"),
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"region":       tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":       tftypes.NewValue(tftypes.String, "sweden"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
@@ -926,7 +926,7 @@ func TestVPCResource_TFSDKCreateSync201(t *testing.T) {
 				ID:          "vpc-sync-1",
 				Name:        "sync-vpc",
 				CIDR:        "10.0.0.0/16",
-				Region:      "eu-north-1",
+				Region:      "sweden",
 				Status:      "active",
 				IsDefault:   false,
 				SubnetCount: 0,
@@ -1109,7 +1109,7 @@ func TestVPCResource_TFSDKCreatePollingErrorState(t *testing.T) {
 				ID:     "vpc-err-1",
 				Name:   "err-vpc",
 				CIDR:   "10.0.0.0/16",
-				Region: "eu-north-1",
+				Region: "sweden",
 				Status: "creating",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/vpcs/vpc-err-1":
@@ -1117,7 +1117,7 @@ func TestVPCResource_TFSDKCreatePollingErrorState(t *testing.T) {
 				ID:     "vpc-err-1",
 				Name:   "err-vpc",
 				CIDR:   "10.0.0.0/16",
-				Region: "eu-north-1",
+				Region: "sweden",
 				Status: "error",
 			})
 		default:
@@ -1199,7 +1199,7 @@ func TestVPCResource_TFSDKReadAPIError(t *testing.T) {
 		"name":         tftypes.NewValue(tftypes.String, "err-vpc"),
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"region":       tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":       tftypes.NewValue(tftypes.String, "sweden"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
@@ -1255,7 +1255,7 @@ func TestVPCResource_TFSDKReadBadJSON(t *testing.T) {
 		"name":         tftypes.NewValue(tftypes.String, "bj-vpc"),
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"region":       tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":       tftypes.NewValue(tftypes.String, "sweden"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
@@ -1310,7 +1310,7 @@ func TestVPCResource_TFSDKUpdateAPIError(t *testing.T) {
 		"name":         tftypes.NewValue(tftypes.String, "old-vpc"),
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"region":       tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":       tftypes.NewValue(tftypes.String, "sweden"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
@@ -1324,7 +1324,7 @@ func TestVPCResource_TFSDKUpdateAPIError(t *testing.T) {
 		"name":         tftypes.NewValue(tftypes.String, "new-vpc"),
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"region":       tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":       tftypes.NewValue(tftypes.String, "sweden"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
@@ -1378,7 +1378,7 @@ func TestVPCResource_TFSDKUpdateBadJSON(t *testing.T) {
 		"name":         tftypes.NewValue(tftypes.String, "old-vpc"),
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"region":       tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":       tftypes.NewValue(tftypes.String, "sweden"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
@@ -1392,7 +1392,7 @@ func TestVPCResource_TFSDKUpdateBadJSON(t *testing.T) {
 		"name":         tftypes.NewValue(tftypes.String, "new-vpc"),
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"region":       tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":       tftypes.NewValue(tftypes.String, "sweden"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
@@ -1446,7 +1446,7 @@ func TestVPCResource_TFSDKDeleteAPIError(t *testing.T) {
 		"name":         tftypes.NewValue(tftypes.String, "err-vpc"),
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"region":       tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":       tftypes.NewValue(tftypes.String, "sweden"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),

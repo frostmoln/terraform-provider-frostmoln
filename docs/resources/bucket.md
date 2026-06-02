@@ -15,7 +15,7 @@ Manages an object storage bucket in the Frostmoln platform.
 ```terraform
 resource "frostmoln_bucket" "example" {
   name          = "my-data-bucket"
-  region        = "eu-north-1"
+  region        = "sweden"
   storage_class = "standard"
   versioning    = "enabled"
 

@@ -25,7 +25,7 @@ func TestSubnetModelFromAPI(t *testing.T) {
 		Description:  "A test subnet",
 		CIDR:         "10.0.1.0/24",
 		VPCID:        "vpc-456",
-		Zone:         "eu-north-1a",
+		Zone:         "sweden-a",
 		GatewayIP:    "10.0.1.1",
 		DNSServers:   []string{"8.8.8.8", "8.8.4.4"},
 		IsPublic:     true,
@@ -58,8 +58,8 @@ func TestSubnetModelFromAPI(t *testing.T) {
 	if model.VPCID.ValueString() != "vpc-456" {
 		t.Errorf("expected VPCID vpc-456, got %s", model.VPCID.ValueString())
 	}
-	if model.Zone.ValueString() != "eu-north-1a" {
-		t.Errorf("expected Zone eu-north-1a, got %s", model.Zone.ValueString())
+	if model.Zone.ValueString() != "sweden-a" {
+		t.Errorf("expected Zone sweden-a, got %s", model.Zone.ValueString())
 	}
 	if model.GatewayIP.ValueString() != "10.0.1.1" {
 		t.Errorf("expected GatewayIP 10.0.1.1, got %s", model.GatewayIP.ValueString())
@@ -127,7 +127,7 @@ func TestSubnetModelToCreateRequest(t *testing.T) {
 		Description: types.StringValue("My subnet"),
 		CIDR:        types.StringValue("10.0.1.0/24"),
 		VPCID:       types.StringValue("vpc-123"),
-		Zone:        types.StringValue("eu-north-1a"),
+		Zone:        types.StringValue("sweden-a"),
 		GatewayIP:   types.StringValue("10.0.1.1"),
 		DNSServers:  dns,
 		IsPublic:    types.BoolValue(true),
@@ -150,8 +150,8 @@ func TestSubnetModelToCreateRequest(t *testing.T) {
 	if req.VPCID != "vpc-123" {
 		t.Errorf("expected VPCID vpc-123, got %s", req.VPCID)
 	}
-	if req.Zone != "eu-north-1a" {
-		t.Errorf("expected Zone eu-north-1a, got %s", req.Zone)
+	if req.Zone != "sweden-a" {
+		t.Errorf("expected Zone sweden-a, got %s", req.Zone)
 	}
 	if req.GatewayIP != "10.0.1.1" {
 		t.Errorf("expected GatewayIP 10.0.1.1, got %s", req.GatewayIP)
@@ -383,7 +383,7 @@ func TestSubnetResourceCreate(t *testing.T) {
 		Name:         "web-subnet",
 		CIDR:         "10.0.1.0/24",
 		VPCID:        "vpc-123",
-		Zone:         "eu-north-1a",
+		Zone:         "sweden-a",
 		GatewayIP:    "10.0.1.1",
 		IsPublic:     false,
 		Status:       "active",
@@ -447,8 +447,8 @@ func TestSubnetResourceCreate(t *testing.T) {
 	if state.CIDR.ValueString() != "10.0.1.0/24" {
 		t.Errorf("expected CIDR 10.0.1.0/24, got %s", state.CIDR.ValueString())
 	}
-	if state.Zone.ValueString() != "eu-north-1a" {
-		t.Errorf("expected Zone eu-north-1a, got %s", state.Zone.ValueString())
+	if state.Zone.ValueString() != "sweden-a" {
+		t.Errorf("expected Zone sweden-a, got %s", state.Zone.ValueString())
 	}
 	if state.AvailableIPs.ValueInt64() != 250 {
 		t.Errorf("expected AvailableIPs 250, got %d", state.AvailableIPs.ValueInt64())

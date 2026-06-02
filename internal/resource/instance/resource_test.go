@@ -53,8 +53,8 @@ func TestInstanceModelToCreateRequest(t *testing.T) {
 		Name:           types.StringValue("web-1"),
 		FlavorID:       types.StringValue("flavor-small"),
 		ImageID:        types.StringValue("img-ubuntu"),
-		Region:         types.StringValue("eu-north-1"),
-		Zone:           types.StringValue("eu-north-1a"),
+		Region:         types.StringValue("sweden"),
+		Zone:           types.StringValue("sweden-a"),
 		VPCID:          types.StringValue("vpc-123"),
 		SubnetID:       types.StringValue("subnet-456"),
 		SecurityGroups: sgs,
@@ -77,11 +77,11 @@ func TestInstanceModelToCreateRequest(t *testing.T) {
 	if req.ImageID != "img-ubuntu" {
 		t.Errorf("expected image_id img-ubuntu, got %s", req.ImageID)
 	}
-	if req.Region != "eu-north-1" {
-		t.Errorf("expected region eu-north-1, got %s", req.Region)
+	if req.Region != "sweden" {
+		t.Errorf("expected region sweden, got %s", req.Region)
 	}
-	if req.Zone != "eu-north-1a" {
-		t.Errorf("expected zone eu-north-1a, got %s", req.Zone)
+	if req.Zone != "sweden-a" {
+		t.Errorf("expected zone sweden-a, got %s", req.Zone)
 	}
 	if req.VPCID != "vpc-123" {
 		t.Errorf("expected vpc_id vpc-123, got %s", req.VPCID)
@@ -183,8 +183,8 @@ func TestInstanceModelFromAPI(t *testing.T) {
 		FlavorName:     "Small",
 		ImageID:        "img-ubuntu",
 		ImageName:      "Ubuntu 24.04",
-		Region:         "eu-north-1",
-		Zone:           "eu-north-1a",
+		Region:         "sweden",
+		Zone:           "sweden-a",
 		VPCID:          "vpc-123",
 		SubnetID:       "subnet-456",
 		PrivateIP:      "10.0.1.5",
@@ -226,11 +226,11 @@ func TestInstanceModelFromAPI(t *testing.T) {
 	if model.ImageName.ValueString() != "Ubuntu 24.04" {
 		t.Errorf("expected image_name Ubuntu 24.04, got %s", model.ImageName.ValueString())
 	}
-	if model.Region.ValueString() != "eu-north-1" {
-		t.Errorf("expected region eu-north-1, got %s", model.Region.ValueString())
+	if model.Region.ValueString() != "sweden" {
+		t.Errorf("expected region sweden, got %s", model.Region.ValueString())
 	}
-	if model.Zone.ValueString() != "eu-north-1a" {
-		t.Errorf("expected zone eu-north-1a, got %s", model.Zone.ValueString())
+	if model.Zone.ValueString() != "sweden-a" {
+		t.Errorf("expected zone sweden-a, got %s", model.Zone.ValueString())
 	}
 	if model.VPCID.ValueString() != "vpc-123" {
 		t.Errorf("expected vpc_id vpc-123, got %s", model.VPCID.ValueString())
@@ -259,7 +259,7 @@ func TestInstanceModelFromAPIMinimalFields(t *testing.T) {
 		Status:    "running",
 		FlavorID:  "flavor-small",
 		ImageID:   "img-ubuntu",
-		Region:    "eu-north-1",
+		Region:    "sweden",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
 
@@ -352,7 +352,7 @@ func TestInstanceCreate(t *testing.T) {
 				Status:    "provisioning",
 				FlavorID:  req.FlavorID,
 				ImageID:   req.ImageID,
-				Region:    "eu-north-1",
+				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
@@ -370,7 +370,7 @@ func TestInstanceCreate(t *testing.T) {
 				FlavorName: "Small",
 				ImageID:    "img-ubuntu",
 				ImageName:  "Ubuntu 24.04",
-				Region:     "eu-north-1",
+				Region:     "sweden",
 				PrivateIP:  "10.0.1.5",
 				CreatedAt:  "2025-06-01T12:00:00Z",
 			})
@@ -450,8 +450,8 @@ func TestInstanceRead(t *testing.T) {
 				FlavorName:     "Small",
 				ImageID:        "img-ubuntu",
 				ImageName:      "Ubuntu 24.04",
-				Region:         "eu-north-1",
-				Zone:           "eu-north-1a",
+				Region:         "sweden",
+				Zone:           "sweden-a",
 				VPCID:          "vpc-123",
 				SubnetID:       "subnet-456",
 				PrivateIP:      "10.0.1.5",
@@ -553,7 +553,7 @@ func TestInstanceUpdate(t *testing.T) {
 				Status:    "running",
 				FlavorID:  "flavor-small",
 				ImageID:   "img-ubuntu",
-				Region:    "eu-north-1",
+				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
@@ -564,7 +564,7 @@ func TestInstanceUpdate(t *testing.T) {
 				Status:    "running",
 				FlavorID:  "flavor-small",
 				ImageID:   "img-ubuntu",
-				Region:    "eu-north-1",
+				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
@@ -633,7 +633,7 @@ func TestInstanceResize(t *testing.T) {
 				Status:    status,
 				FlavorID:  "flavor-large",
 				ImageID:   "img-ubuntu",
-				Region:    "eu-north-1",
+				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
@@ -974,7 +974,7 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 				Status:    "provisioning",
 				FlavorID:  req.FlavorID,
 				ImageID:   req.ImageID,
-				Region:    "eu-north-1",
+				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
@@ -992,7 +992,7 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 				FlavorName:     "Small",
 				ImageID:        "img-ubuntu",
 				ImageName:      "Ubuntu 24.04",
-				Region:         "eu-north-1",
+				Region:         "sweden",
 				PrivateIP:      "10.0.1.5",
 				SecurityGroups: []string{"sg-default"},
 				Tags:           map[string]string{"env": "test"},
@@ -1064,8 +1064,8 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 	if model.ImageName.ValueString() != "Ubuntu 24.04" {
 		t.Errorf("expected ImageName Ubuntu 24.04, got %s", model.ImageName.ValueString())
 	}
-	if model.Region.ValueString() != "eu-north-1" {
-		t.Errorf("expected Region eu-north-1, got %s", model.Region.ValueString())
+	if model.Region.ValueString() != "sweden" {
+		t.Errorf("expected Region sweden, got %s", model.Region.ValueString())
 	}
 	if model.PrivateIP.ValueString() != "10.0.1.5" {
 		t.Errorf("expected PrivateIP 10.0.1.5, got %s", model.PrivateIP.ValueString())
@@ -1096,7 +1096,7 @@ func TestInstanceResource_TFSDKCreateMinimal(t *testing.T) {
 				Status:    "provisioning",
 				FlavorID:  "flavor-small",
 				ImageID:   "img-ubuntu",
-				Region:    "eu-north-1",
+				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
@@ -1112,7 +1112,7 @@ func TestInstanceResource_TFSDKCreateMinimal(t *testing.T) {
 				Status:    status,
 				FlavorID:  "flavor-small",
 				ImageID:   "img-ubuntu",
-				Region:    "eu-north-1",
+				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
@@ -1184,7 +1184,7 @@ func TestInstanceResource_TFSDKCreateErrorState(t *testing.T) {
 				Status:    "provisioning",
 				FlavorID:  "flavor-small",
 				ImageID:   "img-ubuntu",
-				Region:    "eu-north-1",
+				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
@@ -1196,7 +1196,7 @@ func TestInstanceResource_TFSDKCreateErrorState(t *testing.T) {
 				Status:    "error",
 				FlavorID:  "flavor-small",
 				ImageID:   "img-ubuntu",
-				Region:    "eu-north-1",
+				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
@@ -1455,7 +1455,7 @@ func TestInstanceResource_TFSDKUpdateNameChange(t *testing.T) {
 				Status:    "running",
 				FlavorID:  "flavor-small",
 				ImageID:   "img-ubuntu",
-				Region:    "eu-north-1",
+				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
@@ -1466,7 +1466,7 @@ func TestInstanceResource_TFSDKUpdateNameChange(t *testing.T) {
 				Status:    "running",
 				FlavorID:  "flavor-small",
 				ImageID:   "img-ubuntu",
-				Region:    "eu-north-1",
+				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
@@ -1497,7 +1497,7 @@ func TestInstanceResource_TFSDKUpdateNameChange(t *testing.T) {
 		"name":           tftypes.NewValue(tftypes.String, "old-name"),
 		"flavor_id":      tftypes.NewValue(tftypes.String, "flavor-small"),
 		"image_id":       tftypes.NewValue(tftypes.String, "img-ubuntu"),
-		"region":         tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":         tftypes.NewValue(tftypes.String, "sweden"),
 		"status":         tftypes.NewValue(tftypes.String, "running"),
 		"flavor_name":    tftypes.NewValue(tftypes.String, nil),
 		"image_name":     tftypes.NewValue(tftypes.String, nil),
@@ -1513,7 +1513,7 @@ func TestInstanceResource_TFSDKUpdateNameChange(t *testing.T) {
 		"name":           tftypes.NewValue(tftypes.String, "renamed-vm"),
 		"flavor_id":      tftypes.NewValue(tftypes.String, "flavor-small"),
 		"image_id":       tftypes.NewValue(tftypes.String, "img-ubuntu"),
-		"region":         tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":         tftypes.NewValue(tftypes.String, "sweden"),
 		"status":         tftypes.NewValue(tftypes.String, "running"),
 		"flavor_name":    tftypes.NewValue(tftypes.String, nil),
 		"image_name":     tftypes.NewValue(tftypes.String, nil),
@@ -1599,7 +1599,7 @@ func TestInstanceResource_TFSDKUpdateResize(t *testing.T) {
 				Status:    status,
 				FlavorID:  flavorID,
 				ImageID:   "img-ubuntu",
-				Region:    "eu-north-1",
+				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
@@ -1630,7 +1630,7 @@ func TestInstanceResource_TFSDKUpdateResize(t *testing.T) {
 		"name":           tftypes.NewValue(tftypes.String, "resize-vm"),
 		"flavor_id":      tftypes.NewValue(tftypes.String, "flavor-small"),
 		"image_id":       tftypes.NewValue(tftypes.String, "img-ubuntu"),
-		"region":         tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":         tftypes.NewValue(tftypes.String, "sweden"),
 		"status":         tftypes.NewValue(tftypes.String, "running"),
 		"flavor_name":    tftypes.NewValue(tftypes.String, nil),
 		"image_name":     tftypes.NewValue(tftypes.String, nil),
@@ -1646,7 +1646,7 @@ func TestInstanceResource_TFSDKUpdateResize(t *testing.T) {
 		"name":           tftypes.NewValue(tftypes.String, "resize-vm"),
 		"flavor_id":      tftypes.NewValue(tftypes.String, "flavor-large"),
 		"image_id":       tftypes.NewValue(tftypes.String, "img-ubuntu"),
-		"region":         tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":         tftypes.NewValue(tftypes.String, "sweden"),
 		"status":         tftypes.NewValue(tftypes.String, "running"),
 		"flavor_name":    tftypes.NewValue(tftypes.String, nil),
 		"image_name":     tftypes.NewValue(tftypes.String, nil),
@@ -1714,7 +1714,7 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 				Status:         "running",
 				FlavorID:       "flavor-small",
 				ImageID:        "img-ubuntu",
-				Region:         "eu-north-1",
+				Region:         "sweden",
 				SecurityGroups: []string{"sg-new-1", "sg-new-2"},
 				Tags:           map[string]string{"env": "prod"},
 				CreatedAt:      "2025-06-01T12:00:00Z",
@@ -1727,7 +1727,7 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 				Status:         "running",
 				FlavorID:       "flavor-small",
 				ImageID:        "img-ubuntu",
-				Region:         "eu-north-1",
+				Region:         "sweden",
 				SecurityGroups: []string{"sg-new-1", "sg-new-2"},
 				Tags:           map[string]string{"env": "prod"},
 				CreatedAt:      "2025-06-01T12:00:00Z",
@@ -1760,7 +1760,7 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 		"name":      tftypes.NewValue(tftypes.String, "tags-vm"),
 		"flavor_id": tftypes.NewValue(tftypes.String, "flavor-small"),
 		"image_id":  tftypes.NewValue(tftypes.String, "img-ubuntu"),
-		"region":    tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":    tftypes.NewValue(tftypes.String, "sweden"),
 		"status":    tftypes.NewValue(tftypes.String, "running"),
 		"security_groups": tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, []tftypes.Value{
 			tftypes.NewValue(tftypes.String, "sg-old"),
@@ -1782,7 +1782,7 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 		"name":      tftypes.NewValue(tftypes.String, "tags-vm"),
 		"flavor_id": tftypes.NewValue(tftypes.String, "flavor-small"),
 		"image_id":  tftypes.NewValue(tftypes.String, "img-ubuntu"),
-		"region":    tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":    tftypes.NewValue(tftypes.String, "sweden"),
 		"status":    tftypes.NewValue(tftypes.String, "running"),
 		"security_groups": tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, []tftypes.Value{
 			tftypes.NewValue(tftypes.String, "sg-new-1"),

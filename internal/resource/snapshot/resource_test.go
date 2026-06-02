@@ -94,7 +94,7 @@ func TestSnapshotModel_fromAPI(t *testing.T) {
 		VolumeID:    "vol-123",
 		Status:      "available",
 		SizeGB:      100,
-		Region:      "eu-north-1",
+		Region:      "sweden",
 		Tags:        map[string]string{"backup": "daily"},
 		CreatedAt:   "2025-01-01T00:00:00Z",
 	}
@@ -123,8 +123,8 @@ func TestSnapshotModel_fromAPI(t *testing.T) {
 	if model.SizeGB.ValueInt64() != 100 {
 		t.Errorf("expected sizeGb 100, got %d", model.SizeGB.ValueInt64())
 	}
-	if model.Region.ValueString() != "eu-north-1" {
-		t.Errorf("expected region eu-north-1, got %s", model.Region.ValueString())
+	if model.Region.ValueString() != "sweden" {
+		t.Errorf("expected region sweden, got %s", model.Region.ValueString())
 	}
 	if model.CreatedAt.ValueString() != "2025-01-01T00:00:00Z" {
 		t.Errorf("expected createdAt 2025-01-01T00:00:00Z, got %s", model.CreatedAt.ValueString())
@@ -141,7 +141,7 @@ func TestSnapshotModel_fromAPI_nullOptionalFields(t *testing.T) {
 		VolumeID:  "vol-123",
 		Status:    "available",
 		SizeGB:    50,
-		Region:    "eu-north-1",
+		Region:    "sweden",
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}
 
@@ -165,7 +165,7 @@ func TestSnapshotResource_CreateAndRead(t *testing.T) {
 		VolumeID:  "vol-123",
 		Status:    "available",
 		SizeGB:    100,
-		Region:    "eu-north-1",
+		Region:    "sweden",
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}
 
@@ -435,7 +435,7 @@ func TestSnapshotResource_Create_TFSDK(t *testing.T) {
 				VolumeID: "vol-123",
 				Status:   "creating",
 				SizeGB:   100,
-				Region:   "eu-north-1",
+				Region:   "sweden",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/snapshots/snap-abc":
 			n := pollCount.Add(1)
@@ -449,7 +449,7 @@ func TestSnapshotResource_Create_TFSDK(t *testing.T) {
 				VolumeID:  "vol-123",
 				Status:    status,
 				SizeGB:    100,
-				Region:    "eu-north-1",
+				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 		default:
@@ -503,8 +503,8 @@ func TestSnapshotResource_Create_TFSDK(t *testing.T) {
 	if model.SizeGB.ValueInt64() != 100 {
 		t.Errorf("expected size_gb 100, got %d", model.SizeGB.ValueInt64())
 	}
-	if model.Region.ValueString() != "eu-north-1" {
-		t.Errorf("expected region eu-north-1, got %s", model.Region.ValueString())
+	if model.Region.ValueString() != "sweden" {
+		t.Errorf("expected region sweden, got %s", model.Region.ValueString())
 	}
 }
 
@@ -558,7 +558,7 @@ func TestSnapshotResource_Read_TFSDK(t *testing.T) {
 				VolumeID:  "vol-123",
 				Status:    "available",
 				SizeGB:    100,
-				Region:    "eu-north-1",
+				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 		default:
@@ -581,7 +581,7 @@ func TestSnapshotResource_Read_TFSDK(t *testing.T) {
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"size_gb":     tftypes.NewValue(tftypes.Number, int64(100)),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
@@ -630,7 +630,7 @@ func TestSnapshotResource_Read_NotFound_TFSDK(t *testing.T) {
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"size_gb":     tftypes.NewValue(tftypes.Number, int64(50)),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
@@ -673,7 +673,7 @@ func TestSnapshotResource_Read_APIError(t *testing.T) {
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"size_gb":     tftypes.NewValue(tftypes.Number, int64(50)),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
@@ -739,7 +739,7 @@ func TestSnapshotResource_Delete_TFSDK(t *testing.T) {
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"size_gb":     tftypes.NewValue(tftypes.Number, int64(100)),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
@@ -780,7 +780,7 @@ func TestSnapshotResource_Delete_NotFound_TFSDK(t *testing.T) {
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"size_gb":     tftypes.NewValue(tftypes.Number, int64(50)),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
@@ -818,7 +818,7 @@ func TestSnapshotResource_Delete_APIError(t *testing.T) {
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"size_gb":     tftypes.NewValue(tftypes.Number, int64(50)),
-		"region":      tftypes.NewValue(tftypes.String, "eu-north-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
