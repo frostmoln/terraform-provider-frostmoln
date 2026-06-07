@@ -24,6 +24,7 @@ import (
 	nginxinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/nginx_instance"
 	postgresversionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/postgres_versions"
 	redisinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/redis_instance"
+	regionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/regions"
 	secretds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/secret"
 	subnetds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/subnet"
 	valkeyinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/valkey_instance"
@@ -139,7 +140,8 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 	}
 
 	// Create and configure client
-	c := client.NewClient(apiEndpoint, apiKey,
+	c := client.NewClient(
+		apiEndpoint, apiKey,
 		client.WithUserAgent("terraform-provider-frostmoln/"+p.version),
 	)
 
@@ -211,5 +213,6 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		secretds.NewDataSource,
 		apacheinstanceds.NewDataSource,
 		nginxinstanceds.NewDataSource,
+		regionsds.NewDataSource,
 	}
 }
