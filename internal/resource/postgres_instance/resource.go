@@ -73,7 +73,7 @@ func (r *postgresInstanceResource) Schema(_ context.Context, _ resource.SchemaRe
 				},
 			},
 			"flavor": schema.StringAttribute{
-				Description: "The flavor/size for the database instance (e.g. \"db.small\", \"db.medium\").",
+				Description: "The flavor/size for the database instance (e.g. \"db.gp1.small\", \"db.gp1.medium\").",
 				Required:    true,
 			},
 			"storage_gb": schema.Int64Attribute{

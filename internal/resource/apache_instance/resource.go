@@ -73,7 +73,7 @@ func (r *apacheInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 				},
 			},
 			"flavor": schema.StringAttribute{
-				Description: "The flavor/size for the webserver instance (e.g. \"web.small\", \"web.medium\").",
+				Description: "The flavor/size for the webserver instance (e.g. \"web.gp1.small\", \"web.gp1.medium\").",
 				Required:    true,
 			},
 			"storage_gb": schema.Int64Attribute{

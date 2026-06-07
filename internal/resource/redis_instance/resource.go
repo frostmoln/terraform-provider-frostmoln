@@ -73,7 +73,7 @@ func (r *redisInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				},
 			},
 			"flavor_id": schema.StringAttribute{
-				Description: "The flavor/size for the Redis instance (e.g. \"cache.small\", \"cache.medium\").",
+				Description: "The flavor/size for the Redis instance (e.g. \"cache.gp1.small\", \"cache.gp1.medium\").",
 				Required:    true,
 			},
 			"vpc_id": schema.StringAttribute{
