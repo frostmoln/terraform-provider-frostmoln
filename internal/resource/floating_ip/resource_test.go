@@ -65,7 +65,7 @@ func TestFloatingIPModelFromAPIMinimal(t *testing.T) {
 	fip := &apiFloatingIP{
 		ID:        "fip-789",
 		Address:   "203.0.113.20",
-		Region:    "eu-west-1",
+		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}

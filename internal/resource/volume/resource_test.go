@@ -636,8 +636,8 @@ func TestVolumeResource_TFSDKRead(t *testing.T) {
 				Status:     "available",
 				IOPS:       5000,
 				Throughput: 250,
-				Region:     "eu-west-1",
-				Zone:       "eu-west-1a",
+				Region:     "sweden",
+				Zone:       "falkenberg",
 				Tags:       map[string]string{"team": "backend"},
 				CreatedAt:  "2025-02-01T00:00:00Z",
 			})
@@ -676,7 +676,7 @@ func TestVolumeResource_TFSDKRead(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(5000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(250)),
-		"region":      tftypes.NewValue(tftypes.String, "eu-west-1"),
+		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-02-01T00:00:00Z"),
@@ -700,8 +700,8 @@ func TestVolumeResource_TFSDKRead(t *testing.T) {
 	if model.ID.ValueString() != "vol-read-1" {
 		t.Errorf("expected ID vol-read-1, got %s", model.ID.ValueString())
 	}
-	if model.Zone.ValueString() != "eu-west-1a" {
-		t.Errorf("expected Zone eu-west-1a, got %s", model.Zone.ValueString())
+	if model.Zone.ValueString() != "falkenberg" {
+		t.Errorf("expected Zone falkenberg, got %s", model.Zone.ValueString())
 	}
 	if model.IOPS.ValueInt64() != 5000 {
 		t.Errorf("expected IOPS 5000, got %d", model.IOPS.ValueInt64())

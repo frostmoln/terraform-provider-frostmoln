@@ -1254,8 +1254,8 @@ func TestInstanceResource_TFSDKRead(t *testing.T) {
 				FlavorName:     "Medium",
 				ImageID:        "img-debian",
 				ImageName:      "Debian 12",
-				Region:         "eu-west-1",
-				Zone:           "eu-west-1a",
+				Region:         "sweden",
+				Zone:           "falkenberg",
 				VPCID:          "vpc-abc",
 				SubnetID:       "subnet-xyz",
 				PrivateIP:      "10.0.2.10",
@@ -1292,8 +1292,8 @@ func TestInstanceResource_TFSDKRead(t *testing.T) {
 		"name":           tftypes.NewValue(tftypes.String, "read-vm"),
 		"flavor_id":      tftypes.NewValue(tftypes.String, "flavor-medium"),
 		"image_id":       tftypes.NewValue(tftypes.String, "img-debian"),
-		"region":         tftypes.NewValue(tftypes.String, "eu-west-1"),
-		"zone":           tftypes.NewValue(tftypes.String, "eu-west-1a"),
+		"region":         tftypes.NewValue(tftypes.String, "sweden"),
+		"zone":           tftypes.NewValue(tftypes.String, "falkenberg"),
 		"vpc_id":         tftypes.NewValue(tftypes.String, "vpc-abc"),
 		"subnet_id":      tftypes.NewValue(tftypes.String, "subnet-xyz"),
 		"status":         tftypes.NewValue(tftypes.String, "running"),
@@ -1348,8 +1348,8 @@ func TestInstanceResource_TFSDKRead(t *testing.T) {
 	if model.ImageName.ValueString() != "Debian 12" {
 		t.Errorf("expected ImageName Debian 12, got %s", model.ImageName.ValueString())
 	}
-	if model.Zone.ValueString() != "eu-west-1a" {
-		t.Errorf("expected Zone eu-west-1a, got %s", model.Zone.ValueString())
+	if model.Zone.ValueString() != "falkenberg" {
+		t.Errorf("expected Zone falkenberg, got %s", model.Zone.ValueString())
 	}
 	if model.VPCID.ValueString() != "vpc-abc" {
 		t.Errorf("expected VPCID vpc-abc, got %s", model.VPCID.ValueString())
