@@ -7,8 +7,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
@@ -33,7 +35,10 @@ func (r *s3CredentialResource) Metadata(_ context.Context, req resource.Metadata
 
 func (r *s3CredentialResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages an S3 credential in the Frostmoln platform.",
+		Description: "Manages an S3 credential in the Frostmoln platform. Credentials are immutable: " +
+			"changing the name, description, or any scope attribute (allowed_buckets/allowed_actions/" +
+			"ip_whitelist) replaces the credential and issues a new secret_access_key, so update any " +
+			"downstream consumers. Per-credential scoping requires the RGW-IAM object-storage backend.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the S3 credential.",
@@ -54,6 +59,30 @@ func (r *s3CredentialResource) Schema(_ context.Context, _ resource.SchemaReques
 				Optional:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"allowed_buckets": schema.ListAttribute{
+				Description: "Buckets this credential may access. Empty/unset = ALL buckets in the tenant's account — set it to apply least privilege. Changing this replaces the credential.",
+				Optional:    true,
+				ElementType: types.StringType,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.RequiresReplace(),
+				},
+			},
+			"allowed_actions": schema.ListAttribute{
+				Description: "S3 actions this credential may perform, e.g. s3:GetObject. Empty/unset = ALL actions — set it to apply least privilege. Bucket-metadata writes (s3:PutBucketAcl, s3:PutBucketPolicy, s3:PutBucketTagging) are not grantable and are rejected. Changing this replaces the credential.",
+				Optional:    true,
+				ElementType: types.StringType,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.RequiresReplace(),
+				},
+			},
+			"ip_whitelist": schema.ListAttribute{
+				Description: "Source IPs/CIDRs this credential is restricted to (empty/unset = any source IP). Changing this replaces the credential.",
+				Optional:    true,
+				ElementType: types.StringType,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.RequiresReplace(),
 				},
 			},
 			"secret_access_key": schema.StringAttribute{
@@ -101,7 +130,12 @@ func (r *s3CredentialResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
-	apiReq := plan.toCreateRequest()
+	apiReq, diags := plan.toCreateRequest(ctx)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/credentials"), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create S3 credential", err.Error())
@@ -114,7 +148,10 @@ func (r *s3CredentialResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
-	plan.fromAPI(cred)
+	resp.Diagnostics.Append(plan.fromAPI(ctx, cred)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -158,7 +195,10 @@ func (r *s3CredentialResource) Read(ctx context.Context, req resource.ReadReques
 	// Preserve secret_access_key from state since the API does not return it on read.
 	secretKey := state.SecretAccessKey // pragma: allowlist secret
 
-	state.fromAPI(found)
+	resp.Diagnostics.Append(state.fromAPI(ctx, found)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	// Restore the secret key from state since the API only returns it on create.
 	if found.SecretAccessKey == "" && !secretKey.IsNull() && !secretKey.IsUnknown() { // pragma: allowlist secret

@@ -3,19 +3,29 @@
 page_title: "frostmoln_s3_credential Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages an S3 credential in the Frostmoln platform.
+  Manages an S3 credential in the Frostmoln platform. Credentials are immutable: changing the name, description, or any scope attribute (allowed_buckets/allowed_actions/ip_whitelist) replaces the credential and issues a new secret_access_key, so update any downstream consumers. Per-credential scoping requires the RGW-IAM object-storage backend.
 ---
 
 # frostmoln_s3_credential (Resource)
 
-Manages an S3 credential in the Frostmoln platform.
+Manages an S3 credential in the Frostmoln platform. Credentials are immutable: changing the name, description, or any scope attribute (allowed_buckets/allowed_actions/ip_whitelist) replaces the credential and issues a new secret_access_key, so update any downstream consumers. Per-credential scoping requires the RGW-IAM object-storage backend.
 
 ## Example Usage
 
 ```terraform
+# Unscoped credential = full access to all buckets in the tenant's account.
 resource "frostmoln_s3_credential" "example" {
   name        = "app-s3-access"
   description = "S3 credentials for application backend"
+}
+
+# Least-privilege, scoped credential.
+resource "frostmoln_s3_credential" "scoped" {
+  name            = "backup-writer"
+  description     = "Write-only access to the backups bucket from the office"
+  allowed_buckets = ["backups"]
+  allowed_actions = ["s3:PutObject", "s3:GetObject"]
+  ip_whitelist    = ["203.0.113.0/24"]
 }
 
 output "s3_access_key" {
@@ -37,7 +47,10 @@ output "s3_secret_key" {
 
 ### Optional
 
+- `allowed_actions` (List of String) S3 actions this credential may perform, e.g. s3:GetObject. Empty/unset = ALL actions — set it to apply least privilege. Bucket-metadata writes (s3:PutBucketAcl, s3:PutBucketPolicy, s3:PutBucketTagging) are not grantable and are rejected. Changing this replaces the credential.
+- `allowed_buckets` (List of String) Buckets this credential may access. Empty/unset = ALL buckets in the tenant's account — set it to apply least privilege. Changing this replaces the credential.
 - `description` (String) A description of the S3 credential.
+- `ip_whitelist` (List of String) Source IPs/CIDRs this credential is restricted to (empty/unset = any source IP). Changing this replaces the credential.
 
 ### Read-Only
 

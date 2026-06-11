@@ -1,6 +1,7 @@
 package s3_credential
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -22,7 +23,7 @@ func TestS3CredentialModelToCreateRequest(t *testing.T) {
 		Description: types.StringValue("test description"),
 	}
 
-	req := model.toCreateRequest()
+	req, _ := model.toCreateRequest(context.Background())
 
 	if req.Name != "my-cred" {
 		t.Errorf("expected name my-cred, got %s", req.Name)
@@ -38,7 +39,7 @@ func TestS3CredentialModelToCreateRequestNoDescription(t *testing.T) {
 		Description: types.StringNull(),
 	}
 
-	req := model.toCreateRequest()
+	req, _ := model.toCreateRequest(context.Background())
 
 	if req.Name != "my-cred" {
 		t.Errorf("expected name my-cred, got %s", req.Name)
@@ -59,7 +60,7 @@ func TestS3CredentialModelFromAPI(t *testing.T) {
 	}
 
 	var model S3CredentialModel
-	model.fromAPI(cred)
+	model.fromAPI(context.Background(), cred)
 
 	if model.ID.ValueString() != "cred-123" {
 		t.Errorf("expected ID cred-123, got %s", model.ID.ValueString())
@@ -93,7 +94,7 @@ func TestS3CredentialModelFromAPINoSecret(t *testing.T) {
 	model := S3CredentialModel{
 		SecretAccessKey: types.StringValue("existing-secret"), // pragma: allowlist secret
 	}
-	model.fromAPI(cred)
+	model.fromAPI(context.Background(), cred)
 
 	// fromAPI should not overwrite the secret_access_key when the API returns empty.
 	if model.SecretAccessKey.ValueString() != "existing-secret" { // pragma: allowlist secret
@@ -112,7 +113,7 @@ func TestS3CredentialModelFromAPIEmptyDescription(t *testing.T) {
 	model := S3CredentialModel{
 		Description: types.StringNull(),
 	}
-	model.fromAPI(cred)
+	model.fromAPI(context.Background(), cred)
 
 	if !model.Description.IsNull() {
 		t.Errorf("expected null description, got %s", model.Description.ValueString())
@@ -395,9 +396,116 @@ func TestS3CredentialResource_Schema_Attributes(t *testing.T) {
 	if s.Description == "" {
 		t.Error("expected non-empty schema description")
 	}
-	for _, name := range []string{"id", "name", "description", "secret_access_key", "status", "created_at"} {
+	for _, name := range []string{"id", "name", "description", "secret_access_key", "status", "created_at", "allowed_buckets", "allowed_actions", "ip_whitelist"} {
 		if _, ok := s.Attributes[name]; !ok {
 			t.Errorf("expected attribute %s in schema", name)
+		}
+	}
+}
+
+func TestS3CredentialModel_ScopingRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	buckets, _ := types.ListValueFrom(ctx, types.StringType, []string{"b1", "b2"})
+	actions, _ := types.ListValueFrom(ctx, types.StringType, []string{"s3:GetObject"})
+	ips, _ := types.ListValueFrom(ctx, types.StringType, []string{"203.0.113.0/24"})
+	model := S3CredentialModel{
+		Name:           types.StringValue("scoped"),
+		AllowedBuckets: buckets,
+		AllowedActions: actions,
+		IPWhitelist:    ips,
+	}
+
+	req, diags := model.toCreateRequest(ctx)
+	if diags.HasError() {
+		t.Fatalf("toCreateRequest diags: %v", diags.Errors())
+	}
+	if len(req.AllowedBuckets) != 2 || req.AllowedBuckets[0] != "b1" {
+		t.Errorf("expected allowed_buckets [b1 b2], got %v", req.AllowedBuckets)
+	}
+	if len(req.AllowedActions) != 1 || req.AllowedActions[0] != "s3:GetObject" {
+		t.Errorf("expected allowed_actions [s3:GetObject], got %v", req.AllowedActions)
+	}
+	if len(req.IPWhitelist) != 1 || req.IPWhitelist[0] != "203.0.113.0/24" {
+		t.Errorf("expected ip_whitelist [203.0.113.0/24], got %v", req.IPWhitelist)
+	}
+
+	// Read-back: the API echoes the scope; the model must reflect it.
+	var got S3CredentialModel
+	if d := got.fromAPI(ctx, &apiS3Credential{
+		ID: "c1", Name: "scoped", Status: "active", CreatedAt: "t",
+		AllowedBuckets: []string{"b1", "b2"},
+		AllowedActions: []string{"s3:GetObject"},
+		IPWhitelist:    []string{"203.0.113.0/24"},
+	}); d.HasError() {
+		t.Fatalf("fromAPI diags: %v", d.Errors())
+	}
+	var rb []string
+	got.AllowedBuckets.ElementsAs(ctx, &rb, false)
+	if len(rb) != 2 || rb[1] != "b2" {
+		t.Errorf("expected read-back allowed_buckets [b1 b2], got %v", rb)
+	}
+}
+
+func TestS3CredentialModel_UnscopedIsNull(t *testing.T) {
+	ctx := context.Background()
+	// Unset scoping => omitted from request, and read-back of an empty API
+	// response keeps the fields null (no perpetual null-vs-[] drift).
+	model := S3CredentialModel{Name: types.StringValue("open")}
+	req, diags := model.toCreateRequest(ctx)
+	if diags.HasError() {
+		t.Fatalf("toCreateRequest diags: %v", diags.Errors())
+	}
+	if req.AllowedBuckets != nil || req.AllowedActions != nil || req.IPWhitelist != nil {
+		t.Errorf("expected nil scope slices, got %v / %v / %v", req.AllowedBuckets, req.AllowedActions, req.IPWhitelist)
+	}
+	// The unset scope MUST be omitted from the wire JSON (omitempty on nil
+	// slices) — otherwise the backend could misread "unrestricted" intent.
+	wire, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, k := range []string{"allowedBuckets", "allowedActions", "ipWhitelist"} {
+		if bytes.Contains(wire, []byte(k)) {
+			t.Errorf("unset scope must be omitted from wire JSON, found %q in %s", k, wire)
+		}
+	}
+
+	var got S3CredentialModel
+	if d := got.fromAPI(ctx, &apiS3Credential{ID: "c1", Name: "open", Status: "active", CreatedAt: "t"}); d.HasError() {
+		t.Fatalf("fromAPI diags: %v", d.Errors())
+	}
+	if !got.AllowedBuckets.IsNull() || !got.AllowedActions.IsNull() || !got.IPWhitelist.IsNull() {
+		t.Error("expected unset scope lists to be null after read-back")
+	}
+}
+
+// TestS3CredentialModel_EmptyReadDoesNotWidenScope is the anti-scope-widening
+// invariant: if state holds a restriction but the API returns an empty scope
+// (transient/partial read), fromAPI MUST preserve the existing restriction —
+// never silently clear it (which a later apply would push as a scope widening).
+func TestS3CredentialModel_EmptyReadDoesNotWidenScope(t *testing.T) {
+	ctx := context.Background()
+	existing, _ := types.ListValueFrom(ctx, types.StringType, []string{"b1"})
+	model := S3CredentialModel{
+		AllowedBuckets: existing,
+		AllowedActions: existing,
+		IPWhitelist:    existing,
+	}
+
+	// API echoes nothing for the scope axes.
+	if d := model.fromAPI(ctx, &apiS3Credential{ID: "c1", Name: "scoped", Status: "active", CreatedAt: "t"}); d.HasError() {
+		t.Fatalf("fromAPI diags: %v", d.Errors())
+	}
+
+	for name, l := range map[string]types.List{"allowed_buckets": model.AllowedBuckets, "allowed_actions": model.AllowedActions, "ip_whitelist": model.IPWhitelist} {
+		if l.IsNull() {
+			t.Errorf("%s was cleared by an empty read (scope widening)", name)
+			continue
+		}
+		var vals []string
+		l.ElementsAs(ctx, &vals, false)
+		if len(vals) != 1 || vals[0] != "b1" {
+			t.Errorf("%s restriction not preserved, got %v", name, vals)
 		}
 	}
 }
@@ -474,6 +582,9 @@ func TestS3CredentialResource_Create_TFSDK(t *testing.T) {
 		"secret_access_key": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"status":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 	})
 
 	createReq := resource.CreateRequest{
@@ -523,6 +634,9 @@ func TestS3CredentialResource_Create_APIError(t *testing.T) {
 		"secret_access_key": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"status":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 	})
 
 	createReq := resource.CreateRequest{
@@ -578,6 +692,9 @@ func TestS3CredentialResource_Read_TFSDK(t *testing.T) {
 		"secret_access_key": tftypes.NewValue(tftypes.String, "saved-secret"), // pragma: allowlist secret
 		"status":            tftypes.NewValue(tftypes.String, "active"),
 		"created_at":        tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -635,6 +752,9 @@ func TestS3CredentialResource_Read_NotFoundInList_TFSDK(t *testing.T) {
 		"secret_access_key": tftypes.NewValue(tftypes.String, "old-secret"), // pragma: allowlist secret
 		"status":            tftypes.NewValue(tftypes.String, "active"),
 		"created_at":        tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -676,6 +796,9 @@ func TestS3CredentialResource_Read_APIError(t *testing.T) {
 		"secret_access_key": tftypes.NewValue(tftypes.String, "secret"), // pragma: allowlist secret
 		"status":            tftypes.NewValue(tftypes.String, "active"),
 		"created_at":        tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -739,6 +862,9 @@ func TestS3CredentialResource_Delete_TFSDK(t *testing.T) {
 		"secret_access_key": tftypes.NewValue(tftypes.String, "secret"), // pragma: allowlist secret
 		"status":            tftypes.NewValue(tftypes.String, "active"),
 		"created_at":        tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -777,6 +903,9 @@ func TestS3CredentialResource_Delete_NotFound_TFSDK(t *testing.T) {
 		"secret_access_key": tftypes.NewValue(tftypes.String, "secret"), // pragma: allowlist secret
 		"status":            tftypes.NewValue(tftypes.String, "active"),
 		"created_at":        tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -812,6 +941,9 @@ func TestS3CredentialResource_Delete_APIError(t *testing.T) {
 		"secret_access_key": tftypes.NewValue(tftypes.String, "secret"), // pragma: allowlist secret
 		"status":            tftypes.NewValue(tftypes.String, "active"),
 		"created_at":        tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -839,6 +971,9 @@ func TestS3CredentialResource_ImportState_TFSDK(t *testing.T) {
 		"secret_access_key": tftypes.NewValue(tftypes.String, nil),
 		"status":            tftypes.NewValue(tftypes.String, nil),
 		"created_at":        tftypes.NewValue(tftypes.String, nil),
+		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 	})
 
 	importReq := resource.ImportStateRequest{ID: "cred-abc"}
