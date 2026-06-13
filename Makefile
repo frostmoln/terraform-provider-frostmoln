@@ -1,7 +1,7 @@
 # terraform-provider-frostmoln Makefile
 
 HOSTNAME = registry.terraform.io
-NAMESPACE = nordiclight
+NAMESPACE = frostmoln
 NAME = frostmoln
 BINARY = terraform-provider-${NAME}
 VERSION ?= 0.1.0
@@ -77,7 +77,7 @@ generate: install
 	@printf 'terraform {\n  required_providers {\n    frostmoln = {\n      source = "$(HOSTNAME)/$(NAMESPACE)/$(NAME)"\n    }\n  }\n}\n' > $(TFGEN_DIR)/main.tf
 	@cd $(TFGEN_DIR) && terraform init -plugin-dir=$$HOME/.terraform.d/plugins > /dev/null 2>&1
 	@cd $(TFGEN_DIR) && terraform providers schema -json > $(TFGEN_DIR)/raw-schema.json
-	@jq '(.provider_schemas["registry.terraform.io/hashicorp/frostmoln"] = .provider_schemas["registry.terraform.io/nordiclight/frostmoln"]) | del(.provider_schemas["registry.terraform.io/nordiclight/frostmoln"])' $(TFGEN_DIR)/raw-schema.json > $(TFGEN_DIR)/schema.json
+	@jq '(.provider_schemas["registry.terraform.io/hashicorp/frostmoln"] = .provider_schemas["registry.terraform.io/frostmoln/frostmoln"]) | del(.provider_schemas["registry.terraform.io/frostmoln/frostmoln"])' $(TFGEN_DIR)/raw-schema.json > $(TFGEN_DIR)/schema.json
 	$(GOCMD) run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs generate \
 		-provider-name frostmoln \
 		-providers-schema $(TFGEN_DIR)/schema.json \

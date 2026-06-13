@@ -96,7 +96,7 @@ func (p *FrostmolnProvider) Schema(_ context.Context, _ provider.SchemaRequest, 
 		Description: "Terraform provider for the Frostmoln Cloud Platform.",
 		Attributes: map[string]schema.Attribute{
 			"api_endpoint": schema.StringAttribute{
-				Description: "The API endpoint URL. Can also be set via the FROSTMOLN_API_ENDPOINT environment variable. Defaults to https://api.nordiclight.cloud.",
+				Description: "The API endpoint URL. Can also be set via the FROSTMOLN_API_ENDPOINT environment variable. Defaults to https://api.frostmoln.cloud.",
 				Optional:    true,
 			},
 			"api_key": schema.StringAttribute{
@@ -116,7 +116,7 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 	}
 
 	// Resolve API endpoint
-	apiEndpoint := "https://api.nordiclight.cloud"
+	apiEndpoint := "https://api.frostmoln.cloud"
 	if !config.APIEndpoint.IsNull() && !config.APIEndpoint.IsUnknown() {
 		apiEndpoint = config.APIEndpoint.ValueString()
 	} else if v := os.Getenv("FROSTMOLN_API_ENDPOINT"); v != "" {

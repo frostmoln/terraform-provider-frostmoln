@@ -112,7 +112,7 @@ func TestBucketModelFromAPI(t *testing.T) {
 		Versioning:   "enabled",
 		ObjectCount:  42,
 		SizeBytes:    1024000,
-		Endpoint:     "https://s3.sweden.nordiclight.cloud",
+		Endpoint:     "https://s3.sweden.frostmoln.cloud",
 		AccessKey:    "AKIAEXAMPLE",
 		Tags:         map[string]string{"env": "staging"},
 		CreatedAt:    "2025-03-01T10:00:00Z",
@@ -142,7 +142,7 @@ func TestBucketModelFromAPI(t *testing.T) {
 	if model.SizeBytes.ValueInt64() != 1024000 {
 		t.Errorf("expected size_bytes 1024000, got %d", model.SizeBytes.ValueInt64())
 	}
-	if model.Endpoint.ValueString() != "https://s3.sweden.nordiclight.cloud" {
+	if model.Endpoint.ValueString() != "https://s3.sweden.frostmoln.cloud" {
 		t.Errorf("expected endpoint, got %s", model.Endpoint.ValueString())
 	}
 	if model.AccessKey.ValueString() != "AKIAEXAMPLE" {
@@ -201,7 +201,7 @@ func TestBucketCreate(t *testing.T) {
 				Region:       "sweden",
 				StorageClass: "standard",
 				Versioning:   "enabled",
-				Endpoint:     "https://s3.sweden.nordiclight.cloud",
+				Endpoint:     "https://s3.sweden.frostmoln.cloud",
 				AccessKey:    "AKIAEXAMPLE",
 				CreatedAt:    "2025-03-01T10:00:00Z",
 			})
@@ -252,7 +252,7 @@ func TestBucketRead(t *testing.T) {
 				Versioning:   "enabled",
 				ObjectCount:  10,
 				SizeBytes:    5000,
-				Endpoint:     "https://s3.sweden.nordiclight.cloud",
+				Endpoint:     "https://s3.sweden.frostmoln.cloud",
 				CreatedAt:    "2025-03-01T10:00:00Z",
 			})
 		default:
@@ -306,7 +306,7 @@ func TestBucketUpdate(t *testing.T) {
 				Region:       "sweden",
 				StorageClass: "standard",
 				Versioning:   "suspended",
-				Endpoint:     "https://s3.sweden.nordiclight.cloud",
+				Endpoint:     "https://s3.sweden.frostmoln.cloud",
 				CreatedAt:    "2025-03-01T10:00:00Z",
 			})
 		default:
@@ -502,7 +502,7 @@ func TestBucketResourceCreate(t *testing.T) {
 		Versioning:   "enabled",
 		ObjectCount:  0,
 		SizeBytes:    0,
-		Endpoint:     "https://s3.sweden.nordiclight.cloud",
+		Endpoint:     "https://s3.sweden.frostmoln.cloud",
 		AccessKey:    "AKIAEXAMPLE",
 		CreatedAt:    "2025-06-01T12:00:00Z",
 	}
@@ -557,7 +557,7 @@ func TestBucketResourceCreate(t *testing.T) {
 	if state.AccessKey.ValueString() != "AKIAEXAMPLE" {
 		t.Errorf("expected AccessKey AKIAEXAMPLE, got %s", state.AccessKey.ValueString())
 	}
-	if state.Endpoint.ValueString() != "https://s3.sweden.nordiclight.cloud" {
+	if state.Endpoint.ValueString() != "https://s3.sweden.frostmoln.cloud" {
 		t.Errorf("expected Endpoint, got %s", state.Endpoint.ValueString())
 	}
 }
@@ -570,7 +570,7 @@ func TestBucketResourceRead(t *testing.T) {
 		Versioning:   "enabled",
 		ObjectCount:  42,
 		SizeBytes:    1024000,
-		Endpoint:     "https://s3.sweden.nordiclight.cloud",
+		Endpoint:     "https://s3.sweden.frostmoln.cloud",
 		CreatedAt:    "2025-06-01T12:00:00Z",
 	}
 
@@ -601,7 +601,7 @@ func TestBucketResourceRead(t *testing.T) {
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 0),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, 0),
-		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.sweden.nordiclight.cloud"),
+		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.sweden.frostmoln.cloud"),
 		"access_key":    tftypes.NewValue(tftypes.String, "AKIAOLD"),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
@@ -649,7 +649,7 @@ func TestBucketResourceReadNotFoundRemovesState(t *testing.T) {
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 0),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, 0),
-		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.nordiclight.cloud"),
+		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.frostmoln.cloud"),
 		"access_key":    tftypes.NewValue(tftypes.String, nil),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 	})
@@ -675,7 +675,7 @@ func TestBucketResourceUpdate(t *testing.T) {
 		Versioning:   "suspended",
 		ObjectCount:  10,
 		SizeBytes:    5000,
-		Endpoint:     "https://s3.sweden.nordiclight.cloud",
+		Endpoint:     "https://s3.sweden.frostmoln.cloud",
 		CreatedAt:    "2025-06-01T12:00:00Z",
 	}
 
@@ -707,7 +707,7 @@ func TestBucketResourceUpdate(t *testing.T) {
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 10),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, 5000),
-		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.sweden.nordiclight.cloud"),
+		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.sweden.frostmoln.cloud"),
 		"access_key":    tftypes.NewValue(tftypes.String, "AKIAOLD"),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
@@ -720,7 +720,7 @@ func TestBucketResourceUpdate(t *testing.T) {
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
-		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.sweden.nordiclight.cloud"),
+		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.sweden.frostmoln.cloud"),
 		"access_key":    tftypes.NewValue(tftypes.String, "AKIAOLD"),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
@@ -775,7 +775,7 @@ func TestBucketResourceDelete(t *testing.T) {
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 0),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, 0),
-		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.nordiclight.cloud"),
+		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.frostmoln.cloud"),
 		"access_key":    tftypes.NewValue(tftypes.String, nil),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 	})
@@ -816,7 +816,7 @@ func TestBucketResourceDeleteAlreadyGone(t *testing.T) {
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 0),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, 0),
-		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.nordiclight.cloud"),
+		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.frostmoln.cloud"),
 		"access_key":    tftypes.NewValue(tftypes.String, nil),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 	})
