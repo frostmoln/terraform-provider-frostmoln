@@ -150,7 +150,7 @@ func TestAPIKeyModelFromAPI(t *testing.T) {
 		ID:          "ak-123",
 		Name:        "my-key",
 		Description: "Test key",
-		KeyPrefix:   "nlak_test",
+		KeyPrefix:   "fmk_test",
 		Scopes:      []string{"compute:read", "compute:write"},
 		ExpiresAt:   "2026-12-31T23:59:59Z",
 		RateLimit:   100,
@@ -175,8 +175,8 @@ func TestAPIKeyModelFromAPI(t *testing.T) {
 	if model.Description.ValueString() != "Test key" {
 		t.Errorf("expected description 'Test key', got %s", model.Description.ValueString())
 	}
-	if model.KeyPrefix.ValueString() != "nlak_test" {
-		t.Errorf("expected key_prefix nlak_test, got %s", model.KeyPrefix.ValueString())
+	if model.KeyPrefix.ValueString() != "fmk_test" {
+		t.Errorf("expected key_prefix fmk_test, got %s", model.KeyPrefix.ValueString())
 	}
 	if model.ExpiresAt.ValueString() != "2026-12-31T23:59:59Z" {
 		t.Errorf("expected expires_at, got %s", model.ExpiresAt.ValueString())
@@ -199,7 +199,7 @@ func TestAPIKeyModelFromAPIMinimalFields(t *testing.T) {
 	key := &apiAPIKey{
 		ID:        "ak-min",
 		Name:      "basic-key",
-		KeyPrefix: "nlak_basic",
+		KeyPrefix: "fmk_basic",
 		Status:    "active",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
@@ -269,8 +269,8 @@ func TestAPIKeyCreate(t *testing.T) {
 				ID:          "ak-new",
 				Name:        req.Name,
 				Description: req.Description,
-				Key:         "nlak_secretvalue123456", // pragma: allowlist secret
-				KeyPrefix:   "nlak_secr",
+				Key:         "fmk_secretvalue123456", // pragma: allowlist secret
+				KeyPrefix:   "fmk_secr",
 				Scopes:      req.Scopes,
 				RateLimit:   req.RateLimit,
 				Status:      "active",
@@ -305,11 +305,11 @@ func TestAPIKeyCreate(t *testing.T) {
 	if key.ID != "ak-new" {
 		t.Errorf("expected ID ak-new, got %s", key.ID)
 	}
-	if key.Key != "nlak_secretvalue123456" { // pragma: allowlist secret
+	if key.Key != "fmk_secretvalue123456" { // pragma: allowlist secret
 		t.Error("expected key value in create response")
 	}
-	if key.KeyPrefix != "nlak_secr" {
-		t.Errorf("expected key_prefix nlak_secr, got %s", key.KeyPrefix)
+	if key.KeyPrefix != "fmk_secr" {
+		t.Errorf("expected key_prefix fmk_secr, got %s", key.KeyPrefix)
 	}
 	if key.Status != "active" {
 		t.Errorf("expected status active, got %s", key.Status)
@@ -327,7 +327,7 @@ func TestAPIKeyRead(t *testing.T) {
 				ID:          "ak-123",
 				Name:        "my-key",
 				Description: "Test key",
-				KeyPrefix:   "nlak_test",
+				KeyPrefix:   "fmk_test",
 				Scopes:      []string{"compute:read"},
 				RateLimit:   50,
 				Status:      "active",
@@ -420,7 +420,7 @@ func TestAPIKeyUpdate(t *testing.T) {
 			json.NewEncoder(w).Encode(apiAPIKey{
 				ID:        "ak-123",
 				Name:      "updated-key",
-				KeyPrefix: "nlak_test",
+				KeyPrefix: "fmk_test",
 				Status:    "active",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
@@ -429,7 +429,7 @@ func TestAPIKeyUpdate(t *testing.T) {
 			json.NewEncoder(w).Encode(apiAPIKey{
 				ID:        "ak-123",
 				Name:      "updated-key",
-				KeyPrefix: "nlak_test",
+				KeyPrefix: "fmk_test",
 				Status:    "active",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
@@ -635,8 +635,8 @@ func TestAPIKeyResource_Create_TFSDK(t *testing.T) {
 			json.NewEncoder(w).Encode(apiAPIKey{
 				ID:        "ak-new",
 				Name:      "test-key",
-				Key:       "nlak_secret123", // pragma: allowlist secret
-				KeyPrefix: "nlak_secr",
+				Key:       "fmk_secret123", // pragma: allowlist secret
+				KeyPrefix: "fmk_secr",
 				Status:    "active",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
@@ -683,11 +683,11 @@ func TestAPIKeyResource_Create_TFSDK(t *testing.T) {
 	if model.ID.ValueString() != "ak-new" {
 		t.Errorf("expected ID ak-new, got %s", model.ID.ValueString())
 	}
-	if model.Key.ValueString() != "nlak_secret123" { // pragma: allowlist secret
-		t.Errorf("expected key nlak_secret123, got %s", model.Key.ValueString())
+	if model.Key.ValueString() != "fmk_secret123" { // pragma: allowlist secret
+		t.Errorf("expected key fmk_secret123, got %s", model.Key.ValueString())
 	}
-	if model.KeyPrefix.ValueString() != "nlak_secr" {
-		t.Errorf("expected key_prefix nlak_secr, got %s", model.KeyPrefix.ValueString())
+	if model.KeyPrefix.ValueString() != "fmk_secr" {
+		t.Errorf("expected key_prefix fmk_secr, got %s", model.KeyPrefix.ValueString())
 	}
 	if model.Status.ValueString() != "active" {
 		t.Errorf("expected status active, got %s", model.Status.ValueString())
@@ -742,7 +742,7 @@ func TestAPIKeyResource_Read_TFSDK(t *testing.T) {
 			json.NewEncoder(w).Encode(apiAPIKey{
 				ID:        "ak-123",
 				Name:      "my-key",
-				KeyPrefix: "nlak_test",
+				KeyPrefix: "fmk_test",
 				Scopes:    []string{"compute:read"},
 				Status:    "active",
 				CreatedAt: "2025-06-01T12:00:00Z",
@@ -766,8 +766,8 @@ func TestAPIKeyResource_Read_TFSDK(t *testing.T) {
 		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, []tftypes.Value{tftypes.NewValue(tftypes.String, "compute:read")}),
 		"expires_at":  tftypes.NewValue(tftypes.String, nil),
 		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
-		"key":         tftypes.NewValue(tftypes.String, "nlak_savedkey"), // pragma: allowlist secret
-		"key_prefix":  tftypes.NewValue(tftypes.String, "nlak_test"),
+		"key":         tftypes.NewValue(tftypes.String, "fmk_savedkey"), // pragma: allowlist secret
+		"key_prefix":  tftypes.NewValue(tftypes.String, "fmk_test"),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
@@ -791,11 +791,11 @@ func TestAPIKeyResource_Read_TFSDK(t *testing.T) {
 		t.Errorf("expected ID ak-123, got %s", model.ID.ValueString())
 	}
 	// Key should be preserved from state since API does not return it.
-	if model.Key.ValueString() != "nlak_savedkey" { // pragma: allowlist secret
+	if model.Key.ValueString() != "fmk_savedkey" { // pragma: allowlist secret
 		t.Errorf("expected key to be preserved from state, got %s", model.Key.ValueString())
 	}
-	if model.KeyPrefix.ValueString() != "nlak_test" {
-		t.Errorf("expected key_prefix nlak_test, got %s", model.KeyPrefix.ValueString())
+	if model.KeyPrefix.ValueString() != "fmk_test" {
+		t.Errorf("expected key_prefix fmk_test, got %s", model.KeyPrefix.ValueString())
 	}
 }
 
@@ -821,7 +821,7 @@ func TestAPIKeyResource_Read_NotFound_TFSDK(t *testing.T) {
 		"expires_at":  tftypes.NewValue(tftypes.String, nil),
 		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
 		"key":         tftypes.NewValue(tftypes.String, "saved"), // pragma: allowlist secret
-		"key_prefix":  tftypes.NewValue(tftypes.String, "nlak"),
+		"key_prefix":  tftypes.NewValue(tftypes.String, "fmk"),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
@@ -850,7 +850,7 @@ func TestAPIKeyResource_Update_TFSDK(t *testing.T) {
 			json.NewEncoder(w).Encode(apiAPIKey{
 				ID:        "ak-123",
 				Name:      "updated-key",
-				KeyPrefix: "nlak_test",
+				KeyPrefix: "fmk_test",
 				Status:    "active",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
@@ -858,7 +858,7 @@ func TestAPIKeyResource_Update_TFSDK(t *testing.T) {
 			json.NewEncoder(w).Encode(apiAPIKey{
 				ID:        "ak-123",
 				Name:      "updated-key",
-				KeyPrefix: "nlak_test",
+				KeyPrefix: "fmk_test",
 				Status:    "active",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
@@ -882,8 +882,8 @@ func TestAPIKeyResource_Update_TFSDK(t *testing.T) {
 		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"expires_at":  tftypes.NewValue(tftypes.String, nil),
 		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
-		"key":         tftypes.NewValue(tftypes.String, "nlak_saved"), // pragma: allowlist secret
-		"key_prefix":  tftypes.NewValue(tftypes.String, "nlak_test"),
+		"key":         tftypes.NewValue(tftypes.String, "fmk_saved"), // pragma: allowlist secret
+		"key_prefix":  tftypes.NewValue(tftypes.String, "fmk_test"),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
@@ -896,8 +896,8 @@ func TestAPIKeyResource_Update_TFSDK(t *testing.T) {
 		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"expires_at":  tftypes.NewValue(tftypes.String, nil),
 		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
-		"key":         tftypes.NewValue(tftypes.String, "nlak_saved"), // pragma: allowlist secret
-		"key_prefix":  tftypes.NewValue(tftypes.String, "nlak_test"),
+		"key":         tftypes.NewValue(tftypes.String, "fmk_saved"), // pragma: allowlist secret
+		"key_prefix":  tftypes.NewValue(tftypes.String, "fmk_test"),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
@@ -922,7 +922,7 @@ func TestAPIKeyResource_Update_TFSDK(t *testing.T) {
 		t.Errorf("expected name updated-key, got %s", model.Name.ValueString())
 	}
 	// Key should be preserved from state.
-	if model.Key.ValueString() != "nlak_saved" { // pragma: allowlist secret
+	if model.Key.ValueString() != "fmk_saved" { // pragma: allowlist secret
 		t.Errorf("expected key to be preserved, got %s", model.Key.ValueString())
 	}
 }
@@ -948,8 +948,8 @@ func TestAPIKeyResource_Update_APIError(t *testing.T) {
 		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"expires_at":  tftypes.NewValue(tftypes.String, nil),
 		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
-		"key":         tftypes.NewValue(tftypes.String, "nlak_saved"), // pragma: allowlist secret
-		"key_prefix":  tftypes.NewValue(tftypes.String, "nlak_test"),
+		"key":         tftypes.NewValue(tftypes.String, "fmk_saved"), // pragma: allowlist secret
+		"key_prefix":  tftypes.NewValue(tftypes.String, "fmk_test"),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
@@ -961,8 +961,8 @@ func TestAPIKeyResource_Update_APIError(t *testing.T) {
 		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"expires_at":  tftypes.NewValue(tftypes.String, nil),
 		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
-		"key":         tftypes.NewValue(tftypes.String, "nlak_saved"), // pragma: allowlist secret
-		"key_prefix":  tftypes.NewValue(tftypes.String, "nlak_test"),
+		"key":         tftypes.NewValue(tftypes.String, "fmk_saved"), // pragma: allowlist secret
+		"key_prefix":  tftypes.NewValue(tftypes.String, "fmk_test"),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
@@ -1008,8 +1008,8 @@ func TestAPIKeyResource_Delete_TFSDK(t *testing.T) {
 		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"expires_at":  tftypes.NewValue(tftypes.String, nil),
 		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
-		"key":         tftypes.NewValue(tftypes.String, "nlak_key"), // pragma: allowlist secret
-		"key_prefix":  tftypes.NewValue(tftypes.String, "nlak"),
+		"key":         tftypes.NewValue(tftypes.String, "fmk_key"), // pragma: allowlist secret
+		"key_prefix":  tftypes.NewValue(tftypes.String, "fmk"),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
@@ -1050,8 +1050,8 @@ func TestAPIKeyResource_Delete_NotFound_TFSDK(t *testing.T) {
 		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"expires_at":  tftypes.NewValue(tftypes.String, nil),
 		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
-		"key":         tftypes.NewValue(tftypes.String, "nlak"), // pragma: allowlist secret
-		"key_prefix":  tftypes.NewValue(tftypes.String, "nlak"),
+		"key":         tftypes.NewValue(tftypes.String, "fmk"), // pragma: allowlist secret
+		"key_prefix":  tftypes.NewValue(tftypes.String, "fmk"),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
