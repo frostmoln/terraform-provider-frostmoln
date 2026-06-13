@@ -12,7 +12,7 @@ Terraform provider for the [Frostmoln Cloud Platform](https://frostmoln.cloud), 
 ```sh
 git clone go.frostmoln.internal/terraform-provider-frostmoln
 cd terraform-provider-frostmoln
-make build
+go build ./...
 ```
 
 ## Using The Provider
@@ -37,8 +37,8 @@ provider "frostmoln" {
 See [CLAUDE.md](CLAUDE.md) for development guidelines.
 
 ```sh
-make build     # Build
-make test      # Unit tests
-make testacc   # Acceptance tests
-make install   # Install locally
+go build ./...     # Build
+go test ./...      # Unit tests
+TF_ACC=1 go test ./...   # Acceptance tests
+go install ./...   # Install locally
 ```

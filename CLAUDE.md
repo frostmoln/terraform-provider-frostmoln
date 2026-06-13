@@ -65,21 +65,21 @@ terraform-provider-frostmoln/
 
 ```bash
 # Development
-make build            # Build provider binary
-make test             # Run unit tests
-make testacc          # Run acceptance tests (requires TF_ACC=1)
-make lint             # Run linter
-make fmt              # Format code
+go build ./...            # Build provider binary
+go test ./...             # Run unit tests
+TF_ACC=1 go test ./...          # Run acceptance tests (requires TF_ACC=1)
+golangci-lint run             # Run linter
+gofumpt -w .              # Format code
 
 # Installation
-make install          # Install provider locally for dev testing
+go install ./...          # Install provider locally for dev testing
 
 # Documentation
 make generate         # Generate provider docs with tfplugindocs
 
 # Maintenance
-make deps             # Update dependencies
-make clean            # Clean build artifacts
+go mod tidy             # Update dependencies
+rm -rf bin/            # Clean build artifacts
 ```
 
 ## Testing
@@ -88,7 +88,7 @@ make clean            # Clean build artifacts
 
 ```bash
 # Run all unit tests
-make test
+go test ./...
 
 # Run specific package tests
 go test -v ./internal/client/...
