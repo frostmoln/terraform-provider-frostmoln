@@ -20,8 +20,9 @@ import (
 )
 
 var (
-	_ resource.Resource                = &loadBalancerResource{}
-	_ resource.ResourceWithImportState = &loadBalancerResource{}
+	_ resource.Resource                   = &loadBalancerResource{}
+	_ resource.ResourceWithImportState    = &loadBalancerResource{}
+	_ resource.ResourceWithValidateConfig = &loadBalancerResource{}
 )
 
 type loadBalancerResource struct {
@@ -94,6 +95,32 @@ func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"scheme": schema.StringAttribute{
+				Description: "Reachability scheme: internal (default, private VIP only) or public (a bring-your-own floating IP is attached to the VIP for external reachability). When public, floating_ip_id is required. There is no in-place change between schemes; changing this forces a new resource.",
+				Optional:    true,
+				Computed:    true,
+				Default:     stringdefault.StaticString("internal"),
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+				Validators: []validator.String{
+					stringvalidator.OneOf("internal", "public"),
+				},
+			},
+			"floating_ip_id": schema.StringAttribute{
+				Description: "ID of a pre-allocated, tenant-owned, unassociated floating IP to attach to the VIP. Required when scheme is public; must be omitted when scheme is internal. Changing this forces a new resource.",
+				Optional:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"floating_ip_address": schema.StringAttribute{
+				Description: "The public IP address of the attached floating IP (present only when scheme is public).",
+				Computed:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
 			"provider_type": schema.StringAttribute{
 				Description: "The Octavia provider driver: amphora (default, full L7 + TLS) or ovn (L4-only, source-IP preserving, zero VM overhead). There is no in-place migration between providers; changing this forces a new resource. (Named provider_type because \"provider\" is a reserved Terraform attribute name.)",
 				Optional:    true,
@@ -152,6 +179,46 @@ func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 				Computed:    true,
 			},
 		},
+	}
+}
+
+// ValidateConfig enforces the scheme<->floating_ip_id invariant at plan time:
+// a public load balancer must reference a floating IP; an internal one must not.
+// Unknown (interpolated) values are skipped — the backend stays authoritative.
+func (r *loadBalancerResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var cfg LoadBalancerModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if cfg.Scheme.IsUnknown() || cfg.FloatingIPID.IsUnknown() {
+		return
+	}
+
+	// A null scheme defaults to internal (schema default applied after config).
+	scheme := "internal"
+	if !cfg.Scheme.IsNull() {
+		scheme = cfg.Scheme.ValueString()
+	}
+	hasFIP := !cfg.FloatingIPID.IsNull() && cfg.FloatingIPID.ValueString() != ""
+
+	switch scheme {
+	case "public":
+		if !hasFIP {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("floating_ip_id"),
+				"Missing floating_ip_id",
+				`floating_ip_id is required when scheme is "public".`,
+			)
+		}
+	case "internal":
+		if hasFIP {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("floating_ip_id"),
+				"Unexpected floating_ip_id",
+				`floating_ip_id must not be set when scheme is "internal" (the default); set scheme = "public" to attach a floating IP.`,
+			)
+		}
 	}
 }
 

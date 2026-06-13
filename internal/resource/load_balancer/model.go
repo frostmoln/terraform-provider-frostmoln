@@ -16,6 +16,9 @@ type LoadBalancerModel struct {
 	SubnetID           types.String `tfsdk:"subnet_id"`
 	Description        types.String `tfsdk:"description"`
 	VIPAddress         types.String `tfsdk:"vip_address"`
+	Scheme             types.String `tfsdk:"scheme"`
+	FloatingIPID       types.String `tfsdk:"floating_ip_id"`
+	FloatingIPAddress  types.String `tfsdk:"floating_ip_address"`
 	Provider           types.String `tfsdk:"provider_type"`
 	FlavorID           types.String `tfsdk:"flavor_id"`
 	Tags               types.Map    `tfsdk:"tags"`
@@ -36,6 +39,9 @@ type apiLoadBalancer struct {
 	SubnetID           string            `json:"subnetId"`
 	VIPAddress         string            `json:"vipAddress,omitempty"`
 	VIPPortID          string            `json:"vipPortId,omitempty"`
+	Scheme             string            `json:"scheme,omitempty"`
+	FloatingIPID       string            `json:"floatingIpId,omitempty"`
+	FloatingIPAddress  string            `json:"floatingIpAddress,omitempty"`
 	Provider           string            `json:"provider,omitempty"`
 	FlavorID           string            `json:"flavorId,omitempty"`
 	Status             string            `json:"status"`
@@ -48,14 +54,16 @@ type apiLoadBalancer struct {
 
 // apiCreateLoadBalancerRequest is the API request to create a load balancer.
 type apiCreateLoadBalancerRequest struct {
-	Name        string            `json:"name"`
-	Description string            `json:"description,omitempty"`
-	VPCID       string            `json:"vpcId"`
-	SubnetID    string            `json:"subnetId"`
-	VIPAddress  string            `json:"vipAddress,omitempty"`
-	Provider    string            `json:"provider,omitempty"`
-	FlavorID    string            `json:"flavorId,omitempty"`
-	Tags        map[string]string `json:"tags,omitempty"`
+	Name         string            `json:"name"`
+	Description  string            `json:"description,omitempty"`
+	VPCID        string            `json:"vpcId"`
+	SubnetID     string            `json:"subnetId"`
+	VIPAddress   string            `json:"vipAddress,omitempty"`
+	Scheme       string            `json:"scheme,omitempty"`
+	FloatingIPID string            `json:"floatingIpId,omitempty"`
+	Provider     string            `json:"provider,omitempty"`
+	FlavorID     string            `json:"flavorId,omitempty"`
+	Tags         map[string]string `json:"tags,omitempty"`
 }
 
 // apiUpdateLoadBalancerRequest is the API request to update a load balancer.
@@ -79,6 +87,12 @@ func (m *LoadBalancerModel) toCreateRequest(ctx context.Context, diags *diag.Dia
 	}
 	if !m.VIPAddress.IsNull() && !m.VIPAddress.IsUnknown() {
 		req.VIPAddress = m.VIPAddress.ValueString()
+	}
+	if !m.Scheme.IsNull() && !m.Scheme.IsUnknown() {
+		req.Scheme = m.Scheme.ValueString()
+	}
+	if !m.FloatingIPID.IsNull() && !m.FloatingIPID.IsUnknown() {
+		req.FloatingIPID = m.FloatingIPID.ValueString()
 	}
 	if !m.Provider.IsNull() && !m.Provider.IsUnknown() {
 		req.Provider = m.Provider.ValueString()
@@ -148,6 +162,26 @@ func (m *LoadBalancerModel) fromAPI(ctx context.Context, lb *apiLoadBalancer, di
 		m.VIPPortID = types.StringValue(lb.VIPPortID)
 	} else {
 		m.VIPPortID = types.StringNull()
+	}
+
+	// scheme is computed (default internal) and always populated on read.
+	if lb.Scheme != "" {
+		m.Scheme = types.StringValue(lb.Scheme)
+	} else {
+		m.Scheme = types.StringValue("internal")
+	}
+
+	// floating_ip_id is the bring-your-own FIP (config); reflect the attached
+	// FIP from the read. floating_ip_address is computed.
+	if lb.FloatingIPID != "" {
+		m.FloatingIPID = types.StringValue(lb.FloatingIPID)
+	} else {
+		m.FloatingIPID = types.StringNull()
+	}
+	if lb.FloatingIPAddress != "" {
+		m.FloatingIPAddress = types.StringValue(lb.FloatingIPAddress)
+	} else {
+		m.FloatingIPAddress = types.StringNull()
 	}
 
 	if lb.Provider != "" {

@@ -125,6 +125,9 @@ func planValue(t *testing.T, schemaResp resource.SchemaResponse, ctx context.Con
 		"subnet_id":           tftypes.NewValue(tftypes.String, "subnet-1"),
 		"description":         tftypes.NewValue(tftypes.String, nil),
 		"vip_address":         tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"scheme":              tftypes.NewValue(tftypes.String, "internal"),
+		"floating_ip_id":      tftypes.NewValue(tftypes.String, nil),
+		"floating_ip_address": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"provider_type":       tftypes.NewValue(tftypes.String, "amphora"),
 		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
@@ -135,6 +138,67 @@ func planValue(t *testing.T, schemaResp resource.SchemaResponse, ctx context.Con
 		"created_at":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"updated_at":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 	})
+}
+
+// schemeConfigValue builds a raw config value with the given scheme and
+// floating_ip_id (pass nil for an unset/null attribute) and every other
+// attribute null, for exercising ValidateConfig.
+func schemeConfigValue(t *testing.T, schemaResp resource.SchemaResponse, ctx context.Context, scheme, floatingIPID interface{}) tftypes.Value {
+	t.Helper()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+	return tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":                  tftypes.NewValue(tftypes.String, nil),
+		"name":                tftypes.NewValue(tftypes.String, "test-lb"),
+		"vpc_id":              tftypes.NewValue(tftypes.String, "vpc-1"),
+		"subnet_id":           tftypes.NewValue(tftypes.String, "subnet-1"),
+		"description":         tftypes.NewValue(tftypes.String, nil),
+		"vip_address":         tftypes.NewValue(tftypes.String, nil),
+		"scheme":              tftypes.NewValue(tftypes.String, scheme),
+		"floating_ip_id":      tftypes.NewValue(tftypes.String, floatingIPID),
+		"floating_ip_address": tftypes.NewValue(tftypes.String, nil),
+		"provider_type":       tftypes.NewValue(tftypes.String, nil),
+		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
+		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"vip_port_id":         tftypes.NewValue(tftypes.String, nil),
+		"status":              tftypes.NewValue(tftypes.String, nil),
+		"provisioning_status": tftypes.NewValue(tftypes.String, nil),
+		"operating_status":    tftypes.NewValue(tftypes.String, nil),
+		"created_at":          tftypes.NewValue(tftypes.String, nil),
+		"updated_at":          tftypes.NewValue(tftypes.String, nil),
+	})
+}
+
+func TestLoadBalancerValidateConfig(t *testing.T) {
+	ctx := context.Background()
+	schemaResp := getSchema(t)
+	r := newTestResource(nil)
+
+	tests := []struct {
+		name       string
+		scheme     interface{}
+		fip        interface{}
+		wantErrors bool
+	}{
+		{"public with fip ok", "public", "fip-1", false},
+		{"public without fip errors", "public", nil, true},
+		{"internal with fip errors", "internal", "fip-1", true},
+		{"internal without fip ok", "internal", nil, false},
+		{"null scheme with fip errors (defaults internal)", nil, "fip-1", true},
+		{"null scheme without fip ok", nil, nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := tfsdk.Config{Schema: schemaResp.Schema, Raw: schemeConfigValue(t, schemaResp, ctx, tt.scheme, tt.fip)}
+			resp := &resource.ValidateConfigResponse{}
+			r.ValidateConfig(ctx, resource.ValidateConfigRequest{Config: cfg}, resp)
+			if tt.wantErrors && !resp.Diagnostics.HasError() {
+				t.Errorf("expected a validation error, got none")
+			}
+			if !tt.wantErrors && resp.Diagnostics.HasError() {
+				t.Errorf("expected no validation error, got: %v", resp.Diagnostics.Errors())
+			}
+		})
+	}
 }
 
 // TestLoadBalancerCreateAsyncOperationPoll exercises the 202 -> operation-poll
@@ -340,6 +404,9 @@ func TestLoadBalancerDeleteAsyncOperationPoll(t *testing.T) {
 		"subnet_id":           tftypes.NewValue(tftypes.String, "subnet-1"),
 		"description":         tftypes.NewValue(tftypes.String, nil),
 		"vip_address":         tftypes.NewValue(tftypes.String, "10.0.0.7"),
+		"scheme":              tftypes.NewValue(tftypes.String, "internal"),
+		"floating_ip_id":      tftypes.NewValue(tftypes.String, nil),
+		"floating_ip_address": tftypes.NewValue(tftypes.String, nil),
 		"provider_type":       tftypes.NewValue(tftypes.String, "amphora"),
 		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),

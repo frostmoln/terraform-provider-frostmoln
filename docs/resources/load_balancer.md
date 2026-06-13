@@ -35,11 +35,27 @@ resource "frostmoln_load_balancer" "web" {
   subnet_id     = frostmoln_subnet.public.id
   provider_type = "amphora"
 
-  description = "Public ingress load balancer"
+  description = "Internal ingress load balancer (private VIP only — the default scheme)"
 
   tags = {
     environment = "production"
   }
+}
+
+# A PUBLIC load balancer: attach a pre-allocated, unassociated floating IP to
+# the VIP for external reachability. scheme and floating_ip_id are ForceNew
+# (there is no in-place internal<->public migration). floating_ip_id is REQUIRED
+# when scheme = "public" and must be omitted when scheme = "internal".
+resource "frostmoln_floating_ip" "ingress" {}
+
+resource "frostmoln_load_balancer" "public_web" {
+  name           = "public-web-lb"
+  vpc_id         = frostmoln_vpc.main.id
+  subnet_id      = frostmoln_subnet.public.id
+  scheme         = "public"
+  floating_ip_id = frostmoln_floating_ip.ingress.id
+
+  # floating_ip_address is computed (the attached FIP's public address).
 }
 ```
 
@@ -56,13 +72,16 @@ resource "frostmoln_load_balancer" "web" {
 
 - `description` (String) A description of the load balancer.
 - `flavor_id` (String) The Octavia flavor ID for the load balancer (amphora provider only). Changing this forces a new resource.
+- `floating_ip_id` (String) ID of a pre-allocated, tenant-owned, unassociated floating IP to attach to the VIP. Required when scheme is public; must be omitted when scheme is internal. Changing this forces a new resource.
 - `provider_type` (String) The Octavia provider driver: amphora (default, full L7 + TLS) or ovn (L4-only, source-IP preserving, zero VM overhead). There is no in-place migration between providers; changing this forces a new resource. (Named provider_type because "provider" is a reserved Terraform attribute name.)
+- `scheme` (String) Reachability scheme: internal (default, private VIP only) or public (a bring-your-own floating IP is attached to the VIP for external reachability). When public, floating_ip_id is required. There is no in-place change between schemes; changing this forces a new resource.
 - `tags` (Map of String) Key-value tags for the load balancer.
 - `vip_address` (String) The virtual IP address of the load balancer. If omitted, an address is allocated automatically. An explicitly-set VIP is effectively immutable: the backend does not support changing a VIP in place, so a changed vip_address in config is ignored on update. To move to a different VIP, taint the resource (terraform taint / -replace) to force a destroy and recreate.
 
 ### Read-Only
 
 - `created_at` (String) The creation timestamp.
+- `floating_ip_address` (String) The public IP address of the attached floating IP (present only when scheme is public).
 - `id` (String) The unique identifier of the load balancer.
 - `operating_status` (String) The Octavia operating status of the load balancer.
 - `provisioning_status` (String) The Octavia provisioning status of the load balancer.

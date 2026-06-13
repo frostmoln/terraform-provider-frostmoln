@@ -20,9 +20,25 @@ resource "frostmoln_load_balancer" "web" {
   subnet_id     = frostmoln_subnet.public.id
   provider_type = "amphora"
 
-  description = "Public ingress load balancer"
+  description = "Internal ingress load balancer (private VIP only — the default scheme)"
 
   tags = {
     environment = "production"
   }
+}
+
+# A PUBLIC load balancer: attach a pre-allocated, unassociated floating IP to
+# the VIP for external reachability. scheme and floating_ip_id are ForceNew
+# (there is no in-place internal<->public migration). floating_ip_id is REQUIRED
+# when scheme = "public" and must be omitted when scheme = "internal".
+resource "frostmoln_floating_ip" "ingress" {}
+
+resource "frostmoln_load_balancer" "public_web" {
+  name           = "public-web-lb"
+  vpc_id         = frostmoln_vpc.main.id
+  subnet_id      = frostmoln_subnet.public.id
+  scheme         = "public"
+  floating_ip_id = frostmoln_floating_ip.ingress.id
+
+  # floating_ip_address is computed (the attached FIP's public address).
 }
