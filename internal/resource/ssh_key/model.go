@@ -29,11 +29,6 @@ type apiCreateSSHKeyRequest struct {
 	PublicKey string `json:"publicKey"`
 }
 
-// apiSSHKeyList is the API response for listing SSH keys.
-type apiSSHKeyList struct {
-	SSHKeys []apiSSHKey `json:"keys"`
-}
-
 // toCreateRequest converts the Terraform model to an API create request.
 func (m *SSHKeyModel) toCreateRequest() apiCreateSSHKeyRequest {
 	return apiCreateSSHKeyRequest{

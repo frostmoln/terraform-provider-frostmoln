@@ -240,7 +240,7 @@ func newTestClient(t *testing.T, server *httptest.Server) *client.Client {
 }
 
 func meHandler(w http.ResponseWriter, _ *http.Request) {
-	json.NewEncoder(w).Encode(map[string]string{
+	_ = json.NewEncoder(w).Encode(map[string]string{
 		"id":       "user-123",
 		"tenantId": "tenant-456",
 		"email":    "test@example.com",
@@ -265,7 +265,7 @@ func TestAPIKeyCreate(t *testing.T) {
 				t.Errorf("expected description 'A test key', got %s", req.Description)
 			}
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(apiAPIKey{
+			_ = json.NewEncoder(w).Encode(apiAPIKey{
 				ID:          "ak-new",
 				Name:        req.Name,
 				Description: req.Description,
@@ -323,7 +323,7 @@ func TestAPIKeyRead(t *testing.T) {
 			meHandler(w, r)
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/api-keys/ak-123":
-			json.NewEncoder(w).Encode(apiAPIKey{
+			_ = json.NewEncoder(w).Encode(apiAPIKey{
 				ID:          "ak-123",
 				Name:        "my-key",
 				Description: "Test key",
@@ -376,7 +376,7 @@ func TestAPIKeyReadNotFound(t *testing.T) {
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/api-keys/nonexistent":
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{
 					"code":    "NOT_FOUND",
 					"message": "API key not found",
@@ -417,7 +417,7 @@ func TestAPIKeyUpdate(t *testing.T) {
 			if req.Name == nil || *req.Name != "updated-key" {
 				t.Errorf("expected name updated-key, got %v", req.Name)
 			}
-			json.NewEncoder(w).Encode(apiAPIKey{
+			_ = json.NewEncoder(w).Encode(apiAPIKey{
 				ID:        "ak-123",
 				Name:      "updated-key",
 				KeyPrefix: "fmk_test",
@@ -426,7 +426,7 @@ func TestAPIKeyUpdate(t *testing.T) {
 			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/api-keys/ak-123":
-			json.NewEncoder(w).Encode(apiAPIKey{
+			_ = json.NewEncoder(w).Encode(apiAPIKey{
 				ID:        "ak-123",
 				Name:      "updated-key",
 				KeyPrefix: "fmk_test",
@@ -493,7 +493,7 @@ func TestAPIKeyDeleteAlreadyGone(t *testing.T) {
 
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/api-keys/gone":
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{
 					"code":    "NOT_FOUND",
 					"message": "API key not found",
@@ -632,7 +632,7 @@ func TestAPIKeyResource_Create_TFSDK(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/api-keys":
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(apiAPIKey{
+			_ = json.NewEncoder(w).Encode(apiAPIKey{
 				ID:        "ak-new",
 				Name:      "test-key",
 				Key:       "fmk_secret123", // pragma: allowlist secret
@@ -697,7 +697,7 @@ func TestAPIKeyResource_Create_TFSDK(t *testing.T) {
 func TestAPIKeyResource_Create_APIError(t *testing.T) {
 	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "INTERNAL", "message": "server error"},
 		})
 	})
@@ -739,7 +739,7 @@ func TestAPIKeyResource_Read_TFSDK(t *testing.T) {
 	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/api-keys/ak-123":
-			json.NewEncoder(w).Encode(apiAPIKey{
+			_ = json.NewEncoder(w).Encode(apiAPIKey{
 				ID:        "ak-123",
 				Name:      "my-key",
 				KeyPrefix: "fmk_test",
@@ -802,7 +802,7 @@ func TestAPIKeyResource_Read_TFSDK(t *testing.T) {
 func TestAPIKeyResource_Read_NotFound_TFSDK(t *testing.T) {
 	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	})
@@ -847,7 +847,7 @@ func TestAPIKeyResource_Update_TFSDK(t *testing.T) {
 	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/api-keys/ak-123":
-			json.NewEncoder(w).Encode(apiAPIKey{
+			_ = json.NewEncoder(w).Encode(apiAPIKey{
 				ID:        "ak-123",
 				Name:      "updated-key",
 				KeyPrefix: "fmk_test",
@@ -855,7 +855,7 @@ func TestAPIKeyResource_Update_TFSDK(t *testing.T) {
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/api-keys/ak-123":
-			json.NewEncoder(w).Encode(apiAPIKey{
+			_ = json.NewEncoder(w).Encode(apiAPIKey{
 				ID:        "ak-123",
 				Name:      "updated-key",
 				KeyPrefix: "fmk_test",
@@ -930,7 +930,7 @@ func TestAPIKeyResource_Update_TFSDK(t *testing.T) {
 func TestAPIKeyResource_Update_APIError(t *testing.T) {
 	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "INTERNAL", "message": "server error"},
 		})
 	})
@@ -1032,7 +1032,7 @@ func TestAPIKeyResource_Delete_TFSDK(t *testing.T) {
 func TestAPIKeyResource_Delete_NotFound_TFSDK(t *testing.T) {
 	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	})

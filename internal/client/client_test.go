@@ -43,7 +43,7 @@ func TestConfigure(t *testing.T) {
 			t.Error("expected X-API-Key header")
 		}
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(UserProfile{
+		_ = json.NewEncoder(w).Encode(UserProfile{
 			ID:       "user-123",
 			TenantID: "tenant-456",
 			Email:    "test@example.com",
@@ -66,7 +66,7 @@ func TestConfigure(t *testing.T) {
 
 func TestConfigureNoTenantID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(UserProfile{ID: "user-123"})
+		_ = json.NewEncoder(w).Encode(UserProfile{ID: "user-123"})
 	}))
 	defer server.Close()
 
@@ -80,7 +80,7 @@ func TestConfigureNoTenantID(t *testing.T) {
 func TestConfigureAuthError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{
 				"code":    "AUTHENTICATION_REQUIRED",
 				"message": "invalid api key",
@@ -120,7 +120,7 @@ func TestGet(t *testing.T) {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	}))
 	defer server.Close()
 
@@ -143,7 +143,7 @@ func TestPost(t *testing.T) {
 			t.Error("expected Content-Type application/json")
 		}
 		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(`{"id":"new-123"}`))
+		_, _ = w.Write([]byte(`{"id":"new-123"}`))
 	}))
 	defer server.Close()
 
@@ -179,7 +179,7 @@ func TestDelete(t *testing.T) {
 func TestAPIErrorNestedFormat(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{
 				"code":    "NOT_FOUND",
 				"message": "resource not found",
@@ -201,7 +201,7 @@ func TestAPIErrorNestedFormat(t *testing.T) {
 func TestAPIErrorFlatFormat(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(APIError{
+		_ = json.NewEncoder(w).Encode(APIError{
 			Code:    "VALIDATION_ERROR",
 			Message: "invalid input",
 			Details: "name is required",
@@ -262,13 +262,13 @@ func TestPatch(t *testing.T) {
 		}
 
 		var body map[string]string
-		json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewDecoder(r.Body).Decode(&body)
 		if body["name"] != "updated" {
 			t.Errorf("expected body name 'updated', got %q", body["name"])
 		}
 
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"id":"vpc-1","name":"updated"}`))
+		_, _ = w.Write([]byte(`{"id":"vpc-1","name":"updated"}`))
 	}))
 	defer server.Close()
 
@@ -295,13 +295,13 @@ func TestPut(t *testing.T) {
 		}
 
 		var body map[string]string
-		json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewDecoder(r.Body).Decode(&body)
 		if body["flavor"] != "m1.large" {
 			t.Errorf("expected body flavor 'm1.large', got %q", body["flavor"])
 		}
 
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"id":"i-1","flavor":"m1.large"}`))
+		_, _ = w.Write([]byte(`{"id":"i-1","flavor":"m1.large"}`))
 	}))
 	defer server.Close()
 
@@ -403,7 +403,7 @@ func TestDefaultPollConfig(t *testing.T) {
 func TestGetOperation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-1" {
-			json.NewEncoder(w).Encode(Operation{
+			_ = json.NewEncoder(w).Encode(Operation{
 				OperationID:  "op-1",
 				Status:       "completed",
 				ResourceType: "load_balancer",
@@ -434,7 +434,7 @@ func TestWaitForOperationCompleted(t *testing.T) {
 			if calls >= 2 {
 				status = "completed"
 			}
-			json.NewEncoder(w).Encode(Operation{OperationID: "op-2", Status: status, ResourceID: "lb-2"})
+			_ = json.NewEncoder(w).Encode(Operation{OperationID: "op-2", Status: status, ResourceID: "lb-2"})
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -454,7 +454,7 @@ func TestWaitForOperationCompleted(t *testing.T) {
 func TestWaitForOperationFailed(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-3" {
-			json.NewEncoder(w).Encode(Operation{OperationID: "op-3", Status: "failed", Error: "boom"})
+			_ = json.NewEncoder(w).Encode(Operation{OperationID: "op-3", Status: "failed", Error: "boom"})
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)

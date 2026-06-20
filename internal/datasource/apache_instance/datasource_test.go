@@ -1,0 +1,334 @@
+package apache_instance
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+)
+
+func TestNewDataSource(t *testing.T) {
+	ds := NewDataSource()
+	if ds == nil {
+		t.Fatal("expected non-nil data source")
+	}
+}
+
+func TestMetadata(t *testing.T) {
+	ds := NewDataSource()
+	req := datasource.MetadataRequest{ProviderTypeName: "frostmoln"}
+	var resp datasource.MetadataResponse
+	ds.Metadata(context.Background(), req, &resp)
+	if resp.TypeName != "frostmoln_apache_instance" {
+		t.Errorf("expected type name frostmoln_apache_instance, got %s", resp.TypeName)
+	}
+}
+
+func TestSchema(t *testing.T) {
+	ds := NewDataSource()
+	var resp datasource.SchemaResponse
+	ds.Schema(context.Background(), datasource.SchemaRequest{}, &resp)
+
+	expectedAttrs := []string{
+		"id", "name", "engine_version", "flavor", "storage_gb", "tls_enabled",
+		"php_enabled", "php_version", "engine_config", "status", "private_ip",
+		"port", "created_at", "updated_at", "tenant_id",
+	}
+	for _, attr := range expectedAttrs {
+		if _, ok := resp.Schema.Attributes[attr]; !ok {
+			t.Errorf("expected attribute %q in schema", attr)
+		}
+	}
+	idAttr := resp.Schema.Attributes["id"].(schema.StringAttribute)
+	if !idAttr.Required {
+		t.Error("expected id to be required")
+	}
+}
+
+func TestConfigureNilProviderData(t *testing.T) {
+	ds := &apacheInstanceDataSource{}
+	var resp datasource.ConfigureResponse
+	ds.Configure(context.Background(), datasource.ConfigureRequest{}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Errorf("expected no errors, got %v", resp.Diagnostics.Errors())
+	}
+}
+
+func TestConfigureWrongType(t *testing.T) {
+	ds := &apacheInstanceDataSource{}
+	var resp datasource.ConfigureResponse
+	ds.Configure(context.Background(), datasource.ConfigureRequest{ProviderData: "not-a-client"}, &resp)
+	if !resp.Diagnostics.HasError() {
+		t.Error("expected error for wrong type")
+	}
+}
+
+// --- helpers ---
+
+func newTestServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/me", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(client.UserProfile{ID: "user-1", TenantID: "tenant-1"})
+	})
+	mux.HandleFunc("/", handler)
+	return httptest.NewServer(mux)
+}
+
+func configureDS(t *testing.T, ds datasource.DataSource, c *client.Client) {
+	t.Helper()
+	dc, ok := ds.(datasource.DataSourceWithConfigure)
+	if !ok {
+		t.Fatal("datasource does not implement DataSourceWithConfigure")
+	}
+	var resp datasource.ConfigureResponse
+	dc.Configure(context.Background(), datasource.ConfigureRequest{ProviderData: c}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("configure failed: %v", resp.Diagnostics.Errors())
+	}
+}
+
+func getDSSchema(t *testing.T) datasource.SchemaResponse {
+	t.Helper()
+	ds := NewDataSource()
+	var resp datasource.SchemaResponse
+	ds.Schema(context.Background(), datasource.SchemaRequest{}, &resp)
+	return resp
+}
+
+func configVal(t *testing.T, id string) tftypes.Value {
+	t.Helper()
+	schemaResp := getDSSchema(t)
+	tfType := schemaResp.Schema.Type().TerraformType(context.Background())
+	return tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":             tftypes.NewValue(tftypes.String, id),
+		"name":           tftypes.NewValue(tftypes.String, nil),
+		"engine_version": tftypes.NewValue(tftypes.String, nil),
+		"flavor":         tftypes.NewValue(tftypes.String, nil),
+		"storage_gb":     tftypes.NewValue(tftypes.Number, nil),
+		"tls_enabled":    tftypes.NewValue(tftypes.Bool, nil),
+		"php_enabled":    tftypes.NewValue(tftypes.Bool, nil),
+		"php_version":    tftypes.NewValue(tftypes.String, nil),
+		"engine_config":  tftypes.NewValue(tftypes.String, nil),
+		"status":         tftypes.NewValue(tftypes.String, nil),
+		"private_ip":     tftypes.NewValue(tftypes.String, nil),
+		"port":           tftypes.NewValue(tftypes.Number, nil),
+		"created_at":     tftypes.NewValue(tftypes.String, nil),
+		"updated_at":     tftypes.NewValue(tftypes.String, nil),
+		"tenant_id":      tftypes.NewValue(tftypes.String, nil),
+	})
+}
+
+func TestReadByID(t *testing.T) {
+	server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/webservers/ws-1" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
+				ID:            "ws-1",
+				Name:          "my-apache",
+				Engine:        "apache",
+				EngineVersion: "2.4",
+				Flavor:        "web.small",
+				StorageGB:     20,
+				TLSEnabled:    true,
+				PHPEnabled:    true,
+				PHPVersion:    "8.3",
+				EngineConfig:  "ServerTokens Prod",
+				Status:        "running",
+				PrivateIP:     "10.0.1.5",
+				Port:          443,
+				CreatedAt:     "2025-01-01T00:00:00Z",
+				UpdatedAt:     "2025-01-02T00:00:00Z",
+				TenantID:      "tenant-1",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureDS(t, ds, c)
+	schemaResp := getDSSchema(t)
+
+	ctx := context.Background()
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal(t, "ws-1")},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	var state apacheInstanceModel
+	readResp.State.Get(ctx, &state)
+
+	if state.ID.ValueString() != "ws-1" {
+		t.Errorf("expected ID ws-1, got %s", state.ID.ValueString())
+	}
+	if state.Name.ValueString() != "my-apache" {
+		t.Errorf("expected Name my-apache, got %s", state.Name.ValueString())
+	}
+	if state.EngineVersion.ValueString() != "2.4" {
+		t.Errorf("expected EngineVersion 2.4, got %s", state.EngineVersion.ValueString())
+	}
+	if state.StorageGB.ValueInt64() != 20 {
+		t.Errorf("expected StorageGB 20, got %d", state.StorageGB.ValueInt64())
+	}
+	if !state.TLSEnabled.ValueBool() {
+		t.Error("expected TLSEnabled true")
+	}
+	if !state.PHPEnabled.ValueBool() {
+		t.Error("expected PHPEnabled true")
+	}
+	if state.PHPVersion.ValueString() != "8.3" {
+		t.Errorf("expected PHPVersion 8.3, got %s", state.PHPVersion.ValueString())
+	}
+	if state.Port.ValueInt64() != 443 {
+		t.Errorf("expected Port 443, got %d", state.Port.ValueInt64())
+	}
+	if state.TenantID.ValueString() != "tenant-1" {
+		t.Errorf("expected TenantID tenant-1, got %s", state.TenantID.ValueString())
+	}
+}
+
+func TestReadByIDNullableFieldsEmpty(t *testing.T) {
+	server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/webservers/ws-2" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
+				ID:            "ws-2",
+				Name:          "minimal",
+				Engine:        "apache",
+				EngineVersion: "2.4",
+				Flavor:        "web.small",
+				StorageGB:     10,
+				Status:        "provisioning",
+				CreatedAt:     "2025-01-01T00:00:00Z",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureDS(t, ds, c)
+	schemaResp := getDSSchema(t)
+
+	ctx := context.Background()
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal(t, "ws-2")},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	var state apacheInstanceModel
+	readResp.State.Get(ctx, &state)
+
+	if !state.PHPVersion.IsNull() {
+		t.Error("expected null php_version")
+	}
+	if !state.EngineConfig.IsNull() {
+		t.Error("expected null engine_config")
+	}
+	if !state.PrivateIP.IsNull() {
+		t.Error("expected null private_ip")
+	}
+	if !state.Port.IsNull() {
+		t.Error("expected null port")
+	}
+	if !state.UpdatedAt.IsNull() {
+		t.Error("expected null updated_at")
+	}
+	if !state.TenantID.IsNull() {
+		t.Error("expected null tenant_id")
+	}
+}
+
+func TestReadAPIError(t *testing.T) {
+	server := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"code": "INTERNAL_ERROR", "message": "server error",
+		})
+	})
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureDS(t, ds, c)
+	schemaResp := getDSSchema(t)
+
+	ctx := context.Background()
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal(t, "ws-err")},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+	if !readResp.Diagnostics.HasError() {
+		t.Error("expected error for API failure")
+	}
+}
+
+func TestReadBadResponseBody(t *testing.T) {
+	server := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("not json"))
+	})
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureDS(t, ds, c)
+	schemaResp := getDSSchema(t)
+
+	ctx := context.Background()
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal(t, "ws-bad")},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+	if !readResp.Diagnostics.HasError() {
+		t.Error("expected error for bad response body")
+	}
+}

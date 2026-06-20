@@ -172,7 +172,7 @@ func TestSnapshotResource_CreateAndRead(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(client.UserProfile{
+			_ = json.NewEncoder(w).Encode(client.UserProfile{
 				ID: "user-1", TenantID: "tenant-1",
 			})
 
@@ -181,15 +181,15 @@ func TestSnapshotResource_CreateAndRead(t *testing.T) {
 			creating := snapshot
 			creating.Status = "creating"
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(creating)
+			_ = json.NewEncoder(w).Encode(creating)
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/snapshots/snap-abc":
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(snapshot)
+			_ = json.NewEncoder(w).Encode(snapshot)
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -249,7 +249,7 @@ func TestSnapshotResource_Delete(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(client.UserProfile{
+			_ = json.NewEncoder(w).Encode(client.UserProfile{
 				ID: "user-1", TenantID: "tenant-1",
 			})
 
@@ -259,7 +259,7 @@ func TestSnapshotResource_Delete(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -284,13 +284,13 @@ func TestSnapshotResource_ReadNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(client.UserProfile{
+			_ = json.NewEncoder(w).Encode(client.UserProfile{
 				ID: "user-1", TenantID: "tenant-1",
 			})
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -317,7 +317,7 @@ func snapMeServer(t *testing.T, handler func(w http.ResponseWriter, r *http.Requ
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/me" {
-			json.NewEncoder(w).Encode(client.UserProfile{
+			_ = json.NewEncoder(w).Encode(client.UserProfile{
 				ID: "user-1", TenantID: "tenant-1",
 			})
 			return
@@ -429,7 +429,7 @@ func TestSnapshotResource_Create_TFSDK(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-1/snapshots":
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(apiSnapshot{
+			_ = json.NewEncoder(w).Encode(apiSnapshot{
 				ID:       "snap-abc",
 				Name:     "test-snap",
 				VolumeID: "vol-123",
@@ -443,7 +443,7 @@ func TestSnapshotResource_Create_TFSDK(t *testing.T) {
 			if n >= 2 {
 				status = "available"
 			}
-			json.NewEncoder(w).Encode(apiSnapshot{
+			_ = json.NewEncoder(w).Encode(apiSnapshot{
 				ID:        "snap-abc",
 				Name:      "test-snap",
 				VolumeID:  "vol-123",
@@ -511,7 +511,7 @@ func TestSnapshotResource_Create_TFSDK(t *testing.T) {
 func TestSnapshotResource_Create_APIError(t *testing.T) {
 	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "INTERNAL", "message": "server error"},
 		})
 	})
@@ -552,7 +552,7 @@ func TestSnapshotResource_Read_TFSDK(t *testing.T) {
 	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/snapshots/snap-abc":
-			json.NewEncoder(w).Encode(apiSnapshot{
+			_ = json.NewEncoder(w).Encode(apiSnapshot{
 				ID:        "snap-abc",
 				Name:      "test-snap",
 				VolumeID:  "vol-123",
@@ -611,7 +611,7 @@ func TestSnapshotResource_Read_TFSDK(t *testing.T) {
 func TestSnapshotResource_Read_NotFound_TFSDK(t *testing.T) {
 	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	})
@@ -654,7 +654,7 @@ func TestSnapshotResource_Read_NotFound_TFSDK(t *testing.T) {
 func TestSnapshotResource_Read_APIError(t *testing.T) {
 	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "INTERNAL", "message": "server error"},
 		})
 	})
@@ -761,7 +761,7 @@ func TestSnapshotResource_Delete_TFSDK(t *testing.T) {
 func TestSnapshotResource_Delete_NotFound_TFSDK(t *testing.T) {
 	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	})
@@ -799,7 +799,7 @@ func TestSnapshotResource_Delete_NotFound_TFSDK(t *testing.T) {
 func TestSnapshotResource_Delete_APIError(t *testing.T) {
 	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "INTERNAL", "message": "server error"},
 		})
 	})

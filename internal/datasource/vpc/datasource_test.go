@@ -87,7 +87,7 @@ func newTestServer(t *testing.T, vpcs []apiVPC) *httptest.Server {
 
 	mux.HandleFunc("/v1/me", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(client.UserProfile{
+		_ = json.NewEncoder(w).Encode(client.UserProfile{
 			ID:       "user-1",
 			TenantID: "tenant-1",
 		})
@@ -97,7 +97,7 @@ func newTestServer(t *testing.T, vpcs []apiVPC) *httptest.Server {
 	mux.HandleFunc("/v1/tenants/tenant-1/vpcs", func(w http.ResponseWriter, r *http.Request) {
 		// Check if this is a specific VPC lookup (has trailing path)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(apiVPCList{VPCs: vpcs})
+		_ = json.NewEncoder(w).Encode(apiVPCList{VPCs: vpcs})
 	})
 
 	// Handle individual VPC lookups
@@ -105,7 +105,7 @@ func newTestServer(t *testing.T, vpcs []apiVPC) *httptest.Server {
 		v := vpc // capture loop variable
 		mux.HandleFunc("/v1/tenants/tenant-1/vpcs/"+vpc.ID, func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(v)
+			_ = json.NewEncoder(w).Encode(v)
 		})
 	}
 

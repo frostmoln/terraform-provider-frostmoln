@@ -593,7 +593,7 @@ func TestUpdate(t *testing.T) {
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-1/caches/redis-123":
 			_ = json.NewDecoder(r.Body).Decode(&updatedBody)
 			w.WriteHeader(http.StatusOK)
-			fmt.Fprint(w, `{}`)
+			_, _ = fmt.Fprint(w, `{}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/caches/redis-123":
 			_ = json.NewEncoder(w).Encode(apiRedisInstance{
 				ID:              "redis-123",

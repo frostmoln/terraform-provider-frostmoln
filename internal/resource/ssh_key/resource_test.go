@@ -64,7 +64,7 @@ func TestSSHKeyCreate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"id":       "user-123",
 				"tenantId": "tenant-456",
 				"email":    "test@example.com",
@@ -81,7 +81,7 @@ func TestSSHKeyCreate(t *testing.T) {
 				t.Errorf("expected public key ssh-ed25519 AAAA..., got %s", req.PublicKey)
 			}
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(apiSSHKey{
+			_ = json.NewEncoder(w).Encode(apiSSHKey{
 				ID:          "key-abc",
 				Name:        req.Name,
 				PublicKey:   req.PublicKey,
@@ -124,12 +124,12 @@ func TestSSHKeyRead(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"id":       "user-123",
 				"tenantId": "tenant-456",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/sshkeys/key-abc":
-			json.NewEncoder(w).Encode(apiSSHKey{
+			_ = json.NewEncoder(w).Encode(apiSSHKey{
 				ID:          "key-abc",
 				Name:        "test-key",
 				PublicKey:   "ssh-ed25519 AAAA...",
@@ -170,13 +170,13 @@ func TestSSHKeyReadNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"id":       "user-123",
 				"tenantId": "tenant-456",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/sshkeys/nonexistent":
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{
 					"code":    "NOT_FOUND",
 					"message": "SSH key not found",
@@ -208,7 +208,7 @@ func TestSSHKeyDelete(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"id":       "user-123",
 				"tenantId": "tenant-456",
 			})
@@ -248,7 +248,7 @@ func newMeAndSSHKeyServer(t *testing.T, handler func(w http.ResponseWriter, r *h
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/me" {
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"id":       "user-123",
 				"tenantId": "tenant-456",
 			})
@@ -364,7 +364,7 @@ func TestSSHKeyResource_Create_TFSDK(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/sshkeys":
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(apiSSHKey{
+			_ = json.NewEncoder(w).Encode(apiSSHKey{
 				ID:          "key-abc",
 				Name:        "test-key",
 				PublicKey:   "ssh-ed25519 AAAA...",
@@ -423,7 +423,7 @@ func TestSSHKeyResource_Create_TFSDK(t *testing.T) {
 func TestSSHKeyResource_Create_APIError(t *testing.T) {
 	server := newMeAndSSHKeyServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "INTERNAL", "message": "server error"},
 		})
 	})
@@ -460,7 +460,7 @@ func TestSSHKeyResource_Read_TFSDK(t *testing.T) {
 	server := newMeAndSSHKeyServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/sshkeys/key-abc":
-			json.NewEncoder(w).Encode(apiSSHKey{
+			_ = json.NewEncoder(w).Encode(apiSSHKey{
 				ID:          "key-abc",
 				Name:        "test-key",
 				PublicKey:   "ssh-ed25519 AAAA...",
@@ -513,7 +513,7 @@ func TestSSHKeyResource_Read_TFSDK(t *testing.T) {
 func TestSSHKeyResource_Read_NotFound_TFSDK(t *testing.T) {
 	server := newMeAndSSHKeyServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	})
@@ -561,7 +561,7 @@ func TestSSHKeyResource_Read_NotFound_TFSDK(t *testing.T) {
 func TestSSHKeyResource_Read_APIError(t *testing.T) {
 	server := newMeAndSSHKeyServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "INTERNAL", "message": "server error"},
 		})
 	})
@@ -660,7 +660,7 @@ func TestSSHKeyResource_Delete_TFSDK(t *testing.T) {
 func TestSSHKeyResource_Delete_NotFound_TFSDK(t *testing.T) {
 	server := newMeAndSSHKeyServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	})
@@ -695,7 +695,7 @@ func TestSSHKeyResource_Delete_NotFound_TFSDK(t *testing.T) {
 func TestSSHKeyResource_Delete_APIError(t *testing.T) {
 	server := newMeAndSSHKeyServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "INTERNAL", "message": "server error"},
 		})
 	})

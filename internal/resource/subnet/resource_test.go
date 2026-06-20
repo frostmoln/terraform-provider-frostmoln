@@ -182,23 +182,23 @@ func TestSubnetResourceCRUD(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/subnets":
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(subnetData)
+			_ = json.NewEncoder(w).Encode(subnetData)
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/subnets/subnet-test-1":
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(subnetData)
+			_ = json.NewEncoder(w).Encode(subnetData)
 
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/subnets/subnet-test-1":
 			subnetData.Tags = map[string]string{"env": "updated"}
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(subnetData)
+			_ = json.NewEncoder(w).Encode(subnetData)
 
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/subnets/subnet-test-1":
 			w.WriteHeader(http.StatusNoContent)
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -271,7 +271,7 @@ func TestSubnetResourceCRUD(t *testing.T) {
 func TestSubnetReadNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "subnet not found"},
 		})
 	}))
@@ -394,11 +394,11 @@ func TestSubnetResourceCreate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/subnets" {
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(subnetResp)
+			_ = json.NewEncoder(w).Encode(subnetResp)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -469,11 +469,11 @@ func TestSubnetResourceRead(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/subnets/subnet-read-1" {
-			json.NewEncoder(w).Encode(subnetResp)
+			_ = json.NewEncoder(w).Encode(subnetResp)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -523,7 +523,7 @@ func TestSubnetResourceRead(t *testing.T) {
 func TestSubnetResourceReadNotFoundRemovesState(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -579,11 +579,11 @@ func TestSubnetResourceUpdate(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/subnets/subnet-upd-1" {
-			json.NewEncoder(w).Encode(subnetResp)
+			_ = json.NewEncoder(w).Encode(subnetResp)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -656,7 +656,7 @@ func TestSubnetResourceDelete(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -700,7 +700,7 @@ func TestSubnetResourceDelete(t *testing.T) {
 func TestSubnetResourceDeleteAlreadyGone(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))

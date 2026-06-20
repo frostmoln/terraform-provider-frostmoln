@@ -172,22 +172,22 @@ func TestSecurityGroupResourceCRUD(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/security-groups":
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(sgCreated)
+			_ = json.NewEncoder(w).Encode(sgCreated)
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-test-1":
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(sgCreated)
+			_ = json.NewEncoder(w).Encode(sgCreated)
 
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-test-1":
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(sgUpdated)
+			_ = json.NewEncoder(w).Encode(sgUpdated)
 
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-test-1":
 			w.WriteHeader(http.StatusNoContent)
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -259,7 +259,7 @@ func TestSecurityGroupResourceCRUD(t *testing.T) {
 func TestSecurityGroupReadNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "security group not found"},
 		})
 	}))
@@ -378,10 +378,10 @@ func TestResourceCreate(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/security-groups":
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(sgResp)
+			_ = json.NewEncoder(w).Encode(sgResp)
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -435,11 +435,11 @@ func TestResourceRead(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-read-1" {
-			json.NewEncoder(w).Encode(sgResp)
+			_ = json.NewEncoder(w).Encode(sgResp)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -483,7 +483,7 @@ func TestResourceRead(t *testing.T) {
 func TestResourceReadNotFoundRemovesState(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -531,11 +531,11 @@ func TestResourceUpdate(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-upd-1" {
-			json.NewEncoder(w).Encode(sgResp)
+			_ = json.NewEncoder(w).Encode(sgResp)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -596,7 +596,7 @@ func TestResourceDelete(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -634,7 +634,7 @@ func TestResourceDelete(t *testing.T) {
 func TestResourceDeleteAlreadyGone(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))

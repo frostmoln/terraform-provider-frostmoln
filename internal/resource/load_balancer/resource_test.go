@@ -208,11 +208,11 @@ func TestLoadBalancerCreateAsyncOperationPoll(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "u-1", "tenantId": "t-123"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "u-1", "tenantId": "t-123"})
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/load-balancers":
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(client.Operation{
+			_ = json.NewEncoder(w).Encode(client.Operation{
 				OperationID:  "op-1",
 				Status:       "pending",
 				ResourceType: "load_balancer",
@@ -224,7 +224,7 @@ func TestLoadBalancerCreateAsyncOperationPoll(t *testing.T) {
 			if opCalls >= 2 {
 				status = "completed"
 			}
-			json.NewEncoder(w).Encode(client.Operation{
+			_ = json.NewEncoder(w).Encode(client.Operation{
 				OperationID:  "op-1",
 				Status:       status,
 				ResourceType: "load_balancer",
@@ -232,7 +232,7 @@ func TestLoadBalancerCreateAsyncOperationPoll(t *testing.T) {
 			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/load-balancers/lb-async-1":
-			json.NewEncoder(w).Encode(apiLoadBalancer{
+			_ = json.NewEncoder(w).Encode(apiLoadBalancer{
 				ID:                 "lb-async-1",
 				Name:               "test-lb",
 				VPCID:              "vpc-1",
@@ -247,7 +247,7 @@ func TestLoadBalancerCreateAsyncOperationPoll(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "NOT_FOUND", "message": "nf"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "NOT_FOUND", "message": "nf"}})
 		}
 	}))
 	defer server.Close()
@@ -290,12 +290,12 @@ func TestLoadBalancerCreateOperationFailed(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "u-1", "tenantId": "t-123"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "u-1", "tenantId": "t-123"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/load-balancers":
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(client.Operation{OperationID: "op-f", Status: "pending"})
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-f", Status: "pending"})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-f":
-			json.NewEncoder(w).Encode(client.Operation{OperationID: "op-f", Status: "failed", Error: "quota exceeded"})
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-f", Status: "failed", Error: "quota exceeded"})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -330,13 +330,13 @@ func TestLoadBalancerCreateOperationNoResourceID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "u-1", "tenantId": "t-123"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "u-1", "tenantId": "t-123"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/load-balancers":
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(client.Operation{OperationID: "op-n", Status: "pending"})
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-n", Status: "pending"})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-n":
 			// Completed but no ResourceID.
-			json.NewEncoder(w).Encode(client.Operation{OperationID: "op-n", Status: "completed"})
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-n", Status: "completed"})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -370,17 +370,17 @@ func TestLoadBalancerDeleteAsyncOperationPoll(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "u-1", "tenantId": "t-123"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "u-1", "tenantId": "t-123"})
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/load-balancers/lb-del-1":
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(client.Operation{OperationID: "op-d", Status: "pending"})
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-d", Status: "pending"})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-d":
 			opCalls++
 			status := "running"
 			if opCalls >= 2 {
 				status = "completed"
 			}
-			json.NewEncoder(w).Encode(client.Operation{OperationID: "op-d", Status: status, ResourceID: "lb-del-1"})
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-d", Status: status, ResourceID: "lb-del-1"})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

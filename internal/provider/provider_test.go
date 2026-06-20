@@ -122,7 +122,7 @@ func TestConfigureWithValidAPIKey(t *testing.T) {
 		}
 		if r.Header.Get("X-API-Key") != "valid-key" { // pragma: allowlist secret
 			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{
 					"code":    "AUTHENTICATION_REQUIRED",
 					"message": "invalid api key",
@@ -131,7 +131,7 @@ func TestConfigureWithValidAPIKey(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"id":       "user-123",
 			"tenantId": "tenant-456",
 			"email":    "test@example.com",
@@ -161,7 +161,7 @@ func TestConfigureWithInvalidAPIResponse(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{
 				"code":    "AUTHENTICATION_REQUIRED",
 				"message": "invalid api key",
@@ -192,13 +192,100 @@ func TestConfigureWithInvalidAPIResponse(t *testing.T) {
 	}
 }
 
+func TestConfigureMissingAPIKey(t *testing.T) {
+	// No api_key attribute and no FROSTMOLN_API_KEY env var -> must error.
+	t.Setenv("FROSTMOLN_API_KEY", "")
+	t.Setenv("FROSTMOLN_API_ENDPOINT", "")
+
+	ctx := context.Background()
+	protoServer := providerserver.NewProtocol6(New("test")())()
+
+	// Build a config with both attributes null.
+	typ := providerConfigType()
+	val := tftypes.NewValue(typ, map[string]tftypes.Value{
+		"api_endpoint": tftypes.NewValue(tftypes.String, nil),
+		"api_key":      tftypes.NewValue(tftypes.String, nil),
+	})
+	dv, err := tfprotov6.NewDynamicValue(typ, val)
+	if err != nil {
+		t.Fatalf("failed to create DynamicValue: %v", err)
+	}
+
+	resp, err := protoServer.ConfigureProvider(ctx, &tfprotov6.ConfigureProviderRequest{
+		Config: &dv,
+	})
+	if err != nil {
+		t.Fatalf("ConfigureProvider returned error: %v", err)
+	}
+
+	hasError := false
+	for _, d := range resp.Diagnostics {
+		if d.Severity == tfprotov6.DiagnosticSeverityError {
+			hasError = true
+			break
+		}
+	}
+	if !hasError {
+		t.Error("expected error diagnostic when API key is missing")
+	}
+}
+
+func TestConfigureFromEnvVars(t *testing.T) {
+	// api_endpoint and api_key resolved entirely from environment variables.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/me" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("X-API-Key") != "env-key" { // pragma: allowlist secret
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":       "user-env",
+			"tenantId": "tenant-env",
+		})
+	}))
+	defer server.Close()
+
+	t.Setenv("FROSTMOLN_API_ENDPOINT", server.URL)
+	t.Setenv("FROSTMOLN_API_KEY", "env-key") // pragma: allowlist secret
+
+	ctx := context.Background()
+	protoServer := providerserver.NewProtocol6(New("test")())()
+
+	// Both attributes null so the env vars are used.
+	typ := providerConfigType()
+	val := tftypes.NewValue(typ, map[string]tftypes.Value{
+		"api_endpoint": tftypes.NewValue(tftypes.String, nil),
+		"api_key":      tftypes.NewValue(tftypes.String, nil),
+	})
+	dv, err := tfprotov6.NewDynamicValue(typ, val)
+	if err != nil {
+		t.Fatalf("failed to create DynamicValue: %v", err)
+	}
+
+	resp, err := protoServer.ConfigureProvider(ctx, &tfprotov6.ConfigureProviderRequest{
+		Config: &dv,
+	})
+	if err != nil {
+		t.Fatalf("ConfigureProvider returned error: %v", err)
+	}
+	for _, d := range resp.Diagnostics {
+		if d.Severity == tfprotov6.DiagnosticSeverityError {
+			t.Errorf("unexpected error diagnostic: %s: %s", d.Summary, d.Detail)
+		}
+	}
+}
+
 func TestConfigureSetsClientInProviderData(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/me" {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"id":       "user-abc",
 				"tenantId": "tenant-xyz",
 				"email":    "test@example.com",
@@ -209,7 +296,7 @@ func TestConfigureSetsClientInProviderData(t *testing.T) {
 		// Test that a subsequent data source read can reach the server.
 		if r.URL.Path == "/v1/flavors" {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"flavors": []interface{}{},
 			})
 			return

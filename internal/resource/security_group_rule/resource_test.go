@@ -152,18 +152,18 @@ func TestSecurityGroupRuleResourceCRUD(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-123/rules":
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(ruleCreated)
+			_ = json.NewEncoder(w).Encode(ruleCreated)
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-123":
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(sgWithRules)
+			_ = json.NewEncoder(w).Encode(sgWithRules)
 
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-123/rules/rule-test-1":
 			w.WriteHeader(http.StatusNoContent)
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -233,11 +233,11 @@ func TestSecurityGroupRuleReadRuleNotFoundInSG(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-123" {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(sgWithNoRules)
+			_ = json.NewEncoder(w).Encode(sgWithNoRules)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -370,11 +370,11 @@ func TestRuleResourceCreate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-123/rules" {
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(ruleResp)
+			_ = json.NewEncoder(w).Encode(ruleResp)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -440,11 +440,11 @@ func TestRuleResourceRead(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-123" {
-			json.NewEncoder(w).Encode(sgWithRules)
+			_ = json.NewEncoder(w).Encode(sgWithRules)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -496,11 +496,11 @@ func TestRuleResourceReadRuleNotFoundRemovesState(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-123" {
-			json.NewEncoder(w).Encode(sgWithRules)
+			_ = json.NewEncoder(w).Encode(sgWithRules)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -541,7 +541,7 @@ func TestRuleResourceReadRuleNotFoundRemovesState(t *testing.T) {
 func TestRuleResourceReadSGNotFoundRemovesState(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -598,7 +598,7 @@ func TestRuleResourceDelete(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -638,7 +638,7 @@ func TestRuleResourceDelete(t *testing.T) {
 func TestRuleResourceDeleteAlreadyGone(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))

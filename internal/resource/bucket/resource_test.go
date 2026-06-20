@@ -183,7 +183,7 @@ func TestBucketCreate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"id":       "user-123",
 				"tenantId": "tenant-456",
 			})
@@ -196,7 +196,7 @@ func TestBucketCreate(t *testing.T) {
 				t.Errorf("expected name test-bucket, got %s", req.Name)
 			}
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(apiBucket{
+			_ = json.NewEncoder(w).Encode(apiBucket{
 				Name:         req.Name,
 				Region:       "sweden",
 				StorageClass: "standard",
@@ -240,12 +240,12 @@ func TestBucketRead(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"id":       "user-123",
 				"tenantId": "tenant-456",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/buckets/test-bucket":
-			json.NewEncoder(w).Encode(apiBucket{
+			_ = json.NewEncoder(w).Encode(apiBucket{
 				Name:         "test-bucket",
 				Region:       "sweden",
 				StorageClass: "standard",
@@ -289,7 +289,7 @@ func TestBucketUpdate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"id":       "user-123",
 				"tenantId": "tenant-456",
 			})
@@ -301,7 +301,7 @@ func TestBucketUpdate(t *testing.T) {
 			if req.Versioning == nil || *req.Versioning != "suspended" {
 				t.Errorf("expected versioning suspended, got %v", req.Versioning)
 			}
-			json.NewEncoder(w).Encode(apiBucket{
+			_ = json.NewEncoder(w).Encode(apiBucket{
 				Name:         "test-bucket",
 				Region:       "sweden",
 				StorageClass: "standard",
@@ -343,7 +343,7 @@ func TestBucketDelete(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"id":       "user-123",
 				"tenantId": "tenant-456",
 			})
@@ -376,13 +376,13 @@ func TestBucketReadNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"id":       "user-123",
 				"tenantId": "tenant-456",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/buckets/nonexistent":
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{
 					"code":    "NOT_FOUND",
 					"message": "Bucket not found",
@@ -510,11 +510,11 @@ func TestBucketResourceCreate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/buckets" {
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(bucketResp)
+			_ = json.NewEncoder(w).Encode(bucketResp)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -576,11 +576,11 @@ func TestBucketResourceRead(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/buckets/read-bucket" {
-			json.NewEncoder(w).Encode(bucketResp)
+			_ = json.NewEncoder(w).Encode(bucketResp)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -628,7 +628,7 @@ func TestBucketResourceRead(t *testing.T) {
 func TestBucketResourceReadNotFoundRemovesState(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -681,11 +681,11 @@ func TestBucketResourceUpdate(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/buckets/upd-bucket" {
-			json.NewEncoder(w).Encode(bucketResp)
+			_ = json.NewEncoder(w).Encode(bucketResp)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -754,7 +754,7 @@ func TestBucketResourceDelete(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -795,7 +795,7 @@ func TestBucketResourceDelete(t *testing.T) {
 func TestBucketResourceDeleteAlreadyGone(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))

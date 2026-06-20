@@ -314,7 +314,7 @@ func newTestClient(t *testing.T, server *httptest.Server) *client.Client {
 }
 
 func meHandler(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(map[string]string{
+	_ = json.NewEncoder(w).Encode(map[string]string{
 		"id":       "user-123",
 		"tenantId": "tenant-456",
 		"email":    "test@example.com",
@@ -346,7 +346,7 @@ func TestInstanceCreate(t *testing.T) {
 				t.Errorf("expected user data, got %s", req.UserData)
 			}
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(apiInstance{
+			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:        "inst-new",
 				Name:      req.Name,
 				Status:    "provisioning",
@@ -362,7 +362,7 @@ func TestInstanceCreate(t *testing.T) {
 			if n >= 2 {
 				status = "running"
 			}
-			json.NewEncoder(w).Encode(apiInstance{
+			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:         "inst-new",
 				Name:       "web-1",
 				Status:     status,
@@ -442,7 +442,7 @@ func TestInstanceRead(t *testing.T) {
 			meHandler(w, r)
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc":
-			json.NewEncoder(w).Encode(apiInstance{
+			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:             "inst-abc",
 				Name:           "web-1",
 				Status:         "running",
@@ -506,7 +506,7 @@ func TestInstanceReadNotFound(t *testing.T) {
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/nonexistent":
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{
 					"code":    "NOT_FOUND",
 					"message": "Instance not found",
@@ -547,7 +547,7 @@ func TestInstanceUpdate(t *testing.T) {
 			if req.Name == nil || *req.Name != "renamed-vm" {
 				t.Errorf("expected name renamed-vm, got %v", req.Name)
 			}
-			json.NewEncoder(w).Encode(apiInstance{
+			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:        "inst-abc",
 				Name:      "renamed-vm",
 				Status:    "running",
@@ -558,7 +558,7 @@ func TestInstanceUpdate(t *testing.T) {
 			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc":
-			json.NewEncoder(w).Encode(apiInstance{
+			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:        "inst-abc",
 				Name:      "renamed-vm",
 				Status:    "running",
@@ -619,7 +619,7 @@ func TestInstanceResize(t *testing.T) {
 				t.Errorf("expected flavor_id flavor-large, got %s", req.FlavorID)
 			}
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc":
 			idx := int(statusIdx.Add(1)) - 1
@@ -627,7 +627,7 @@ func TestInstanceResize(t *testing.T) {
 			if idx < len(statuses) {
 				status = statuses[idx]
 			}
-			json.NewEncoder(w).Encode(apiInstance{
+			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:        "inst-abc",
 				Name:      "web-1",
 				Status:    status,
@@ -683,21 +683,21 @@ func TestInstanceDelete(t *testing.T) {
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc":
 			deleted = true
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(map[string]string{"status": "deleting"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "deleting"})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc":
 			n := getCount.Add(1)
 			if n >= 2 {
 				// Instance deleted.
 				w.WriteHeader(http.StatusNotFound)
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"error": map[string]string{
 						"code":    "NOT_FOUND",
 						"message": "Instance not found",
 					},
 				})
 			} else {
-				json.NewEncoder(w).Encode(apiInstance{
+				_ = json.NewEncoder(w).Encode(apiInstance{
 					ID:     "inst-abc",
 					Name:   "web-1",
 					Status: "deleting",
@@ -760,7 +760,7 @@ func TestInstanceDeleteAlreadyGone(t *testing.T) {
 
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-456/instances/gone":
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{
 					"code":    "NOT_FOUND",
 					"message": "Instance not found",
@@ -793,20 +793,6 @@ func getInstanceSchema(t *testing.T) resource.SchemaResponse {
 	var schemaResp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 	return schemaResp
-}
-
-func configureInstanceResource(t *testing.T, r resource.Resource, c *client.Client) {
-	t.Helper()
-	rc, ok := r.(resource.ResourceWithConfigure)
-	if !ok {
-		t.Fatal("resource does not implement ResourceWithConfigure")
-	}
-	configReq := resource.ConfigureRequest{ProviderData: c}
-	var configResp resource.ConfigureResponse
-	rc.Configure(context.Background(), configReq, &configResp)
-	if configResp.Diagnostics.HasError() {
-		t.Fatalf("configure failed: %v", configResp.Diagnostics.Errors())
-	}
 }
 
 // instanceTFValue builds a tftypes.Value for the instance schema.
@@ -942,7 +928,7 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances":
 			var req apiCreateInstanceRequest
@@ -968,7 +954,7 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 				t.Errorf("expected tag env=test, got %v", req.Tags)
 			}
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(apiInstance{
+			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:        "inst-new-1",
 				Name:      req.Name,
 				Status:    "provisioning",
@@ -984,7 +970,7 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 			if n >= 2 {
 				status = "running"
 			}
-			json.NewEncoder(w).Encode(apiInstance{
+			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:             "inst-new-1",
 				Name:           "web-1",
 				Status:         status,
@@ -1086,11 +1072,11 @@ func TestInstanceResource_TFSDKCreateMinimal(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances":
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(apiInstance{
+			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:        "inst-min-1",
 				Name:      "minimal-vm",
 				Status:    "provisioning",
@@ -1106,7 +1092,7 @@ func TestInstanceResource_TFSDKCreateMinimal(t *testing.T) {
 			if n >= 2 {
 				status = "running"
 			}
-			json.NewEncoder(w).Encode(apiInstance{
+			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:        "inst-min-1",
 				Name:      "minimal-vm",
 				Status:    status,
@@ -1174,11 +1160,11 @@ func TestInstanceResource_TFSDKCreateErrorState(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances":
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(apiInstance{
+			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:        "inst-err-1",
 				Name:      "error-vm",
 				Status:    "provisioning",
@@ -1190,7 +1176,7 @@ func TestInstanceResource_TFSDKCreateErrorState(t *testing.T) {
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-err-1":
 			// Instance goes to error state.
-			json.NewEncoder(w).Encode(apiInstance{
+			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:        "inst-err-1",
 				Name:      "error-vm",
 				Status:    "error",
@@ -1243,10 +1229,10 @@ func TestInstanceResource_TFSDKRead(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-read-1":
-			json.NewEncoder(w).Encode(apiInstance{
+			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:             "inst-read-1",
 				Name:           "read-vm",
 				Status:         "running",
@@ -1268,7 +1254,7 @@ func TestInstanceResource_TFSDKRead(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -1377,11 +1363,11 @@ func TestInstanceResource_TFSDKReadNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -1440,16 +1426,16 @@ func TestInstanceResource_TFSDKUpdateNameChange(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-upd-1":
 			patchCalled = true
 			var req apiUpdateInstanceRequest
-			json.NewDecoder(r.Body).Decode(&req)
+			_ = json.NewDecoder(r.Body).Decode(&req)
 			if req.Name == nil || *req.Name != "renamed-vm" {
 				t.Errorf("expected name renamed-vm, got %v", req.Name)
 			}
-			json.NewEncoder(w).Encode(apiInstance{
+			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:        "inst-upd-1",
 				Name:      "renamed-vm",
 				Status:    "running",
@@ -1460,7 +1446,7 @@ func TestInstanceResource_TFSDKUpdateNameChange(t *testing.T) {
 			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-upd-1":
-			json.NewEncoder(w).Encode(apiInstance{
+			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:        "inst-upd-1",
 				Name:      "renamed-vm",
 				Status:    "running",
@@ -1574,17 +1560,17 @@ func TestInstanceResource_TFSDKUpdateResize(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-resize-1/action":
 			var req apiInstanceActionRequest
-			json.NewDecoder(r.Body).Decode(&req)
+			_ = json.NewDecoder(r.Body).Decode(&req)
 			actions = append(actions, req.Action)
 			if req.Action == "resize" && req.FlavorID != "flavor-large" {
 				t.Errorf("expected resize to flavor-large, got %s", req.FlavorID)
 			}
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-resize-1":
 			idx := int(statusIdx.Add(1)) - 1
@@ -1593,7 +1579,7 @@ func TestInstanceResource_TFSDKUpdateResize(t *testing.T) {
 				status = statuses[idx]
 			}
 			flavorID := "flavor-large"
-			json.NewEncoder(w).Encode(apiInstance{
+			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:        "inst-resize-1",
 				Name:      "resize-vm",
 				Status:    status,
@@ -1696,19 +1682,19 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-tags-1":
 			patchCalled = true
 			var req apiUpdateInstanceRequest
-			json.NewDecoder(r.Body).Decode(&req)
+			_ = json.NewDecoder(r.Body).Decode(&req)
 			if req.Tags["env"] != "prod" {
 				t.Errorf("expected tag env=prod, got %v", req.Tags)
 			}
 			if len(req.SecurityGroups) != 2 {
 				t.Errorf("expected 2 security groups, got %d", len(req.SecurityGroups))
 			}
-			json.NewEncoder(w).Encode(apiInstance{
+			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:             "inst-tags-1",
 				Name:           "tags-vm",
 				Status:         "running",
@@ -1721,7 +1707,7 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-tags-1":
-			json.NewEncoder(w).Encode(apiInstance{
+			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:             "inst-tags-1",
 				Name:           "tags-vm",
 				Status:         "running",
@@ -1841,22 +1827,22 @@ func TestInstanceResource_TFSDKDelete(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-del-1":
 			deleteCalled = true
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(map[string]string{"status": "deleting"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "deleting"})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-del-1":
 			n := getCount.Add(1)
 			if n >= 2 {
 				w.WriteHeader(http.StatusNotFound)
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"error": map[string]string{"code": "NOT_FOUND", "message": "Instance not found"},
 				})
 			} else {
-				json.NewEncoder(w).Encode(apiInstance{
+				_ = json.NewEncoder(w).Encode(apiInstance{
 					ID:     "inst-del-1",
 					Name:   "del-vm",
 					Status: "deleting",
@@ -1920,11 +1906,11 @@ func TestInstanceResource_TFSDKDeleteAlreadyGone(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}

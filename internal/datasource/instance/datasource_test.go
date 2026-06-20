@@ -88,7 +88,7 @@ func newTestServer(t *testing.T, instances map[string]apiInstance) *httptest.Ser
 
 	mux.HandleFunc("/v1/me", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(client.UserProfile{
+		_ = json.NewEncoder(w).Encode(client.UserProfile{
 			ID:       "user-1",
 			TenantID: "tenant-1",
 		})
@@ -98,7 +98,7 @@ func newTestServer(t *testing.T, instances map[string]apiInstance) *httptest.Ser
 		i := inst
 		mux.HandleFunc("/v1/tenants/tenant-1/instances/"+id, func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(i)
+			_ = json.NewEncoder(w).Encode(i)
 		})
 	}
 

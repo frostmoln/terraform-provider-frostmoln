@@ -169,32 +169,32 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(fipData)
+			_ = json.NewEncoder(w).Encode(fipData)
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-test-1":
 			w.WriteHeader(http.StatusOK)
 			if associated {
-				json.NewEncoder(w).Encode(fipAssociated)
+				_ = json.NewEncoder(w).Encode(fipAssociated)
 			} else {
-				json.NewEncoder(w).Encode(fipDisassociated)
+				_ = json.NewEncoder(w).Encode(fipDisassociated)
 			}
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-test-1/associate":
 			associated = true
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(fipAssociated)
+			_ = json.NewEncoder(w).Encode(fipAssociated)
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-test-1/disassociate":
 			associated = false
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(fipDisassociated)
+			_ = json.NewEncoder(w).Encode(fipDisassociated)
 
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-test-1":
 			w.WriteHeader(http.StatusOK)
 			if associated {
-				json.NewEncoder(w).Encode(fipAssociated)
+				_ = json.NewEncoder(w).Encode(fipAssociated)
 			} else {
-				json.NewEncoder(w).Encode(fipDisassociated)
+				_ = json.NewEncoder(w).Encode(fipDisassociated)
 			}
 
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-test-1":
@@ -202,7 +202,7 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -278,7 +278,7 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 func TestFloatingIPReadNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "floating IP not found"},
 		})
 	}))
@@ -391,11 +391,11 @@ func TestFIPResourceCreate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips" {
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(fipResp)
+			_ = json.NewEncoder(w).Encode(fipResp)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -464,12 +464,12 @@ func TestFIPResourceCreateWithAssociation(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(fipAllocated)
+			_ = json.NewEncoder(w).Encode(fipAllocated)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-assoc-1/associate":
-			json.NewEncoder(w).Encode(fipAssociated)
+			_ = json.NewEncoder(w).Encode(fipAssociated)
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -524,11 +524,11 @@ func TestFIPResourceRead(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-read-1" {
-			json.NewEncoder(w).Encode(fipResp)
+			_ = json.NewEncoder(w).Encode(fipResp)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -570,7 +570,7 @@ func TestFIPResourceRead(t *testing.T) {
 func TestFIPResourceReadNotFoundRemovesState(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -630,19 +630,19 @@ func TestFIPResourceUpdate(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-upd-1/disassociate":
 			associated = false
-			json.NewEncoder(w).Encode(fipResp)
+			_ = json.NewEncoder(w).Encode(fipResp)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-upd-1/associate":
 			associated = true
-			json.NewEncoder(w).Encode(fipAssocResp)
+			_ = json.NewEncoder(w).Encode(fipAssocResp)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-upd-1":
 			if associated {
-				json.NewEncoder(w).Encode(fipAssocResp)
+				_ = json.NewEncoder(w).Encode(fipAssocResp)
 			} else {
-				json.NewEncoder(w).Encode(fipResp)
+				_ = json.NewEncoder(w).Encode(fipResp)
 			}
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -709,7 +709,7 @@ func TestFIPResourceDelete(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -748,7 +748,7 @@ func TestFIPResourceDelete(t *testing.T) {
 func TestFIPResourceDeleteAlreadyGone(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	}))
@@ -787,7 +787,7 @@ func TestFIPResourceCreateAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips" {
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "server error"},
 			})
 			return
@@ -827,7 +827,7 @@ func TestFIPResourceCreateBadResponseBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips" {
 			w.WriteHeader(http.StatusCreated)
-			w.Write([]byte("not json"))
+			_, _ = w.Write([]byte("not json"))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -874,15 +874,15 @@ func TestFIPResourceCreateAssociationError(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(fipResp)
+			_ = json.NewEncoder(w).Encode(fipResp)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-ae-1/associate":
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "association failed"},
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -939,16 +939,16 @@ func TestFIPResourceCreateAssociationBadResponseThenReread(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(fipAllocated)
+			_ = json.NewEncoder(w).Encode(fipAllocated)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-reread-1/associate":
 			// Return non-JSON body to trigger the unmarshal fallback path
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("ok"))
+			_, _ = w.Write([]byte("ok"))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-reread-1":
-			json.NewEncoder(w).Encode(fipAssociated)
+			_ = json.NewEncoder(w).Encode(fipAssociated)
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -1005,20 +1005,20 @@ func TestFIPResourceCreateAssocRereadGetError(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(fipAllocated)
+			_ = json.NewEncoder(w).Encode(fipAllocated)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-rre-1/associate":
 			// Return non-JSON body to trigger re-read path
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("ok"))
+			_, _ = w.Write([]byte("ok"))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-rre-1":
 			// Re-read also fails
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "read failed"},
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -1065,17 +1065,17 @@ func TestFIPResourceCreateAssocRereadBadJSON(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(fipAllocated)
+			_ = json.NewEncoder(w).Encode(fipAllocated)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-rbj-1/associate":
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("ok"))
+			_, _ = w.Write([]byte("ok"))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-rbj-1":
 			// Re-read succeeds HTTP-wise but returns bad JSON
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("bad json"))
+			_, _ = w.Write([]byte("bad json"))
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -1112,7 +1112,7 @@ func TestFIPResourceCreateAssocRereadBadJSON(t *testing.T) {
 func TestFIPResourceReadAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "INTERNAL_ERROR", "message": "server error"},
 		})
 	}))
@@ -1148,7 +1148,7 @@ func TestFIPResourceReadAPIError(t *testing.T) {
 func TestFIPResourceReadBadJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("not json"))
+		_, _ = w.Write([]byte("not json"))
 	}))
 	defer server.Close()
 
@@ -1191,12 +1191,12 @@ func TestFIPResourceUpdateDisassociateOnly(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-dis-1/disassociate":
-			json.NewEncoder(w).Encode(fipResp)
+			_ = json.NewEncoder(w).Encode(fipResp)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-dis-1":
-			json.NewEncoder(w).Encode(fipResp)
+			_ = json.NewEncoder(w).Encode(fipResp)
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -1269,12 +1269,12 @@ func TestFIPResourceUpdateTagsOnly(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-tags-1":
 			patchCalled = true
-			json.NewEncoder(w).Encode(fipResp)
+			_ = json.NewEncoder(w).Encode(fipResp)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-tags-1":
-			json.NewEncoder(w).Encode(fipResp)
+			_ = json.NewEncoder(w).Encode(fipResp)
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -1334,7 +1334,7 @@ func TestFIPResourceUpdateDisassociateError(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-de-1/disassociate":
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "disassociate failed"},
 			})
 		default:
@@ -1387,10 +1387,10 @@ func TestFIPResourceUpdateAssociateError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-ae2-1/disassociate":
-			json.NewEncoder(w).Encode(apiFloatingIP{})
+			_ = json.NewEncoder(w).Encode(apiFloatingIP{})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-ae2-1/associate":
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "associate failed"},
 			})
 		default:
@@ -1444,7 +1444,7 @@ func TestFIPResourceUpdatePatchError(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-pe-1":
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "patch failed"},
 			})
 		default:
@@ -1500,7 +1500,7 @@ func TestFIPResourceUpdateReadError(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-re-1":
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "read failed"},
 			})
 		default:
@@ -1555,7 +1555,7 @@ func TestFIPResourceUpdateReadBadJSON(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-rbj-1":
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("not json"))
+			_, _ = w.Write([]byte("not json"))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -1605,7 +1605,7 @@ func TestFIPResourceUpdateReadBadJSON(t *testing.T) {
 func TestFIPResourceDeleteAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "INTERNAL_ERROR", "message": "server error"},
 		})
 	}))

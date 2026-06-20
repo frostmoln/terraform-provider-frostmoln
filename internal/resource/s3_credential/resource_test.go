@@ -124,7 +124,7 @@ func TestS3CredentialCreate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"id":       "user-123",
 				"tenantId": "tenant-456",
 			})
@@ -137,7 +137,7 @@ func TestS3CredentialCreate(t *testing.T) {
 				t.Errorf("expected name test-cred, got %s", req.Name)
 			}
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(apiS3Credential{
+			_ = json.NewEncoder(w).Encode(apiS3Credential{
 				ID:              "cred-abc",
 				Name:            req.Name,
 				Description:     req.Description,
@@ -183,12 +183,12 @@ func TestS3CredentialReadFromList(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"id":       "user-123",
 				"tenantId": "tenant-456",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/credentials":
-			json.NewEncoder(w).Encode(apiS3CredentialList{
+			_ = json.NewEncoder(w).Encode(apiS3CredentialList{
 				Credentials: []apiS3Credential{
 					{
 						ID:        "cred-other",
@@ -247,12 +247,12 @@ func TestS3CredentialReadNotFoundInList(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"id":       "user-123",
 				"tenantId": "tenant-456",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/credentials":
-			json.NewEncoder(w).Encode(apiS3CredentialList{
+			_ = json.NewEncoder(w).Encode(apiS3CredentialList{
 				Credentials: []apiS3Credential{
 					{
 						ID:        "cred-other",
@@ -302,7 +302,7 @@ func TestS3CredentialDelete(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"id":       "user-123",
 				"tenantId": "tenant-456",
 			})
@@ -337,7 +337,7 @@ func s3CredMeServer(t *testing.T, handler func(w http.ResponseWriter, r *http.Re
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/me" {
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"id":       "user-123",
 				"tenantId": "tenant-456",
 			})
@@ -555,7 +555,7 @@ func TestS3CredentialResource_Create_TFSDK(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/credentials":
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(apiS3Credential{
+			_ = json.NewEncoder(w).Encode(apiS3Credential{
 				ID:              "cred-abc",
 				Name:            "test-cred",
 				Description:     "test",
@@ -616,7 +616,7 @@ func TestS3CredentialResource_Create_TFSDK(t *testing.T) {
 func TestS3CredentialResource_Create_APIError(t *testing.T) {
 	server := s3CredMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "INTERNAL", "message": "server error"},
 		})
 	})
@@ -657,7 +657,7 @@ func TestS3CredentialResource_Read_TFSDK(t *testing.T) {
 	server := s3CredMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/credentials":
-			json.NewEncoder(w).Encode(apiS3CredentialList{
+			_ = json.NewEncoder(w).Encode(apiS3CredentialList{
 				Credentials: []apiS3Credential{
 					{
 						ID:        "cred-other",
@@ -728,7 +728,7 @@ func TestS3CredentialResource_Read_NotFoundInList_TFSDK(t *testing.T) {
 	server := s3CredMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/credentials":
-			json.NewEncoder(w).Encode(apiS3CredentialList{
+			_ = json.NewEncoder(w).Encode(apiS3CredentialList{
 				Credentials: []apiS3Credential{
 					{ID: "cred-other", Name: "other", Status: "active", CreatedAt: "2025-05-01T10:00:00Z"},
 				},
@@ -778,7 +778,7 @@ func TestS3CredentialResource_Read_NotFoundInList_TFSDK(t *testing.T) {
 func TestS3CredentialResource_Read_APIError(t *testing.T) {
 	server := s3CredMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "INTERNAL", "message": "server error"},
 		})
 	})
@@ -885,7 +885,7 @@ func TestS3CredentialResource_Delete_TFSDK(t *testing.T) {
 func TestS3CredentialResource_Delete_NotFound_TFSDK(t *testing.T) {
 	server := s3CredMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 		})
 	})
@@ -923,7 +923,7 @@ func TestS3CredentialResource_Delete_NotFound_TFSDK(t *testing.T) {
 func TestS3CredentialResource_Delete_APIError(t *testing.T) {
 	server := s3CredMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "INTERNAL", "message": "server error"},
 		})
 	})

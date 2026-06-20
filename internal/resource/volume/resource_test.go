@@ -213,14 +213,6 @@ func TestVolumeModel_fromAPI_nullOptionalFields(t *testing.T) {
 	}
 }
 
-func newTestClient(t *testing.T, server *httptest.Server) *client.Client {
-	t.Helper()
-	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client()))
-	// Set tenant ID directly via Configure with a mock /v1/me endpoint,
-	// but since we control the server, we just configure through it.
-	return c
-}
-
 func TestVolumeResource_CreateAndRead(t *testing.T) {
 	var createCalls atomic.Int32
 
@@ -240,7 +232,7 @@ func TestVolumeResource_CreateAndRead(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(client.UserProfile{
+			_ = json.NewEncoder(w).Encode(client.UserProfile{
 				ID: "user-1", TenantID: "tenant-1",
 			})
 
@@ -251,16 +243,16 @@ func TestVolumeResource_CreateAndRead(t *testing.T) {
 				creating := volume
 				creating.Status = "creating"
 				w.WriteHeader(http.StatusAccepted)
-				json.NewEncoder(w).Encode(creating)
+				_ = json.NewEncoder(w).Encode(creating)
 			}
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-abc":
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(volume)
+			_ = json.NewEncoder(w).Encode(volume)
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -331,14 +323,14 @@ func TestVolumeResource_Update(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(client.UserProfile{
+			_ = json.NewEncoder(w).Encode(client.UserProfile{
 				ID: "user-1", TenantID: "tenant-1",
 			})
 
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-abc":
 			patchCalled.Add(1)
 			var updateReq apiUpdateVolumeRequest
-			json.NewDecoder(r.Body).Decode(&updateReq)
+			_ = json.NewDecoder(r.Body).Decode(&updateReq)
 			if updateReq.Name != nil {
 				currentVolume.Name = *updateReq.Name
 			}
@@ -346,21 +338,21 @@ func TestVolumeResource_Update(t *testing.T) {
 				currentVolume.Description = *updateReq.Description
 			}
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(currentVolume)
+			_ = json.NewEncoder(w).Encode(currentVolume)
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-abc/resize":
 			resizeCalled.Add(1)
 			var resizeReq apiResizeVolumeRequest
-			json.NewDecoder(r.Body).Decode(&resizeReq)
+			_ = json.NewDecoder(r.Body).Decode(&resizeReq)
 			currentVolume.SizeGB = resizeReq.SizeGB
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"operationId": "op-resize-1", "status": "accepted", "resourceType": "volume",
 			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-abc":
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(currentVolume)
+			_ = json.NewEncoder(w).Encode(currentVolume)
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -419,7 +411,7 @@ func TestVolumeResource_Delete(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(client.UserProfile{
+			_ = json.NewEncoder(w).Encode(client.UserProfile{
 				ID: "user-1", TenantID: "tenant-1",
 			})
 
@@ -429,7 +421,7 @@ func TestVolumeResource_Delete(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -454,13 +446,13 @@ func TestVolumeResource_ReadNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(client.UserProfile{
+			_ = json.NewEncoder(w).Encode(client.UserProfile{
 				ID: "user-1", TenantID: "tenant-1",
 			})
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -511,11 +503,11 @@ func TestVolumeResource_TFSDKCreate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes":
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(apiVolume{
+			_ = json.NewEncoder(w).Encode(apiVolume{
 				ID:         "vol-new-1",
 				Name:       "new-volume",
 				SizeGB:     100,
@@ -532,7 +524,7 @@ func TestVolumeResource_TFSDKCreate(t *testing.T) {
 			if pollCount >= 2 {
 				status = "available"
 			}
-			json.NewEncoder(w).Encode(apiVolume{
+			_ = json.NewEncoder(w).Encode(apiVolume{
 				ID:         "vol-new-1",
 				Name:       "new-volume",
 				SizeGB:     100,
@@ -547,7 +539,7 @@ func TestVolumeResource_TFSDKCreate(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -624,10 +616,10 @@ func TestVolumeResource_TFSDKRead(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-read-1":
-			json.NewEncoder(w).Encode(apiVolume{
+			_ = json.NewEncoder(w).Encode(apiVolume{
 				ID:         "vol-read-1",
 				Name:       "read-vol",
 				SizeGB:     200,
@@ -644,7 +636,7 @@ func TestVolumeResource_TFSDKRead(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -712,11 +704,11 @@ func TestVolumeResource_TFSDKReadNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -787,28 +779,28 @@ func TestVolumeResource_TFSDKUpdate_PatchAndResize(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-upd-1":
 			patchCalled = true
 			currentVol.Name = "updated-vol"
 			currentVol.Description = "new desc"
-			json.NewEncoder(w).Encode(currentVol)
+			_ = json.NewEncoder(w).Encode(currentVol)
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-upd-1/resize":
 			resizeCalled = true
 			currentVol.SizeGB = 200
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"operationId": "op-resize-1", "status": "accepted", "resourceType": "volume",
 			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-upd-1":
-			json.NewEncoder(w).Encode(currentVol)
+			_ = json.NewEncoder(w).Encode(currentVol)
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -902,7 +894,7 @@ func TestVolumeResource_TFSDKDelete(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-del-1":
 			deleteCalled = true
@@ -910,7 +902,7 @@ func TestVolumeResource_TFSDKDelete(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -1000,10 +992,10 @@ func TestVolumeResource_TFSDKCreateAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes":
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "server error"},
 			})
 		default:
@@ -1060,10 +1052,10 @@ func TestVolumeResource_TFSDKCreateBadResponseBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes":
 			w.WriteHeader(http.StatusAccepted)
-			w.Write([]byte("not json"))
+			_, _ = w.Write([]byte("not json"))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -1118,17 +1110,17 @@ func TestVolumeResource_TFSDKCreatePollingErrorState(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes":
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(apiVolume{
+			_ = json.NewEncoder(w).Encode(apiVolume{
 				ID:     "vol-err-1",
 				Name:   "error-vol",
 				SizeGB: 100,
 				Status: "creating",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-err-1":
-			json.NewEncoder(w).Encode(apiVolume{
+			_ = json.NewEncoder(w).Encode(apiVolume{
 				ID:     "vol-err-1",
 				Name:   "error-vol",
 				SizeGB: 100,
@@ -1136,7 +1128,7 @@ func TestVolumeResource_TFSDKCreatePollingErrorState(t *testing.T) {
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -1193,10 +1185,10 @@ func TestVolumeResource_TFSDKCreateFinalReadError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes":
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(apiVolume{
+			_ = json.NewEncoder(w).Encode(apiVolume{
 				ID:     "vol-fre-1",
 				Name:   "fre-vol",
 				SizeGB: 100,
@@ -1206,7 +1198,7 @@ func TestVolumeResource_TFSDKCreateFinalReadError(t *testing.T) {
 			n := getCount.Add(1)
 			if n == 1 {
 				// First GET (poll): return available so polling finishes
-				json.NewEncoder(w).Encode(apiVolume{
+				_ = json.NewEncoder(w).Encode(apiVolume{
 					ID:     "vol-fre-1",
 					Name:   "fre-vol",
 					SizeGB: 100,
@@ -1215,13 +1207,13 @@ func TestVolumeResource_TFSDKCreateFinalReadError(t *testing.T) {
 			} else {
 				// Second GET (final read): return error
 				w.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"error": map[string]string{"code": "INTERNAL_ERROR", "message": "read failed"},
 				})
 			}
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -1276,10 +1268,10 @@ func TestVolumeResource_TFSDKReadAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		default:
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "server error"},
 			})
 		}
@@ -1334,13 +1326,13 @@ func TestVolumeResource_TFSDKReadBadJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-bj-r":
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("not json"))
+			_, _ = w.Write([]byte("not json"))
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -1395,10 +1387,10 @@ func TestVolumeResource_TFSDKUpdatePatchError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-pe-1":
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "patch failed"},
 			})
 		default:
@@ -1475,10 +1467,10 @@ func TestVolumeResource_TFSDKUpdateResizeError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-re-1/resize":
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "resize failed"},
 			})
 		default:
@@ -1555,10 +1547,10 @@ func TestVolumeResource_TFSDKUpdateReadError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-ure-1":
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "read failed"},
 			})
 		default:
@@ -1617,10 +1609,10 @@ func TestVolumeResource_TFSDKDeleteNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -1674,10 +1666,10 @@ func TestVolumeResource_TFSDKDeleteAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		default:
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "server error"},
 			})
 		}

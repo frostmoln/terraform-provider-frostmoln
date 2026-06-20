@@ -193,22 +193,22 @@ func TestVPCResourceCRUD(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/vpcs":
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(vpcCreated)
+			_ = json.NewEncoder(w).Encode(vpcCreated)
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/vpcs/vpc-test-1":
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(vpcCreated)
+			_ = json.NewEncoder(w).Encode(vpcCreated)
 
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/vpcs/vpc-test-1":
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(vpcUpdated)
+			_ = json.NewEncoder(w).Encode(vpcUpdated)
 
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/vpcs/vpc-test-1":
 			w.WriteHeader(http.StatusNoContent)
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -284,7 +284,7 @@ func TestVPCResourceAsyncCreate(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/vpcs":
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(apiVPC{
+			_ = json.NewEncoder(w).Encode(apiVPC{
 				ID:     "vpc-async-1",
 				Name:   "async-vpc",
 				CIDR:   "10.0.0.0/16",
@@ -299,7 +299,7 @@ func TestVPCResourceAsyncCreate(t *testing.T) {
 				status = "active"
 			}
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(apiVPC{
+			_ = json.NewEncoder(w).Encode(apiVPC{
 				ID:        "vpc-async-1",
 				Name:      "async-vpc",
 				CIDR:      "10.0.0.0/16",
@@ -364,7 +364,7 @@ func TestVPCResourceAsyncCreate(t *testing.T) {
 func TestVPCReadNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]string{"code": "NOT_FOUND", "message": "VPC not found"},
 		})
 	}))
@@ -412,11 +412,11 @@ func TestVPCResource_TFSDKCreate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/vpcs":
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(apiVPC{
+			_ = json.NewEncoder(w).Encode(apiVPC{
 				ID:     "vpc-created-1",
 				Name:   "test-vpc",
 				CIDR:   "10.0.0.0/16",
@@ -430,7 +430,7 @@ func TestVPCResource_TFSDKCreate(t *testing.T) {
 			if callCount >= 2 {
 				status = "active"
 			}
-			json.NewEncoder(w).Encode(apiVPC{
+			_ = json.NewEncoder(w).Encode(apiVPC{
 				ID:          "vpc-created-1",
 				Name:        "test-vpc",
 				CIDR:        "10.0.0.0/16",
@@ -443,7 +443,7 @@ func TestVPCResource_TFSDKCreate(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -512,10 +512,10 @@ func TestVPCResource_TFSDKRead(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/vpcs/vpc-read-1":
-			json.NewEncoder(w).Encode(apiVPC{
+			_ = json.NewEncoder(w).Encode(apiVPC{
 				ID:          "vpc-read-1",
 				Name:        "read-vpc",
 				Description: "Description",
@@ -531,7 +531,7 @@ func TestVPCResource_TFSDKRead(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -600,11 +600,11 @@ func TestVPCResource_TFSDKReadNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -664,10 +664,10 @@ func TestVPCResource_TFSDKUpdate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/tenant-456/vpcs/vpc-upd-1":
-			json.NewEncoder(w).Encode(apiVPC{
+			_ = json.NewEncoder(w).Encode(apiVPC{
 				ID:          "vpc-upd-1",
 				Name:        "updated-vpc",
 				Description: "Updated desc",
@@ -683,7 +683,7 @@ func TestVPCResource_TFSDKUpdate(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -766,7 +766,7 @@ func TestVPCResource_TFSDKDelete(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-456/vpcs/vpc-del-1":
 			deleteCalled = true
@@ -775,7 +775,7 @@ func TestVPCResource_TFSDKDelete(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -832,11 +832,11 @@ func TestVPCResource_TFSDKDeleteAlreadyGone(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -919,10 +919,10 @@ func TestVPCResource_TFSDKCreateSync201(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/vpcs":
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(apiVPC{
+			_ = json.NewEncoder(w).Encode(apiVPC{
 				ID:          "vpc-sync-1",
 				Name:        "sync-vpc",
 				CIDR:        "10.0.0.0/16",
@@ -934,7 +934,7 @@ func TestVPCResource_TFSDKCreateSync201(t *testing.T) {
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -994,10 +994,10 @@ func TestVPCResource_TFSDKCreateAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/vpcs":
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "server error"},
 			})
 		default:
@@ -1049,10 +1049,10 @@ func TestVPCResource_TFSDKCreateBadResponseBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/vpcs":
 			w.WriteHeader(http.StatusCreated)
-			w.Write([]byte("not json"))
+			_, _ = w.Write([]byte("not json"))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -1102,10 +1102,10 @@ func TestVPCResource_TFSDKCreatePollingErrorState(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/vpcs":
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(apiVPC{
+			_ = json.NewEncoder(w).Encode(apiVPC{
 				ID:     "vpc-err-1",
 				Name:   "err-vpc",
 				CIDR:   "10.0.0.0/16",
@@ -1113,7 +1113,7 @@ func TestVPCResource_TFSDKCreatePollingErrorState(t *testing.T) {
 				Status: "creating",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/vpcs/vpc-err-1":
-			json.NewEncoder(w).Encode(apiVPC{
+			_ = json.NewEncoder(w).Encode(apiVPC{
 				ID:     "vpc-err-1",
 				Name:   "err-vpc",
 				CIDR:   "10.0.0.0/16",
@@ -1122,7 +1122,7 @@ func TestVPCResource_TFSDKCreatePollingErrorState(t *testing.T) {
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -1172,10 +1172,10 @@ func TestVPCResource_TFSDKReadAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		default:
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "server error"},
 			})
 		}
@@ -1225,13 +1225,13 @@ func TestVPCResource_TFSDKReadBadJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/vpcs/vpc-bj-1":
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("not json"))
+			_, _ = w.Write([]byte("not json"))
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		}
@@ -1281,10 +1281,10 @@ func TestVPCResource_TFSDKUpdateAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/tenant-456/vpcs/vpc-ue-1":
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "update failed"},
 			})
 		default:
@@ -1351,10 +1351,10 @@ func TestVPCResource_TFSDKUpdateBadJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/tenant-456/vpcs/vpc-ubj-1":
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("not json"))
+			_, _ = w.Write([]byte("not json"))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -1419,10 +1419,10 @@ func TestVPCResource_TFSDKDeleteAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		default:
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "server error"},
 			})
 		}
