@@ -16,7 +16,7 @@ jobs:
       GOINSECURE: go.frostmoln.internal,git.sm.internal
       GIT_SSL_NO_VERIFY: "true"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Configure Go private modules
         run: |
           git config --global url."http://gitea:3000/frostmoln/".insteadOf "http://go.frostmoln.internal/"
