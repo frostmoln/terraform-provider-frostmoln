@@ -10,6 +10,6 @@ jobs:
   pre-commit:
     # Pinned to an immutable version tag, not @main (act-cache staleness,
     # ADR-0048). Renovate's gitea-tags manager bumps it.
-    uses: frostmoln/workflows/.gitea/workflows/pre-commit.yml@v0.3.2
+    uses: frostmoln/workflows/.gitea/workflows/pre-commit.yml@v0.3.3
     secrets:
       CI_GITEA_TOKEN: ${{ secrets.CI_GITEA_TOKEN }}
