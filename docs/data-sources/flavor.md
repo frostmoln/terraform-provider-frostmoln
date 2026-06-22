@@ -27,12 +27,18 @@ output "medium_flavor_specs" {
 
 ### Optional
 
+- `family` (String) Filter by or computed flavor family (e.g. gp, co, mo, so)
 - `id` (String) The unique identifier of the flavor. Exactly one of id or name must be specified.
 - `name` (String) The name of the flavor. Exactly one of id or name must be specified.
+- `status` (String) Filter by or computed flavor lifecycle status (preview, active, deprecated, retired)
 
 ### Read-Only
 
+- `base_vcpu_ratio` (Number) Base vCPU to physical CPU ratio
 - `category` (String) The category of the flavor.
 - `disk_gb` (Number) The disk size in GB.
+- `generation` (Number) Flavor generation number
 - `ram_mb` (Number) The amount of RAM in MB.
+- `successor_id` (String) ID of the successor flavor when deprecated or retired
+- `vcpu_multiplier` (Number) vCPU multiplier relative to base ratio
 - `vcpus` (Number) The number of virtual CPUs.
