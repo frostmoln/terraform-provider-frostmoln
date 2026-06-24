@@ -498,39 +498,36 @@ func configureVolumeResource(t *testing.T, r resource.Resource, c *client.Client
 }
 
 func TestVolumeResource_TFSDKCreate(t *testing.T) {
-	pollCount := 0
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes":
+			// Provisioning returns 202 + an Operation envelope (operationId only).
 			w.WriteHeader(http.StatusAccepted)
-			_ = json.NewEncoder(w).Encode(apiVolume{
-				ID:         "vol-new-1",
-				Name:       "new-volume",
-				SizeGB:     100,
-				VolumeType: "ssd",
-				Encrypted:  true,
-				Status:     "creating",
-				Region:     "sweden",
-				CreatedAt:  "2025-01-01T00:00:00Z",
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId":  "op-vol-1",
+				"status":       "pending",
+				"resourceType": "volume",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-vol-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId":  "op-vol-1",
+				"status":       "completed",
+				"resourceType": "volume",
+				"resourceId":   "vol-new-1",
 			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-new-1":
-			pollCount++
-			status := "creating"
-			if pollCount >= 2 {
-				status = "available"
-			}
 			_ = json.NewEncoder(w).Encode(apiVolume{
 				ID:         "vol-new-1",
 				Name:       "new-volume",
 				SizeGB:     100,
 				VolumeType: "ssd",
 				Encrypted:  true,
-				Status:     status,
+				Status:     "available",
 				IOPS:       3000,
 				Throughput: 125,
 				Region:     "sweden",
@@ -792,7 +789,12 @@ func TestVolumeResource_TFSDKUpdate_PatchAndResize(t *testing.T) {
 			currentVol.SizeGB = 200
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(map[string]string{
-				"operationId": "op-resize-1", "status": "accepted", "resourceType": "volume",
+				"operationId": "op-resize-1", "status": "pending", "resourceType": "volume",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-resize-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-resize-1", "status": "completed", "resourceType": "volume", "resourceId": "vol-upd-1",
 			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-upd-1":
@@ -898,7 +900,17 @@ func TestVolumeResource_TFSDKDelete(t *testing.T) {
 
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-del-1":
 			deleteCalled = true
-			w.WriteHeader(http.StatusNoContent)
+			// Provisioning returns 202 + an Operation envelope; the resource polls
+			// it to completion before dropping state.
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-del-1", "status": "pending", "resourceType": "volume",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-del-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-del-1", "status": "completed", "resourceType": "volume", "resourceId": "vol-del-1",
+			})
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -1113,18 +1125,15 @@ func TestVolumeResource_TFSDKCreatePollingErrorState(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes":
 			w.WriteHeader(http.StatusAccepted)
-			_ = json.NewEncoder(w).Encode(apiVolume{
-				ID:     "vol-err-1",
-				Name:   "error-vol",
-				SizeGB: 100,
-				Status: "creating",
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-err-1", "status": "pending", "resourceType": "volume",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-err-1":
-			_ = json.NewEncoder(w).Encode(apiVolume{
-				ID:     "vol-err-1",
-				Name:   "error-vol",
-				SizeGB: 100,
-				Status: "error",
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-err-1":
+			// The create workflow failed → operation terminal-failed → the resource
+			// must surface an error (was: volume polled to "error" state).
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-err-1", "status": "failed", "resourceType": "volume",
+				"error": "volume entered error state",
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -1180,37 +1189,25 @@ func TestVolumeResource_TFSDKCreatePollingErrorState(t *testing.T) {
 }
 
 func TestVolumeResource_TFSDKCreateFinalReadError(t *testing.T) {
-	var getCount atomic.Int32
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes":
 			w.WriteHeader(http.StatusAccepted)
-			_ = json.NewEncoder(w).Encode(apiVolume{
-				ID:     "vol-fre-1",
-				Name:   "fre-vol",
-				SizeGB: 100,
-				Status: "creating",
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-fre-1", "status": "pending", "resourceType": "volume",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-fre-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-fre-1", "status": "completed", "resourceType": "volume", "resourceId": "vol-fre-1",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-fre-1":
-			n := getCount.Add(1)
-			if n == 1 {
-				// First GET (poll): return available so polling finishes
-				_ = json.NewEncoder(w).Encode(apiVolume{
-					ID:     "vol-fre-1",
-					Name:   "fre-vol",
-					SizeGB: 100,
-					Status: "available",
-				})
-			} else {
-				// Second GET (final read): return error
-				w.WriteHeader(http.StatusInternalServerError)
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"error": map[string]string{"code": "INTERNAL_ERROR", "message": "read failed"},
-				})
-			}
+			// Final read after the operation completes returns an error.
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "read failed"},
+			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{

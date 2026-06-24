@@ -177,36 +177,38 @@ func (r *volumeResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	// Parse the initial response to get the volume ID.
-	vol, err := client.ParseResponse[apiVolume](apiResp)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to parse volume response", err.Error())
-		return
+	// Volume create routes through provisioning, which returns 202 with an
+	// Operation envelope (operationId only, NOT the volume). Poll the operation to
+	// completion (the workflow waits for the volume to reach available before
+	// completing), then read by its resolved resourceId. A 201 with the volume
+	// body is still accepted for a synchronous backend. Mirrors the snapshot +
+	// load_balancer resources.
+	var volumeID string
+	if apiResp.IsAccepted() {
+		op, err := client.ParseResponse[client.Operation](apiResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to parse operation response", err.Error())
+			return
+		}
+		done, err := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute)
+		if err != nil {
+			resp.Diagnostics.AddError("Volume creation failed", err.Error())
+			return
+		}
+		volumeID = done.ResourceID
+	} else {
+		vol, err := client.ParseResponse[apiVolume](apiResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to parse volume response", err.Error())
+			return
+		}
+		volumeID = vol.ID
 	}
-
-	volumeID := vol.ID
-
-	// Poll until the volume is no longer in "creating" state.
-	_, err = client.WaitForState(ctx, client.PollConfig{
-		Interval:     2 * time.Second,
-		Timeout:      5 * time.Minute,
-		TargetStates: []string{"available", "in-use"},
-		ErrorStates:  []string{"error"},
-		ResourceName: "volume",
-		PollFunc: func(ctx context.Context) (string, error) {
-			pollResp, err := r.client.Get(ctx, r.client.TenantPath("/volumes/"+volumeID), nil)
-			if err != nil {
-				return "", err
-			}
-			pollVol, err := client.ParseResponse[apiVolume](pollResp)
-			if err != nil {
-				return "", err
-			}
-			return pollVol.Status, nil
-		},
-	})
-	if err != nil {
-		resp.Diagnostics.AddError("Volume creation failed", err.Error())
+	if volumeID == "" {
+		resp.Diagnostics.AddError(
+			"Volume Operation Returned No Resource ID",
+			"The volume create operation completed but returned no resource ID. The volume may exist in the backend without being tracked in Terraform state - check `fm storage volume list` and import it if necessary.",
+		)
 		return
 	}
 
@@ -308,34 +310,24 @@ func (r *volumeResource) Update(ctx context.Context, req resource.UpdateRequest,
 		resizeReq := apiResizeVolumeRequest{
 			SizeGB: int(plan.SizeGB.ValueInt64()),
 		}
-		_, err := r.client.Post(ctx, r.client.TenantPath("/volumes/"+volumeID+"/resize"), resizeReq)
+		resizeResp, err := r.client.Post(ctx, r.client.TenantPath("/volumes/"+volumeID+"/resize"), resizeReq)
 		if err != nil {
 			resp.Diagnostics.AddError("Failed to resize volume", err.Error())
 			return
 		}
 
-		// Wait for resize to complete.
-		_, err = client.WaitForState(ctx, client.PollConfig{
-			Interval:     2 * time.Second,
-			Timeout:      5 * time.Minute,
-			TargetStates: []string{"available", "in-use"},
-			ErrorStates:  []string{"error"},
-			ResourceName: "volume resize",
-			PollFunc: func(ctx context.Context) (string, error) {
-				pollResp, err := r.client.Get(ctx, r.client.TenantPath("/volumes/"+volumeID), nil)
-				if err != nil {
-					return "", err
-				}
-				pollVol, err := client.ParseResponse[apiVolume](pollResp)
-				if err != nil {
-					return "", err
-				}
-				return pollVol.Status, nil
-			},
-		})
-		if err != nil {
-			resp.Diagnostics.AddError("Volume resize failed", err.Error())
-			return
+		// Resize is async (provisioning 202 + Operation): poll the operation to
+		// completion (the workflow waits for the volume to return to available).
+		if resizeResp.IsAccepted() {
+			op, err := client.ParseResponse[client.Operation](resizeResp)
+			if err != nil {
+				resp.Diagnostics.AddError("Failed to parse operation response", err.Error())
+				return
+			}
+			if _, err := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute); err != nil {
+				resp.Diagnostics.AddError("Volume resize failed", err.Error())
+				return
+			}
 		}
 	}
 
@@ -363,12 +355,26 @@ func (r *volumeResource) Delete(ctx context.Context, req resource.DeleteRequest,
 		return
 	}
 
-	_, err := r.client.Delete(ctx, r.client.TenantPath("/volumes/"+state.ID.ValueString()))
+	apiResp, err := r.client.Delete(ctx, r.client.TenantPath("/volumes/"+state.ID.ValueString()))
 	if err != nil {
 		if client.IsNotFound(err) {
 			return
 		}
 		resp.Diagnostics.AddError("Failed to delete volume", err.Error())
+		return
+	}
+
+	// Async delete (provisioning 202 + Operation): poll until the workflow has
+	// verified the volume is actually gone before dropping it from state.
+	if apiResp.IsAccepted() {
+		op, err := client.ParseResponse[client.Operation](apiResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to parse operation response", err.Error())
+			return
+		}
+		if _, err := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute); err != nil {
+			resp.Diagnostics.AddError("Volume deletion failed", err.Error())
+		}
 	}
 }
 
