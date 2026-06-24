@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -138,8 +139,51 @@ func (r *securityGroupRuleResource) Create(ctx context.Context, req resource.Cre
 		return
 	}
 
+	// Rule create routes through provisioning → 202 + an Operation envelope
+	// (operationId only). Poll the operation, then resolve the rule by its
+	// resourceId from the parent security group (rules aren't directly GETtable —
+	// same as Read). A non-202 body is parsed directly for a sync backend.
 	var rule apiSecurityGroupRule
-	if err := json.Unmarshal(apiResp.Body, &rule); err != nil {
+	if apiResp.IsAccepted() {
+		op, opErr := client.ParseResponse[client.Operation](apiResp)
+		if opErr != nil {
+			resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
+			return
+		}
+		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute)
+		if waitErr != nil {
+			resp.Diagnostics.AddError("Security Group Rule Creation Failed", waitErr.Error())
+			return
+		}
+		if done.ResourceID == "" {
+			resp.Diagnostics.AddError("Security Group Rule Operation Returned No Resource ID",
+				"The rule create operation completed but returned no resource ID.")
+			return
+		}
+		sgResp, readErr := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf("/security-groups/%s", sgID)), nil)
+		if readErr != nil {
+			resp.Diagnostics.AddError("Failed to Read Security Group After Rule Creation", readErr.Error())
+			return
+		}
+		var sg apiSecurityGroupWithRules
+		if err := json.Unmarshal(sgResp.Body, &sg); err != nil {
+			resp.Diagnostics.AddError("Failed to Parse Security Group Response", err.Error())
+			return
+		}
+		var found *apiSecurityGroupRule
+		for i := range sg.Rules {
+			if sg.Rules[i].ID == done.ResourceID {
+				found = &sg.Rules[i]
+				break
+			}
+		}
+		if found == nil {
+			resp.Diagnostics.AddError("Security Group Rule Not Found After Creation",
+				fmt.Sprintf("rule %s not present on security group %s after the create operation completed", done.ResourceID, sgID))
+			return
+		}
+		rule = *found
+	} else if err := json.Unmarshal(apiResp.Body, &rule); err != nil {
 		resp.Diagnostics.AddError("Failed to Parse Security Group Rule Response", err.Error())
 		return
 	}

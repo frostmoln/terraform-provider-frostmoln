@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/url"
 	"time"
 
@@ -153,37 +152,40 @@ func (r *vpcResource) Create(ctx context.Context, req resource.CreateRequest, re
 		return
 	}
 
+	// VPC create routes through provisioning → 202 + an Operation envelope
+	// (operationId only, NOT the VPC). Poll the operation, then read by its
+	// resolved resourceId. A non-202 body is parsed directly for a sync backend.
+	// (Previously json.Unmarshal'd the envelope into apiVPC → empty ID → polled
+	// /vpcs/{empty} against the real backend.)
 	var vpc apiVPC
-	if err := json.Unmarshal(apiResp.Body, &vpc); err != nil {
-		resp.Diagnostics.AddError("Failed to Parse VPC Response", err.Error())
-		return
-	}
-
-	// If 202 Accepted, poll until active
-	if apiResp.StatusCode == http.StatusAccepted {
-		_, err := client.WaitForState(ctx, client.PollConfig{
-			Interval:     2 * time.Second,
-			Timeout:      5 * time.Minute,
-			TargetStates: []string{"active"},
-			ErrorStates:  []string{"error"},
-			ResourceName: "VPC",
-			PollFunc: func(ctx context.Context) (string, error) {
-				pollResp, err := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf("/vpcs/%s", vpc.ID)), nil)
-				if err != nil {
-					return "", err
-				}
-				var polledVPC apiVPC
-				if err := json.Unmarshal(pollResp.Body, &polledVPC); err != nil {
-					return "", err
-				}
-				vpc = polledVPC
-				return polledVPC.Status, nil
-			},
-		})
-		if err != nil {
-			resp.Diagnostics.AddError("VPC Creation Failed", err.Error())
+	if apiResp.IsAccepted() {
+		op, opErr := client.ParseResponse[client.Operation](apiResp)
+		if opErr != nil {
+			resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
 			return
 		}
+		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute)
+		if waitErr != nil {
+			resp.Diagnostics.AddError("VPC Creation Failed", waitErr.Error())
+			return
+		}
+		if done.ResourceID == "" {
+			resp.Diagnostics.AddError("VPC Operation Returned No Resource ID",
+				"The VPC create operation completed but returned no resource ID. Check `fm network vpc list` and import it if necessary.")
+			return
+		}
+		readResp, readErr := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf("/vpcs/%s", done.ResourceID)), nil)
+		if readErr != nil {
+			resp.Diagnostics.AddError("Failed to Read VPC After Creation", readErr.Error())
+			return
+		}
+		if err := json.Unmarshal(readResp.Body, &vpc); err != nil {
+			resp.Diagnostics.AddError("Failed to Parse VPC Response", err.Error())
+			return
+		}
+	} else if err := json.Unmarshal(apiResp.Body, &vpc); err != nil {
+		resp.Diagnostics.AddError("Failed to Parse VPC Response", err.Error())
+		return
 	}
 
 	plan.fromAPI(ctx, &vpc, &resp.Diagnostics)

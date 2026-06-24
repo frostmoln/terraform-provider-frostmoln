@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -122,8 +123,36 @@ func (r *securityGroupResource) Create(ctx context.Context, req resource.CreateR
 		return
 	}
 
+	// Security-group create routes through provisioning → 202 + an Operation
+	// envelope (operationId only). Poll the operation, then read by its resolved
+	// resourceId. A non-202 body is parsed directly for a sync backend.
 	var sg apiSecurityGroup
-	if err := json.Unmarshal(apiResp.Body, &sg); err != nil {
+	if apiResp.IsAccepted() {
+		op, opErr := client.ParseResponse[client.Operation](apiResp)
+		if opErr != nil {
+			resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
+			return
+		}
+		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute)
+		if waitErr != nil {
+			resp.Diagnostics.AddError("Security Group Creation Failed", waitErr.Error())
+			return
+		}
+		if done.ResourceID == "" {
+			resp.Diagnostics.AddError("Security Group Operation Returned No Resource ID",
+				"The security group create operation completed but returned no resource ID. Check `fm network security-group list` and import it if necessary.")
+			return
+		}
+		readResp, readErr := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf("/security-groups/%s", done.ResourceID)), nil)
+		if readErr != nil {
+			resp.Diagnostics.AddError("Failed to Read Security Group After Creation", readErr.Error())
+			return
+		}
+		if err := json.Unmarshal(readResp.Body, &sg); err != nil {
+			resp.Diagnostics.AddError("Failed to Parse Security Group Response", err.Error())
+			return
+		}
+	} else if err := json.Unmarshal(apiResp.Body, &sg); err != nil {
 		resp.Diagnostics.AddError("Failed to Parse Security Group Response", err.Error())
 		return
 	}

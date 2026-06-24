@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -173,8 +174,36 @@ func (r *subnetResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
+	// Subnet create routes through provisioning → 202 + an Operation envelope
+	// (operationId only, NOT the subnet). Poll the operation, then read by its
+	// resolved resourceId. A non-202 body is parsed directly for a sync backend.
 	var subnet apiSubnet
-	if err := json.Unmarshal(apiResp.Body, &subnet); err != nil {
+	if apiResp.IsAccepted() {
+		op, opErr := client.ParseResponse[client.Operation](apiResp)
+		if opErr != nil {
+			resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
+			return
+		}
+		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute)
+		if waitErr != nil {
+			resp.Diagnostics.AddError("Subnet Creation Failed", waitErr.Error())
+			return
+		}
+		if done.ResourceID == "" {
+			resp.Diagnostics.AddError("Subnet Operation Returned No Resource ID",
+				"The subnet create operation completed but returned no resource ID. Check `fm network subnet list` and import it if necessary.")
+			return
+		}
+		readResp, readErr := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf("/subnets/%s", done.ResourceID)), nil)
+		if readErr != nil {
+			resp.Diagnostics.AddError("Failed to Read Subnet After Creation", readErr.Error())
+			return
+		}
+		if err := json.Unmarshal(readResp.Body, &subnet); err != nil {
+			resp.Diagnostics.AddError("Failed to Parse Subnet Response", err.Error())
+			return
+		}
+	} else if err := json.Unmarshal(apiResp.Body, &subnet); err != nil {
 		resp.Diagnostics.AddError("Failed to Parse Subnet Response", err.Error())
 		return
 	}

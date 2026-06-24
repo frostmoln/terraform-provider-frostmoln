@@ -407,35 +407,30 @@ func configureVPCResource(t *testing.T, r resource.Resource, c *client.Client) {
 }
 
 func TestVPCResource_TFSDKCreate(t *testing.T) {
-	callCount := 0
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/vpcs":
+			// Provisioning returns 202 + an Operation envelope (operationId only).
 			w.WriteHeader(http.StatusAccepted)
-			_ = json.NewEncoder(w).Encode(apiVPC{
-				ID:     "vpc-created-1",
-				Name:   "test-vpc",
-				CIDR:   "10.0.0.0/16",
-				Region: "sweden",
-				Status: "creating",
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-vpc-1", "status": "pending", "resourceType": "vpc",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-vpc-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-vpc-1", "status": "completed", "resourceType": "vpc", "resourceId": "vpc-created-1",
 			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/vpcs/vpc-created-1":
-			callCount++
-			status := "creating"
-			if callCount >= 2 {
-				status = "active"
-			}
 			_ = json.NewEncoder(w).Encode(apiVPC{
 				ID:          "vpc-created-1",
 				Name:        "test-vpc",
 				CIDR:        "10.0.0.0/16",
 				Region:      "sweden",
-				Status:      status,
+				Status:      "active",
 				IsDefault:   false,
 				SubnetCount: 0,
 				CreatedAt:   "2025-01-01T00:00:00Z",
@@ -1105,20 +1100,14 @@ func TestVPCResource_TFSDKCreatePollingErrorState(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/vpcs":
 			w.WriteHeader(http.StatusAccepted)
-			_ = json.NewEncoder(w).Encode(apiVPC{
-				ID:     "vpc-err-1",
-				Name:   "err-vpc",
-				CIDR:   "10.0.0.0/16",
-				Region: "sweden",
-				Status: "creating",
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-vpc-err", "status": "pending", "resourceType": "vpc",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/vpcs/vpc-err-1":
-			_ = json.NewEncoder(w).Encode(apiVPC{
-				ID:     "vpc-err-1",
-				Name:   "err-vpc",
-				CIDR:   "10.0.0.0/16",
-				Region: "sweden",
-				Status: "error",
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-vpc-err":
+			// The create workflow failed → operation terminal-failed → create errors.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-vpc-err", "status": "failed", "resourceType": "vpc",
+				"error": "vpc entered error state",
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
