@@ -53,7 +53,7 @@ type apiInstance struct {
 	ImageID    string            `json:"imageId"`
 	ImageName  string            `json:"imageName,omitempty"`
 	Region     string            `json:"region"`
-	Zone       string            `json:"zone,omitempty"`
+	Zone       string            `json:"availabilityZone,omitempty"`
 	VPCID      string            `json:"vpcId,omitempty"`
 	SubnetID   string            `json:"subnetId,omitempty"`
 	PrivateIP  string            `json:"privateIp,omitempty"`

@@ -43,7 +43,7 @@ type apiInstance struct {
 	ImageID        string            `json:"imageId"`
 	ImageName      string            `json:"imageName,omitempty"`
 	Region         string            `json:"region"`
-	Zone           string            `json:"zone,omitempty"`
+	Zone           string            `json:"availabilityZone,omitempty"`
 	VPCID          string            `json:"vpcId,omitempty"`
 	SubnetID       string            `json:"subnetId,omitempty"`
 	PrivateIP      string            `json:"privateIp,omitempty"`
@@ -60,7 +60,7 @@ type apiCreateInstanceRequest struct {
 	FlavorID       string            `json:"flavorId"`
 	ImageID        string            `json:"imageId"`
 	Region         string            `json:"region,omitempty"`
-	Zone           string            `json:"zone,omitempty"`
+	Zone           string            `json:"availabilityZone,omitempty"`
 	VPCID          string            `json:"vpcId,omitempty"`
 	SubnetID       string            `json:"subnetId,omitempty"`
 	SecurityGroups []string          `json:"securityGroups,omitempty"`

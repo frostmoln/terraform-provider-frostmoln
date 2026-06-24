@@ -48,7 +48,7 @@ type apiSubnet struct {
 	VPCID        string            `json:"vpcId"`
 	Description  string            `json:"description,omitempty"`
 	CIDR         string            `json:"cidr"`
-	Zone         string            `json:"zone,omitempty"`
+	Zone         string            `json:"availabilityZone,omitempty"`
 	GatewayIP    string            `json:"gatewayIp,omitempty"`
 	IsPublic     bool              `json:"isPublic"`
 	Status       string            `json:"status"`

@@ -35,7 +35,7 @@ type apiVolume struct {
 	Description string            `json:"description,omitempty"`
 	SizeGB      int               `json:"sizeGb"`
 	VolumeType  string            `json:"volumeType"`
-	Zone        string            `json:"zone,omitempty"`
+	Zone        string            `json:"availabilityZone,omitempty"`
 	SnapshotID  string            `json:"snapshotId,omitempty"`
 	Encrypted   bool              `json:"encrypted"`
 	Status      string            `json:"status"`
@@ -54,7 +54,7 @@ type apiCreateVolumeRequest struct {
 	Description string            `json:"description,omitempty"`
 	SizeGB      int               `json:"sizeGb"`
 	VolumeType  string            `json:"volumeType,omitempty"`
-	Zone        string            `json:"zone,omitempty"`
+	Zone        string            `json:"availabilityZone,omitempty"`
 	SnapshotID  string            `json:"snapshotId,omitempty"`
 	Encrypted   bool              `json:"encrypted"`
 	Tags        map[string]string `json:"tags,omitempty"`
