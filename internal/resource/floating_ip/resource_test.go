@@ -389,15 +389,18 @@ func TestFIPResourceCreate(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips" {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(fipResp)
-			return
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-new-1":
+			_ = json.NewEncoder(w).Encode(fipResp)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+			})
 		}
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-		})
 	}))
 	defer server.Close()
 
@@ -466,6 +469,9 @@ func TestFIPResourceCreateWithAssociation(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(fipAllocated)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-assoc-1/associate":
+			_ = json.NewEncoder(w).Encode(fipAssociated)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-assoc-1":
+			// Final read after the (sync, in this mock) associate → associated state.
 			_ = json.NewEncoder(w).Encode(fipAssociated)
 		default:
 			w.WriteHeader(http.StatusNotFound)

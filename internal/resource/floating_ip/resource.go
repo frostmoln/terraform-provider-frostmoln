@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -127,35 +128,69 @@ func (r *floatingIPResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
+	// Allocate routes through provisioning → 202 + an Operation envelope
+	// (operationId only, NOT the floating IP). Resolve the FIP id from the
+	// operation; a non-202 body is parsed directly for a sync backend.
 	var fip apiFloatingIP
-	if err := json.Unmarshal(apiResp.Body, &fip); err != nil {
-		resp.Diagnostics.AddError("Failed to Parse Floating IP Response", err.Error())
-		return
+	var fipID string
+	if apiResp.IsAccepted() {
+		op, opErr := client.ParseResponse[client.Operation](apiResp)
+		if opErr != nil {
+			resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
+			return
+		}
+		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute)
+		if waitErr != nil {
+			resp.Diagnostics.AddError("Floating IP Allocation Failed", waitErr.Error())
+			return
+		}
+		fipID = done.ResourceID
+		if fipID == "" {
+			resp.Diagnostics.AddError("Floating IP Operation Returned No Resource ID",
+				"The floating IP allocate operation completed but returned no resource ID. Check `fm network floating-ip list` and import it if necessary.")
+			return
+		}
+	} else {
+		if err := json.Unmarshal(apiResp.Body, &fip); err != nil {
+			resp.Diagnostics.AddError("Failed to Parse Floating IP Response", err.Error())
+			return
+		}
+		fipID = fip.ID
 	}
 
-	// If instance_id is set, associate after allocation
+	// If instance_id is set, associate after allocation (also async via provisioning).
 	if !plan.InstanceID.IsNull() && !plan.InstanceID.IsUnknown() {
 		assocReq := apiAssociateFloatingIPRequest{
 			InstanceID: plan.InstanceID.ValueString(),
 		}
-		assocResp, err := r.client.Post(ctx, r.client.TenantPath(fmt.Sprintf("/floating-ips/%s/associate", fip.ID)), assocReq)
+		assocResp, err := r.client.Post(ctx, r.client.TenantPath(fmt.Sprintf("/floating-ips/%s/associate", fipID)), assocReq)
 		if err != nil {
 			resp.Diagnostics.AddError("Failed to Associate Floating IP", err.Error())
 			return
 		}
-		// Re-read the floating IP to get the updated state
-		if err := json.Unmarshal(assocResp.Body, &fip); err != nil {
-			// If the response doesn't contain the full FIP, fetch it
-			readResp, readErr := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf("/floating-ips/%s", fip.ID)), nil)
-			if readErr != nil {
-				resp.Diagnostics.AddError("Failed to Read Floating IP After Association", readErr.Error())
+		if assocResp.IsAccepted() {
+			op, opErr := client.ParseResponse[client.Operation](assocResp)
+			if opErr != nil {
+				resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
 				return
 			}
-			if err := json.Unmarshal(readResp.Body, &fip); err != nil {
-				resp.Diagnostics.AddError("Failed to Parse Floating IP Response", err.Error())
+			if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute); waitErr != nil {
+				resp.Diagnostics.AddError("Floating IP Association Failed", waitErr.Error())
 				return
 			}
 		}
+	}
+
+	// Read the final state by the resolved id (covers allocate-only and the
+	// post-association state).
+	readResp, err := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf("/floating-ips/%s", fipID)), nil)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Floating IP After Creation", err.Error())
+		return
+	}
+	if err := json.Unmarshal(readResp.Body, &fip); err != nil {
+		resp.Diagnostics.AddError("Failed to Parse Floating IP Response", err.Error())
+		return
 	}
 
 	plan.fromAPI(ctx, &fip, &resp.Diagnostics)
