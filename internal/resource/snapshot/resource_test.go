@@ -176,14 +176,14 @@ func TestSnapshotResource_CreateAndRead(t *testing.T) {
 				ID: "user-1", TenantID: "tenant-1",
 			})
 
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-1/snapshots":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-123/snapshots":
 			createCalls.Add(1)
 			creating := snapshot
 			creating.Status = "creating"
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(creating)
 
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/snapshots/snap-abc":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-123/snapshots/snap-abc":
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(snapshot)
 
@@ -209,7 +209,7 @@ func TestSnapshotResource_CreateAndRead(t *testing.T) {
 		VolumeID: "vol-123",
 	}
 
-	apiResp, err := c.Post(ctx, c.TenantPath("/snapshots"), createReq)
+	apiResp, err := c.Post(ctx, c.TenantPath("/volumes/vol-123/snapshots"), createReq)
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestSnapshotResource_CreateAndRead(t *testing.T) {
 	}
 
 	// Test Read
-	getResp, err := c.Get(ctx, c.TenantPath("/snapshots/snap-abc"), nil)
+	getResp, err := c.Get(ctx, c.TenantPath("/volumes/vol-123/snapshots/snap-abc"), nil)
 	if err != nil {
 		t.Fatalf("read failed: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestSnapshotResource_Delete(t *testing.T) {
 				ID: "user-1", TenantID: "tenant-1",
 			})
 
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-1/snapshots/snap-abc":
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-123/snapshots/snap-abc":
 			deleteCalled.Add(1)
 			w.WriteHeader(http.StatusNoContent)
 
@@ -271,7 +271,7 @@ func TestSnapshotResource_Delete(t *testing.T) {
 		t.Fatalf("configure failed: %v", err)
 	}
 
-	_, err := c.Delete(context.Background(), c.TenantPath("/snapshots/snap-abc"))
+	_, err := c.Delete(context.Background(), c.TenantPath("/volumes/vol-123/snapshots/snap-abc"))
 	if err != nil {
 		t.Fatalf("delete failed: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestSnapshotResource_ReadNotFound(t *testing.T) {
 		t.Fatalf("configure failed: %v", err)
 	}
 
-	_, err := c.Get(context.Background(), c.TenantPath("/snapshots/nonexistent"), nil)
+	_, err := c.Get(context.Background(), c.TenantPath("/volumes/vol-123/snapshots/nonexistent"), nil)
 	if err == nil {
 		t.Fatal("expected error for nonexistent snapshot")
 	}
@@ -423,31 +423,29 @@ func TestSnapshotResource_Configure_WrongType(t *testing.T) {
 }
 
 func TestSnapshotResource_Create_TFSDK(t *testing.T) {
-	var pollCount atomic.Int32
-
 	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-1/snapshots":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-123/snapshots":
+			// Provisioning returns 202 + an Operation envelope (operationId only).
 			w.WriteHeader(http.StatusAccepted)
-			_ = json.NewEncoder(w).Encode(apiSnapshot{
-				ID:       "snap-abc",
-				Name:     "test-snap",
-				VolumeID: "vol-123",
-				Status:   "creating",
-				SizeGB:   100,
-				Region:   "sweden",
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId":  "op-snap-1",
+				"status":       "pending",
+				"resourceType": "snapshot",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/snapshots/snap-abc":
-			n := pollCount.Add(1)
-			status := "creating"
-			if n >= 2 {
-				status = "available"
-			}
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-snap-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId":  "op-snap-1",
+				"status":       "completed",
+				"resourceType": "snapshot",
+				"resourceId":   "snap-abc",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-123/snapshots/snap-abc":
 			_ = json.NewEncoder(w).Encode(apiSnapshot{
 				ID:        "snap-abc",
 				Name:      "test-snap",
 				VolumeID:  "vol-123",
-				Status:    status,
+				Status:    "available",
 				SizeGB:    100,
 				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
@@ -551,7 +549,7 @@ func TestSnapshotResource_Create_APIError(t *testing.T) {
 func TestSnapshotResource_Read_TFSDK(t *testing.T) {
 	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/snapshots/snap-abc":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-123/snapshots/snap-abc":
 			_ = json.NewEncoder(w).Encode(apiSnapshot{
 				ID:        "snap-abc",
 				Name:      "test-snap",
@@ -716,7 +714,7 @@ func TestSnapshotResource_Delete_TFSDK(t *testing.T) {
 	deleted := false
 	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-1/snapshots/snap-abc":
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-123/snapshots/snap-abc":
 			deleted = true
 			w.WriteHeader(http.StatusNoContent)
 		default:

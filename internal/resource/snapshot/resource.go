@@ -134,46 +134,52 @@ func (r *snapshotResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
-	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/snapshots"), apiReq)
+	// Volume snapshots are nested under their volume (ADR-0065).
+	collectionPath := "/volumes/" + plan.VolumeID.ValueString() + "/snapshots"
+
+	apiResp, err := r.client.Post(ctx, r.client.TenantPath(collectionPath), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create snapshot", err.Error())
 		return
 	}
 
-	snap, err := client.ParseResponse[apiSnapshot](apiResp)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to parse snapshot response", err.Error())
+	// Snapshot writes route through provisioning, which returns 202 with an
+	// Operation envelope (operationId only, not the snapshot). Poll the operation
+	// to completion, then read the snapshot by its resolved resourceId. A 201 with
+	// the snapshot body is also accepted for a synchronous backend.
+	var snapshotID string
+	if apiResp.IsAccepted() {
+		op, err := client.ParseResponse[client.Operation](apiResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to parse operation response", err.Error())
+			return
+		}
+		done, err := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 10*time.Minute)
+		if err != nil {
+			resp.Diagnostics.AddError("Snapshot creation failed", err.Error())
+			return
+		}
+		snapshotID = done.ResourceID
+	} else {
+		snap, err := client.ParseResponse[apiSnapshot](apiResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to parse snapshot response", err.Error())
+			return
+		}
+		snapshotID = snap.ID
+	}
+	if snapshotID == "" {
+		resp.Diagnostics.AddError(
+			"Snapshot Operation Returned No Resource ID",
+			"The snapshot create operation completed but returned no resource ID. The snapshot may exist in the backend without being tracked in Terraform state - check `fm storage snapshot list --volume "+plan.VolumeID.ValueString()+"` and import it if necessary.",
+		)
 		return
 	}
 
-	snapshotID := snap.ID
-
-	// Poll until the snapshot is no longer in "creating" state.
-	_, err = client.WaitForState(ctx, client.PollConfig{
-		Interval:     2 * time.Second,
-		Timeout:      10 * time.Minute,
-		TargetStates: []string{"available"},
-		ErrorStates:  []string{"error"},
-		ResourceName: "snapshot",
-		PollFunc: func(ctx context.Context) (string, error) {
-			pollResp, err := r.client.Get(ctx, r.client.TenantPath("/snapshots/"+snapshotID), nil)
-			if err != nil {
-				return "", err
-			}
-			pollSnap, err := client.ParseResponse[apiSnapshot](pollResp)
-			if err != nil {
-				return "", err
-			}
-			return pollSnap.Status, nil
-		},
-	})
-	if err != nil {
-		resp.Diagnostics.AddError("Snapshot creation failed", err.Error())
-		return
-	}
+	memberPath := collectionPath + "/" + snapshotID
 
 	// Read the final state.
-	getResp, err := r.client.Get(ctx, r.client.TenantPath("/snapshots/"+snapshotID), nil)
+	getResp, err := r.client.Get(ctx, r.client.TenantPath(memberPath), nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to read snapshot after creation", err.Error())
 		return
@@ -196,7 +202,7 @@ func (r *snapshotResource) Read(ctx context.Context, req resource.ReadRequest, r
 		return
 	}
 
-	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/snapshots/"+state.ID.ValueString()), nil)
+	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/volumes/"+state.VolumeID.ValueString()+"/snapshots/"+state.ID.ValueString()), nil)
 	if err != nil {
 		if client.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
@@ -230,12 +236,26 @@ func (r *snapshotResource) Delete(ctx context.Context, req resource.DeleteReques
 		return
 	}
 
-	_, err := r.client.Delete(ctx, r.client.TenantPath("/snapshots/"+state.ID.ValueString()))
+	apiResp, err := r.client.Delete(ctx, r.client.TenantPath("/volumes/"+state.VolumeID.ValueString()+"/snapshots/"+state.ID.ValueString()))
 	if err != nil {
 		if client.IsNotFound(err) {
 			return
 		}
 		resp.Diagnostics.AddError("Failed to delete snapshot", err.Error())
+		return
+	}
+
+	// Async delete (provisioning 202 + Operation): poll until the workflow has
+	// verified the snapshot is actually gone before dropping it from state.
+	if apiResp.IsAccepted() {
+		op, err := client.ParseResponse[client.Operation](apiResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to parse operation response", err.Error())
+			return
+		}
+		if _, err := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 10*time.Minute); err != nil {
+			resp.Diagnostics.AddError("Snapshot deletion failed", err.Error())
+		}
 	}
 }
 
