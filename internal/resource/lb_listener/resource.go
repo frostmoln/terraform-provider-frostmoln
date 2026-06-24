@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -158,10 +159,42 @@ func (r *listenerResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
-	listener, err := client.ParseResponse[apiListener](apiResp)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to Parse Listener Response", err.Error())
-		return
+	// Listener create routes through provisioning → 202 + an Operation envelope
+	// (operationId only). Poll the operation, then read by its resolved
+	// resourceId. A non-202 body is parsed directly for a sync backend.
+	var listener *apiListener
+	if apiResp.IsAccepted() {
+		op, opErr := client.ParseResponse[client.Operation](apiResp)
+		if opErr != nil {
+			resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
+			return
+		}
+		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute)
+		if waitErr != nil {
+			resp.Diagnostics.AddError("Listener Creation Failed", waitErr.Error())
+			return
+		}
+		if done.ResourceID == "" {
+			resp.Diagnostics.AddError("Listener Operation Returned No Resource ID",
+				"The listener create operation completed but returned no resource ID.")
+			return
+		}
+		readResp, readErr := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf("/load-balancers/%s/listeners/%s", lbID, done.ResourceID)), nil)
+		if readErr != nil {
+			resp.Diagnostics.AddError("Failed to Read Listener After Creation", readErr.Error())
+			return
+		}
+		listener, err = client.ParseResponse[apiListener](readResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to Parse Listener Response", err.Error())
+			return
+		}
+	} else {
+		listener, err = client.ParseResponse[apiListener](apiResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to Parse Listener Response", err.Error())
+			return
+		}
 	}
 
 	plan.fromAPI(ctx, listener, &resp.Diagnostics)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -152,10 +153,37 @@ func (r *healthMonitorResource) Create(ctx context.Context, req resource.CreateR
 		return
 	}
 
-	hm, err := client.ParseResponse[apiHealthMonitor](apiResp)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to Parse Health Monitor Response", err.Error())
-		return
+	// Health-monitor create routes through provisioning → 202 + an Operation
+	// envelope (operationId only). Poll the operation, then re-read the monitor
+	// (one per pool — no id in the path). A non-202 body is parsed directly for a
+	// sync backend.
+	var hm *apiHealthMonitor
+	if apiResp.IsAccepted() {
+		op, opErr := client.ParseResponse[client.Operation](apiResp)
+		if opErr != nil {
+			resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
+			return
+		}
+		if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute); waitErr != nil {
+			resp.Diagnostics.AddError("Health Monitor Creation Failed", waitErr.Error())
+			return
+		}
+		readResp, readErr := r.client.Get(ctx, r.monitorPath(lbID, poolID), nil)
+		if readErr != nil {
+			resp.Diagnostics.AddError("Failed to Read Health Monitor After Creation", readErr.Error())
+			return
+		}
+		hm, err = client.ParseResponse[apiHealthMonitor](readResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to Parse Health Monitor Response", err.Error())
+			return
+		}
+	} else {
+		hm, err = client.ParseResponse[apiHealthMonitor](apiResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to Parse Health Monitor Response", err.Error())
+			return
+		}
 	}
 
 	plan.fromAPI(lbID, hm)
