@@ -194,49 +194,41 @@ func (r *scaleGroupResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
-	sg, err := client.ParseResponse[apiScaleGroup](apiResp)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to parse scale group response", err.Error())
+	// Scale-group create routes through provisioning, which returns 202 + an
+	// Operation envelope (operationId only, NOT the scale group). Poll the
+	// operation to completion, then read by its resolved resourceId. A 201 with
+	// the scale-group body is still accepted for a synchronous backend.
+	var scaleGroupID string
+	if apiResp.IsAccepted() {
+		op, opErr := client.ParseResponse[client.Operation](apiResp)
+		if opErr != nil {
+			resp.Diagnostics.AddError("Failed to parse operation response", opErr.Error())
+			return
+		}
+		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout())
+		if waitErr != nil {
+			resp.Diagnostics.AddError("Scale group failed to reach active state", waitErr.Error())
+			return
+		}
+		scaleGroupID = done.ResourceID
+	} else {
+		sg, parseErr := client.ParseResponse[apiScaleGroup](apiResp)
+		if parseErr != nil {
+			resp.Diagnostics.AddError("Failed to parse scale group response", parseErr.Error())
+			return
+		}
+		scaleGroupID = sg.ID
+	}
+	if scaleGroupID == "" {
+		resp.Diagnostics.AddError(
+			"Scale Group Operation Returned No Resource ID",
+			"The scale group create operation completed but returned no resource ID. The scale group may exist in the backend without being tracked in Terraform state - check `fm compute scale-group list` and import it if necessary.",
+		)
 		return
 	}
 
-	plan.fromAPI(ctx, sg, &resp.Diagnostics)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// Save state immediately so the ID is tracked, even if polling fails.
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// Poll until scale group reaches "active" status.
-	_, err = client.WaitForState(ctx, client.PollConfig{
-		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
-		TargetStates: []string{"active"},
-		ErrorStates:  []string{"error", "failed"},
-		ResourceName: "scale_group",
-		PollFunc: func(pollCtx context.Context) (string, error) {
-			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/scale-groups/"+sg.ID), nil)
-			if pollErr != nil {
-				return "", pollErr
-			}
-			current, parseErr := client.ParseResponse[apiScaleGroup](pollResp)
-			if parseErr != nil {
-				return "", parseErr
-			}
-			return current.Status, nil
-		},
-	})
-	if err != nil {
-		resp.Diagnostics.AddError("Scale group failed to reach active state", err.Error())
-		return
-	}
-
-	// Refresh state after polling completes to get final status and current_size.
-	readResp, err := r.client.Get(ctx, r.client.TenantPath("/scale-groups/"+sg.ID), nil)
+	// Refresh state after the operation completes to get final status and current_size.
+	readResp, err := r.client.Get(ctx, r.client.TenantPath("/scale-groups/"+scaleGroupID), nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to read scale group after creation", err.Error())
 		return

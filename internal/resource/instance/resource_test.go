@@ -923,7 +923,6 @@ func TestInstanceResource_Configure(t *testing.T) {
 }
 
 func TestInstanceResource_TFSDKCreate(t *testing.T) {
-	var pollCount atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -953,27 +952,22 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 			if req.Tags["env"] != "test" {
 				t.Errorf("expected tag env=test, got %v", req.Tags)
 			}
+			// Provisioning returns 202 + an Operation envelope (operationId only).
 			w.WriteHeader(http.StatusAccepted)
-			_ = json.NewEncoder(w).Encode(apiInstance{
-				ID:        "inst-new-1",
-				Name:      req.Name,
-				Status:    "provisioning",
-				FlavorID:  req.FlavorID,
-				ImageID:   req.ImageID,
-				Region:    "sweden",
-				CreatedAt: "2025-06-01T12:00:00Z",
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-inst-1", "status": "pending", "resourceType": "instance",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-inst-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-inst-1", "status": "completed", "resourceType": "instance", "resourceId": "inst-new-1",
 			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-new-1":
-			n := pollCount.Add(1)
-			status := "provisioning"
-			if n >= 2 {
-				status = "running"
-			}
 			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:             "inst-new-1",
 				Name:           "web-1",
-				Status:         status,
+				Status:         "running",
 				FlavorID:       "flavor-small",
 				FlavorName:     "Small",
 				ImageID:        "img-ubuntu",
@@ -1067,8 +1061,6 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 }
 
 func TestInstanceResource_TFSDKCreateMinimal(t *testing.T) {
-	var pollCount atomic.Int32
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
@@ -1076,26 +1068,20 @@ func TestInstanceResource_TFSDKCreateMinimal(t *testing.T) {
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances":
 			w.WriteHeader(http.StatusAccepted)
-			_ = json.NewEncoder(w).Encode(apiInstance{
-				ID:        "inst-min-1",
-				Name:      "minimal-vm",
-				Status:    "provisioning",
-				FlavorID:  "flavor-small",
-				ImageID:   "img-ubuntu",
-				Region:    "sweden",
-				CreatedAt: "2025-06-01T12:00:00Z",
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-min-1", "status": "pending", "resourceType": "instance",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-min-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-min-1", "status": "completed", "resourceType": "instance", "resourceId": "inst-min-1",
 			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-min-1":
-			n := pollCount.Add(1)
-			status := "provisioning"
-			if n >= 2 {
-				status = "running"
-			}
 			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:        "inst-min-1",
 				Name:      "minimal-vm",
-				Status:    status,
+				Status:    "running",
 				FlavorID:  "flavor-small",
 				ImageID:   "img-ubuntu",
 				Region:    "sweden",
@@ -1164,26 +1150,15 @@ func TestInstanceResource_TFSDKCreateErrorState(t *testing.T) {
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances":
 			w.WriteHeader(http.StatusAccepted)
-			_ = json.NewEncoder(w).Encode(apiInstance{
-				ID:        "inst-err-1",
-				Name:      "error-vm",
-				Status:    "provisioning",
-				FlavorID:  "flavor-small",
-				ImageID:   "img-ubuntu",
-				Region:    "sweden",
-				CreatedAt: "2025-06-01T12:00:00Z",
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-inst-err", "status": "pending", "resourceType": "instance",
 			})
 
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-err-1":
-			// Instance goes to error state.
-			_ = json.NewEncoder(w).Encode(apiInstance{
-				ID:        "inst-err-1",
-				Name:      "error-vm",
-				Status:    "error",
-				FlavorID:  "flavor-small",
-				ImageID:   "img-ubuntu",
-				Region:    "sweden",
-				CreatedAt: "2025-06-01T12:00:00Z",
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-inst-err":
+			// The create workflow failed → operation terminal-failed → create errors.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-inst-err", "status": "failed", "resourceType": "instance",
+				"error": "instance entered error state",
 			})
 
 		default:

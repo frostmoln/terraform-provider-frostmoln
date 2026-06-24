@@ -518,7 +518,6 @@ func sgJSON(status string) apiScaleGroup {
 // --- CRUD tests ---
 
 func TestCreate(t *testing.T) {
-	var getCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/scale-groups":
@@ -527,14 +526,17 @@ func TestCreate(t *testing.T) {
 			if body.Name != "asg" {
 				t.Errorf("expected name asg, got %s", body.Name)
 			}
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(sgJSON("provisioning"))
+			// Provisioning returns 202 + an Operation envelope (operationId only).
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-sg-1", "status": "pending", "resourceType": "scale_group",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-sg-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-sg-1", "status": "completed", "resourceType": "scale_group", "resourceId": "asg-1",
+			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/scale-groups/asg-1":
-			status := "provisioning"
-			if getCount.Add(1) >= 2 {
-				status = "active"
-			}
-			_ = json.NewEncoder(w).Encode(sgJSON(status))
+			_ = json.NewEncoder(w).Encode(sgJSON("active"))
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -594,10 +596,16 @@ func TestCreatePollError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/scale-groups":
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(sgJSON("provisioning"))
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/scale-groups/asg-1":
-			_ = json.NewEncoder(w).Encode(sgJSON("error"))
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-sg-err", "status": "pending", "resourceType": "scale_group",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-sg-err":
+			// The create workflow failed → operation terminal-failed → create errors.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-sg-err", "status": "failed", "resourceType": "scale_group",
+				"error": "scale group entered error state",
+			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -616,7 +624,7 @@ func TestCreatePollError(t *testing.T) {
 	createResp := resource.CreateResponse{State: emptySGState(t)}
 	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
 	if !createResp.Diagnostics.HasError() {
-		t.Error("expected error when scale group enters error state during polling")
+		t.Error("expected error when scale group operation fails")
 	}
 }
 

@@ -208,9 +208,38 @@ func (r *instanceResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
-	inst, err := client.ParseResponse[apiInstance](apiResp)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to parse instance response", err.Error())
+	// Instance create routes through provisioning, which returns 202 + an Operation
+	// envelope (operationId only, NOT the instance). Poll the operation to
+	// completion (the workflow waits for the instance to reach running before
+	// completing), then read by its resolved resourceId. A 201 with the instance
+	// body is still accepted for a synchronous backend. Mirrors the volume +
+	// snapshot + load_balancer resources.
+	var instanceID string
+	if apiResp.IsAccepted() {
+		op, opErr := client.ParseResponse[client.Operation](apiResp)
+		if opErr != nil {
+			resp.Diagnostics.AddError("Failed to parse operation response", opErr.Error())
+			return
+		}
+		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout())
+		if waitErr != nil {
+			resp.Diagnostics.AddError("Instance failed to reach running state", waitErr.Error())
+			return
+		}
+		instanceID = done.ResourceID
+	} else {
+		inst, parseErr := client.ParseResponse[apiInstance](apiResp)
+		if parseErr != nil {
+			resp.Diagnostics.AddError("Failed to parse instance response", parseErr.Error())
+			return
+		}
+		instanceID = inst.ID
+	}
+	if instanceID == "" {
+		resp.Diagnostics.AddError(
+			"Instance Operation Returned No Resource ID",
+			"The instance create operation completed but returned no resource ID. The instance may exist in the backend without being tracked in Terraform state - check `fm compute instance list` and import it if necessary.",
+		)
 		return
 	}
 
@@ -221,43 +250,8 @@ func (r *instanceResource) Create(ctx context.Context, req resource.CreateReques
 		plan.UserDataHash = types.StringNull()
 	}
 
-	plan.fromAPI(ctx, inst, &resp.Diagnostics)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// Save state immediately so the ID is tracked, even if polling fails below.
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// Poll until instance reaches "running" status.
-	_, err = client.WaitForState(ctx, client.PollConfig{
-		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
-		TargetStates: []string{"running"},
-		ErrorStates:  []string{"error"},
-		ResourceName: "instance",
-		PollFunc: func(pollCtx context.Context) (string, error) {
-			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/instances/"+inst.ID), nil)
-			if pollErr != nil {
-				return "", pollErr
-			}
-			current, parseErr := client.ParseResponse[apiInstance](pollResp)
-			if parseErr != nil {
-				return "", parseErr
-			}
-			return current.Status, nil
-		},
-	})
-	if err != nil {
-		resp.Diagnostics.AddError("Instance failed to reach running state", err.Error())
-		return
-	}
-
-	// Refresh state after polling completes to get the final status and IPs.
-	readResp, err := r.client.Get(ctx, r.client.TenantPath("/instances/"+inst.ID), nil)
+	// Read the final state (the operation completion means the instance is running).
+	readResp, err := r.client.Get(ctx, r.client.TenantPath("/instances/"+instanceID), nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to read instance after creation", err.Error())
 		return
