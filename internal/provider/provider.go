@@ -15,6 +15,7 @@ import (
 	apacheinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/apache_instance"
 	cacheinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/cache_instance"
 	databaseenginesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/database_engines"
+	dnszoneds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/dns_zone"
 	flavords "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/flavor"
 	flavorsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/flavors"
 	imageds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/image"
@@ -34,6 +35,8 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/api_key"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/bucket"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/cache_instance"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_record"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_zone"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/floating_ip"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/launch_template"
@@ -169,6 +172,8 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		security_group.NewResource,
 		security_group_rule.NewResource,
 		floating_ip.NewResource,
+		dns_zone.NewResource,
+		dns_record.NewResource,
 		load_balancer.NewResource,
 		lb_listener.NewResource,
 		lb_pool.NewResource,
@@ -206,6 +211,7 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		flavorsds.NewDataSource,
 		vpcds.NewDataSource,
 		subnetds.NewDataSource,
+		dnszoneds.NewDataSource,
 		instanceds.NewDataSource,
 		postgresversionsds.NewDataSource,
 		mysqlversionsds.NewDataSource,
