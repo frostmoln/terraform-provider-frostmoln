@@ -20,6 +20,7 @@ import (
 	imageds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/image"
 	imagesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/images"
 	instanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/instance"
+	messaginginstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/messaging_instance"
 	mysqlversionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/mysql_versions"
 	nginxinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/nginx_instance"
 	postgresversionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/postgres_versions"
@@ -41,6 +42,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/lb_member"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/lb_pool"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/load_balancer"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/messaging_instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/mysql_backup"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/mysql_instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/mysql_read_replica"
@@ -186,6 +188,7 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		redis_instance.NewResource,
 		cache_instance.NewResource,
 		valkey_instance.NewResource,
+		messaging_instance.NewResource,
 		scale_group.NewResource,
 		secret.NewResource,
 		api_key.NewResource,
@@ -210,6 +213,7 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		redisinstanceds.NewDataSource,
 		cacheinstanceds.NewDataSource,
 		valkeyinstanceds.NewDataSource,
+		messaginginstanceds.NewDataSource,
 		secretds.NewDataSource,
 		apacheinstanceds.NewDataSource,
 		nginxinstanceds.NewDataSource,
