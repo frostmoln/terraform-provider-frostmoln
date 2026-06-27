@@ -13,21 +13,13 @@ jobs:
   acceptance:
     runs-on: ubuntu-latest
     env:
-      GOPRIVATE: go.frostmoln.internal/*
-      GONOSUMCHECK: go.frostmoln.internal/*
-      GOINSECURE: go.frostmoln.internal,git.sm.internal
-      GIT_SSL_NO_VERIFY: "true"
       API_ENDPOINT: ${{ vars.API_ENDPOINT }}
       PORTAL_URL: ${{ vars.PORTAL_URL }}
     steps:
       - uses: actions/checkout@v7
-      - name: Configure Go private modules
-        run: |
-          git config --global url."http://gitea:3000/frostmoln/".insteadOf "http://go.frostmoln.internal/"
-          git config --global url."http://gitea:3000/frostmoln/".insteadOf "https://go.frostmoln.internal/"
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: 'go.mod'
+      # No actions/setup-go and no gitea private-module config: Go is baked into
+      # the anchor-runner image (GOTOOLCHAIN=auto matches go.mod), and the provider
+      # has zero internal Go-module deps (only public + self-referencing imports).
 
       - name: Create test user and API key
         run: |
