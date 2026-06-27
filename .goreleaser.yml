@@ -1,0 +1,91 @@
+# GoReleaser configuration for the Frostmoln Terraform provider.
+# https://goreleaser.com
+#
+# Usage:
+#   goreleaser check                                    # validate this config
+#   goreleaser release --snapshot --clean --skip=sign   # local test build (no publish/sign)
+#   goreleaser release --clean                          # real release (CI, on tag)
+#
+# Distribution model (ADR-0077): published to the PUBLIC Terraform Registry
+# (registry.terraform.io/frostmoln/frostmoln). Canonical source stays on
+# git.sm.internal; CI mirrors the tagged tree to the public GitHub repo and
+# attaches the signed release assets there. The registry reads:
+#   - the GitHub Release assets (per-OS/arch zips + SHA256SUMS + .sig + manifest)
+#   - docs/ + LICENSE + terraform-registry-manifest.json from the tagged commit
+# Checksums are signed with GPG; the matching public key is uploaded to the
+# registry publisher account.
+version: 2
+
+project_name: terraform-provider-frostmoln
+
+before:
+  hooks:
+    # download (not tidy) — a release build must not mutate go.mod/go.sum.
+    - go mod download
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    mod_timestamp: '{{ .CommitTimestamp }}'
+    flags:
+      - -trimpath
+    ldflags:
+      - '-s -w -X main.version={{.Version}}'
+    main: ./cmd/terraform-provider-frostmoln
+    goos:
+      - freebsd
+      - windows
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - '386'
+      - arm
+      - arm64
+    ignore:
+      - goos: darwin
+        goarch: '386'
+    binary: '{{ .ProjectName }}_v{{ .Version }}'
+
+archives:
+  - formats:
+      - zip
+    # Registry-required asset name: terraform-provider-NAME_VERSION_OS_ARCH.zip
+    name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+
+checksum:
+  extra_files:
+    - glob: terraform-registry-manifest.json
+      name_template: '{{ .ProjectName }}_{{ .Version }}_manifest.json'
+  name_template: '{{ .ProjectName }}_{{ .Version }}_SHA256SUMS'
+  algorithm: sha256
+
+# GPG detached signature over SHA256SUMS. The registry verifies it against the
+# uploaded public key. CI imports a passphrase-less key and exports its
+# fingerprint as $GPG_FINGERPRINT.
+signs:
+  - artifacts: checksum
+    args:
+      - '--batch'
+      # Force binary output — the registry rejects an ASCII-armored .sig, and a
+      # runner gpg.conf with `armor` would otherwise armor it.
+      - '--no-armor'
+      - '--local-user'
+      - '{{ .Env.GPG_FINGERPRINT }}'
+      - '--output'
+      - '${signature}'
+      - '--detach-sign'
+      - '${artifact}'
+
+release:
+  extra_files:
+    - glob: terraform-registry-manifest.json
+      name_template: '{{ .ProjectName }}_{{ .Version }}_manifest.json'
+  github:
+    owner: Frostmoln
+    name: terraform-provider-frostmoln
+
+# Release notes come from the shared release workflow's git-cliff changelog +
+# the release PR; goreleaser does not generate its own.
+changelog:
+  disable: true

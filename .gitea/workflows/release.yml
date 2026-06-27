@@ -1,0 +1,24 @@
+name: Release
+
+# Calls the shared release workflow at frostmoln/workflows.
+# - On push to main: git-cliff bumps the next semver and opens (or refreshes) the
+#   next-release PR with the changelog + .version file.
+# - When that PR is squash-merged, the workflow creates the vX.Y.Z tag (with the
+#   RELEASE_TOKEN PAT, so it DOES trigger tag workflows) -> goreleaser.yml runs and
+#   publishes the provider to the public Terraform Registry (ADR-0077).
+#
+# Mirrors fm-cli/billing. RELEASE_TOKEN is a Gitea PAT inherited from the frostmoln
+# ORG-level Actions secret (no per-repo copy); referenced here so the shared workflow
+# can create the tag with a token that re-triggers tag workflows.
+# enforce_siv_path stays off: the provider is a leaf plugin binary, never an imported
+# Go module.
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  release:
+    uses: frostmoln/workflows/.gitea/workflows/release.yml@v0.4.3
+    secrets:
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}

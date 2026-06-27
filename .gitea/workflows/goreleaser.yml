@@ -1,0 +1,142 @@
+name: GoReleaser
+
+# Publishes the Frostmoln Terraform provider to the public Terraform Registry
+# (registry.terraform.io/frostmoln/frostmoln) — ADR-0077. Fires when the shared
+# release workflow cuts a vX.Y.Z tag (release-PR merge). It:
+#   1. builds the cross-platform provider binaries (goreleaser, GPG-signed checksums),
+#   2. mirrors the tagged source tree + tag to the public GitHub repo
+#      Frostmoln/terraform-provider-frostmoln (the registry reads docs/LICENSE/manifest
+#      from there), and
+#   3. creates the GitHub Release with the signed assets. The registry webhook on the
+#      GitHub repo then syncs the new version automatically.
+#
+# One-time operator gates (see ADR-0077): the public GitHub repo must exist with the
+# frostmoln-goreleaser App installed (contents:write); GPG_PRIVATE_KEY_B64 must be set
+# and its public key uploaded to the registry account; a full-history secret scan of
+# this repo must have passed before the first tag (ongoing commits are gated by the
+# pre-commit detect-secrets CI check).
+#
+# Secrets:
+#   TAP_GH_APP_ID / TAP_GH_APP_KEY_B64  - GitHub App (frostmoln-goreleaser); minted token
+#                                         scoped to contents:write on the provider repo,
+#                                         used for the mirror push AND goreleaser's Release.
+#   GPG_PRIVATE_KEY_B64                 - passphrase-less GPG signing key (base64). Its public
+#                                         key is uploaded to the Terraform Registry account.
+#   RELEASE_TOKEN                       - Gitea PAT (org-level); only relevant to release.yml.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: goreleaser-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  goreleaser:
+    name: GoReleaser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # No actions/setup-go: Go is baked into the anchor-runner image (PATH +
+      # GOTOOLCHAIN=auto, which matches go.mod). setup-go is a flaky no-op on these
+      # self-hosted runners (setup-go#244) — a flake here would fail a release.
+      - name: Install goreleaser
+        run: |
+          set -euo pipefail
+          go version
+          # renovate: datasource=github-releases depName=goreleaser/goreleaser
+          GORELEASER_VERSION=v2.16.0
+          # Pinned digest of goreleaser_Linux_x86_64.tar.gz — not TOFU on the release's
+          # own checksums.txt (this job holds the signing key + publish creds).
+          # Renovate bumps the version; update this digest in the same PR.
+          GORELEASER_SHA256=eaae05b5eba07533bd0f06846b68c808399504784df00c62eb219541fc04e5e2
+          base="https://github.com/goreleaser/goreleaser/releases/download/${GORELEASER_VERSION}"
+          f=goreleaser_Linux_x86_64.tar.gz
+          tmp="$(mktemp -d)"; cd "$tmp"
+          curl -sSfL "${base}/${f}" -o "$f"
+          echo "${GORELEASER_SHA256}  ${f}" | sha256sum -c -
+          sudo tar -xzf "$f" -C /usr/local/bin goreleaser
+          cd - >/dev/null
+          goreleaser --version
+
+      - name: Import GPG signing key
+        id: gpg
+        env:
+          GPG_PRIVATE_KEY_B64: ${{ secrets.GPG_PRIVATE_KEY_B64 }}
+        run: |
+          set -euo pipefail
+          # Isolated, disposable keyring so the release key can't leak to other jobs
+          # on the shared runner pool (cleaned up in the always() step below).
+          GNUPGHOME="$(mktemp -d)"
+          chmod 700 "$GNUPGHOME"
+          echo "GNUPGHOME=${GNUPGHOME}" >> "$GITHUB_ENV"
+          export GNUPGHOME
+          printf '%s' "$GPG_PRIVATE_KEY_B64" | base64 -d | gpg --batch --import
+          fpr=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/{print $10; exit}')
+          echo "fingerprint=$fpr" >> "$GITHUB_OUTPUT"
+
+      - name: Mint GitHub App token (mirror + GitHub Release)
+        id: ghapp
+        env:
+          APP_ID: ${{ secrets.TAP_GH_APP_ID }}
+          APP_KEY_B64: ${{ secrets.TAP_GH_APP_KEY_B64 }}
+          OWNER: Frostmoln
+        run: |
+          set -euo pipefail
+          pem=$(mktemp)
+          trap 'rm -f "$pem"' EXIT
+          b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+          printf '%s' "$APP_KEY_B64" | base64 -d > "$pem"
+          now=$(date +%s)
+          hdr=$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | b64url)
+          pld=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((now-60))" "$((now+540))" "$APP_ID" | b64url)
+          sig=$(printf '%s' "$hdr.$pld" | openssl dgst -sha256 -sign "$pem" -binary | b64url)
+          jwt="$hdr.$pld.$sig"
+          echo "::add-mask::$jwt"
+          inst=$(curl -fsS -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/orgs/$OWNER/installation" | jq -r .id)
+          # Least privilege: scope the token to contents:write on just the provider repo.
+          tok=$(curl -fsS -X POST -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" \
+            -d '{"repositories":["terraform-provider-frostmoln"],"permissions":{"contents":"write"}}' \
+            "https://api.github.com/app/installations/$inst/access_tokens" | jq -r .token)
+          echo "::add-mask::$tok"
+          echo "token=$tok" >> "$GITHUB_OUTPUT"
+
+      - name: Mirror source + tag to GitHub
+        env:
+          TOKEN: ${{ steps.ghapp.outputs.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          remote="https://x-access-token:${TOKEN}@github.com/Frostmoln/terraform-provider-frostmoln.git"
+          # Pre-flight: clear error if the one-time setup is missing, before the tag-
+          # dependent work runs.
+          git ls-remote "$remote" >/dev/null 2>&1 || {
+            echo "::error::Cannot reach Frostmoln/terraform-provider-frostmoln on GitHub. Ensure the public repo exists and the frostmoln-goreleaser App is installed on it (contents:write).";
+            exit 1;
+          }
+          git remote add github "$remote"
+          # GitHub main is a downstream-only public mirror (no PRs land there), so a
+          # force push is safe. The registry reads docs/LICENSE/manifest from this tag.
+          git push github "HEAD:refs/heads/main" --force
+          # No --force on the tag: re-publishing an already-released version must fail
+          # loudly, not silently overwrite an ingested tag.
+          git push github "refs/tags/${TAG}"
+
+      - name: Release (build, sign, GitHub Release)
+        env:
+          GITHUB_TOKEN: ${{ steps.ghapp.outputs.token }}
+          GPG_FINGERPRINT: ${{ steps.gpg.outputs.fingerprint }}
+        run: goreleaser release --clean
+
+      - name: Clean up signing key + mirror remote
+        if: always()
+        run: |
+          gpgconf --kill gpg-agent 2>/dev/null || true
+          [ -n "${GNUPGHOME:-}" ] && rm -rf "$GNUPGHOME" || true
+          git remote remove github 2>/dev/null || true
