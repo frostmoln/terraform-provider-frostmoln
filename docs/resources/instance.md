@@ -25,6 +25,9 @@ resource "frostmoln_instance" "example" {
   security_groups = [frostmoln_security_group.web.id]
   ssh_key_names   = [frostmoln_ssh_key.example.name]
 
+  # Password for the default OS user, usable only at the VNC console (SSH stays key-only).
+  console_password = "change-me-at-the-console" # pragma: allowlist secret
+
   tags = {
     role        = "web"
     environment = "production"
@@ -43,6 +46,7 @@ resource "frostmoln_instance" "example" {
 
 ### Optional
 
+- `console_password` (String, Sensitive) Password for the default OS user, usable only at the VNC console; SSH stays key-only. Changing forces replacement.
 - `region` (String) The region for the instance.
 - `security_groups` (Set of String) The security group IDs attached to the instance.
 - `ssh_key_names` (Set of String) The SSH key names to inject into the instance.

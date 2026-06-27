@@ -50,17 +50,18 @@ func TestInstanceModelToCreateRequest(t *testing.T) {
 	diags.Append(d...)
 
 	model := InstanceModel{
-		Name:           types.StringValue("web-1"),
-		FlavorID:       types.StringValue("flavor-small"),
-		ImageID:        types.StringValue("img-ubuntu"),
-		Region:         types.StringValue("sweden"),
-		Zone:           types.StringValue("sweden-a"),
-		VPCID:          types.StringValue("vpc-123"),
-		SubnetID:       types.StringValue("subnet-456"),
-		SecurityGroups: sgs,
-		SSHKeyNames:    keys,
-		UserData:       types.StringValue("#!/bin/bash\necho hello"),
-		Tags:           tags,
+		Name:            types.StringValue("web-1"),
+		FlavorID:        types.StringValue("flavor-small"),
+		ImageID:         types.StringValue("img-ubuntu"),
+		Region:          types.StringValue("sweden"),
+		Zone:            types.StringValue("sweden-a"),
+		VPCID:           types.StringValue("vpc-123"),
+		SubnetID:        types.StringValue("subnet-456"),
+		SecurityGroups:  sgs,
+		SSHKeyNames:     keys,
+		UserData:        types.StringValue("#!/bin/bash\necho hello"),
+		ConsolePassword: types.StringValue("s3cret-console"),
+		Tags:            tags,
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
@@ -98,6 +99,9 @@ func TestInstanceModelToCreateRequest(t *testing.T) {
 	if req.UserData != "#!/bin/bash\necho hello" {
 		t.Errorf("expected user data, got %s", req.UserData)
 	}
+	if req.ConsolePassword != "s3cret-console" { // pragma: allowlist secret
+		t.Errorf("expected console password s3cret-console, got %s", req.ConsolePassword)
+	}
 	if req.Tags["env"] != "test" {
 		t.Errorf("expected tag env=test, got %v", req.Tags)
 	}
@@ -108,17 +112,18 @@ func TestInstanceModelToCreateRequestMinimal(t *testing.T) {
 	diags := diag.Diagnostics{}
 
 	model := InstanceModel{
-		Name:           types.StringValue("minimal-vm"),
-		FlavorID:       types.StringValue("flavor-small"),
-		ImageID:        types.StringValue("img-ubuntu"),
-		Region:         types.StringNull(),
-		Zone:           types.StringNull(),
-		VPCID:          types.StringNull(),
-		SubnetID:       types.StringNull(),
-		SecurityGroups: types.SetNull(types.StringType),
-		SSHKeyNames:    types.SetNull(types.StringType),
-		UserData:       types.StringNull(),
-		Tags:           types.MapNull(types.StringType),
+		Name:            types.StringValue("minimal-vm"),
+		FlavorID:        types.StringValue("flavor-small"),
+		ImageID:         types.StringValue("img-ubuntu"),
+		Region:          types.StringNull(),
+		Zone:            types.StringNull(),
+		VPCID:           types.StringNull(),
+		SubnetID:        types.StringNull(),
+		SecurityGroups:  types.SetNull(types.StringType),
+		SSHKeyNames:     types.SetNull(types.StringType),
+		UserData:        types.StringNull(),
+		ConsolePassword: types.StringNull(),
+		Tags:            types.MapNull(types.StringType),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
@@ -137,6 +142,9 @@ func TestInstanceModelToCreateRequestMinimal(t *testing.T) {
 	}
 	if req.UserData != "" {
 		t.Errorf("expected empty user data, got %s", req.UserData)
+	}
+	if req.ConsolePassword != "" {
+		t.Errorf("expected empty console password, got %s", req.ConsolePassword)
 	}
 }
 
@@ -345,6 +353,9 @@ func TestInstanceCreate(t *testing.T) {
 			if req.UserData != "#!/bin/bash" {
 				t.Errorf("expected user data, got %s", req.UserData)
 			}
+			if req.ConsolePassword != "s3cret-console" { // pragma: allowlist secret
+				t.Errorf("expected console password, got %s", req.ConsolePassword)
+			}
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:        "inst-new",
@@ -386,10 +397,11 @@ func TestInstanceCreate(t *testing.T) {
 
 	// Simulate the create flow.
 	apiReq := apiCreateInstanceRequest{
-		Name:     "web-1",
-		FlavorID: "flavor-small",
-		ImageID:  "img-ubuntu",
-		UserData: "#!/bin/bash",
+		Name:            "web-1",
+		FlavorID:        "flavor-small",
+		ImageID:         "img-ubuntu",
+		UserData:        "#!/bin/bash",
+		ConsolePassword: "s3cret-console",
 	}
 	resp, err := c.Post(context.Background(), c.TenantPath("/instances"), apiReq)
 	if err != nil {
@@ -802,25 +814,26 @@ func instanceTFValue(t *testing.T, tfType tftypes.Type, vals map[string]tftypes.
 
 	// Defaults for every attribute so callers only need to override what they care about.
 	defaults := map[string]tftypes.Value{
-		"id":              tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"name":            tftypes.NewValue(tftypes.String, "test-vm"),
-		"flavor_id":       tftypes.NewValue(tftypes.String, "flavor-small"),
-		"image_id":        tftypes.NewValue(tftypes.String, "img-ubuntu"),
-		"region":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"zone":            tftypes.NewValue(tftypes.String, nil),
-		"vpc_id":          tftypes.NewValue(tftypes.String, nil),
-		"subnet_id":       tftypes.NewValue(tftypes.String, nil),
-		"security_groups": tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, nil),
-		"ssh_key_names":   tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, nil),
-		"user_data":       tftypes.NewValue(tftypes.String, nil),
-		"user_data_hash":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"tags":            tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"flavor_name":     tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"image_name":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"private_ip":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"public_ip":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"created_at":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"id":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":             tftypes.NewValue(tftypes.String, "test-vm"),
+		"flavor_id":        tftypes.NewValue(tftypes.String, "flavor-small"),
+		"image_id":         tftypes.NewValue(tftypes.String, "img-ubuntu"),
+		"region":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"zone":             tftypes.NewValue(tftypes.String, nil),
+		"vpc_id":           tftypes.NewValue(tftypes.String, nil),
+		"subnet_id":        tftypes.NewValue(tftypes.String, nil),
+		"security_groups":  tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, nil),
+		"ssh_key_names":    tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, nil),
+		"user_data":        tftypes.NewValue(tftypes.String, nil),
+		"console_password": tftypes.NewValue(tftypes.String, nil),
+		"user_data_hash":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"tags":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"flavor_name":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"image_name":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"private_ip":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"public_ip":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 	}
 
 	for k, v := range vals {
@@ -882,7 +895,7 @@ func TestInstanceResource_Schema(t *testing.T) {
 		}
 	}
 
-	optionalAttrs := []string{"region", "zone", "vpc_id", "subnet_id", "security_groups", "ssh_key_names", "user_data", "tags"}
+	optionalAttrs := []string{"region", "zone", "vpc_id", "subnet_id", "security_groups", "ssh_key_names", "user_data", "console_password", "tags"}
 	for _, attr := range optionalAttrs {
 		a, ok := s.Attributes[attr]
 		if !ok {
@@ -946,6 +959,9 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 			if req.UserData != "#!/bin/bash\necho hello" {
 				t.Errorf("expected user data, got %q", req.UserData)
 			}
+			if req.ConsolePassword != "s3cret-console" { // pragma: allowlist secret
+				t.Errorf("expected console password, got %q", req.ConsolePassword)
+			}
 			if len(req.SecurityGroups) != 1 || req.SecurityGroups[0] != "sg-default" {
 				t.Errorf("expected security groups [sg-default], got %v", req.SecurityGroups)
 			}
@@ -1002,9 +1018,10 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	planVal := instanceTFValue(t, tfType, map[string]tftypes.Value{
-		"name":      tftypes.NewValue(tftypes.String, "web-1"),
-		"image_id":  tftypes.NewValue(tftypes.String, "img-ubuntu"),
-		"user_data": tftypes.NewValue(tftypes.String, "#!/bin/bash\necho hello"),
+		"name":             tftypes.NewValue(tftypes.String, "web-1"),
+		"image_id":         tftypes.NewValue(tftypes.String, "img-ubuntu"),
+		"user_data":        tftypes.NewValue(tftypes.String, "#!/bin/bash\necho hello"),
+		"console_password": tftypes.NewValue(tftypes.String, "s3cret-console"),
 		"security_groups": tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, []tftypes.Value{
 			tftypes.NewValue(tftypes.String, "sg-default"),
 		}),

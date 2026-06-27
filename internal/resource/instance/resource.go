@@ -129,6 +129,14 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"console_password": schema.StringAttribute{
+				Description: "Password for the default OS user, usable only at the VNC console; SSH stays key-only. Changing forces replacement.",
+				Optional:    true,
+				Sensitive:   true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
 			"user_data_hash": schema.StringAttribute{
 				Description: "SHA256 hash of the user data, used for change detection.",
 				Computed:    true,

@@ -12,25 +12,26 @@ import (
 
 // InstanceModel is the Terraform state model for a compute instance.
 type InstanceModel struct {
-	ID             types.String `tfsdk:"id"`
-	Name           types.String `tfsdk:"name"`
-	FlavorID       types.String `tfsdk:"flavor_id"`
-	ImageID        types.String `tfsdk:"image_id"`
-	Region         types.String `tfsdk:"region"`
-	Zone           types.String `tfsdk:"zone"`
-	VPCID          types.String `tfsdk:"vpc_id"`
-	SubnetID       types.String `tfsdk:"subnet_id"`
-	SecurityGroups types.Set    `tfsdk:"security_groups"`
-	SSHKeyNames    types.Set    `tfsdk:"ssh_key_names"`
-	UserData       types.String `tfsdk:"user_data"`
-	UserDataHash   types.String `tfsdk:"user_data_hash"`
-	Tags           types.Map    `tfsdk:"tags"`
-	Status         types.String `tfsdk:"status"`
-	FlavorName     types.String `tfsdk:"flavor_name"`
-	ImageName      types.String `tfsdk:"image_name"`
-	PrivateIP      types.String `tfsdk:"private_ip"`
-	PublicIP       types.String `tfsdk:"public_ip"`
-	CreatedAt      types.String `tfsdk:"created_at"`
+	ID              types.String `tfsdk:"id"`
+	Name            types.String `tfsdk:"name"`
+	FlavorID        types.String `tfsdk:"flavor_id"`
+	ImageID         types.String `tfsdk:"image_id"`
+	Region          types.String `tfsdk:"region"`
+	Zone            types.String `tfsdk:"zone"`
+	VPCID           types.String `tfsdk:"vpc_id"`
+	SubnetID        types.String `tfsdk:"subnet_id"`
+	SecurityGroups  types.Set    `tfsdk:"security_groups"`
+	SSHKeyNames     types.Set    `tfsdk:"ssh_key_names"`
+	UserData        types.String `tfsdk:"user_data"`
+	ConsolePassword types.String `tfsdk:"console_password"`
+	UserDataHash    types.String `tfsdk:"user_data_hash"`
+	Tags            types.Map    `tfsdk:"tags"`
+	Status          types.String `tfsdk:"status"`
+	FlavorName      types.String `tfsdk:"flavor_name"`
+	ImageName       types.String `tfsdk:"image_name"`
+	PrivateIP       types.String `tfsdk:"private_ip"`
+	PublicIP        types.String `tfsdk:"public_ip"`
+	CreatedAt       types.String `tfsdk:"created_at"`
 }
 
 // apiInstance is the API representation of a compute instance.
@@ -56,17 +57,18 @@ type apiInstance struct {
 
 // apiCreateInstanceRequest is the API request to create an instance.
 type apiCreateInstanceRequest struct {
-	Name           string            `json:"name"`
-	FlavorID       string            `json:"flavorId"`
-	ImageID        string            `json:"imageId"`
-	Region         string            `json:"region,omitempty"`
-	Zone           string            `json:"availabilityZone,omitempty"`
-	VPCID          string            `json:"vpcId,omitempty"`
-	SubnetID       string            `json:"subnetId,omitempty"`
-	SecurityGroups []string          `json:"securityGroups,omitempty"`
-	SSHKeyNames    []string          `json:"sshKeyNames,omitempty"`
-	UserData       string            `json:"userData,omitempty"`
-	Tags           map[string]string `json:"tags,omitempty"`
+	Name            string            `json:"name"`
+	FlavorID        string            `json:"flavorId"`
+	ImageID         string            `json:"imageId"`
+	Region          string            `json:"region,omitempty"`
+	Zone            string            `json:"availabilityZone,omitempty"`
+	VPCID           string            `json:"vpcId,omitempty"`
+	SubnetID        string            `json:"subnetId,omitempty"`
+	SecurityGroups  []string          `json:"securityGroups,omitempty"`
+	SSHKeyNames     []string          `json:"sshKeyNames,omitempty"`
+	UserData        string            `json:"userData,omitempty"`
+	ConsolePassword string            `json:"consolePassword,omitempty"`
+	Tags            map[string]string `json:"tags,omitempty"`
 }
 
 // apiUpdateInstanceRequest is the API request to update an instance.
@@ -124,6 +126,10 @@ func (m *InstanceModel) toCreateRequest(ctx context.Context, diags *diag.Diagnos
 		req.UserData = m.UserData.ValueString()
 	}
 
+	if !m.ConsolePassword.IsNull() && !m.ConsolePassword.IsUnknown() {
+		req.ConsolePassword = m.ConsolePassword.ValueString()
+	}
+
 	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
 		tags := make(map[string]string)
 		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
@@ -158,7 +164,8 @@ func (m *InstanceModel) toUpdateRequest(ctx context.Context, diags *diag.Diagnos
 }
 
 // fromAPI populates the Terraform model from an API response.
-// It preserves the user_data field from state since the API does not return it.
+// It preserves the user_data and console_password fields from state since the API
+// does not return them.
 func (m *InstanceModel) fromAPI(ctx context.Context, inst *apiInstance, diags *diag.Diagnostics) {
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
@@ -255,6 +262,6 @@ func (m *InstanceModel) fromAPI(ctx context.Context, inst *apiInstance, diags *d
 		m.Tags = types.MapNull(types.StringType)
 	}
 
-	// user_data and user_data_hash are NOT set here because the API doesn't return them.
-	// They are preserved from the existing state in the Read method.
+	// user_data, user_data_hash and console_password are NOT set here because the API
+	// doesn't return them. They are preserved from the existing state in the Read method.
 }
