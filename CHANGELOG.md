@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-06-28
+
+### 🚀 Features
+
+- 202-tolerant frostmoln_messaging_instance create (#87)
+
+### ⚙️ Miscellaneous Tasks
+
+- Drop dead gitea:3000 insteadOf + actions/setup-go (#83)
+- *(deps)* Update pre-commit hook alessandrojcm/commitlint-pre-commit-hook to v9.26.0 (#85)
+
 ## [0.1.0] - 2026-06-27
 
 ### 🚀 Features
