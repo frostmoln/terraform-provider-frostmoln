@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -347,9 +346,11 @@ func newTestMessagingResource(c *client.Client) *messagingInstanceResource {
 
 // --- CRUD tests ---
 
+// TestCreate covers the async path: messaging create routes through
+// provisioning, which returns 202 + an Operation envelope (operationId only).
+// The provider polls GET /v1/operations/{id} to completion, takes the
+// operation's resourceId as the instance id, then reads the instance.
 func TestCreate(t *testing.T) {
-	var callCount atomic.Int32
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/messaging":
@@ -360,25 +361,16 @@ func TestCreate(t *testing.T) {
 			if body.Engine != "lavinmq" {
 				t.Errorf("expected engine lavinmq, got %s", body.Engine)
 			}
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(apiMessagingInstance{
-				ID:              "mq-new",
-				Name:            body.Name,
-				Engine:          body.Engine,
-				EngineVersion:   body.EngineVersion,
-				FlavorID:        body.FlavorID,
-				VPCID:           body.VPCID,
-				SubnetID:        body.SubnetID,
-				PersistenceMode: "persistent",
-				Status:          "creating",
-				CreatedAt:       "2025-01-01T00:00:00Z",
+			// Provisioning returns 202 + an Operation envelope (operationId only).
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-mq-1", "status": "pending", "resourceType": "messaging_instance",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-mq-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-mq-1", "status": "completed", "resourceType": "messaging_instance", "resourceId": "mq-new",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/messaging/mq-new":
-			count := callCount.Add(1)
-			status := "creating"
-			if count >= 2 {
-				status = "running"
-			}
 			_ = json.NewEncoder(w).Encode(apiMessagingInstance{
 				ID:              "mq-new",
 				Name:            "test-broker",
@@ -388,7 +380,7 @@ func TestCreate(t *testing.T) {
 				VPCID:           "vpc-1",
 				SubnetID:        "sn-1",
 				PersistenceMode: "persistent",
-				Status:          status,
+				Status:          "running",
 				PrivateIP:       "10.0.1.5",
 				Port:            5672,
 				AMQPSPort:       5671,
@@ -443,6 +435,89 @@ func TestCreate(t *testing.T) {
 	}
 }
 
+// TestCreateLegacy201 covers the synchronous fallback: a backend that returns
+// 201 + the instance body directly (no operation envelope). The provider reads
+// the id from the body, then reads the instance to populate final state.
+func TestCreateLegacy201(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/messaging":
+			var body apiCreateMessagingInstanceRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("failed to decode request: %v", err)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(apiMessagingInstance{
+				ID:              "mq-legacy",
+				Name:            body.Name,
+				Engine:          body.Engine,
+				EngineVersion:   body.EngineVersion,
+				FlavorID:        body.FlavorID,
+				VPCID:           body.VPCID,
+				SubnetID:        body.SubnetID,
+				PersistenceMode: "persistent",
+				Status:          "running",
+				CreatedAt:       "2025-01-01T00:00:00Z",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/messaging/mq-legacy":
+			_ = json.NewEncoder(w).Encode(apiMessagingInstance{
+				ID:              "mq-legacy",
+				Name:            "test-broker",
+				Engine:          "lavinmq",
+				EngineVersion:   "2.3",
+				FlavorID:        "mq.gp1.small",
+				VPCID:           "vpc-1",
+				SubnetID:        "sn-1",
+				PersistenceMode: "persistent",
+				Status:          "running",
+				PrivateIP:       "10.0.1.5",
+				Port:            5672,
+				AMQPSPort:       5671,
+				ManagementPort:  15672,
+				CreatedAt:       "2025-01-01T00:00:00Z",
+			})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+
+	r := newTestMessagingResource(c)
+
+	plan := buildMessagingInstancePlan(t, MessagingInstanceModel{
+		Name:            types.StringValue("test-broker"),
+		Engine:          types.StringValue("lavinmq"),
+		EngineVersion:   types.StringValue("2.3"),
+		FlavorID:        types.StringValue("mq.gp1.small"),
+		VPCID:           types.StringValue("vpc-1"),
+		SubnetID:        types.StringValue("sn-1"),
+		PersistenceMode: types.StringValue("persistent"),
+	})
+
+	createResp := resource.CreateResponse{State: emptyMessagingInstanceState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("create failed: %v", createResp.Diagnostics.Errors())
+	}
+
+	var result MessagingInstanceModel
+	createResp.State.Get(context.Background(), &result)
+	if result.ID.ValueString() != "mq-legacy" {
+		t.Errorf("expected ID mq-legacy, got %s", result.ID.ValueString())
+	}
+	if result.Status.ValueString() != "running" {
+		t.Errorf("expected status running, got %s", result.Status.ValueString())
+	}
+	if result.Port.ValueInt64() != 5672 {
+		t.Errorf("expected port 5672, got %d", result.Port.ValueInt64())
+	}
+}
+
 func TestCreateAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/messaging" {
@@ -476,21 +551,21 @@ func TestCreateAPIError(t *testing.T) {
 	}
 }
 
-func TestCreatePollErrorState(t *testing.T) {
+// TestCreateOperationFailed covers the async path where the provisioning
+// workflow fails: the operation reaches a terminal "failed" state, so Create
+// must surface an error rather than writing half-formed state.
+func TestCreateOperationFailed(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/messaging":
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(apiMessagingInstance{
-				ID: "mq-err", Name: "x", Engine: "lavinmq", EngineVersion: "2.3",
-				FlavorID: "f", VPCID: "v", SubnetID: "s", Status: "creating",
-				CreatedAt: "2025-01-01T00:00:00Z",
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-mq-err", "status": "pending", "resourceType": "messaging_instance",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/messaging/mq-err":
-			_ = json.NewEncoder(w).Encode(apiMessagingInstance{
-				ID: "mq-err", Name: "x", Engine: "lavinmq", EngineVersion: "2.3",
-				FlavorID: "f", VPCID: "v", SubnetID: "s", Status: "error",
-				CreatedAt: "2025-01-01T00:00:00Z",
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-mq-err":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-mq-err", "status": "failed", "resourceType": "messaging_instance",
+				"error": "messaging instance entered error state",
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -516,7 +591,7 @@ func TestCreatePollErrorState(t *testing.T) {
 	createResp := resource.CreateResponse{State: emptyMessagingInstanceState(t)}
 	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
 	if !createResp.Diagnostics.HasError() {
-		t.Error("expected error when instance enters error state during polling")
+		t.Error("expected error when the create operation fails")
 	}
 }
 

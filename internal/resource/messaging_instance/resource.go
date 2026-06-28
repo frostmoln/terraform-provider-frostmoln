@@ -184,49 +184,69 @@ func (r *messagingInstanceResource) Create(ctx context.Context, req resource.Cre
 		return
 	}
 
-	inst, err := client.ParseResponse[apiMessagingInstance](apiResp)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to parse messaging instance response", err.Error())
-		return
-	}
-
-	plan.fromAPI(ctx, inst, &resp.Diagnostics)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// Save state immediately so the ID is tracked, even if polling fails.
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// Poll until instance reaches "running" status.
-	_, err = client.WaitForState(ctx, client.PollConfig{
-		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
-		TargetStates: []string{"running"},
-		ErrorStates:  []string{"error", "failed"},
-		ResourceName: "messaging_instance",
-		PollFunc: func(pollCtx context.Context) (string, error) {
-			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/messaging/"+inst.ID), nil)
-			if pollErr != nil {
-				return "", pollErr
+	// Messaging create routes through provisioning, which returns 202 + an Operation
+	// envelope (operationId only, NOT the instance). Poll the operation to
+	// completion (the workflow waits for the instance to reach running before
+	// completing), then read by its resolved resourceId. A 201 with the instance
+	// body is still accepted for a synchronous backend. Mirrors the compute
+	// instance + volume + load_balancer resources.
+	var instanceID string
+	if apiResp.IsAccepted() {
+		op, opErr := client.ParseResponse[client.Operation](apiResp)
+		if opErr != nil {
+			resp.Diagnostics.AddError("Failed to parse operation response", opErr.Error())
+			return
+		}
+		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout())
+		if waitErr != nil {
+			resp.Diagnostics.AddError("Messaging instance failed to reach running state", waitErr.Error())
+			return
+		}
+		instanceID = done.ResourceID
+	} else {
+		inst, parseErr := client.ParseResponse[apiMessagingInstance](apiResp)
+		if parseErr != nil {
+			resp.Diagnostics.AddError("Failed to parse messaging instance response", parseErr.Error())
+			return
+		}
+		instanceID = inst.ID
+		// Legacy 201 (a synchronous backend, or a pre-202-rollout messaging build):
+		// the instance comes back as "creating". Poll to running so `apply` blocks
+		// to completion exactly like the 202 operation path does.
+		if instanceID != "" {
+			if _, waitErr := client.WaitForState(ctx, client.PollConfig{
+				Interval:     r.getPollInterval(),
+				Timeout:      r.getPollTimeout(),
+				TargetStates: []string{"running"},
+				ErrorStates:  []string{"error", "failed"},
+				ResourceName: "messaging_instance",
+				PollFunc: func(pollCtx context.Context) (string, error) {
+					pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/messaging/"+instanceID), nil)
+					if pollErr != nil {
+						return "", pollErr
+					}
+					current, parseErr := client.ParseResponse[apiMessagingInstance](pollResp)
+					if parseErr != nil {
+						return "", parseErr
+					}
+					return current.Status, nil
+				},
+			}); waitErr != nil {
+				resp.Diagnostics.AddError("Messaging instance failed to reach running state", waitErr.Error())
+				return
 			}
-			current, parseErr := client.ParseResponse[apiMessagingInstance](pollResp)
-			if parseErr != nil {
-				return "", parseErr
-			}
-			return current.Status, nil
-		},
-	})
-	if err != nil {
-		resp.Diagnostics.AddError("Messaging instance failed to reach running state", err.Error())
+		}
+	}
+	if instanceID == "" {
+		resp.Diagnostics.AddError(
+			"Messaging Instance Operation Returned No Resource ID",
+			"The messaging instance create operation completed but returned no resource ID. The instance may exist in the backend without being tracked in Terraform state - check `fm messaging instance list` and import it if necessary.",
+		)
 		return
 	}
 
-	// Refresh state after polling completes to get final status, IPs, etc.
-	readResp, err := r.client.Get(ctx, r.client.TenantPath("/messaging/"+inst.ID), nil)
+	// Read the final state (the operation completion means the instance is running).
+	readResp, err := r.client.Get(ctx, r.client.TenantPath("/messaging/"+instanceID), nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to read messaging instance after creation", err.Error())
 		return
