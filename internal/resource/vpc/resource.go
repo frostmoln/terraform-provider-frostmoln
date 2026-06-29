@@ -64,15 +64,6 @@ func (r *vpcResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"region": schema.StringAttribute{
-				Description: "The region for the VPC.",
-				Optional:    true,
-				Computed:    true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-					stringplanmodifier.UseStateForUnknown(),
-				},
-			},
 			"tags": schema.MapAttribute{
 				Description: "Tags for the VPC.",
 				Optional:    true,

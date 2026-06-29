@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -38,7 +39,7 @@ func TestSchema(t *testing.T) {
 	var resp datasource.SchemaResponse
 	ds.Schema(context.Background(), req, &resp)
 
-	expectedAttrs := []string{"id", "name", "description", "cidr", "region", "status", "is_default", "subnet_count", "tags", "created_at"}
+	expectedAttrs := []string{"id", "name", "description", "cidr", "status", "is_default", "subnet_count", "tags", "created_at"}
 	for _, attr := range expectedAttrs {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %q in schema", attr)
@@ -119,7 +120,6 @@ func TestReadByID(t *testing.T) {
 			Name:        "production",
 			Description: "Production VPC",
 			CIDR:        "10.0.0.0/16",
-			Region:      "sweden",
 			Status:      "active",
 			IsDefault:   false,
 			SubnetCount: 3,
@@ -161,8 +161,8 @@ func TestReadByID(t *testing.T) {
 
 func TestReadByName(t *testing.T) {
 	vpcs := []apiVPC{
-		{ID: "vpc-1", Name: "production", CIDR: "10.0.0.0/16", Region: "sweden", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"},
-		{ID: "vpc-2", Name: "staging", CIDR: "10.1.0.0/16", Region: "sweden", Status: "active", CreatedAt: "2025-01-02T00:00:00Z"},
+		{ID: "vpc-1", Name: "production", CIDR: "10.0.0.0/16", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"},
+		{ID: "vpc-2", Name: "staging", CIDR: "10.1.0.0/16", Status: "active", CreatedAt: "2025-01-02T00:00:00Z"},
 	}
 	server := newTestServer(t, vpcs)
 	defer server.Close()
@@ -200,7 +200,7 @@ func TestReadByName(t *testing.T) {
 
 func TestReadNotFound(t *testing.T) {
 	vpcs := []apiVPC{
-		{ID: "vpc-1", Name: "production", CIDR: "10.0.0.0/16", Region: "sweden", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"},
+		{ID: "vpc-1", Name: "production", CIDR: "10.0.0.0/16", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"},
 	}
 	server := newTestServer(t, vpcs)
 	defer server.Close()
@@ -262,7 +262,6 @@ func TestTFSDK_ReadByID(t *testing.T) {
 			Name:        "prod-vpc",
 			Description: "Production VPC",
 			CIDR:        "10.0.0.0/16",
-			Region:      "sweden",
 			Status:      "active",
 			IsDefault:   false,
 			SubnetCount: 3,
@@ -290,7 +289,6 @@ func TestTFSDK_ReadByID(t *testing.T) {
 		"name":         tftypes.NewValue(tftypes.String, nil),
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, nil),
-		"region":       tftypes.NewValue(tftypes.String, nil),
 		"status":       tftypes.NewValue(tftypes.String, nil),
 		"is_default":   tftypes.NewValue(tftypes.Bool, nil),
 		"subnet_count": tftypes.NewValue(tftypes.Number, nil),
@@ -329,8 +327,8 @@ func TestTFSDK_ReadByID(t *testing.T) {
 
 func TestTFSDK_ReadByName(t *testing.T) {
 	vpcs := []apiVPC{
-		{ID: "vpc-1", Name: "prod-vpc", CIDR: "10.0.0.0/16", Region: "sweden", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"},
-		{ID: "vpc-2", Name: "staging-vpc", CIDR: "10.1.0.0/16", Region: "sweden", Status: "active", CreatedAt: "2025-01-02T00:00:00Z"},
+		{ID: "vpc-1", Name: "prod-vpc", CIDR: "10.0.0.0/16", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"},
+		{ID: "vpc-2", Name: "staging-vpc", CIDR: "10.1.0.0/16", Status: "active", CreatedAt: "2025-01-02T00:00:00Z"},
 	}
 	server := newTestServer(t, vpcs)
 	defer server.Close()
@@ -352,7 +350,6 @@ func TestTFSDK_ReadByName(t *testing.T) {
 		"name":         tftypes.NewValue(tftypes.String, "staging-vpc"),
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, nil),
-		"region":       tftypes.NewValue(tftypes.String, nil),
 		"status":       tftypes.NewValue(tftypes.String, nil),
 		"is_default":   tftypes.NewValue(tftypes.Bool, nil),
 		"subnet_count": tftypes.NewValue(tftypes.Number, nil),
@@ -384,7 +381,7 @@ func TestTFSDK_ReadByName(t *testing.T) {
 }
 
 func TestTFSDK_ReadBothIDAndName(t *testing.T) {
-	vpcs := []apiVPC{{ID: "vpc-1", Name: "test", CIDR: "10.0.0.0/16", Region: "sweden", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"}}
+	vpcs := []apiVPC{{ID: "vpc-1", Name: "test", CIDR: "10.0.0.0/16", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"}}
 	server := newTestServer(t, vpcs)
 	defer server.Close()
 
@@ -405,7 +402,6 @@ func TestTFSDK_ReadBothIDAndName(t *testing.T) {
 		"name":         tftypes.NewValue(tftypes.String, "test"),
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, nil),
-		"region":       tftypes.NewValue(tftypes.String, nil),
 		"status":       tftypes.NewValue(tftypes.String, nil),
 		"is_default":   tftypes.NewValue(tftypes.Bool, nil),
 		"subnet_count": tftypes.NewValue(tftypes.Number, nil),
@@ -427,7 +423,7 @@ func TestTFSDK_ReadBothIDAndName(t *testing.T) {
 }
 
 func TestTFSDK_ReadNeitherIDNorName(t *testing.T) {
-	vpcs := []apiVPC{{ID: "vpc-1", Name: "test", CIDR: "10.0.0.0/16", Region: "sweden", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"}}
+	vpcs := []apiVPC{{ID: "vpc-1", Name: "test", CIDR: "10.0.0.0/16", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"}}
 	server := newTestServer(t, vpcs)
 	defer server.Close()
 
@@ -448,7 +444,6 @@ func TestTFSDK_ReadNeitherIDNorName(t *testing.T) {
 		"name":         tftypes.NewValue(tftypes.String, nil),
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, nil),
-		"region":       tftypes.NewValue(tftypes.String, nil),
 		"status":       tftypes.NewValue(tftypes.String, nil),
 		"is_default":   tftypes.NewValue(tftypes.Bool, nil),
 		"subnet_count": tftypes.NewValue(tftypes.Number, nil),
@@ -470,7 +465,7 @@ func TestTFSDK_ReadNeitherIDNorName(t *testing.T) {
 }
 
 func TestTFSDK_ReadNameNotFound(t *testing.T) {
-	vpcs := []apiVPC{{ID: "vpc-1", Name: "existing", CIDR: "10.0.0.0/16", Region: "sweden", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"}}
+	vpcs := []apiVPC{{ID: "vpc-1", Name: "existing", CIDR: "10.0.0.0/16", Status: "active", CreatedAt: "2025-01-01T00:00:00Z"}}
 	server := newTestServer(t, vpcs)
 	defer server.Close()
 
@@ -491,7 +486,6 @@ func TestTFSDK_ReadNameNotFound(t *testing.T) {
 		"name":         tftypes.NewValue(tftypes.String, "nonexistent"),
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, nil),
-		"region":       tftypes.NewValue(tftypes.String, nil),
 		"status":       tftypes.NewValue(tftypes.String, nil),
 		"is_default":   tftypes.NewValue(tftypes.Bool, nil),
 		"subnet_count": tftypes.NewValue(tftypes.Number, nil),
@@ -518,7 +512,6 @@ func TestAPIVPCSerialization(t *testing.T) {
 		Name:        "test",
 		Description: "Test VPC",
 		CIDR:        "10.0.0.0/16",
-		Region:      "sweden",
 		Status:      "active",
 		IsDefault:   true,
 		SubnetCount: 2,
@@ -547,5 +540,25 @@ func TestAPIVPCSerialization(t *testing.T) {
 	}
 	if decoded.Tags["env"] != "test" {
 		t.Errorf("expected tag env=test, got %s", decoded.Tags["env"])
+	}
+
+	// Wire-contract guard: the literal JSON key must be the canonical
+	// cidrBlock (not cidr), and region must not appear (ADR-0022). A
+	// struct->struct round-trip can't catch a wrong tag — assert the bytes.
+	s := string(data)
+	if !strings.Contains(s, `"cidrBlock"`) {
+		t.Errorf("expected wire key cidrBlock, got: %s", s)
+	}
+	if strings.Contains(s, `"cidr"`) || strings.Contains(s, `"region"`) {
+		t.Errorf("unexpected legacy wire key (cidr/region) in: %s", s)
+	}
+
+	// And a backend-shaped payload must populate CIDR via the cidrBlock key.
+	var fromWire apiVPC
+	if err := json.Unmarshal([]byte(`{"id":"vpc-2","cidrBlock":"10.9.0.0/16"}`), &fromWire); err != nil {
+		t.Fatalf("Unmarshal backend payload failed: %v", err)
+	}
+	if fromWire.CIDR != "10.9.0.0/16" {
+		t.Errorf("expected CIDR populated from cidrBlock, got %q", fromWire.CIDR)
 	}
 }

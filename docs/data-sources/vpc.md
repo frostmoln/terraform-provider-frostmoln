@@ -36,7 +36,6 @@ output "vpc_cidr" {
 - `created_at` (String) The timestamp when the VPC was created.
 - `description` (String) The description of the VPC.
 - `is_default` (Boolean) Whether this is the default VPC.
-- `region` (String) The region of the VPC.
 - `status` (String) The status of the VPC.
 - `subnet_count` (Number) The number of subnets in the VPC.
 - `tags` (Map of String) The tags associated with the VPC.

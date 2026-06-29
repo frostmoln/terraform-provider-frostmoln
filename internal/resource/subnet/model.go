@@ -30,14 +30,14 @@ type apiSubnet struct {
 	ID           string            `json:"id"`
 	Name         string            `json:"name"`
 	Description  string            `json:"description,omitempty"`
-	CIDR         string            `json:"cidr"`
+	CIDR         string            `json:"cidrBlock"`
 	VPCID        string            `json:"vpcId"`
 	Zone         string            `json:"availabilityZone,omitempty"`
 	GatewayIP    string            `json:"gatewayIp,omitempty"`
 	DNSServers   []string          `json:"dnsServers,omitempty"`
 	IsPublic     bool              `json:"isPublic"`
 	Status       string            `json:"status"`
-	AvailableIPs int               `json:"availableIps"`
+	AvailableIPs int               `json:"availableIpCount"`
 	Tags         map[string]string `json:"tags,omitempty"`
 	CreatedAt    string            `json:"createdAt"`
 }
@@ -46,7 +46,7 @@ type apiSubnet struct {
 type apiCreateSubnetRequest struct {
 	Name        string            `json:"name"`
 	Description string            `json:"description,omitempty"`
-	CIDR        string            `json:"cidr"`
+	CIDR        string            `json:"cidrBlock"`
 	VPCID       string            `json:"vpcId"`
 	Zone        string            `json:"availabilityZone,omitempty"`
 	GatewayIP   string            `json:"gatewayIp,omitempty"`

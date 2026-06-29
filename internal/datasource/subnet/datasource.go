@@ -47,12 +47,12 @@ type apiSubnet struct {
 	Name         string            `json:"name"`
 	VPCID        string            `json:"vpcId"`
 	Description  string            `json:"description,omitempty"`
-	CIDR         string            `json:"cidr"`
+	CIDR         string            `json:"cidrBlock"`
 	Zone         string            `json:"availabilityZone,omitempty"`
 	GatewayIP    string            `json:"gatewayIp,omitempty"`
 	IsPublic     bool              `json:"isPublic"`
 	Status       string            `json:"status"`
-	AvailableIPs int               `json:"availableIps"`
+	AvailableIPs int               `json:"availableIpCount"`
 	Tags         map[string]string `json:"tags,omitempty"`
 	CreatedAt    string            `json:"createdAt"`
 }

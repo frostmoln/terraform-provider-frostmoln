@@ -23,7 +23,6 @@ Manages a VPC in the Frostmoln Cloud Platform.
 ### Optional
 
 - `description` (String) A description of the VPC.
-- `region` (String) The region for the VPC.
 - `tags` (Map of String) Tags for the VPC.
 
 ### Read-Only

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -519,5 +520,26 @@ func TestAPISubnetSerialization(t *testing.T) {
 	}
 	if decoded.Tags["env"] != "test" {
 		t.Errorf("expected tag env=test, got %s", decoded.Tags["env"])
+	}
+
+	// Wire-contract guard: literal keys must be the canonical cidrBlock /
+	// availableIpCount / availabilityZone (a struct->struct round-trip can't
+	// catch a wrong tag — assert the bytes and a backend-shaped decode).
+	s := string(data)
+	for _, want := range []string{`"cidrBlock"`, `"availableIpCount"`, `"availabilityZone"`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("expected wire key %s, got: %s", want, s)
+		}
+	}
+	if strings.Contains(s, `"cidr"`) || strings.Contains(s, `"availableIps"`) {
+		t.Errorf("unexpected legacy wire key (cidr/availableIps) in: %s", s)
+	}
+
+	var fromWire apiSubnet
+	if err := json.Unmarshal([]byte(`{"cidrBlock":"10.0.9.0/24","availableIpCount":250,"availabilityZone":"sweden-a"}`), &fromWire); err != nil {
+		t.Fatalf("Unmarshal backend payload failed: %v", err)
+	}
+	if fromWire.CIDR != "10.0.9.0/24" || fromWire.AvailableIPs != 250 || fromWire.Zone != "sweden-a" {
+		t.Errorf("backend payload did not populate fields: cidr=%q ips=%d zone=%q", fromWire.CIDR, fromWire.AvailableIPs, fromWire.Zone)
 	}
 }

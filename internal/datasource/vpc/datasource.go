@@ -31,7 +31,6 @@ type vpcModel struct {
 	Name        types.String `tfsdk:"name"`
 	Description types.String `tfsdk:"description"`
 	CIDR        types.String `tfsdk:"cidr"`
-	Region      types.String `tfsdk:"region"`
 	Status      types.String `tfsdk:"status"`
 	IsDefault   types.Bool   `tfsdk:"is_default"`
 	SubnetCount types.Int64  `tfsdk:"subnet_count"`
@@ -44,8 +43,7 @@ type apiVPC struct {
 	ID          string            `json:"id"`
 	Name        string            `json:"name"`
 	Description string            `json:"description,omitempty"`
-	CIDR        string            `json:"cidr"`
-	Region      string            `json:"region"`
+	CIDR        string            `json:"cidrBlock"`
 	Status      string            `json:"status"`
 	IsDefault   bool              `json:"isDefault"`
 	SubnetCount int               `json:"subnetCount"`
@@ -82,10 +80,6 @@ func (d *vpcDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, re
 			},
 			"cidr": schema.StringAttribute{
 				Description: "The CIDR block of the VPC.",
-				Computed:    true,
-			},
-			"region": schema.StringAttribute{
-				Description: "The region of the VPC.",
 				Computed:    true,
 			},
 			"status": schema.StringAttribute{
@@ -207,7 +201,6 @@ func (d *vpcDataSource) setVPCState(ctx context.Context, state *vpcModel, vpc *a
 	state.Name = types.StringValue(vpc.Name)
 	state.Description = types.StringValue(vpc.Description)
 	state.CIDR = types.StringValue(vpc.CIDR)
-	state.Region = types.StringValue(vpc.Region)
 	state.Status = types.StringValue(vpc.Status)
 	state.IsDefault = types.BoolValue(vpc.IsDefault)
 	state.SubnetCount = types.Int64Value(int64(vpc.SubnetCount))

@@ -14,7 +14,6 @@ type VPCModel struct {
 	Name        types.String `tfsdk:"name"`
 	Description types.String `tfsdk:"description"`
 	CIDR        types.String `tfsdk:"cidr"`
-	Region      types.String `tfsdk:"region"`
 	Tags        types.Map    `tfsdk:"tags"`
 	Status      types.String `tfsdk:"status"`
 	IsDefault   types.Bool   `tfsdk:"is_default"`
@@ -28,8 +27,7 @@ type apiVPC struct {
 	ID          string            `json:"id"`
 	Name        string            `json:"name"`
 	Description string            `json:"description,omitempty"`
-	CIDR        string            `json:"cidr"`
-	Region      string            `json:"region"`
+	CIDR        string            `json:"cidrBlock"`
 	Status      string            `json:"status"`
 	IsDefault   bool              `json:"isDefault"`
 	SubnetCount int               `json:"subnetCount"`
@@ -42,8 +40,7 @@ type apiVPC struct {
 type apiCreateVPCRequest struct {
 	Name        string            `json:"name"`
 	Description string            `json:"description,omitempty"`
-	CIDR        string            `json:"cidr"`
-	Region      string            `json:"region,omitempty"`
+	CIDR        string            `json:"cidrBlock"`
 	Tags        map[string]string `json:"tags,omitempty"`
 }
 
@@ -63,10 +60,6 @@ func (m *VPCModel) toCreateRequest(ctx context.Context, diags *diag.Diagnostics)
 
 	if !m.Description.IsNull() && !m.Description.IsUnknown() {
 		req.Description = m.Description.ValueString()
-	}
-
-	if !m.Region.IsNull() && !m.Region.IsUnknown() {
-		req.Region = m.Region.ValueString()
 	}
 
 	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
@@ -109,7 +102,6 @@ func (m *VPCModel) fromAPI(ctx context.Context, vpc *apiVPC, diags *diag.Diagnos
 	m.ID = types.StringValue(vpc.ID)
 	m.Name = types.StringValue(vpc.Name)
 	m.CIDR = types.StringValue(vpc.CIDR)
-	m.Region = types.StringValue(vpc.Region)
 	m.Status = types.StringValue(vpc.Status)
 	m.IsDefault = types.BoolValue(vpc.IsDefault)
 	m.SubnetCount = types.Int64Value(int64(vpc.SubnetCount))
