@@ -105,6 +105,12 @@ func (b *bearerSource) refreshLocked(ctx context.Context) error {
 	tok, err := b.src.Refresh(ctx, b.httpClient, b.apiEndpoint, b.refresh)
 	var perr *clicreds.PersistError
 	if err != nil && !errors.As(err, &perr) {
+		// A dead refresh token (invalid_grant) can't be retried — surface an
+		// actionable re-login diagnostic instead of a raw OAuth error. Any other
+		// grant/lock failure propagates unchanged.
+		if clicreds.IsRefreshTokenDead(err) {
+			return clicreds.ErrSessionExpired
+		}
 		return err // grant or lock failure — no usable token
 	}
 	// Grant succeeded; tok is valid even when perr != nil (write-back failed).

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -196,6 +197,52 @@ func TestRefreshWritesBackPreservingFields(t *testing.T) {
 		if fi.Mode().Perm() != 0o600 {
 			t.Errorf("expected mode 0600 after write, got %#o", fi.Mode().Perm())
 		}
+	}
+}
+
+// TestRefreshInvalidGrantIsDead pins the cross-module contract: when the token
+// endpoint rejects the refresh with invalid_grant, Refresh surfaces an error
+// that IsRefreshTokenDead classifies as a dead refresh token (so refreshLocked
+// can return the re-login diagnostic). A predicate-only unit test wouldn't catch
+// the shared module ceasing to return a typed *OAuthError.
+func TestRefreshInvalidGrantIsDead(t *testing.T) {
+	s := newOIDCServer(t)
+	s.tokenStatus = http.StatusBadRequest
+	s.tokenBody = `{"error":"invalid_grant"}`
+	path := writeConfigFile(t, sampleConfig, 0o600)
+	r, err := Resolve(Options{Path: path})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	_, err = r.Bearer.Refresh(context.Background(), s.Client(), s.URL, r.RefreshToken)
+	if !IsRefreshTokenDead(err) {
+		t.Fatalf("expected a dead refresh token (invalid_grant), got %v", err)
+	}
+}
+
+// TestRefreshSendsUserAgent: a UserAgent set on the source is stamped on the
+// OIDC refresh request; the zero value sends none.
+func TestRefreshSendsUserAgent(t *testing.T) {
+	s := newOIDCServer(t)
+	path := writeConfigFile(t, sampleConfig, 0o600)
+
+	r, err := Resolve(Options{Path: path, UserAgent: "terraform-provider-frostmoln/9.9.9"})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if _, err := r.Bearer.Refresh(context.Background(), s.Client(), s.URL, r.RefreshToken); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if s.gotUserAgent != "terraform-provider-frostmoln/9.9.9" {
+		t.Errorf("User-Agent = %q, want terraform-provider-frostmoln/9.9.9", s.gotUserAgent)
+	}
+
+	r2, _ := Resolve(Options{Path: writeConfigFile(t, sampleConfig, 0o600)}) // no UserAgent
+	if _, err := r2.Bearer.Refresh(context.Background(), s.Client(), s.URL, r2.RefreshToken); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if strings.HasPrefix(s.gotUserAgent, "terraform-provider-frostmoln/") {
+		t.Errorf("empty UserAgent should send no provider UA, got %q", s.gotUserAgent)
 	}
 }
 

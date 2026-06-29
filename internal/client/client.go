@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"go.frostmoln.internal/oidc"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/clicreds"
 )
 
 // Client is the Frostmoln API client for the Terraform provider.
@@ -342,8 +344,12 @@ func (c *Client) Do(ctx context.Context, method, reqPath string, query url.Value
 	}
 	refreshed, rerr := c.bearer.refreshIfStale(ctx, used)
 	if rerr != nil || !refreshed {
-		// Refresh failed (e.g. expired/revoked refresh token) — surface the
-		// original 401 so the user knows to re-run `fm auth login`.
+		// A dead refresh token (invalid_grant) can't be retried — surface the
+		// actionable re-login diagnostic (the gateway's raw 401 body doesn't say
+		// "run fm auth login"). Any other refresh failure leaves the original 401.
+		if errors.Is(rerr, clicreds.ErrSessionExpired) {
+			return nil, rerr
+		}
 		return nil, err
 	}
 	return c.do(ctx, method, reqPath, query, body, c.bearer.token())

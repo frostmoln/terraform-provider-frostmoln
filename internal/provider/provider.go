@@ -163,7 +163,8 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 		endpointExplicit = true
 	}
 
-	ua := client.WithUserAgent("terraform-provider-frostmoln/" + p.version)
+	userAgent := "terraform-provider-frostmoln/" + p.version
+	ua := client.WithUserAgent(userAgent)
 	// Stamp the provider build version so the gateway can enforce a minimum
 	// supported version (X-FM-Provider-Version, ADR-0088).
 	ver := client.WithClientVersion(p.version)
@@ -195,8 +196,9 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 
 	case useCLI:
 		resolved, rerr := clicreds.Resolve(clicreds.Options{
-			Path:    cliConfigPath(config),
-			Context: stringValue(config.CLIContext),
+			Path:      cliConfigPath(config),
+			Context:   stringValue(config.CLIContext),
+			UserAgent: userAgent,
 		})
 		switch {
 		case errors.Is(rerr, clicreds.ErrNotFound):

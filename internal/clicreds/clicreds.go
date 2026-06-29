@@ -68,6 +68,10 @@ type Options struct {
 	Path string
 	// Context overrides the context to read; "" uses the file's current_context.
 	Context string
+	// UserAgent, when set, is sent on the OIDC refresh requests so the IdP/gateway
+	// can attribute them to the provider (e.g. "terraform-provider-frostmoln/1.2.3").
+	// "" sends none (Go's default).
+	UserAgent string
 }
 
 // Resolved is the credential resolved from the CLI config. Exactly one of
@@ -167,7 +171,7 @@ func Resolve(opts Options) (*Resolved, error) {
 	}
 	// Refresh/write-back only matters for the bearer path (api keys never rotate).
 	if creds.AccessToken != "" && creds.APIKey == "" {
-		res.Bearer = &FileSource{path: path, contextName: chosen}
+		res.Bearer = &FileSource{path: path, contextName: chosen, userAgent: opts.UserAgent}
 	}
 	return res, nil
 }
@@ -181,6 +185,21 @@ type PersistError struct{ Err error }
 func (e *PersistError) Error() string { return "persist refreshed token: " + e.Err.Error() }
 func (e *PersistError) Unwrap() error { return e.Err }
 
+// ErrSessionExpired is the actionable error surfaced when the fm CLI session's
+// refresh token is dead (see IsRefreshTokenDead): the provider can't refresh it,
+// and re-authenticating with the CLI is the only fix. Callers may errors.Is it.
+var ErrSessionExpired = errors.New("the fm CLI session has expired or been revoked; run `fm auth login` to refresh it")
+
+// IsRefreshTokenDead reports whether err is an OAuth invalid_grant from the
+// refresh path — the fm CLI session's refresh token is revoked/expired/reused,
+// so no retry helps and the user must re-authenticate (`fm auth login`). Per the
+// shared module's OAuthError contract, invalid_grant is the one credential-dead
+// signal; other OAuth codes are config/transient and must not trip a re-login.
+func IsRefreshTokenDead(err error) bool {
+	var oe *oidc.OAuthError
+	return errors.As(err, &oe) && oe.Code == "invalid_grant"
+}
+
 // FileSource refreshes an fm-CLI OIDC bearer credential bound to a config file
 // and context. Refresh performs the whole refresh as one locked
 // read-modify-write so that aliased provider instances and a concurrent `fm`
@@ -189,6 +208,7 @@ func (e *PersistError) Unwrap() error { return e.Err }
 type FileSource struct {
 	path        string
 	contextName string // "" for a flat (context-less) config
+	userAgent   string // sent on OIDC refresh requests; "" sends none
 }
 
 // Refresh exchanges the on-disk refresh token for a fresh token set and writes
@@ -232,7 +252,7 @@ func (s *FileSource) Refresh(ctx context.Context, httpClient *http.Client, apiEn
 	// per-hop transport guard (ADR-0087). The injected httpClient sets
 	// RefuseUnsafeRedirect (see client.NewClient); the shared client also
 	// re-applies it defensively for a client that didn't.
-	tok, err := (oidc.Client{HTTPClient: httpClient}).RefreshViaGateway(ctx, apiEndpoint, refreshToken)
+	tok, err := (oidc.Client{HTTPClient: httpClient, UserAgent: s.userAgent}).RefreshViaGateway(ctx, apiEndpoint, refreshToken)
 	if err != nil {
 		return nil, err
 	}

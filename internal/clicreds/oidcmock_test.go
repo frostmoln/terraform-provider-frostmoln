@@ -17,6 +17,7 @@ type oidcServer struct {
 	*httptest.Server
 	clientID     string
 	gotForm      map[string]string
+	gotUserAgent string // User-Agent seen on the token request
 	tokenStatus  int    // override token endpoint status; 0 = 200
 	tokenBody    string // override token endpoint body
 	issuerOverri string // override the issuer returned by cli-config
@@ -44,6 +45,7 @@ func newOIDCServer(t *testing.T) *oidcServer {
 			// issuer-match check passes.
 			_ = json.NewEncoder(w).Encode(map[string]string{"issuer": s.URL, "token_endpoint": tokenEP})
 		case "/token":
+			s.gotUserAgent = r.Header.Get("User-Agent")
 			_ = r.ParseForm()
 			s.gotForm = map[string]string{}
 			for k := range r.Form {

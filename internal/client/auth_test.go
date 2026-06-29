@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -23,7 +24,8 @@ type authServer struct {
 	*httptest.Server
 	validToken   string
 	refreshCalls int64
-	failRefresh  bool
+	failRefresh  bool // token endpoint returns invalid_grant (dead refresh token)
+	transientRef bool // token endpoint returns 503 (transient, non-OAuth error)
 }
 
 func newAuthServer(t *testing.T) *authServer {
@@ -38,6 +40,10 @@ func newAuthServer(t *testing.T) *authServer {
 			_ = json.NewEncoder(w).Encode(map[string]string{"token_endpoint": s.URL + "/token"})
 		case "/token":
 			atomic.AddInt64(&s.refreshCalls, 1)
+			if s.transientRef {
+				w.WriteHeader(http.StatusServiceUnavailable) // no OAuth body → plain error
+				return
+			}
 			if s.failRefresh {
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
@@ -149,9 +155,33 @@ func TestBearerProactiveRefresh(t *testing.T) {
 	}
 }
 
-func TestBearerRefreshFailureSurfacesOriginal401(t *testing.T) {
+// TestBearerInvalidGrantSurfacesRelogin: on the reactive 401 path, a dead
+// refresh token (invalid_grant) surfaces the actionable ErrSessionExpired
+// re-login diagnostic — NOT the opaque original 401 (which says nothing about
+// `fm auth login`). This is the dominant path for a mid-apply token expiry.
+func TestBearerInvalidGrantSurfacesRelogin(t *testing.T) {
 	s := newAuthServer(t)
 	s.failRefresh = true
+	src, _ := fmConfigSource(t, bearerConfig("stale-access", "r0"), "")
+	c := NewClient(s.URL, "", WithTokenSource(TokenSourceConfig{
+		AccessToken:  "stale-access",
+		RefreshToken: "r0",
+		ExpiresAt:    time.Now().Add(time.Hour).Unix(), // fresh → no proactive; force the reactive 401 path
+		Source:       src,
+	}))
+
+	_, err := c.Get(context.Background(), "/v1/test", nil)
+	if !errors.Is(err, clicreds.ErrSessionExpired) {
+		t.Fatalf("expected ErrSessionExpired re-login prompt, got %T %v", err, err)
+	}
+}
+
+// TestBearerTransientRefreshFailureSurfacesOriginal401: a NON-dead refresh
+// failure (transient 5xx, not invalid_grant) is not a re-login signal — the
+// original 401 surfaces unchanged.
+func TestBearerTransientRefreshFailureSurfacesOriginal401(t *testing.T) {
+	s := newAuthServer(t)
+	s.transientRef = true
 	src, _ := fmConfigSource(t, bearerConfig("stale-access", "r0"), "")
 	c := NewClient(s.URL, "", WithTokenSource(TokenSourceConfig{
 		AccessToken:  "stale-access",
@@ -161,8 +191,8 @@ func TestBearerRefreshFailureSurfacesOriginal401(t *testing.T) {
 	}))
 
 	_, err := c.Get(context.Background(), "/v1/test", nil)
-	if err == nil {
-		t.Fatal("expected an error when refresh fails")
+	if errors.Is(err, clicreds.ErrSessionExpired) {
+		t.Fatalf("a transient refresh failure must not surface ErrSessionExpired, got %v", err)
 	}
 	apiErr, ok := err.(*APIError)
 	if !ok || apiErr.StatusCode != http.StatusUnauthorized {
