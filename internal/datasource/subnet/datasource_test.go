@@ -39,7 +39,7 @@ func TestSchema(t *testing.T) {
 	var resp datasource.SchemaResponse
 	ds.Schema(context.Background(), req, &resp)
 
-	expectedAttrs := []string{"id", "name", "vpc_id", "description", "cidr", "zone", "gateway_ip", "is_public", "status", "available_ips", "tags", "created_at"}
+	expectedAttrs := []string{"id", "name", "vpc_id", "description", "cidr", "zone", "gateway_ip", "status", "available_ips", "tags", "created_at"}
 	for _, attr := range expectedAttrs {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %q in schema", attr)
@@ -118,7 +118,6 @@ func TestReadByID(t *testing.T) {
 			CIDR:         "10.0.1.0/24",
 			Zone:         "sweden-a",
 			GatewayIP:    "10.0.1.1",
-			IsPublic:     true,
 			Status:       "active",
 			AvailableIPs: 250,
 			Tags:         map[string]string{"tier": "web"},
@@ -270,7 +269,6 @@ func TestTFSDK_ReadSubnetByID(t *testing.T) {
 			CIDR:         "10.0.1.0/24",
 			Zone:         "sweden-a",
 			GatewayIP:    "10.0.1.1",
-			IsPublic:     true,
 			Status:       "active",
 			AvailableIPs: 250,
 			Tags:         map[string]string{"tier": "web"},
@@ -300,7 +298,6 @@ func TestTFSDK_ReadSubnetByID(t *testing.T) {
 		"cidr":          tftypes.NewValue(tftypes.String, nil),
 		"zone":          tftypes.NewValue(tftypes.String, nil),
 		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
-		"is_public":     tftypes.NewValue(tftypes.Bool, nil),
 		"status":        tftypes.NewValue(tftypes.String, nil),
 		"available_ips": tftypes.NewValue(tftypes.Number, nil),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
@@ -330,9 +327,6 @@ func TestTFSDK_ReadSubnetByID(t *testing.T) {
 	}
 	if state.AvailableIPs.ValueInt64() != 250 {
 		t.Errorf("expected AvailableIPs 250, got %d", state.AvailableIPs.ValueInt64())
-	}
-	if state.IsPublic.ValueBool() != true {
-		t.Error("expected IsPublic true")
 	}
 }
 
@@ -364,7 +358,6 @@ func TestTFSDK_ReadSubnetByNameWithVPCFilter(t *testing.T) {
 		"cidr":          tftypes.NewValue(tftypes.String, nil),
 		"zone":          tftypes.NewValue(tftypes.String, nil),
 		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
-		"is_public":     tftypes.NewValue(tftypes.Bool, nil),
 		"status":        tftypes.NewValue(tftypes.String, nil),
 		"available_ips": tftypes.NewValue(tftypes.Number, nil),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
@@ -416,7 +409,6 @@ func TestTFSDK_ReadSubnetBothIDAndName(t *testing.T) {
 		"cidr":          tftypes.NewValue(tftypes.String, nil),
 		"zone":          tftypes.NewValue(tftypes.String, nil),
 		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
-		"is_public":     tftypes.NewValue(tftypes.Bool, nil),
 		"status":        tftypes.NewValue(tftypes.String, nil),
 		"available_ips": tftypes.NewValue(tftypes.Number, nil),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
@@ -460,7 +452,6 @@ func TestTFSDK_ReadSubnetNeitherIDNorName(t *testing.T) {
 		"cidr":          tftypes.NewValue(tftypes.String, nil),
 		"zone":          tftypes.NewValue(tftypes.String, nil),
 		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
-		"is_public":     tftypes.NewValue(tftypes.Bool, nil),
 		"status":        tftypes.NewValue(tftypes.String, nil),
 		"available_ips": tftypes.NewValue(tftypes.Number, nil),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
@@ -489,7 +480,6 @@ func TestAPISubnetSerialization(t *testing.T) {
 		CIDR:         "10.0.1.0/24",
 		Zone:         "sweden-a",
 		GatewayIP:    "10.0.1.1",
-		IsPublic:     true,
 		Status:       "active",
 		AvailableIPs: 250,
 		Tags:         map[string]string{"env": "test"},
@@ -511,9 +501,6 @@ func TestAPISubnetSerialization(t *testing.T) {
 	}
 	if decoded.VPCID != sub.VPCID {
 		t.Errorf("expected VPCID %s, got %s", sub.VPCID, decoded.VPCID)
-	}
-	if decoded.IsPublic != sub.IsPublic {
-		t.Errorf("expected IsPublic %v, got %v", sub.IsPublic, decoded.IsPublic)
 	}
 	if decoded.AvailableIPs != sub.AvailableIPs {
 		t.Errorf("expected AvailableIPs %d, got %d", sub.AvailableIPs, decoded.AvailableIPs)

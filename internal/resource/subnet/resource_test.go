@@ -28,7 +28,6 @@ func TestSubnetModelFromAPI(t *testing.T) {
 		Zone:         "sweden-a",
 		GatewayIP:    "10.0.1.1",
 		DNSServers:   []string{"8.8.8.8", "8.8.4.4"},
-		IsPublic:     true,
 		Status:       "active",
 		AvailableIPs: 250,
 		Tags:         map[string]string{"env": "test"},
@@ -63,9 +62,6 @@ func TestSubnetModelFromAPI(t *testing.T) {
 	}
 	if model.GatewayIP.ValueString() != "10.0.1.1" {
 		t.Errorf("expected GatewayIP 10.0.1.1, got %s", model.GatewayIP.ValueString())
-	}
-	if model.IsPublic.ValueBool() != true {
-		t.Error("expected IsPublic true, got false")
 	}
 	if model.Status.ValueString() != "active" {
 		t.Errorf("expected Status active, got %s", model.Status.ValueString())
@@ -130,7 +126,6 @@ func TestSubnetModelToCreateRequest(t *testing.T) {
 		Zone:        types.StringValue("sweden-a"),
 		GatewayIP:   types.StringValue("10.0.1.1"),
 		DNSServers:  dns,
-		IsPublic:    types.BoolValue(true),
 		Tags:        tags,
 	}
 
@@ -158,9 +153,6 @@ func TestSubnetModelToCreateRequest(t *testing.T) {
 	}
 	if len(req.DNSServers) != 1 || req.DNSServers[0] != "1.1.1.1" {
 		t.Errorf("expected DNSServers [1.1.1.1], got %v", req.DNSServers)
-	}
-	if !req.IsPublic {
-		t.Error("expected IsPublic true")
 	}
 	if req.Tags["env"] != "prod" {
 		t.Errorf("expected tag env=prod, got %v", req.Tags)
@@ -310,7 +302,6 @@ func subnetObjectType() tftypes.Object {
 			"zone":          tftypes.String,
 			"gateway_ip":    tftypes.String,
 			"dns_servers":   tftypes.List{ElementType: tftypes.String},
-			"is_public":     tftypes.Bool,
 			"tags":          tftypes.Map{ElementType: tftypes.String},
 			"status":        tftypes.String,
 			"available_ips": tftypes.Number,
@@ -342,7 +333,7 @@ func TestSubnetSchema(t *testing.T) {
 	resp := &resource.SchemaResponse{}
 	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
 
-	for _, attr := range []string{"id", "name", "description", "cidr", "vpc_id", "zone", "gateway_ip", "dns_servers", "is_public", "tags", "status", "available_ips", "created_at"} {
+	for _, attr := range []string{"id", "name", "description", "cidr", "vpc_id", "zone", "gateway_ip", "dns_servers", "tags", "status", "available_ips", "created_at"} {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %s in schema", attr)
 		}
@@ -385,7 +376,6 @@ func TestSubnetResourceCreate(t *testing.T) {
 		VPCID:        "vpc-123",
 		Zone:         "sweden-a",
 		GatewayIP:    "10.0.1.1",
-		IsPublic:     false,
 		Status:       "active",
 		AvailableIPs: 250,
 		CreatedAt:    "2025-06-01T12:00:00Z",
@@ -420,7 +410,6 @@ func TestSubnetResourceCreate(t *testing.T) {
 		"zone":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"gateway_ip":    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
-		"is_public":     tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"available_ips": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
@@ -495,7 +484,6 @@ func TestSubnetResourceRead(t *testing.T) {
 		"zone":          tftypes.NewValue(tftypes.String, nil),
 		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
 		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
-		"is_public":     tftypes.NewValue(tftypes.Bool, false),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":        tftypes.NewValue(tftypes.String, "active"),
 		"available_ips": tftypes.NewValue(tftypes.Number, 200),
@@ -545,7 +533,6 @@ func TestSubnetResourceReadNotFoundRemovesState(t *testing.T) {
 		"zone":          tftypes.NewValue(tftypes.String, nil),
 		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
 		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
-		"is_public":     tftypes.NewValue(tftypes.Bool, false),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":        tftypes.NewValue(tftypes.String, "active"),
 		"available_ips": tftypes.NewValue(tftypes.Number, 250),
@@ -606,7 +593,6 @@ func TestSubnetResourceUpdate(t *testing.T) {
 		"zone":          tftypes.NewValue(tftypes.String, nil),
 		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
 		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
-		"is_public":     tftypes.NewValue(tftypes.Bool, false),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":        tftypes.NewValue(tftypes.String, "active"),
 		"available_ips": tftypes.NewValue(tftypes.Number, 250),
@@ -622,7 +608,6 @@ func TestSubnetResourceUpdate(t *testing.T) {
 		"zone":        tftypes.NewValue(tftypes.String, nil),
 		"gateway_ip":  tftypes.NewValue(tftypes.String, nil),
 		"dns_servers": tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
-		"is_public":   tftypes.NewValue(tftypes.Bool, false),
 		"tags": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{
 			"env": tftypes.NewValue(tftypes.String, "prod"),
 		}),
@@ -678,7 +663,6 @@ func TestSubnetResourceDelete(t *testing.T) {
 		"zone":          tftypes.NewValue(tftypes.String, nil),
 		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
 		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
-		"is_public":     tftypes.NewValue(tftypes.Bool, false),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":        tftypes.NewValue(tftypes.String, "active"),
 		"available_ips": tftypes.NewValue(tftypes.Number, 250),
@@ -722,7 +706,6 @@ func TestSubnetResourceDeleteAlreadyGone(t *testing.T) {
 		"zone":          tftypes.NewValue(tftypes.String, nil),
 		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
 		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
-		"is_public":     tftypes.NewValue(tftypes.Bool, false),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":        tftypes.NewValue(tftypes.String, "active"),
 		"available_ips": tftypes.NewValue(tftypes.Number, 250),

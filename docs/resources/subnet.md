@@ -26,7 +26,6 @@ Manages a subnet in the Frostmoln Cloud Platform.
 - `description` (String) A description of the subnet.
 - `dns_servers` (List of String) The DNS server addresses for the subnet.
 - `gateway_ip` (String) The gateway IP address for the subnet.
-- `is_public` (Boolean) Whether the subnet is public.
 - `tags` (Map of String) Tags for the subnet.
 - `zone` (String) The availability zone for the subnet.
 

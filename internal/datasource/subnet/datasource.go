@@ -34,7 +34,6 @@ type subnetModel struct {
 	CIDR         types.String `tfsdk:"cidr"`
 	Zone         types.String `tfsdk:"zone"`
 	GatewayIP    types.String `tfsdk:"gateway_ip"`
-	IsPublic     types.Bool   `tfsdk:"is_public"`
 	Status       types.String `tfsdk:"status"`
 	AvailableIPs types.Int64  `tfsdk:"available_ips"`
 	Tags         types.Map    `tfsdk:"tags"`
@@ -50,7 +49,6 @@ type apiSubnet struct {
 	CIDR         string            `json:"cidrBlock"`
 	Zone         string            `json:"availabilityZone,omitempty"`
 	GatewayIP    string            `json:"gatewayIp,omitempty"`
-	IsPublic     bool              `json:"isPublic"`
 	Status       string            `json:"status"`
 	AvailableIPs int               `json:"availableIpCount"`
 	Tags         map[string]string `json:"tags,omitempty"`
@@ -99,10 +97,6 @@ func (d *subnetDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 			},
 			"gateway_ip": schema.StringAttribute{
 				Description: "The gateway IP address of the subnet.",
-				Computed:    true,
-			},
-			"is_public": schema.BoolAttribute{
-				Description: "Whether this is a public subnet.",
 				Computed:    true,
 			},
 			"status": schema.StringAttribute{
@@ -238,7 +232,6 @@ func (d *subnetDataSource) setSubnetState(ctx context.Context, state *subnetMode
 	state.CIDR = types.StringValue(sub.CIDR)
 	state.Zone = types.StringValue(sub.Zone)
 	state.GatewayIP = types.StringValue(sub.GatewayIP)
-	state.IsPublic = types.BoolValue(sub.IsPublic)
 	state.Status = types.StringValue(sub.Status)
 	state.AvailableIPs = types.Int64Value(int64(sub.AvailableIPs))
 	state.CreatedAt = types.StringValue(sub.CreatedAt)

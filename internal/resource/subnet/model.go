@@ -18,7 +18,6 @@ type SubnetModel struct {
 	Zone         types.String `tfsdk:"zone"`
 	GatewayIP    types.String `tfsdk:"gateway_ip"`
 	DNSServers   types.List   `tfsdk:"dns_servers"`
-	IsPublic     types.Bool   `tfsdk:"is_public"`
 	Tags         types.Map    `tfsdk:"tags"`
 	Status       types.String `tfsdk:"status"`
 	AvailableIPs types.Int64  `tfsdk:"available_ips"`
@@ -35,7 +34,6 @@ type apiSubnet struct {
 	Zone         string            `json:"availabilityZone,omitempty"`
 	GatewayIP    string            `json:"gatewayIp,omitempty"`
 	DNSServers   []string          `json:"dnsServers,omitempty"`
-	IsPublic     bool              `json:"isPublic"`
 	Status       string            `json:"status"`
 	AvailableIPs int               `json:"availableIpCount"`
 	Tags         map[string]string `json:"tags,omitempty"`
@@ -51,7 +49,6 @@ type apiCreateSubnetRequest struct {
 	Zone        string            `json:"availabilityZone,omitempty"`
 	GatewayIP   string            `json:"gatewayIp,omitempty"`
 	DNSServers  []string          `json:"dnsServers,omitempty"`
-	IsPublic    bool              `json:"isPublic"`
 	Tags        map[string]string `json:"tags,omitempty"`
 }
 
@@ -86,10 +83,6 @@ func (m *SubnetModel) toCreateRequest(ctx context.Context, diags *diag.Diagnosti
 		req.DNSServers = servers
 	}
 
-	if !m.IsPublic.IsNull() && !m.IsPublic.IsUnknown() {
-		req.IsPublic = m.IsPublic.ValueBool()
-	}
-
 	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
 		tags := make(map[string]string)
 		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
@@ -118,7 +111,6 @@ func (m *SubnetModel) fromAPI(ctx context.Context, subnet *apiSubnet, diags *dia
 	m.Name = types.StringValue(subnet.Name)
 	m.CIDR = types.StringValue(subnet.CIDR)
 	m.VPCID = types.StringValue(subnet.VPCID)
-	m.IsPublic = types.BoolValue(subnet.IsPublic)
 	m.Status = types.StringValue(subnet.Status)
 	m.AvailableIPs = types.Int64Value(int64(subnet.AvailableIPs))
 	m.CreatedAt = types.StringValue(subnet.CreatedAt)

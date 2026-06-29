@@ -39,7 +39,6 @@ output "subnet_cidr" {
 - `created_at` (String) The timestamp when the subnet was created.
 - `description` (String) The description of the subnet.
 - `gateway_ip` (String) The gateway IP address of the subnet.
-- `is_public` (Boolean) Whether this is a public subnet.
 - `status` (String) The status of the subnet.
 - `tags` (Map of String) The tags associated with the subnet.
 - `zone` (String) The availability zone of the subnet.
