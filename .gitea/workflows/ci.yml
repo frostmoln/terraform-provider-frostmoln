@@ -10,11 +10,25 @@ jobs:
   test:
     if: gitea.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    env:
+      GOPRIVATE: go.frostmoln.internal/*
+      GONOSUMCHECK: go.frostmoln.internal/*
+      GOINSECURE: go.frostmoln.internal,git.sm.internal
+      GIT_SSL_NO_VERIFY: "true"
+      GIT_CONFIG_GLOBAL: /tmp/.gitconfig-ci
     steps:
       - uses: actions/checkout@v7
-      # No actions/setup-go and no gitea private-module config: Go is baked into
-      # the anchor-runner image (GOTOOLCHAIN=auto matches go.mod), and the provider
-      # has zero internal Go-module deps (only public + self-referencing imports).
+      # Go is baked into the anchor-runner image (GOTOOLCHAIN=auto matches
+      # go.mod), so no actions/setup-go. The provider now imports
+      # go.frostmoln.internal/oidc, so it DOES need the private-module rewrite:
+      # `go mod` clones into a fresh repo that doesn't inherit checkout's per-repo
+      # credentials, so the rewrite URL embeds the ci-runner token and targets
+      # git.sm.internal (the k3s dind-bridge runners NXDOMAIN on bare `gitea`).
+      - name: Configure Go private modules
+        env:
+          GITEA_TOKEN: ${{ secrets.CI_GITEA_TOKEN }}
+        run: |  # pragma: allowlist secret
+          printf '[url "https://ci-runner:%s@git.sm.internal/frostmoln/"]\n  insteadOf = http://go.frostmoln.internal/\n  insteadOf = https://go.frostmoln.internal/\n  insteadOf = http://git.sm.internal/frostmoln/\n  insteadOf = https://git.sm.internal/frostmoln/\n' "$GITEA_TOKEN" > /tmp/.gitconfig-ci
       - name: Test
         run: go test ./... -race -coverprofile=coverage.out
       - name: Check coverage

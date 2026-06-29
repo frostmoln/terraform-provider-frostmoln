@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"path"
 	"time"
+
+	"go.frostmoln.internal/oidc"
 )
 
 // Client is the Frostmoln API client for the Terraform provider.
@@ -23,9 +25,22 @@ type Client struct {
 	// X-API-Key path.
 	bearer    *bearerSource
 	userAgent string
-	tenantID  string
-	userID    string
+	// version is the provider build version stamped on requests as
+	// X-FM-Provider-Version so the gateway can enforce a minimum supported
+	// version. Empty sends no header (the gateway's gate fails open).
+	version  string
+	tenantID string
+	userID   string
 }
+
+// ProviderVersionHeader carries the Frostmoln Terraform provider build version
+// so the gateway can enforce a minimum supported version (mirrors the gateway's
+// middleware constant; ADR-0088).
+const ProviderVersionHeader = "X-FM-Provider-Version"
+
+// providerUpgradeFallback is shown when the gateway rejects this provider as too
+// old but its 426 body carried no message of its own.
+const providerUpgradeFallback = "your Frostmoln Terraform provider is older than the minimum supported version; upgrade at https://registry.terraform.io/providers/frostmoln/frostmoln/latest"
 
 // Option configures the client.
 type Option func(*Client)
@@ -38,6 +53,12 @@ func NewClient(baseURL, apiKey string, opts ...Option) *Client {
 		baseURL: baseURL,
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,
+			// Refuse a cross-host / https->http redirect: API requests carry the
+			// X-API-Key or the OIDC bearer token, and the bearer-refresh POST (on
+			// the same client) carries the single-use refresh token in its body —
+			// Go resends the body and forwards custom headers across a same-/sub-
+			// host redirect, so a malicious 3xx must not relay either elsewhere.
+			CheckRedirect: oidc.RefuseUnsafeRedirect,
 		},
 		apiKey:    apiKey,
 		userAgent: "terraform-provider-frostmoln/0.1.0",
@@ -71,6 +92,14 @@ func WithHTTPClient(client *http.Client) Option {
 func WithUserAgent(ua string) Option {
 	return func(c *Client) {
 		c.userAgent = ua
+	}
+}
+
+// WithClientVersion sets the provider build version stamped as
+// X-FM-Provider-Version so the gateway can enforce a minimum supported version.
+func WithClientVersion(version string) Option {
+	return func(c *Client) {
+		c.version = version
 	}
 }
 
@@ -310,6 +339,9 @@ func (c *Client) do(ctx context.Context, method, reqPath string, query url.Value
 	}
 
 	httpReq.Header.Set("User-Agent", c.userAgent)
+	if c.version != "" {
+		httpReq.Header.Set(ProviderVersionHeader, c.version)
+	}
 	httpReq.Header.Set("Accept", "application/json")
 	if body != nil {
 		httpReq.Header.Set("Content-Type", "application/json")
@@ -332,6 +364,23 @@ func (c *Client) do(ctx context.Context, method, reqPath string, query url.Value
 	}
 
 	if httpResp.StatusCode >= 400 {
+		// A 426 is the gateway's minimum-provider-version floor. Surface a clean,
+		// terminal-safe upgrade message (the gateway body is untrusted; the shared
+		// helper strips control/ANSI bytes) so `terraform plan/apply` prints a
+		// single actionable line (ADR-0088).
+		if httpResp.StatusCode == http.StatusUpgradeRequired {
+			var gw struct {
+				Error struct {
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			_ = json.Unmarshal(respBody, &gw)
+			return nil, &APIError{
+				Code:       "PROVIDER_UPGRADE_REQUIRED",
+				Message:    oidc.NewUpgradeRequiredError(gw.Error.Message, providerUpgradeFallback).Error(),
+				StatusCode: httpResp.StatusCode,
+			}
+		}
 		// Try to parse nested error format first: {"error": {"code": ..., "message": ...}}
 		var nested struct {
 			Error APIError `json:"error"`

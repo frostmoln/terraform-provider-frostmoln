@@ -157,6 +157,14 @@ func TestRefreshWritesBackPreservingFields(t *testing.T) {
 	if tok.AccessToken != "fresh-access" {
 		t.Errorf("expected rotated access token, got %q", tok.AccessToken)
 	}
+	// The mock's relative expires_in (1800s) maps to an absolute Unix timestamp
+	// ~now+1800 — the conversion this migration introduced (oidc.Token.ExpiresAt()
+	// -> clicreds.Token.ExpiresAt). The lower bound also catches a regression to
+	// an unconverted/relative value.
+	now := time.Now().Unix()
+	if tok.ExpiresAt < now+1700 || tok.ExpiresAt > now+1800 {
+		t.Errorf("ExpiresAt = %d, want ~now+1800 (%d)", tok.ExpiresAt, now+1800)
+	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -167,6 +175,10 @@ func TestRefreshWritesBackPreservingFields(t *testing.T) {
 		t.Fatalf("parse back: %v", err)
 	}
 
+	// The on-disk expiry must equal the returned one (computed once, not twice).
+	if got := cfg.Contexts["default"].Credentials.ExpiresAt; got != tok.ExpiresAt {
+		t.Errorf("on-disk expires_at %d != returned %d", got, tok.ExpiresAt)
+	}
 	if c := cfg.Contexts["default"].Credentials; c.AccessToken != "fresh-access" || c.RefreshToken != "fresh-refresh" {
 		t.Errorf("default context creds not updated: %+v", c)
 	}

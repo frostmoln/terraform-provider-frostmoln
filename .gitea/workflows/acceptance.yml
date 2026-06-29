@@ -15,11 +15,22 @@ jobs:
     env:
       API_ENDPOINT: ${{ vars.API_ENDPOINT }}
       PORTAL_URL: ${{ vars.PORTAL_URL }}
+      GOPRIVATE: go.frostmoln.internal/*
+      GONOSUMCHECK: go.frostmoln.internal/*
+      GOINSECURE: go.frostmoln.internal,git.sm.internal
+      GIT_SSL_NO_VERIFY: "true"
+      GIT_CONFIG_GLOBAL: /tmp/.gitconfig-ci
     steps:
       - uses: actions/checkout@v7
-      # No actions/setup-go and no gitea private-module config: Go is baked into
-      # the anchor-runner image (GOTOOLCHAIN=auto matches go.mod), and the provider
-      # has zero internal Go-module deps (only public + self-referencing imports).
+      # Go is baked into the anchor-runner image (GOTOOLCHAIN=auto matches
+      # go.mod), so no actions/setup-go. The provider now imports
+      # go.frostmoln.internal/oidc, so `go test` needs the private-module rewrite
+      # (ci-runner token, git.sm.internal — the k3s dind runners NXDOMAIN on `gitea`).
+      - name: Configure Go private modules
+        env:
+          GITEA_TOKEN: ${{ secrets.CI_GITEA_TOKEN }}
+        run: |  # pragma: allowlist secret
+          printf '[url "https://ci-runner:%s@git.sm.internal/frostmoln/"]\n  insteadOf = http://go.frostmoln.internal/\n  insteadOf = https://go.frostmoln.internal/\n  insteadOf = http://git.sm.internal/frostmoln/\n  insteadOf = https://git.sm.internal/frostmoln/\n' "$GITEA_TOKEN" > /tmp/.gitconfig-ci
 
       - name: Create test user and API key
         run: |

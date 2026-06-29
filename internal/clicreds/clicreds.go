@@ -16,7 +16,19 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"go.frostmoln.internal/oidc"
 )
+
+// Token is a refreshed token set the provider persists. RefreshToken is empty
+// when the IdP did not rotate it (the caller keeps the previous one). ExpiresAt
+// is the access-token expiry as an absolute Unix timestamp (seconds), 0 if
+// unknown — distinct from the shared oidc.Token's relative expires_in wire shape.
+type Token struct {
+	AccessToken  string
+	RefreshToken string
+	ExpiresAt    int64
+}
 
 // ErrNotFound is returned by Resolve when no config file exists at the resolved
 // path. The provider treats it as "no CLI credential available" and falls
@@ -216,7 +228,11 @@ func (s *FileSource) Refresh(ctx context.Context, httpClient *http.Client, apiEn
 	if refreshToken == "" {
 		refreshToken = lastSeenRefresh
 	}
-	tok, err := Refresh(ctx, httpClient, apiEndpoint, refreshToken)
+	// The shared module owns the cli-config->discovery->refresh flow + the
+	// per-hop transport guard (ADR-0087). The injected httpClient sets
+	// RefuseUnsafeRedirect (see client.NewClient); the shared client also
+	// re-applies it defensively for a client that didn't.
+	tok, err := (oidc.Client{HTTPClient: httpClient}).RefreshViaGateway(ctx, apiEndpoint, refreshToken)
 	if err != nil {
 		return nil, err
 	}
@@ -224,9 +240,12 @@ func (s *FileSource) Refresh(ctx context.Context, httpClient *http.Client, apiEn
 	if newRefresh == "" { // the IdP may or may not rotate the refresh token
 		newRefresh = refreshToken
 	}
-	result := &Token{AccessToken: tok.AccessToken, RefreshToken: newRefresh, ExpiresAt: tok.ExpiresAt}
+	// Compute the absolute expiry ONCE (ExpiresAt() reads time.Now() per call),
+	// so the in-memory token and the on-disk value are the same instant.
+	expiresAt := tok.ExpiresAt()
+	result := &Token{AccessToken: tok.AccessToken, RefreshToken: newRefresh, ExpiresAt: expiresAt}
 
-	if err := s.applyLocked(cfg, tok.AccessToken, newRefresh, tok.ExpiresAt); err != nil {
+	if err := s.applyLocked(cfg, tok.AccessToken, newRefresh, expiresAt); err != nil {
 		return result, &PersistError{Err: err}
 	}
 	if err := writeConfig(s.path, cfg); err != nil {

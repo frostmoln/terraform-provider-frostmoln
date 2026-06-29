@@ -5,9 +5,46 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
+
+// TestClientStampsVersionAndMaps426 covers the provider version gate (ADR-0088):
+// the build version is stamped as X-FM-Provider-Version and a gateway 426
+// surfaces as a clean, terminal-safe PROVIDER_UPGRADE_REQUIRED error.
+func TestClientStampsVersionAndMaps426(t *testing.T) {
+	var gotVersion string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotVersion = r.Header.Get(ProviderVersionHeader)
+		w.WriteHeader(http.StatusUpgradeRequired)
+		// Include an ANSI escape to prove the shared sanitizer strips it.
+		_, _ = w.Write([]byte("{\"error\":{\"code\":\"PROVIDER_UPGRADE_REQUIRED\",\"message\":\"your provider (v0.1.0) is too old\x1b[31m; upgrade at https://registry.terraform.io/providers/frostmoln/frostmoln/latest\"}}"))
+	}))
+	t.Cleanup(server.Close)
+
+	c := NewClient(server.URL, "test-key", WithClientVersion("v0.1.0"))
+	_, err := c.do(context.Background(), http.MethodGet, "/v1/whatever", nil, nil, "")
+	if err == nil {
+		t.Fatal("expected an error on HTTP 426")
+	}
+	if gotVersion != "v0.1.0" {
+		t.Errorf("X-FM-Provider-Version = %q, want v0.1.0", gotVersion)
+	}
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("expected *APIError, got %T (%v)", err, err)
+	}
+	if apiErr.StatusCode != http.StatusUpgradeRequired || apiErr.Code != "PROVIDER_UPGRADE_REQUIRED" {
+		t.Errorf("apiErr = %+v", apiErr)
+	}
+	if !strings.Contains(apiErr.Message, "registry.terraform.io") {
+		t.Errorf("message missing the upgrade URL: %q", apiErr.Message)
+	}
+	if strings.ContainsAny(apiErr.Message, "\x1b") {
+		t.Errorf("message leaked an ANSI escape: %q", apiErr.Message)
+	}
+}
 
 func TestNewClient(t *testing.T) {
 	c := NewClient("https://api.example.com", "test-key")

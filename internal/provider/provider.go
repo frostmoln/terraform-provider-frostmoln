@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/oidc"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/clicreds"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	apacheinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/apache_instance"
@@ -155,6 +156,9 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 	}
 
 	ua := client.WithUserAgent("terraform-provider-frostmoln/" + p.version)
+	// Stamp the provider build version so the gateway can enforce a minimum
+	// supported version (X-FM-Provider-Version, ADR-0088).
+	ver := client.WithClientVersion(p.version)
 
 	useCLI, err := resolveUseCLIConfig(config)
 	if err != nil {
@@ -176,7 +180,7 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 
 	switch {
 	case apiKey != "":
-		c = client.NewClient(apiEndpoint, apiKey, ua)
+		c = client.NewClient(apiEndpoint, apiKey, ua, ver)
 
 	case useCLI:
 		resolved, rerr := clicreds.Resolve(clicreds.Options{
@@ -198,18 +202,18 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 			endpoint := chooseCLIEndpoint(endpointExplicit, apiEndpoint, resolved.APIEndpoint)
 			switch {
 			case resolved.APIKey != "":
-				c = client.NewClient(endpoint, resolved.APIKey, ua)
+				c = client.NewClient(endpoint, resolved.APIKey, ua, ver)
 			case resolved.AccessToken != "":
 				// The OIDC bearer token (and the refresh token it is exchanged
 				// with) must only travel over https; refuse an insecure endpoint.
-				if !clicreds.SecureURL(endpoint) {
+				if !oidc.SecureURL(endpoint) {
 					resp.Diagnostics.AddError(
 						"Insecure API endpoint for fm CLI session",
 						fmt.Sprintf("the fm CLI session authenticates with an OIDC bearer token, which must be sent over https; refusing endpoint %q", endpoint),
 					)
 					return
 				}
-				c = client.NewClient(endpoint, "", ua, client.WithTokenSource(client.TokenSourceConfig{
+				c = client.NewClient(endpoint, "", ua, ver, client.WithTokenSource(client.TokenSourceConfig{
 					AccessToken:  resolved.AccessToken,
 					RefreshToken: resolved.RefreshToken,
 					ExpiresAt:    resolved.ExpiresAt,
