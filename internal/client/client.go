@@ -18,15 +18,21 @@ type Client struct {
 	baseURL    string
 	httpClient *http.Client
 	apiKey     string
-	userAgent  string
-	tenantID   string
-	userID     string
+	// bearer is set (instead of apiKey) when authenticating from an fm CLI
+	// OIDC session; it refreshes the access token automatically. nil for the
+	// X-API-Key path.
+	bearer    *bearerSource
+	userAgent string
+	tenantID  string
+	userID    string
 }
 
 // Option configures the client.
 type Option func(*Client)
 
-// NewClient creates a new API client.
+// NewClient creates a new API client. Authentication is either the X-API-Key
+// path (pass a non-empty apiKey) or the OIDC bearer path (pass an empty apiKey
+// plus WithTokenSource) — exactly one, never both.
 func NewClient(baseURL, apiKey string, opts ...Option) *Client {
 	c := &Client{
 		baseURL: baseURL,
@@ -39,6 +45,16 @@ func NewClient(baseURL, apiKey string, opts ...Option) *Client {
 
 	for _, opt := range opts {
 		opt(c)
+	}
+
+	// The bearer source refreshes via <baseURL>/v1/auth/cli-config, using the
+	// (possibly customized) HTTP client; wire both after options are applied.
+	if c.bearer != nil {
+		c.bearer.apiEndpoint = c.baseURL
+		c.bearer.httpClient = c.httpClient
+		if c.bearer.now == nil {
+			c.bearer.now = time.Now
+		}
 	}
 
 	return c
@@ -229,8 +245,47 @@ func (r *Response) IsAccepted() bool {
 	return r.StatusCode == http.StatusAccepted
 }
 
-// Do sends an API request and returns the response.
+// Do sends an API request and returns the response. For the X-API-Key path it
+// is a single attempt. For the OIDC bearer path it refreshes the access token
+// proactively (when near expiry) before the request, and reactively once on a
+// 401 before replaying it — so an expired access token never surfaces as an
+// auth error mid-apply.
 func (c *Client) Do(ctx context.Context, method, reqPath string, query url.Values, body interface{}) (*Response, error) {
+	if c.bearer == nil {
+		return c.do(ctx, method, reqPath, query, body, "")
+	}
+
+	refreshedProactively, err := c.bearer.ensureFresh(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("refresh access token: %w", err)
+	}
+	used := c.bearer.token()
+	resp, err := c.do(ctx, method, reqPath, query, body, used)
+	if err == nil {
+		return resp, nil
+	}
+	apiErr, ok := err.(*APIError)
+	if !ok || apiErr.StatusCode != http.StatusUnauthorized {
+		return nil, err
+	}
+	if refreshedProactively {
+		// We just minted this token and it still 401s — that's not expiry
+		// (audience/permission/clock), so another refresh won't help. Surface
+		// the 401 instead of burning a second refresh.
+		return nil, err
+	}
+	refreshed, rerr := c.bearer.refreshIfStale(ctx, used)
+	if rerr != nil || !refreshed {
+		// Refresh failed (e.g. expired/revoked refresh token) — surface the
+		// original 401 so the user knows to re-run `fm auth login`.
+		return nil, err
+	}
+	return c.do(ctx, method, reqPath, query, body, c.bearer.token())
+}
+
+// do sends a single API request with no refresh-retry. bearerToken is the
+// access token to send on the bearer path (ignored for the X-API-Key path).
+func (c *Client) do(ctx context.Context, method, reqPath string, query url.Values, body interface{}, bearerToken string) (*Response, error) {
 	u, err := url.Parse(c.baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid base URL: %w", err)
@@ -259,7 +314,11 @@ func (c *Client) Do(ctx context.Context, method, reqPath string, query url.Value
 	if body != nil {
 		httpReq.Header.Set("Content-Type", "application/json")
 	}
-	httpReq.Header.Set("X-API-Key", c.apiKey)
+	if c.bearer != nil {
+		httpReq.Header.Set("Authorization", "Bearer "+bearerToken)
+	} else if c.apiKey != "" {
+		httpReq.Header.Set("X-API-Key", c.apiKey)
+	}
 
 	httpResp, err := c.httpClient.Do(httpReq)
 	if err != nil {

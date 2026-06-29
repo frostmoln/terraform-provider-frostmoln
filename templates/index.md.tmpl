@@ -13,4 +13,14 @@ The Frostmoln provider enables Terraform to manage resources on the [Frostmoln C
 
 {{ tffile "examples/provider/provider.tf" }}
 
+## Authentication
+
+The provider authenticates in this order — the first credential found wins:
+
+1. The `api_key` provider attribute.
+2. The `FROSTMOLN_API_KEY` environment variable.
+3. An existing `fm` CLI session in `~/.fm/config.yaml` (enabled by default; set `use_cli_config = false` to disable). The provider uses the CLI's stored API key if present, otherwise its OIDC access token — transparently refreshing it (and writing the rotated token back to the CLI config) when it expires.
+
+This lets the provider "just work" after `fm auth login`, like `kubectl`, `aws`, and `gcloud`. See the [Authentication guide](guides/authentication.md) for all three modes, precedence, contexts, and CI usage.
+
 {{ .SchemaMarkdown | trimspace }}
