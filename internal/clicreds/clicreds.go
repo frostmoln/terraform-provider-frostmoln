@@ -212,15 +212,22 @@ type FileSource struct {
 }
 
 // Refresh exchanges the on-disk refresh token for a fresh token set and writes
-// it back, all under the file lock. lastSeenRefresh is the refresh token the
-// caller currently holds; if the on-disk token differs, a peer (another
-// provider instance or `fm`) already rotated it, so Refresh adopts the fresher
-// on-disk token and returns WITHOUT contacting the IdP — never re-POSTing a
-// token a peer may have already invalidated.
+// it back, all under the file lock. lastSeenRefresh / lastSeenExpiresAt describe
+// the token the caller currently holds in memory. If the on-disk token has a
+// strictly later expiry, a peer (another provider instance or `fm`) rotated it
+// forward, so Refresh adopts the fresher on-disk pair and returns WITHOUT
+// contacting the IdP — never re-POSTing a token a peer may have invalidated.
+//
+// The freshness gate is the expiry, not a bare token-inequality: after our own
+// grant succeeds but the write-back fails, the caller's in-memory token (R',
+// newer expiry) outlives the stale on-disk one (R, older expiry). Keying adopt
+// on the expiry means we do NOT adopt that stale R, and we POST the live R'
+// below — re-POSTing the consumed R would trip Zitadel reuse-detection and kill
+// the whole token family.
 //
 // On a successful grant whose write-back fails, it returns the valid new token
 // together with a *PersistError so the caller can proceed and warn.
-func (s *FileSource) Refresh(ctx context.Context, httpClient *http.Client, apiEndpoint, lastSeenRefresh string) (*Token, error) {
+func (s *FileSource) Refresh(ctx context.Context, httpClient *http.Client, apiEndpoint, lastSeenRefresh string, lastSeenExpiresAt int64) (*Token, error) {
 	unlock, err := lockFile(s.path)
 	if err != nil {
 		return nil, err
@@ -233,10 +240,23 @@ func (s *FileSource) Refresh(ctx context.Context, httpClient *http.Client, apiEn
 	}
 	onDisk := s.credsLocked(cfg)
 
-	// A peer already rotated the refresh token — adopt its fresh pair instead of
-	// POSTing our stale one (which reuse-detection would reject, killing the
-	// whole session).
-	if onDisk.RefreshToken != "" && lastSeenRefresh != "" && onDisk.RefreshToken != lastSeenRefresh {
+	// A peer rotated the refresh token forward (its expiry is strictly later than
+	// what we hold) — adopt its fresh pair instead of POSTing our stale one
+	// (which reuse-detection would reject, killing the whole session). A stale
+	// on-disk token from our own failed write-back has an OLDER expiry, so this
+	// gate correctly declines to adopt it.
+	//
+	// Correctness rests on the expiry-monotonicity invariant: every successive
+	// rotation writes a strictly-greater absolute expiry. That holds for the
+	// supported model (one host, monotonic clock, constant Zitadel access-token
+	// TTL) and for the caller's monotonic in-memory expiry (auth.go carries the
+	// prior value forward across an expires_in-less grant). It can break under a
+	// backward NTP step or a cross-host clock skew on a shared (e.g. NFS) config;
+	// the file lock still serializes the write, so the residual is a rare
+	// reuse-detection trip — not corruption. A monotonic per-write counter would
+	// close it fully but is YAGNI until such a deployment exists (see the plan's
+	// "Edge" note).
+	if onDisk.RefreshToken != "" && onDisk.ExpiresAt > lastSeenExpiresAt {
 		return &Token{
 			AccessToken:  onDisk.AccessToken,
 			RefreshToken: onDisk.RefreshToken,
@@ -244,15 +264,24 @@ func (s *FileSource) Refresh(ctx context.Context, httpClient *http.Client, apiEn
 		}, nil
 	}
 
-	refreshToken := onDisk.RefreshToken
+	// Not adopting: POST the freshest token we have. Prefer the caller's
+	// in-memory one — after a failed write-back it is the live R' while the
+	// on-disk copy is the consumed R. Fall back to disk only when the caller
+	// holds nothing.
+	refreshToken := lastSeenRefresh
 	if refreshToken == "" {
-		refreshToken = lastSeenRefresh
+		refreshToken = onDisk.RefreshToken
 	}
+	// Bound the whole grant below lockStaleAfter so the file lock is always
+	// released before a peer would treat it as orphaned, regardless of the
+	// injected client's per-request timeout (which may be absent — LOW-5).
+	grantCtx, cancel := context.WithTimeout(ctx, lockMaxRefresh)
+	defer cancel()
 	// The shared module owns the cli-config->discovery->refresh flow + the
 	// per-hop transport guard (ADR-0087). The injected httpClient sets
 	// RefuseUnsafeRedirect (see client.NewClient); the shared client also
 	// re-applies it defensively for a client that didn't.
-	tok, err := (oidc.Client{HTTPClient: httpClient, UserAgent: s.userAgent}).RefreshViaGateway(ctx, apiEndpoint, refreshToken)
+	tok, err := (oidc.Client{HTTPClient: httpClient, UserAgent: s.userAgent}).RefreshViaGateway(grantCtx, apiEndpoint, refreshToken)
 	if err != nil {
 		return nil, err
 	}
@@ -377,13 +406,19 @@ func writeConfig(path string, cfg *cliConfig) error {
 //
 // ponytail: O_EXCL lockfile, no dependency. A lock held longer than
 // lockStaleAfter is assumed orphaned and broken — it MUST exceed the worst-case
-// lock-hold, which now spans the refresh HTTP call (FileSource.Refresh holds
-// the lock across the IdP round-trip), so a slow IdP isn't mistaken for a crash.
-// The timings are vars only so tests can shrink them.
+// lock-hold, which spans the refresh HTTP round-trip (FileSource.Refresh holds
+// the lock across the IdP grant). FileSource.Refresh bounds that grant with
+// lockMaxRefresh (strictly below lockStaleAfter), so a slow IdP releases the
+// lock before a peer mistakes it for a crash. The timings are vars only so
+// tests can shrink them.
 var (
 	lockStaleAfter = 120 * time.Second
 	lockTimeout    = 5 * time.Second
 	lockRetry      = 50 * time.Millisecond
+	// lockMaxRefresh caps the IdP grant held under the lock. Kept comfortably
+	// below lockStaleAfter so the lock is provably released before the stale
+	// threshold even with a timeout-less injected HTTP client (LOW-5).
+	lockMaxRefresh = 90 * time.Second
 )
 
 func lockFile(path string) (func(), error) {

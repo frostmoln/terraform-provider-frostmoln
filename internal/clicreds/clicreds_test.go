@@ -150,8 +150,9 @@ func TestRefreshWritesBackPreservingFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	// On-disk refresh token == lastSeen, so a real grant runs and rotates.
-	tok, err := r.Bearer.Refresh(context.Background(), s.Client(), s.URL, r.RefreshToken)
+	// In-memory expiry == on-disk expiry, so the freshness gate does not adopt
+	// and a real grant runs and rotates.
+	tok, err := r.Bearer.Refresh(context.Background(), s.Client(), s.URL, r.RefreshToken, r.ExpiresAt)
 	if err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
@@ -214,7 +215,7 @@ func TestRefreshInvalidGrantIsDead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	_, err = r.Bearer.Refresh(context.Background(), s.Client(), s.URL, r.RefreshToken)
+	_, err = r.Bearer.Refresh(context.Background(), s.Client(), s.URL, r.RefreshToken, r.ExpiresAt)
 	if !IsRefreshTokenDead(err) {
 		t.Fatalf("expected a dead refresh token (invalid_grant), got %v", err)
 	}
@@ -230,7 +231,7 @@ func TestRefreshSendsUserAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if _, err := r.Bearer.Refresh(context.Background(), s.Client(), s.URL, r.RefreshToken); err != nil {
+	if _, err := r.Bearer.Refresh(context.Background(), s.Client(), s.URL, r.RefreshToken, r.ExpiresAt); err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
 	if s.gotUserAgent != "terraform-provider-frostmoln/9.9.9" {
@@ -238,7 +239,7 @@ func TestRefreshSendsUserAgent(t *testing.T) {
 	}
 
 	r2, _ := Resolve(Options{Path: writeConfigFile(t, sampleConfig, 0o600)}) // no UserAgent
-	if _, err := r2.Bearer.Refresh(context.Background(), s.Client(), s.URL, r2.RefreshToken); err != nil {
+	if _, err := r2.Bearer.Refresh(context.Background(), s.Client(), s.URL, r2.RefreshToken, r2.ExpiresAt); err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
 	if strings.HasPrefix(s.gotUserAgent, "terraform-provider-frostmoln/") {
@@ -272,7 +273,7 @@ contexts:
 	if r.Bearer == nil {
 		t.Fatal("expected Bearer for the extra context")
 	}
-	if _, err := r.Bearer.Refresh(context.Background(), s.Client(), s.URL, r.RefreshToken); err != nil {
+	if _, err := r.Bearer.Refresh(context.Background(), s.Client(), s.URL, r.RefreshToken, r.ExpiresAt); err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
 	data, _ := os.ReadFile(path)
@@ -288,7 +289,8 @@ contexts:
 
 func TestRefreshAdoptsPeerRotationWithoutPOST(t *testing.T) {
 	// A token endpoint that always 500s — proving Refresh does NOT POST when the
-	// on-disk refresh token differs from the caller's (a peer already rotated).
+	// on-disk token has a strictly later expiry than the caller holds (a peer
+	// rotated it forward).
 	s := newOIDCServer(t)
 	s.tokenStatus = http.StatusInternalServerError
 	s.tokenBody = `{"error":"server_error"}`
@@ -297,8 +299,9 @@ func TestRefreshAdoptsPeerRotationWithoutPOST(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	// Caller holds an older token than what's on disk → adopt disk, no POST.
-	tok, err := r.Bearer.Refresh(context.Background(), s.Client(), s.URL, "stale-old-refresh")
+	// Caller's in-memory expiry (100) is older than the on-disk one (222) → the
+	// freshness gate adopts the on-disk pair, no POST.
+	tok, err := r.Bearer.Refresh(context.Background(), s.Client(), s.URL, "stale-old-refresh", 100)
 	if err != nil {
 		t.Fatalf("expected adoption without POST, got error: %v", err)
 	}
@@ -335,7 +338,7 @@ contexts:
 	if err := os.WriteFile(path, []byte("current_context: default\ncredentials:\n  access_token: top-access\n  refresh_token: top-refresh\n"), 0o600); err != nil {
 		t.Fatalf("rewrite: %v", err)
 	}
-	tok, err := r.Bearer.Refresh(context.Background(), s.Client(), s.URL, "top-refresh")
+	tok, err := r.Bearer.Refresh(context.Background(), s.Client(), s.URL, "top-refresh", r.ExpiresAt)
 	var perr *PersistError
 	if err == nil || !errors.As(err, &perr) {
 		t.Fatalf("expected *PersistError, got %v", err)
@@ -343,6 +346,110 @@ contexts:
 	if tok == nil || tok.AccessToken != "fresh-access" {
 		t.Errorf("expected a valid token alongside the persist error, got %+v", tok)
 	}
+}
+
+// TestRefreshAfterPersistFailurePOSTsLiveToken is the HIGH-1 regression: after a
+// grant R->R' succeeds but the write-back fails, the in-memory token advances to
+// R' while disk still holds the consumed R. The NEXT refresh must POST the live
+// R' — never adopt+re-POST the stale on-disk R, which Zitadel reuse-detection
+// would reject, revoking the whole token family and forcing `fm auth login`.
+func TestRefreshAfterPersistFailurePOSTsLiveToken(t *testing.T) {
+	s := newOIDCServer(t)
+	// Resolve the "extra" context, then delete it from disk (the same
+	// vanished-context mechanism TestRefreshVanishedContextReturnsPersistError /
+	// TestBearerPersistFailureWarnsButSucceeds use): the grant succeeds but
+	// write-back lands nowhere, so disk keeps the consumed refresh token.
+	cfg := `current_context: default
+credentials:
+  access_token: top-access
+  refresh_token: consumed-refresh
+  expires_at: 100
+contexts:
+  default:
+    credentials:
+      access_token: top-access
+      refresh_token: consumed-refresh
+      expires_at: 100
+  extra:
+    credentials:
+      access_token: extra-access
+      refresh_token: consumed-refresh
+      expires_at: 100
+`
+	path := writeConfigFile(t, cfg, 0o600)
+	r, err := Resolve(Options{Path: path, Context: "extra"})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("current_context: default\ncredentials:\n  access_token: top-access\n  refresh_token: consumed-refresh\n  expires_at: 100\n"), 0o600); err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+
+	// First refresh: grant succeeds (POSTs the on-disk consumed-refresh), but the
+	// write-back fails. Capture the live rotated token.
+	tok, err := r.Bearer.Refresh(context.Background(), s.Client(), s.URL, "consumed-refresh", 100)
+	var perr *PersistError
+	if err == nil || !errors.As(err, &perr) {
+		t.Fatalf("expected *PersistError from the failed write-back, got %v", err)
+	}
+	liveRefresh := tok.RefreshToken
+	if liveRefresh != "fresh-refresh" {
+		t.Fatalf("grant did not rotate the refresh token, got %q", liveRefresh)
+	}
+
+	// Second refresh: in-memory holds the live R' (and its newer expiry); disk
+	// still holds the consumed R with the OLD expiry (100). The freshness gate
+	// must NOT adopt the stale disk token, and must POST the live R'.
+	if _, err := r.Bearer.Refresh(context.Background(), s.Client(), s.URL, liveRefresh, tok.ExpiresAt); err != nil {
+		if !errors.As(err, &perr) { // a repeated write-back PersistError is expected and fine
+			t.Fatalf("second refresh: unexpected error: %v", err)
+		}
+	}
+	if got := s.gotForm["refresh_token"]; got != liveRefresh {
+		t.Fatalf("second refresh POSTed %q, want the live %q — the consumed on-disk token must never be re-POSTed", got, liveRefresh)
+	}
+}
+
+// TestRefreshBoundsLockHoldBelowStale is the MED-3/LOW-5 regression: a stalled
+// IdP must not let the file lock outlive lockStaleAfter. The grant is bounded by
+// lockMaxRefresh (< lockStaleAfter) even with a timeout-less HTTP client, so the
+// lock is released before a peer treats it as orphaned (which would let both
+// POST the same token → reuse-detection trip). Without the bound this test hangs
+// until the go-test timeout.
+func TestRefreshBoundsLockHoldBelowStale(t *testing.T) {
+	oldMax, oldStale := lockMaxRefresh, lockStaleAfter
+	lockMaxRefresh = 100 * time.Millisecond
+	lockStaleAfter = 5 * time.Second
+	defer func() { lockMaxRefresh, lockStaleAfter = oldMax, oldStale }()
+
+	s := newOIDCServer(t)
+	block := make(chan struct{})
+	s.tokenBlock = block
+	defer close(block) // release the stalled handler when the test returns, before httptest Close
+	path := writeConfigFile(t, sampleConfig, 0o600)
+	r, err := Resolve(Options{Path: path})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	start := time.Now()
+	// A timeout-less client (LOW-5): only the lockMaxRefresh context bound stops
+	// the stalled token endpoint from holding the lock until lockStaleAfter.
+	_, err = r.Bearer.Refresh(context.Background(), &http.Client{}, s.URL, r.RefreshToken, r.ExpiresAt)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected the stalled grant to fail, got nil")
+	}
+	if elapsed >= lockStaleAfter {
+		t.Fatalf("refresh held the lock %v; must release before lockStaleAfter (%v)", elapsed, lockStaleAfter)
+	}
+	// Prove the named property directly: the lock is actually released (not just
+	// that Refresh returned), so a peer can re-acquire it immediately.
+	unlock, lerr := lockFile(path)
+	if lerr != nil {
+		t.Fatalf("lock not released after the bounded refresh: %v", lerr)
+	}
+	unlock()
 }
 
 func TestLockFileExclusive(t *testing.T) {

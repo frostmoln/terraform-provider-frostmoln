@@ -17,11 +17,12 @@ type oidcServer struct {
 	*httptest.Server
 	clientID     string
 	gotForm      map[string]string
-	gotUserAgent string // User-Agent seen on the token request
-	tokenStatus  int    // override token endpoint status; 0 = 200
-	tokenBody    string // override token endpoint body
-	issuerOverri string // override the issuer returned by cli-config
-	tokenEPOverr string // override the token_endpoint returned by discovery
+	gotUserAgent string        // User-Agent seen on the token request
+	tokenStatus  int           // override token endpoint status; 0 = 200
+	tokenBody    string        // override token endpoint body
+	tokenBlock   chan struct{} // if non-nil, /token stalls until this channel is closed
+	issuerOverri string        // override the issuer returned by cli-config
+	tokenEPOverr string        // override the token_endpoint returned by discovery
 }
 
 func newOIDCServer(t *testing.T) *oidcServer {
@@ -45,6 +46,10 @@ func newOIDCServer(t *testing.T) *oidcServer {
 			// issuer-match check passes.
 			_ = json.NewEncoder(w).Encode(map[string]string{"issuer": s.URL, "token_endpoint": tokenEP})
 		case "/token":
+			if s.tokenBlock != nil {
+				<-s.tokenBlock // stall the grant; the test closes this on return (before httptest Close)
+				return
+			}
 			s.gotUserAgent = r.Header.Get("User-Agent")
 			_ = r.ParseForm()
 			s.gotForm = map[string]string{}

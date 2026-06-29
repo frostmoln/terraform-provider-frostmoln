@@ -102,7 +102,7 @@ func (b *bearerSource) refreshIfStale(ctx context.Context, used string) (bool, e
 // the request — the in-memory token is valid — but is surfaced as a warning,
 // because the on-disk fm session is now stale.
 func (b *bearerSource) refreshLocked(ctx context.Context) error {
-	tok, err := b.src.Refresh(ctx, b.httpClient, b.apiEndpoint, b.refresh)
+	tok, err := b.src.Refresh(ctx, b.httpClient, b.apiEndpoint, b.refresh, b.expiresAt)
 	var perr *clicreds.PersistError
 	if err != nil && !errors.As(err, &perr) {
 		// A dead refresh token (invalid_grant) can't be retried — surface an
@@ -116,7 +116,14 @@ func (b *bearerSource) refreshLocked(ctx context.Context) error {
 	// Grant succeeded; tok is valid even when perr != nil (write-back failed).
 	b.access = tok.AccessToken
 	b.refresh = tok.RefreshToken
-	b.expiresAt = tok.ExpiresAt
+	// Keep the in-memory expiry monotonic. A grant may omit expires_in (then
+	// tok.ExpiresAt == 0); zeroing here would, after a write-back failure, let the
+	// next refresh's expiry gate adopt the stale on-disk token (which still has a
+	// real, larger expiry) and the one after re-POST the consumed token — tripping
+	// Zitadel reuse-detection. Carry the prior expiry forward instead.
+	if tok.ExpiresAt != 0 {
+		b.expiresAt = tok.ExpiresAt
+	}
 	if perr != nil {
 		tflog.Warn(ctx, "refreshed the Frostmoln access token but could not write it back to the fm CLI config; your fm session may need 'fm auth login'", map[string]any{
 			"error": perr.Unwrap().Error(),
