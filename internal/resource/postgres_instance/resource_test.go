@@ -26,7 +26,7 @@ func TestPostgresInstanceModelToCreateRequest(t *testing.T) {
 
 	model := PostgresInstanceModel{
 		Name:                types.StringValue("my-pg"),
-		PostgresVersion:     types.StringValue("16"),
+		Version:             types.StringValue("16"),
 		Flavor:              types.StringValue("db.gp1.small"),
 		StorageGB:           types.Int64Value(50),
 		VPCID:               types.StringValue("vpc-1"),
@@ -84,7 +84,7 @@ func TestPostgresInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 
 	model := PostgresInstanceModel{
 		Name:                types.StringValue("my-pg"),
-		PostgresVersion:     types.StringValue("15"),
+		Version:             types.StringValue("15"),
 		Flavor:              types.StringValue("db.gp1.medium"),
 		StorageGB:           types.Int64Value(100),
 		VPCID:               types.StringValue("vpc-1"),
@@ -217,8 +217,8 @@ func TestPostgresInstanceModelFromAPI(t *testing.T) {
 	if model.ID.ValueString() != "pg-123" {
 		t.Errorf("expected ID pg-123, got %s", model.ID.ValueString())
 	}
-	if model.PostgresVersion.ValueString() != "16" {
-		t.Errorf("expected postgres_version 16, got %s", model.PostgresVersion.ValueString())
+	if model.Version.ValueString() != "16" {
+		t.Errorf("expected version 16, got %s", model.Version.ValueString())
 	}
 	if model.StorageGB.ValueInt64() != 50 {
 		t.Errorf("expected storage_gb 50, got %d", model.StorageGB.ValueInt64())
@@ -317,7 +317,7 @@ func TestSchema(t *testing.T) {
 	var resp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &resp)
 
-	required := []string{"name", "postgres_version", "flavor", "storage_gb", "vpc_id", "subnet_id"}
+	required := []string{"name", "version", "flavor", "storage_gb", "vpc_id", "subnet_id"}
 	for _, attr := range required {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %s in schema", attr)
@@ -418,12 +418,12 @@ func emptyState(t *testing.T) tfsdk.State {
 
 func fullPlanModel() PostgresInstanceModel {
 	return PostgresInstanceModel{
-		Name:            types.StringValue("test-pg"),
-		PostgresVersion: types.StringValue("16"),
-		Flavor:          types.StringValue("db.gp1.small"),
-		StorageGB:       types.Int64Value(50),
-		VPCID:           types.StringValue("vpc-1"),
-		SubnetID:        types.StringValue("sn-1"),
+		Name:      types.StringValue("test-pg"),
+		Version:   types.StringValue("16"),
+		Flavor:    types.StringValue("db.gp1.small"),
+		StorageGB: types.Int64Value(50),
+		VPCID:     types.StringValue("vpc-1"),
+		SubnetID:  types.StringValue("sn-1"),
 	}
 }
 
@@ -570,7 +570,7 @@ func TestRead(t *testing.T) {
 	r := newResource(newClient(t, server))
 	state := buildState(t, PostgresInstanceModel{
 		ID: types.StringValue("pg-123"), Name: types.StringValue("my-pg"),
-		PostgresVersion: types.StringValue("16"), Flavor: types.StringValue("db.gp1.small"),
+		Version: types.StringValue("16"), Flavor: types.StringValue("db.gp1.small"),
 		StorageGB: types.Int64Value(50), VPCID: types.StringValue("vpc-1"),
 		SubnetID: types.StringValue("sn-1"), Status: types.StringValue("running"),
 		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
@@ -598,7 +598,7 @@ func TestReadNotFound(t *testing.T) {
 	r := newResource(newClient(t, server))
 	state := buildState(t, PostgresInstanceModel{
 		ID: types.StringValue("pg-gone"), Name: types.StringValue("gone"),
-		PostgresVersion: types.StringValue("16"), Flavor: types.StringValue("db.gp1.small"),
+		Version: types.StringValue("16"), Flavor: types.StringValue("db.gp1.small"),
 		StorageGB: types.Int64Value(50), VPCID: types.StringValue("vpc-1"),
 		SubnetID: types.StringValue("sn-1"), Status: types.StringValue("running"),
 		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
@@ -627,7 +627,7 @@ func TestReadServerError(t *testing.T) {
 	r := newResource(newClient(t, server))
 	state := buildState(t, PostgresInstanceModel{
 		ID: types.StringValue("pg-123"), Name: types.StringValue("my-pg"),
-		PostgresVersion: types.StringValue("16"), Flavor: types.StringValue("db.gp1.small"),
+		Version: types.StringValue("16"), Flavor: types.StringValue("db.gp1.small"),
 		StorageGB: types.Int64Value(50), VPCID: types.StringValue("vpc-1"),
 		SubnetID: types.StringValue("sn-1"), Status: types.StringValue("running"),
 		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
@@ -663,14 +663,14 @@ func TestUpdate(t *testing.T) {
 	r := newResource(newClient(t, server))
 	state := buildState(t, PostgresInstanceModel{
 		ID: types.StringValue("pg-123"), Name: types.StringValue("old-pg"),
-		PostgresVersion: types.StringValue("16"), Flavor: types.StringValue("db.gp1.small"),
+		Version: types.StringValue("16"), Flavor: types.StringValue("db.gp1.small"),
 		StorageGB: types.Int64Value(50), VPCID: types.StringValue("vpc-1"),
 		SubnetID: types.StringValue("sn-1"), Status: types.StringValue("running"),
 		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
 	})
 	plan := buildPlan(t, PostgresInstanceModel{
 		ID: types.StringValue("pg-123"), Name: types.StringValue("updated-pg"),
-		PostgresVersion: types.StringValue("16"), Flavor: types.StringValue("db.gp1.large"),
+		Version: types.StringValue("16"), Flavor: types.StringValue("db.gp1.large"),
 		StorageGB: types.Int64Value(100), VPCID: types.StringValue("vpc-1"),
 		SubnetID: types.StringValue("sn-1"), Status: types.StringValue("running"),
 		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
@@ -706,14 +706,14 @@ func TestUpdateAPIError(t *testing.T) {
 	r := newResource(newClient(t, server))
 	state := buildState(t, PostgresInstanceModel{
 		ID: types.StringValue("pg-123"), Name: types.StringValue("old-pg"),
-		PostgresVersion: types.StringValue("16"), Flavor: types.StringValue("db.gp1.small"),
+		Version: types.StringValue("16"), Flavor: types.StringValue("db.gp1.small"),
 		StorageGB: types.Int64Value(50), VPCID: types.StringValue("vpc-1"),
 		SubnetID: types.StringValue("sn-1"), Status: types.StringValue("running"),
 		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
 	})
 	plan := buildPlan(t, PostgresInstanceModel{
 		ID: types.StringValue("pg-123"), Name: types.StringValue("new-pg"),
-		PostgresVersion: types.StringValue("16"), Flavor: types.StringValue("db.gp1.small"),
+		Version: types.StringValue("16"), Flavor: types.StringValue("db.gp1.small"),
 		StorageGB: types.Int64Value(50), VPCID: types.StringValue("vpc-1"),
 		SubnetID: types.StringValue("sn-1"), Status: types.StringValue("running"),
 		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
@@ -749,7 +749,7 @@ func TestDelete(t *testing.T) {
 	r := newResource(newClient(t, server))
 	state := buildState(t, PostgresInstanceModel{
 		ID: types.StringValue("pg-123"), Name: types.StringValue("my-pg"),
-		PostgresVersion: types.StringValue("16"), Flavor: types.StringValue("db.gp1.small"),
+		Version: types.StringValue("16"), Flavor: types.StringValue("db.gp1.small"),
 		StorageGB: types.Int64Value(50), VPCID: types.StringValue("vpc-1"),
 		SubnetID: types.StringValue("sn-1"), Status: types.StringValue("running"),
 		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
@@ -771,7 +771,7 @@ func TestDeleteAlreadyGone(t *testing.T) {
 	r := newResource(newClient(t, server))
 	state := buildState(t, PostgresInstanceModel{
 		ID: types.StringValue("pg-gone"), Name: types.StringValue("gone"),
-		PostgresVersion: types.StringValue("16"), Flavor: types.StringValue("db.gp1.small"),
+		Version: types.StringValue("16"), Flavor: types.StringValue("db.gp1.small"),
 		StorageGB: types.Int64Value(50), VPCID: types.StringValue("vpc-1"),
 		SubnetID: types.StringValue("sn-1"), Status: types.StringValue("running"),
 		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),

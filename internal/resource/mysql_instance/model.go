@@ -12,7 +12,7 @@ import (
 type MysqlInstanceModel struct {
 	ID                  types.String `tfsdk:"id"`
 	Name                types.String `tfsdk:"name"`
-	MysqlVersion        types.String `tfsdk:"mysql_version"`
+	Version             types.String `tfsdk:"version"`
 	Flavor              types.String `tfsdk:"flavor"`
 	StorageGB           types.Int64  `tfsdk:"storage_gb"`
 	VPCID               types.String `tfsdk:"vpc_id"`
@@ -89,7 +89,7 @@ func (m *MysqlInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnost
 	req := apiCreateMysqlInstanceRequest{
 		Name:          m.Name.ValueString(),
 		Engine:        "mysql",
-		EngineVersion: m.MysqlVersion.ValueString(),
+		EngineVersion: m.Version.ValueString(),
 		Flavor:        m.Flavor.ValueString(),
 		StorageGB:     int(m.StorageGB.ValueInt64()),
 		VPCID:         m.VPCID.ValueString(),
@@ -158,7 +158,7 @@ func (m *MysqlInstanceModel) toUpdateRequest(state *MysqlInstanceModel) apiUpdat
 func (m *MysqlInstanceModel) fromAPI(_ context.Context, inst *apiMysqlInstance, _ *diag.Diagnostics) {
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
-	m.MysqlVersion = types.StringValue(inst.EngineVersion)
+	m.Version = types.StringValue(inst.EngineVersion)
 	m.Flavor = types.StringValue(inst.Flavor)
 	m.StorageGB = types.Int64Value(int64(inst.StorageGB))
 	m.VPCID = types.StringValue(inst.VPCID)

@@ -27,7 +27,7 @@ func TestNginxInstanceModelToCreateRequest(t *testing.T) {
 
 	model := NginxInstanceModel{
 		Name:            types.StringValue("my-nginx"),
-		EngineVersion:   types.StringValue("1.27"),
+		Version:         types.StringValue("1.27"),
 		Flavor:          types.StringValue("web.gp1.small"),
 		StorageGB:       types.Int64Value(20),
 		TLSEnabled:      types.BoolNull(),
@@ -35,7 +35,7 @@ func TestNginxInstanceModelToCreateRequest(t *testing.T) {
 		GzipEnabled:     types.BoolNull(),
 		TryFiles:        types.StringNull(),
 		ProxyPass:       types.StringNull(),
-		EngineConfig:    types.StringNull(),
+		Config:          types.StringNull(),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
@@ -69,7 +69,7 @@ func TestNginxInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 
 	model := NginxInstanceModel{
 		Name:            types.StringValue("my-nginx"),
-		EngineVersion:   types.StringValue("1.27"),
+		Version:         types.StringValue("1.27"),
 		Flavor:          types.StringValue("web.gp1.medium"),
 		StorageGB:       types.Int64Value(40),
 		TLSEnabled:      types.BoolValue(true),
@@ -77,7 +77,7 @@ func TestNginxInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 		GzipEnabled:     types.BoolValue(true),
 		TryFiles:        types.StringValue("$uri $uri/ =404"),
 		ProxyPass:       types.StringValue("http://backend"),
-		EngineConfig:    types.StringValue(`{"k":"v"}`),
+		Config:          types.StringValue(`{"k":"v"}`),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
@@ -115,7 +115,7 @@ func TestNginxInstanceModelToUpdateRequest(t *testing.T) {
 		GzipEnabled:     types.BoolValue(true),
 		TryFiles:        types.StringValue("a"),
 		ProxyPass:       types.StringValue("b"),
-		EngineConfig:    types.StringValue("c"),
+		Config:          types.StringValue("c"),
 	}
 	state := NginxInstanceModel{
 		Name:            types.StringValue("old-name"),
@@ -126,7 +126,7 @@ func TestNginxInstanceModelToUpdateRequest(t *testing.T) {
 		GzipEnabled:     types.BoolValue(false),
 		TryFiles:        types.StringNull(),
 		ProxyPass:       types.StringNull(),
-		EngineConfig:    types.StringNull(),
+		Config:          types.StringNull(),
 	}
 
 	req := plan.toUpdateRequest(&state)
@@ -166,7 +166,7 @@ func TestNginxInstanceModelToUpdateRequestNoChanges(t *testing.T) {
 		GzipEnabled:     types.BoolValue(true),
 		TryFiles:        types.StringValue("a"),
 		ProxyPass:       types.StringValue("b"),
-		EngineConfig:    types.StringValue("c"),
+		Config:          types.StringValue("c"),
 	}
 
 	req := same.toUpdateRequest(&same)
@@ -258,8 +258,8 @@ func TestNginxInstanceModelFromAPINulls(t *testing.T) {
 	if !model.ProxyPass.IsNull() {
 		t.Error("expected null proxy_pass")
 	}
-	if !model.EngineConfig.IsNull() {
-		t.Error("expected null engine_config")
+	if !model.Config.IsNull() {
+		t.Error("expected null config")
 	}
 	if !model.PrivateIP.IsNull() {
 		t.Error("expected null private_ip")
@@ -300,7 +300,7 @@ func TestSchema(t *testing.T) {
 	var resp resource.SchemaResponse
 	r.Schema(context.Background(), req, &resp)
 
-	requiredAttrs := []string{"name", "engine_version", "flavor", "storage_gb"}
+	requiredAttrs := []string{"name", "version", "flavor", "storage_gb"}
 	for _, attr := range requiredAttrs {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %s in schema", attr)
@@ -400,7 +400,7 @@ func newTestNginxResource(c *client.Client) *nginxInstanceResource {
 func baseNginxModel() NginxInstanceModel {
 	return NginxInstanceModel{
 		Name:            types.StringValue("my-nginx"),
-		EngineVersion:   types.StringValue("1.27"),
+		Version:         types.StringValue("1.27"),
 		Flavor:          types.StringValue("web.gp1.small"),
 		StorageGB:       types.Int64Value(20),
 		TLSEnabled:      types.BoolValue(true),
@@ -408,7 +408,7 @@ func baseNginxModel() NginxInstanceModel {
 		GzipEnabled:     types.BoolValue(false),
 		TryFiles:        types.StringNull(),
 		ProxyPass:       types.StringNull(),
-		EngineConfig:    types.StringNull(),
+		Config:          types.StringNull(),
 	}
 }
 

@@ -17,14 +17,14 @@ Manages a managed Nginx webserver instance in the Frostmoln platform.
 
 ### Required
 
-- `engine_version` (String) The Nginx version (e.g. "1.24", "1.26").
+- `version` (String) The Nginx version (e.g. "1.24", "1.26").
 - `flavor` (String) The flavor/size for the webserver instance (e.g. "web.gp1.small", "web.gp1.medium").
 - `name` (String) The name of the Nginx instance.
 - `storage_gb` (Number) The storage size in gigabytes.
 
 ### Optional
 
-- `engine_config` (String) Custom engine configuration as a JSON string.
+- `config` (String) Custom engine configuration as a JSON string.
 - `gzip_enabled` (Boolean) Whether gzip compression is enabled.
 - `proxy_pass` (String) The proxy_pass upstream URL (e.g. "http://backend:8080").
 - `tls_enabled` (Boolean) Whether TLS is enabled for the webserver.

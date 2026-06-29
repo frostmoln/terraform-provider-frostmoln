@@ -46,7 +46,7 @@ output "messaging_management_port" {
 - `amqps_port` (Number) The AMQPS (TLS) port number the messaging instance is listening on.
 - `created_at` (String) The timestamp when the instance was created.
 - `engine` (String) The messaging engine type (e.g. "lavinmq").
-- `engine_version` (String) The engine version.
+- `version` (String) The engine version.
 - `flavor_id` (String) The flavor/size of the messaging instance.
 - `management_port` (Number) The HTTP management/API port number the messaging instance is listening on.
 - `name` (String) The name of the messaging instance.

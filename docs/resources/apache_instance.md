@@ -17,14 +17,14 @@ Manages a managed Apache webserver instance in the Frostmoln platform.
 
 ### Required
 
-- `engine_version` (String) The Apache version (e.g. "2.4").
+- `version` (String) The Apache version (e.g. "2.4").
 - `flavor` (String) The flavor/size for the webserver instance (e.g. "web.gp1.small", "web.gp1.medium").
 - `name` (String) The name of the Apache instance.
 - `storage_gb` (Number) The storage size in gigabytes.
 
 ### Optional
 
-- `engine_config` (String) Custom engine configuration as a JSON string.
+- `config` (String) Custom engine configuration as a JSON string.
 - `php_enabled` (Boolean) Whether PHP support is enabled.
 - `php_version` (String) The PHP version (e.g. "8.2", "8.3"). Only applicable when php_enabled is true.
 - `tls_enabled` (Boolean) Whether TLS is enabled for the webserver.

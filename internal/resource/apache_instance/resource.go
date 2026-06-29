@@ -65,7 +65,7 @@ func (r *apacheInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 				Description: "The name of the Apache instance.",
 				Required:    true,
 			},
-			"engine_version": schema.StringAttribute{
+			"version": schema.StringAttribute{
 				Description: "The Apache version (e.g. \"2.4\").",
 				Required:    true,
 				PlanModifiers: []planmodifier.String{
@@ -100,7 +100,7 @@ func (r *apacheInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 				Description: "The PHP version (e.g. \"8.2\", \"8.3\"). Only applicable when php_enabled is true.",
 				Optional:    true,
 			},
-			"engine_config": schema.StringAttribute{
+			"config": schema.StringAttribute{
 				Description: "Custom engine configuration as a JSON string.",
 				Optional:    true,
 			},

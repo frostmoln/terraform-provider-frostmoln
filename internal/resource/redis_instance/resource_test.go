@@ -27,7 +27,7 @@ func TestRedisInstanceModelToCreateRequest(t *testing.T) {
 
 	model := RedisInstanceModel{
 		Name:            types.StringValue("my-redis"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.small"),
 		VPCID:           types.StringValue("vpc-123"),
 		SubnetID:        types.StringValue("subnet-456"),
@@ -72,7 +72,7 @@ func TestRedisInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 
 	model := RedisInstanceModel{
 		Name:            types.StringValue("my-redis"),
-		EngineVersion:   types.StringValue("7.4"),
+		Version:         types.StringValue("7.4"),
 		FlavorID:        types.StringValue("cache.medium"),
 		VPCID:           types.StringValue("vpc-123"),
 		SubnetID:        types.StringValue("subnet-456"),
@@ -169,8 +169,8 @@ func TestRedisInstanceModelFromAPI(t *testing.T) {
 	if model.ID.ValueString() != "redis-123" {
 		t.Errorf("expected ID redis-123, got %s", model.ID.ValueString())
 	}
-	if model.EngineVersion.ValueString() != "7.2" {
-		t.Errorf("expected engine_version 7.2, got %s", model.EngineVersion.ValueString())
+	if model.Version.ValueString() != "7.2" {
+		t.Errorf("expected version 7.2, got %s", model.Version.ValueString())
 	}
 	if model.Port.ValueInt64() != 6379 {
 		t.Errorf("expected port 6379, got %d", model.Port.ValueInt64())
@@ -251,7 +251,7 @@ func TestSchema(t *testing.T) {
 	var resp resource.SchemaResponse
 	r.Schema(context.Background(), req, &resp)
 
-	requiredAttrs := []string{"name", "engine_version", "flavor_id", "vpc_id", "subnet_id"}
+	requiredAttrs := []string{"name", "version", "flavor_id", "vpc_id", "subnet_id"}
 	for _, attr := range requiredAttrs {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %s in schema", attr)
@@ -404,7 +404,7 @@ func TestCreate(t *testing.T) {
 
 	plan := buildRedisInstancePlan(t, RedisInstanceModel{
 		Name:            types.StringValue("test-redis"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -463,7 +463,7 @@ func TestRead(t *testing.T) {
 	state := buildRedisInstanceState(t, RedisInstanceModel{
 		ID:              types.StringValue("redis-123"),
 		Name:            types.StringValue("my-redis"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -504,7 +504,7 @@ func TestReadNotFound(t *testing.T) {
 	state := buildRedisInstanceState(t, RedisInstanceModel{
 		ID:              types.StringValue("redis-gone"),
 		Name:            types.StringValue("gone"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -568,7 +568,7 @@ func TestDelete(t *testing.T) {
 	state := buildRedisInstanceState(t, RedisInstanceModel{
 		ID:              types.StringValue("redis-123"),
 		Name:            types.StringValue("my-redis"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -627,7 +627,7 @@ func TestUpdate(t *testing.T) {
 	state := buildRedisInstanceState(t, RedisInstanceModel{
 		ID:              types.StringValue("redis-123"),
 		Name:            types.StringValue("old-redis"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -640,7 +640,7 @@ func TestUpdate(t *testing.T) {
 	plan := buildRedisInstancePlan(t, RedisInstanceModel{
 		ID:              types.StringValue("redis-123"),
 		Name:            types.StringValue("updated-redis"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.large"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),

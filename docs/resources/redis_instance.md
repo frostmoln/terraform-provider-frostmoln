@@ -14,11 +14,11 @@ Manages a managed Redis instance in the Frostmoln platform.
 
 ```terraform
 resource "frostmoln_redis_instance" "cache" {
-  name           = "my-cache"
-  engine_version = "7.2"
-  flavor_id      = "cache.small"
-  vpc_id         = frostmoln_vpc.main.id
-  subnet_id      = frostmoln_subnet.private.id
+  name      = "my-cache"
+  version   = "7.2"
+  flavor_id = "cache.small"
+  vpc_id    = frostmoln_vpc.main.id
+  subnet_id = frostmoln_subnet.private.id
 
   persistence_mode = "rdb"
   eviction_policy  = "allkeys-lru"
@@ -30,7 +30,7 @@ resource "frostmoln_redis_instance" "cache" {
 
 ### Required
 
-- `engine_version` (String) The Redis version (e.g. "7.2", "7.4").
+- `version` (String) The Redis version (e.g. "7.2", "7.4").
 - `flavor_id` (String) The flavor/size for the Redis instance (e.g. "cache.gp1.small", "cache.gp1.medium").
 - `name` (String) The name of the Redis instance.
 - `subnet_id` (String) The subnet ID where the Redis instance will be deployed.

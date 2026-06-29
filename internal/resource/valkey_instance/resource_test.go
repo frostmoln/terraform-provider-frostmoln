@@ -27,7 +27,7 @@ func TestValkeyInstanceModelToCreateRequest(t *testing.T) {
 
 	model := ValkeyInstanceModel{
 		Name:            types.StringValue("my-valkey"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.gp1.small"),
 		VPCID:           types.StringValue("vpc-123"),
 		SubnetID:        types.StringValue("subnet-456"),
@@ -66,7 +66,7 @@ func TestValkeyInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 
 	model := ValkeyInstanceModel{
 		Name:            types.StringValue("my-valkey"),
-		EngineVersion:   types.StringValue("7.4"),
+		Version:         types.StringValue("7.4"),
 		FlavorID:        types.StringValue("cache.gp1.medium"),
 		VPCID:           types.StringValue("vpc-123"),
 		SubnetID:        types.StringValue("subnet-456"),
@@ -238,7 +238,7 @@ func TestSchema(t *testing.T) {
 	var resp resource.SchemaResponse
 	r.Schema(context.Background(), req, &resp)
 
-	requiredAttrs := []string{"name", "engine_version", "flavor_id", "vpc_id", "subnet_id"}
+	requiredAttrs := []string{"name", "version", "flavor_id", "vpc_id", "subnet_id"}
 	for _, attr := range requiredAttrs {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %s in schema", attr)
@@ -400,7 +400,7 @@ func TestCreate(t *testing.T) {
 
 	plan := buildValkeyInstancePlan(t, ValkeyInstanceModel{
 		Name:            types.StringValue("test-valkey"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.gp1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -446,7 +446,7 @@ func TestCreateAPIError(t *testing.T) {
 
 	plan := buildValkeyInstancePlan(t, ValkeyInstanceModel{
 		Name:            types.StringValue("test-valkey"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.gp1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -490,7 +490,7 @@ func TestCreatePollErrorState(t *testing.T) {
 
 	plan := buildValkeyInstancePlan(t, ValkeyInstanceModel{
 		Name:            types.StringValue("x"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("f"),
 		VPCID:           types.StringValue("v"),
 		SubnetID:        types.StringValue("s"),
@@ -537,7 +537,7 @@ func TestRead(t *testing.T) {
 	state := buildValkeyInstanceState(t, ValkeyInstanceModel{
 		ID:              types.StringValue("valkey-123"),
 		Name:            types.StringValue("my-valkey"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.gp1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -576,7 +576,7 @@ func TestReadNotFound(t *testing.T) {
 	state := buildValkeyInstanceState(t, ValkeyInstanceModel{
 		ID:              types.StringValue("valkey-gone"),
 		Name:            types.StringValue("gone"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.gp1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -617,7 +617,7 @@ func TestReadServerError(t *testing.T) {
 	state := buildValkeyInstanceState(t, ValkeyInstanceModel{
 		ID:              types.StringValue("valkey-123"),
 		Name:            types.StringValue("x"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("f"),
 		VPCID:           types.StringValue("v"),
 		SubnetID:        types.StringValue("s"),
@@ -672,7 +672,7 @@ func TestUpdate(t *testing.T) {
 	state := buildValkeyInstanceState(t, ValkeyInstanceModel{
 		ID:              types.StringValue("valkey-123"),
 		Name:            types.StringValue("old-valkey"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.gp1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -685,7 +685,7 @@ func TestUpdate(t *testing.T) {
 	plan := buildValkeyInstancePlan(t, ValkeyInstanceModel{
 		ID:              types.StringValue("valkey-123"),
 		Name:            types.StringValue("updated-valkey"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.gp1.large"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -729,7 +729,7 @@ func TestUpdateAPIError(t *testing.T) {
 	base := ValkeyInstanceModel{
 		ID:              types.StringValue("valkey-123"),
 		Name:            types.StringValue("old"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.gp1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -778,7 +778,7 @@ func TestDelete(t *testing.T) {
 	state := buildValkeyInstanceState(t, ValkeyInstanceModel{
 		ID:              types.StringValue("valkey-123"),
 		Name:            types.StringValue("my-valkey"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.gp1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -818,7 +818,7 @@ func TestDeleteAlreadyGone(t *testing.T) {
 	state := buildValkeyInstanceState(t, ValkeyInstanceModel{
 		ID:              types.StringValue("valkey-gone"),
 		Name:            types.StringValue("gone"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("f"),
 		VPCID:           types.StringValue("v"),
 		SubnetID:        types.StringValue("s"),
@@ -859,7 +859,7 @@ func TestDeletePollError(t *testing.T) {
 	state := buildValkeyInstanceState(t, ValkeyInstanceModel{
 		ID:              types.StringValue("valkey-123"),
 		Name:            types.StringValue("x"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("f"),
 		VPCID:           types.StringValue("v"),
 		SubnetID:        types.StringValue("s"),

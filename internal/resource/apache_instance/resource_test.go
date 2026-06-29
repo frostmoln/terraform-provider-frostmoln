@@ -26,14 +26,14 @@ func TestApacheInstanceModelToCreateRequest(t *testing.T) {
 	diags := diag.Diagnostics{}
 
 	model := ApacheInstanceModel{
-		Name:          types.StringValue("my-apache"),
-		EngineVersion: types.StringValue("2.4"),
-		Flavor:        types.StringValue("web.gp1.small"),
-		StorageGB:     types.Int64Value(20),
-		TLSEnabled:    types.BoolNull(),
-		PHPEnabled:    types.BoolNull(),
-		PHPVersion:    types.StringNull(),
-		EngineConfig:  types.StringNull(),
+		Name:       types.StringValue("my-apache"),
+		Version:    types.StringValue("2.4"),
+		Flavor:     types.StringValue("web.gp1.small"),
+		StorageGB:  types.Int64Value(20),
+		TLSEnabled: types.BoolNull(),
+		PHPEnabled: types.BoolNull(),
+		PHPVersion: types.StringNull(),
+		Config:     types.StringNull(),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
@@ -69,14 +69,14 @@ func TestApacheInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 	diags := diag.Diagnostics{}
 
 	model := ApacheInstanceModel{
-		Name:          types.StringValue("my-apache"),
-		EngineVersion: types.StringValue("2.4"),
-		Flavor:        types.StringValue("web.gp1.medium"),
-		StorageGB:     types.Int64Value(40),
-		TLSEnabled:    types.BoolValue(true),
-		PHPEnabled:    types.BoolValue(true),
-		PHPVersion:    types.StringValue("8.3"),
-		EngineConfig:  types.StringValue(`{"k":"v"}`),
+		Name:       types.StringValue("my-apache"),
+		Version:    types.StringValue("2.4"),
+		Flavor:     types.StringValue("web.gp1.medium"),
+		StorageGB:  types.Int64Value(40),
+		TLSEnabled: types.BoolValue(true),
+		PHPEnabled: types.BoolValue(true),
+		PHPVersion: types.StringValue("8.3"),
+		Config:     types.StringValue(`{"k":"v"}`),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
@@ -100,22 +100,22 @@ func TestApacheInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 
 func TestApacheInstanceModelToUpdateRequest(t *testing.T) {
 	plan := ApacheInstanceModel{
-		Name:         types.StringValue("new-name"),
-		Flavor:       types.StringValue("web.gp1.large"),
-		StorageGB:    types.Int64Value(80),
-		TLSEnabled:   types.BoolValue(true),
-		PHPEnabled:   types.BoolValue(true),
-		PHPVersion:   types.StringValue("8.3"),
-		EngineConfig: types.StringValue("new"),
+		Name:       types.StringValue("new-name"),
+		Flavor:     types.StringValue("web.gp1.large"),
+		StorageGB:  types.Int64Value(80),
+		TLSEnabled: types.BoolValue(true),
+		PHPEnabled: types.BoolValue(true),
+		PHPVersion: types.StringValue("8.3"),
+		Config:     types.StringValue("new"),
 	}
 	state := ApacheInstanceModel{
-		Name:         types.StringValue("old-name"),
-		Flavor:       types.StringValue("web.gp1.small"),
-		StorageGB:    types.Int64Value(20),
-		TLSEnabled:   types.BoolValue(false),
-		PHPEnabled:   types.BoolValue(false),
-		PHPVersion:   types.StringNull(),
-		EngineConfig: types.StringNull(),
+		Name:       types.StringValue("old-name"),
+		Flavor:     types.StringValue("web.gp1.small"),
+		StorageGB:  types.Int64Value(20),
+		TLSEnabled: types.BoolValue(false),
+		PHPEnabled: types.BoolValue(false),
+		PHPVersion: types.StringNull(),
+		Config:     types.StringNull(),
 	}
 
 	req := plan.toUpdateRequest(&state)
@@ -144,13 +144,13 @@ func TestApacheInstanceModelToUpdateRequest(t *testing.T) {
 
 func TestApacheInstanceModelToUpdateRequestNoChanges(t *testing.T) {
 	same := ApacheInstanceModel{
-		Name:         types.StringValue("same"),
-		Flavor:       types.StringValue("web.gp1.small"),
-		StorageGB:    types.Int64Value(20),
-		TLSEnabled:   types.BoolValue(true),
-		PHPEnabled:   types.BoolValue(false),
-		PHPVersion:   types.StringValue("8.2"),
-		EngineConfig: types.StringValue("cfg"),
+		Name:       types.StringValue("same"),
+		Flavor:     types.StringValue("web.gp1.small"),
+		StorageGB:  types.Int64Value(20),
+		TLSEnabled: types.BoolValue(true),
+		PHPEnabled: types.BoolValue(false),
+		PHPVersion: types.StringValue("8.2"),
+		Config:     types.StringValue("cfg"),
 	}
 
 	req := same.toUpdateRequest(&same)
@@ -235,8 +235,8 @@ func TestApacheInstanceModelFromAPINulls(t *testing.T) {
 	if !model.PHPVersion.IsNull() {
 		t.Error("expected null php_version")
 	}
-	if !model.EngineConfig.IsNull() {
-		t.Error("expected null engine_config")
+	if !model.Config.IsNull() {
+		t.Error("expected null config")
 	}
 	if !model.PrivateIP.IsNull() {
 		t.Error("expected null private_ip")
@@ -277,7 +277,7 @@ func TestSchema(t *testing.T) {
 	var resp resource.SchemaResponse
 	r.Schema(context.Background(), req, &resp)
 
-	requiredAttrs := []string{"name", "engine_version", "flavor", "storage_gb"}
+	requiredAttrs := []string{"name", "version", "flavor", "storage_gb"}
 	for _, attr := range requiredAttrs {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %s in schema", attr)
@@ -376,14 +376,14 @@ func newTestApacheResource(c *client.Client) *apacheInstanceResource {
 
 func baseApacheModel() ApacheInstanceModel {
 	return ApacheInstanceModel{
-		Name:          types.StringValue("my-apache"),
-		EngineVersion: types.StringValue("2.4"),
-		Flavor:        types.StringValue("web.gp1.small"),
-		StorageGB:     types.Int64Value(20),
-		TLSEnabled:    types.BoolValue(true),
-		PHPEnabled:    types.BoolValue(false),
-		PHPVersion:    types.StringNull(),
-		EngineConfig:  types.StringNull(),
+		Name:       types.StringValue("my-apache"),
+		Version:    types.StringValue("2.4"),
+		Flavor:     types.StringValue("web.gp1.small"),
+		StorageGB:  types.Int64Value(20),
+		TLSEnabled: types.BoolValue(true),
+		PHPEnabled: types.BoolValue(false),
+		PHPVersion: types.StringNull(),
+		Config:     types.StringNull(),
 	}
 }
 

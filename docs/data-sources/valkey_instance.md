@@ -23,7 +23,7 @@ Look up a managed Valkey instance by ID.
 
 - `admin_username` (String) The admin username for the Valkey instance.
 - `created_at` (String) The timestamp when the instance was created.
-- `engine_version` (String) The Valkey version.
+- `version` (String) The Valkey version.
 - `eviction_policy` (String) The eviction policy of the Valkey instance.
 - `flavor_id` (String) The flavor/size of the Valkey instance.
 - `name` (String) The name of the Valkey instance.

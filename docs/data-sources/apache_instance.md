@@ -22,8 +22,8 @@ Look up a managed Apache webserver instance by ID.
 ### Read-Only
 
 - `created_at` (String) The timestamp when the instance was created.
-- `engine_config` (String) Custom engine configuration.
-- `engine_version` (String) The Apache version.
+- `config` (String) Custom engine configuration.
+- `version` (String) The Apache version.
 - `flavor` (String) The flavor/size of the Apache instance.
 - `name` (String) The name of the Apache instance.
 - `php_enabled` (Boolean) Whether PHP support is enabled.

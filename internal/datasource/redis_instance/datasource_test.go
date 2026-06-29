@@ -39,7 +39,7 @@ func TestSchema(t *testing.T) {
 	ds.Schema(context.Background(), req, &resp)
 
 	expectedAttrs := []string{
-		"id", "name", "engine_version", "flavor_id", "vpc_id", "subnet_id",
+		"id", "name", "version", "flavor_id", "vpc_id", "subnet_id",
 		"persistence_mode", "eviction_policy", "status", "private_ip", "port",
 		"admin_username", "created_at", "updated_at",
 	}
@@ -164,7 +164,7 @@ func TestTFSDK_ReadRedisInstanceByID(t *testing.T) {
 	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
 		"id":               tftypes.NewValue(tftypes.String, "redis-1"),
 		"name":             tftypes.NewValue(tftypes.String, nil),
-		"engine_version":   tftypes.NewValue(tftypes.String, nil),
+		"version":          tftypes.NewValue(tftypes.String, nil),
 		"flavor_id":        tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":           tftypes.NewValue(tftypes.String, nil),
 		"subnet_id":        tftypes.NewValue(tftypes.String, nil),
@@ -199,8 +199,8 @@ func TestTFSDK_ReadRedisInstanceByID(t *testing.T) {
 	if state.Name.ValueString() != "my-cache" {
 		t.Errorf("expected Name my-cache, got %s", state.Name.ValueString())
 	}
-	if state.EngineVersion.ValueString() != "7.2" {
-		t.Errorf("expected EngineVersion 7.2, got %s", state.EngineVersion.ValueString())
+	if state.Version.ValueString() != "7.2" {
+		t.Errorf("expected version 7.2, got %s", state.Version.ValueString())
 	}
 	if state.FlavorID.ValueString() != "cache.small" {
 		t.Errorf("expected FlavorID cache.small, got %s", state.FlavorID.ValueString())
@@ -238,7 +238,7 @@ func TestTFSDK_ReadRedisInstanceNotFound(t *testing.T) {
 	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
 		"id":               tftypes.NewValue(tftypes.String, "redis-nonexistent"),
 		"name":             tftypes.NewValue(tftypes.String, nil),
-		"engine_version":   tftypes.NewValue(tftypes.String, nil),
+		"version":          tftypes.NewValue(tftypes.String, nil),
 		"flavor_id":        tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":           tftypes.NewValue(tftypes.String, nil),
 		"subnet_id":        tftypes.NewValue(tftypes.String, nil),

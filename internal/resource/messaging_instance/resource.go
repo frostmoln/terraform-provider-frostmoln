@@ -74,7 +74,7 @@ func (r *messagingInstanceResource) Schema(_ context.Context, _ resource.SchemaR
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"engine_version": schema.StringAttribute{
+			"version": schema.StringAttribute{
 				Description: "The engine version (e.g. \"2.3\"). Defaults to the recommended version when omitted.",
 				Optional:    true,
 				Computed:    true,

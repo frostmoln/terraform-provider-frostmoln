@@ -12,7 +12,7 @@ import (
 type NginxInstanceModel struct {
 	ID              types.String `tfsdk:"id"`
 	Name            types.String `tfsdk:"name"`
-	EngineVersion   types.String `tfsdk:"engine_version"`
+	Version         types.String `tfsdk:"version"`
 	Flavor          types.String `tfsdk:"flavor"`
 	StorageGB       types.Int64  `tfsdk:"storage_gb"`
 	TLSEnabled      types.Bool   `tfsdk:"tls_enabled"`
@@ -20,7 +20,7 @@ type NginxInstanceModel struct {
 	GzipEnabled     types.Bool   `tfsdk:"gzip_enabled"`
 	TryFiles        types.String `tfsdk:"try_files"`
 	ProxyPass       types.String `tfsdk:"proxy_pass"`
-	EngineConfig    types.String `tfsdk:"engine_config"`
+	Config          types.String `tfsdk:"config"`
 	Status          types.String `tfsdk:"status"`
 	PrivateIP       types.String `tfsdk:"private_ip"`
 	Port            types.Int64  `tfsdk:"port"`
@@ -84,7 +84,7 @@ func (m *NginxInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnost
 	req := apiCreateWebserverInstanceRequest{
 		Name:          m.Name.ValueString(),
 		Engine:        "nginx",
-		EngineVersion: m.EngineVersion.ValueString(),
+		EngineVersion: m.Version.ValueString(),
 		Flavor:        m.Flavor.ValueString(),
 		StorageGB:     int(m.StorageGB.ValueInt64()),
 	}
@@ -107,8 +107,8 @@ func (m *NginxInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnost
 	if !m.ProxyPass.IsNull() && !m.ProxyPass.IsUnknown() {
 		req.ProxyPass = m.ProxyPass.ValueString()
 	}
-	if !m.EngineConfig.IsNull() && !m.EngineConfig.IsUnknown() {
-		req.EngineConfig = m.EngineConfig.ValueString()
+	if !m.Config.IsNull() && !m.Config.IsUnknown() {
+		req.EngineConfig = m.Config.ValueString()
 	}
 
 	return req
@@ -150,8 +150,8 @@ func (m *NginxInstanceModel) toUpdateRequest(state *NginxInstanceModel) apiUpdat
 		v := m.ProxyPass.ValueString()
 		req.ProxyPass = &v
 	}
-	if !m.EngineConfig.Equal(state.EngineConfig) {
-		v := m.EngineConfig.ValueString()
+	if !m.Config.Equal(state.Config) {
+		v := m.Config.ValueString()
 		req.EngineConfig = &v
 	}
 
@@ -162,7 +162,7 @@ func (m *NginxInstanceModel) toUpdateRequest(state *NginxInstanceModel) apiUpdat
 func (m *NginxInstanceModel) fromAPI(_ context.Context, inst *apiWebserverInstance, _ *diag.Diagnostics) {
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
-	m.EngineVersion = types.StringValue(inst.EngineVersion)
+	m.Version = types.StringValue(inst.EngineVersion)
 	m.Flavor = types.StringValue(inst.Flavor)
 	m.StorageGB = types.Int64Value(int64(inst.StorageGB))
 	m.TLSEnabled = types.BoolValue(inst.TLSEnabled)
@@ -189,9 +189,9 @@ func (m *NginxInstanceModel) fromAPI(_ context.Context, inst *apiWebserverInstan
 	}
 
 	if inst.EngineConfig != "" {
-		m.EngineConfig = types.StringValue(inst.EngineConfig)
+		m.Config = types.StringValue(inst.EngineConfig)
 	} else {
-		m.EngineConfig = types.StringNull()
+		m.Config = types.StringNull()
 	}
 
 	if inst.PrivateIP != "" {

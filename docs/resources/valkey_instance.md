@@ -17,7 +17,7 @@ Manages a managed Valkey instance in the Frostmoln platform.
 
 ### Required
 
-- `engine_version` (String) The Valkey version (e.g. "8.0").
+- `version` (String) The Valkey version (e.g. "8.0").
 - `flavor_id` (String) The flavor/size for the Valkey instance (e.g. "cache.gp1.small", "cache.gp1.medium").
 - `name` (String) The name of the Valkey instance.
 - `subnet_id` (String) The subnet ID where the Valkey instance will be deployed.

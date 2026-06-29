@@ -22,8 +22,8 @@ Look up a managed Nginx webserver instance by ID.
 ### Read-Only
 
 - `created_at` (String) The timestamp when the instance was created.
-- `engine_config` (String) Custom engine configuration.
-- `engine_version` (String) The Nginx version.
+- `config` (String) Custom engine configuration.
+- `version` (String) The Nginx version.
 - `flavor` (String) The flavor/size of the Nginx instance.
 - `gzip_enabled` (Boolean) Whether gzip compression is enabled.
 - `name` (String) The name of the Nginx instance.

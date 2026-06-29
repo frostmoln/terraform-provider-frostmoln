@@ -131,12 +131,12 @@ func TestImportState(t *testing.T) {
 
 func mysqlPlan() MysqlInstanceModel {
 	return MysqlInstanceModel{
-		Name:         types.StringValue("db-1"),
-		MysqlVersion: types.StringValue("8.0"),
-		Flavor:       types.StringValue("db.small"),
-		StorageGB:    types.Int64Value(100),
-		VPCID:        types.StringValue("vpc-1"),
-		SubnetID:     types.StringValue("sn-1"),
+		Name:      types.StringValue("db-1"),
+		Version:   types.StringValue("8.0"),
+		Flavor:    types.StringValue("db.small"),
+		StorageGB: types.Int64Value(100),
+		VPCID:     types.StringValue("vpc-1"),
+		SubnetID:  types.StringValue("sn-1"),
 	}
 }
 
@@ -217,15 +217,15 @@ func TestReadAPIError(t *testing.T) {
 
 	r := &mysqlInstanceResource{client: c}
 	state := buildMysqlInstanceState(t, MysqlInstanceModel{
-		ID:           types.StringValue("db-1"),
-		Name:         types.StringValue("db-1"),
-		MysqlVersion: types.StringValue("8.0"),
-		Flavor:       types.StringValue("db.small"),
-		StorageGB:    types.Int64Value(100),
-		VPCID:        types.StringValue("vpc-1"),
-		SubnetID:     types.StringValue("sn-1"),
-		Status:       types.StringValue("running"),
-		CreatedAt:    types.StringValue("2025-01-01T00:00:00Z"),
+		ID:        types.StringValue("db-1"),
+		Name:      types.StringValue("db-1"),
+		Version:   types.StringValue("8.0"),
+		Flavor:    types.StringValue("db.small"),
+		StorageGB: types.Int64Value(100),
+		VPCID:     types.StringValue("vpc-1"),
+		SubnetID:  types.StringValue("sn-1"),
+		Status:    types.StringValue("running"),
+		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
 	})
 	readResp := resource.ReadResponse{State: state}
 	r.Read(context.Background(), resource.ReadRequest{State: state}, &readResp)
@@ -250,26 +250,26 @@ func TestUpdateAPIError(t *testing.T) {
 
 	r := &mysqlInstanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: time.Second}
 	state := buildMysqlInstanceState(t, MysqlInstanceModel{
-		ID:           types.StringValue("db-1"),
-		Name:         types.StringValue("old"),
-		MysqlVersion: types.StringValue("8.0"),
-		Flavor:       types.StringValue("db.small"),
-		StorageGB:    types.Int64Value(100),
-		VPCID:        types.StringValue("vpc-1"),
-		SubnetID:     types.StringValue("sn-1"),
-		Status:       types.StringValue("running"),
-		CreatedAt:    types.StringValue("2025-01-01T00:00:00Z"),
+		ID:        types.StringValue("db-1"),
+		Name:      types.StringValue("old"),
+		Version:   types.StringValue("8.0"),
+		Flavor:    types.StringValue("db.small"),
+		StorageGB: types.Int64Value(100),
+		VPCID:     types.StringValue("vpc-1"),
+		SubnetID:  types.StringValue("sn-1"),
+		Status:    types.StringValue("running"),
+		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
 	})
 	plan := buildMysqlInstancePlan(t, MysqlInstanceModel{
-		ID:           types.StringValue("db-1"),
-		Name:         types.StringValue("new"),
-		MysqlVersion: types.StringValue("8.0"),
-		Flavor:       types.StringValue("db.small"),
-		StorageGB:    types.Int64Value(100),
-		VPCID:        types.StringValue("vpc-1"),
-		SubnetID:     types.StringValue("sn-1"),
-		Status:       types.StringValue("running"),
-		CreatedAt:    types.StringValue("2025-01-01T00:00:00Z"),
+		ID:        types.StringValue("db-1"),
+		Name:      types.StringValue("new"),
+		Version:   types.StringValue("8.0"),
+		Flavor:    types.StringValue("db.small"),
+		StorageGB: types.Int64Value(100),
+		VPCID:     types.StringValue("vpc-1"),
+		SubnetID:  types.StringValue("sn-1"),
+		Status:    types.StringValue("running"),
+		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
 	})
 	updateResp := resource.UpdateResponse{State: state}
 	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
@@ -290,15 +290,15 @@ func TestDeleteAlreadyGone(t *testing.T) {
 
 	r := &mysqlInstanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: time.Second}
 	state := buildMysqlInstanceState(t, MysqlInstanceModel{
-		ID:           types.StringValue("db-gone"),
-		Name:         types.StringValue("db-1"),
-		MysqlVersion: types.StringValue("8.0"),
-		Flavor:       types.StringValue("db.small"),
-		StorageGB:    types.Int64Value(100),
-		VPCID:        types.StringValue("vpc-1"),
-		SubnetID:     types.StringValue("sn-1"),
-		Status:       types.StringValue("running"),
-		CreatedAt:    types.StringValue("2025-01-01T00:00:00Z"),
+		ID:        types.StringValue("db-gone"),
+		Name:      types.StringValue("db-1"),
+		Version:   types.StringValue("8.0"),
+		Flavor:    types.StringValue("db.small"),
+		StorageGB: types.Int64Value(100),
+		VPCID:     types.StringValue("vpc-1"),
+		SubnetID:  types.StringValue("sn-1"),
+		Status:    types.StringValue("running"),
+		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
 	})
 	deleteResp := resource.DeleteResponse{State: state}
 	r.Delete(context.Background(), resource.DeleteRequest{State: state}, &deleteResp)
@@ -323,15 +323,15 @@ func TestDeleteAPIError(t *testing.T) {
 
 	r := &mysqlInstanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: time.Second}
 	state := buildMysqlInstanceState(t, MysqlInstanceModel{
-		ID:           types.StringValue("db-1"),
-		Name:         types.StringValue("db-1"),
-		MysqlVersion: types.StringValue("8.0"),
-		Flavor:       types.StringValue("db.small"),
-		StorageGB:    types.Int64Value(100),
-		VPCID:        types.StringValue("vpc-1"),
-		SubnetID:     types.StringValue("sn-1"),
-		Status:       types.StringValue("running"),
-		CreatedAt:    types.StringValue("2025-01-01T00:00:00Z"),
+		ID:        types.StringValue("db-1"),
+		Name:      types.StringValue("db-1"),
+		Version:   types.StringValue("8.0"),
+		Flavor:    types.StringValue("db.small"),
+		StorageGB: types.Int64Value(100),
+		VPCID:     types.StringValue("vpc-1"),
+		SubnetID:  types.StringValue("sn-1"),
+		Status:    types.StringValue("running"),
+		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
 	})
 	deleteResp := resource.DeleteResponse{State: state}
 	r.Delete(context.Background(), resource.DeleteRequest{State: state}, &deleteResp)

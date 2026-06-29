@@ -13,7 +13,6 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	apacheinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/apache_instance"
-	cacheinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/cache_instance"
 	databaseenginesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/database_engines"
 	dnszoneds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/dns_zone"
 	flavords "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/flavor"
@@ -34,7 +33,6 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/apache_instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/api_key"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/bucket"
-	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/cache_instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_record"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_zone"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/floating_ip"
@@ -191,7 +189,6 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		mysql_backup.NewResource,
 		mysql_read_replica.NewResource,
 		redis_instance.NewResource,
-		cache_instance.NewResource,
 		valkey_instance.NewResource,
 		messaging_instance.NewResource,
 		scale_group.NewResource,
@@ -217,7 +214,6 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		mysqlversionsds.NewDataSource,
 		databaseenginesds.NewDataSource,
 		redisinstanceds.NewDataSource,
-		cacheinstanceds.NewDataSource,
 		valkeyinstanceds.NewDataSource,
 		messaginginstanceds.NewDataSource,
 		secretds.NewDataSource,

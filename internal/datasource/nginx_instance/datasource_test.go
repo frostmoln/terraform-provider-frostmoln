@@ -38,9 +38,9 @@ func TestSchema(t *testing.T) {
 	ds.Schema(context.Background(), datasource.SchemaRequest{}, &resp)
 
 	expectedAttrs := []string{
-		"id", "name", "engine_version", "flavor", "storage_gb", "tls_enabled",
+		"id", "name", "version", "flavor", "storage_gb", "tls_enabled",
 		"worker_processes", "gzip_enabled", "try_files", "proxy_pass",
-		"engine_config", "status", "private_ip", "port", "created_at",
+		"config", "status", "private_ip", "port", "created_at",
 		"updated_at", "tenant_id",
 	}
 	for _, attr := range expectedAttrs {
@@ -113,7 +113,7 @@ func configVal(t *testing.T, id string) tftypes.Value {
 	return tftypes.NewValue(tfType, map[string]tftypes.Value{
 		"id":               tftypes.NewValue(tftypes.String, id),
 		"name":             tftypes.NewValue(tftypes.String, nil),
-		"engine_version":   tftypes.NewValue(tftypes.String, nil),
+		"version":          tftypes.NewValue(tftypes.String, nil),
 		"flavor":           tftypes.NewValue(tftypes.String, nil),
 		"storage_gb":       tftypes.NewValue(tftypes.Number, nil),
 		"tls_enabled":      tftypes.NewValue(tftypes.Bool, nil),
@@ -121,7 +121,7 @@ func configVal(t *testing.T, id string) tftypes.Value {
 		"gzip_enabled":     tftypes.NewValue(tftypes.Bool, nil),
 		"try_files":        tftypes.NewValue(tftypes.String, nil),
 		"proxy_pass":       tftypes.NewValue(tftypes.String, nil),
-		"engine_config":    tftypes.NewValue(tftypes.String, nil),
+		"config":           tftypes.NewValue(tftypes.String, nil),
 		"status":           tftypes.NewValue(tftypes.String, nil),
 		"private_ip":       tftypes.NewValue(tftypes.String, nil),
 		"port":             tftypes.NewValue(tftypes.Number, nil),
@@ -191,8 +191,8 @@ func TestReadByID(t *testing.T) {
 	if state.Name.ValueString() != "my-nginx" {
 		t.Errorf("expected Name my-nginx, got %s", state.Name.ValueString())
 	}
-	if state.EngineVersion.ValueString() != "1.27" {
-		t.Errorf("expected EngineVersion 1.27, got %s", state.EngineVersion.ValueString())
+	if state.Version.ValueString() != "1.27" {
+		t.Errorf("expected Version 1.27, got %s", state.Version.ValueString())
 	}
 	if !state.GzipEnabled.ValueBool() {
 		t.Error("expected GzipEnabled true")
@@ -264,8 +264,8 @@ func TestReadByIDNullableFieldsEmpty(t *testing.T) {
 	if !state.ProxyPass.IsNull() {
 		t.Error("expected null proxy_pass")
 	}
-	if !state.EngineConfig.IsNull() {
-		t.Error("expected null engine_config")
+	if !state.Config.IsNull() {
+		t.Error("expected null config")
 	}
 	if !state.PrivateIP.IsNull() {
 		t.Error("expected null private_ip")

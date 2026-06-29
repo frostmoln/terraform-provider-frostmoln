@@ -41,7 +41,7 @@ func TestImportState(t *testing.T) {
 func redisPlanModel() RedisInstanceModel {
 	return RedisInstanceModel{
 		Name:            types.StringValue("redis-1"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -167,7 +167,7 @@ func TestUpdatePollErrorState(t *testing.T) {
 	base := RedisInstanceModel{
 		ID:              types.StringValue("redis-1"),
 		Name:            types.StringValue("old"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -208,7 +208,7 @@ func TestDeletePollError(t *testing.T) {
 	state := buildRedisInstanceState(t, RedisInstanceModel{
 		ID:              types.StringValue("redis-1"),
 		Name:            types.StringValue("redis-1"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -238,7 +238,7 @@ func TestReadAPIError(t *testing.T) {
 	state := buildRedisInstanceState(t, RedisInstanceModel{
 		ID:              types.StringValue("redis-1"),
 		Name:            types.StringValue("redis-1"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -272,7 +272,7 @@ func TestUpdateAPIError(t *testing.T) {
 	state := buildRedisInstanceState(t, RedisInstanceModel{
 		ID:              types.StringValue("redis-1"),
 		Name:            types.StringValue("old"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -284,7 +284,7 @@ func TestUpdateAPIError(t *testing.T) {
 	plan := buildRedisInstancePlan(t, RedisInstanceModel{
 		ID:              types.StringValue("redis-1"),
 		Name:            types.StringValue("new"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.large"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -314,7 +314,7 @@ func TestDeleteAlreadyGone(t *testing.T) {
 	state := buildRedisInstanceState(t, RedisInstanceModel{
 		ID:              types.StringValue("redis-gone"),
 		Name:            types.StringValue("redis-1"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -348,7 +348,7 @@ func TestDeleteAPIError(t *testing.T) {
 	state := buildRedisInstanceState(t, RedisInstanceModel{
 		ID:              types.StringValue("redis-1"),
 		Name:            types.StringValue("redis-1"),
-		EngineVersion:   types.StringValue("7.2"),
+		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),

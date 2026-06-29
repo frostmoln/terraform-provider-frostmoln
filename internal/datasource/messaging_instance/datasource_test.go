@@ -38,7 +38,7 @@ func TestSchema(t *testing.T) {
 	ds.Schema(context.Background(), datasource.SchemaRequest{}, &resp)
 
 	expectedAttrs := []string{
-		"id", "name", "engine", "engine_version", "flavor_id", "vpc_id",
+		"id", "name", "engine", "version", "flavor_id", "vpc_id",
 		"subnet_id", "persistence_mode", "status", "private_ip", "port",
 		"amqps_port", "management_port", "created_at", "updated_at",
 	}
@@ -113,7 +113,7 @@ func configVal(t *testing.T, id string) tftypes.Value {
 		"id":               tftypes.NewValue(tftypes.String, id),
 		"name":             tftypes.NewValue(tftypes.String, nil),
 		"engine":           tftypes.NewValue(tftypes.String, nil),
-		"engine_version":   tftypes.NewValue(tftypes.String, nil),
+		"version":          tftypes.NewValue(tftypes.String, nil),
 		"flavor_id":        tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":           tftypes.NewValue(tftypes.String, nil),
 		"subnet_id":        tftypes.NewValue(tftypes.String, nil),
@@ -185,8 +185,8 @@ func TestReadByID(t *testing.T) {
 	if state.Engine.ValueString() != "lavinmq" {
 		t.Errorf("expected Engine lavinmq, got %s", state.Engine.ValueString())
 	}
-	if state.EngineVersion.ValueString() != "2.3" {
-		t.Errorf("expected EngineVersion 2.3, got %s", state.EngineVersion.ValueString())
+	if state.Version.ValueString() != "2.3" {
+		t.Errorf("expected Version 2.3, got %s", state.Version.ValueString())
 	}
 	if state.FlavorID.ValueString() != "mq.gp1.small" {
 		t.Errorf("expected FlavorID mq.gp1.small, got %s", state.FlavorID.ValueString())

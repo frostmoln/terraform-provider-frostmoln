@@ -67,7 +67,7 @@ func (r *postgresInstanceResource) Schema(_ context.Context, _ resource.SchemaRe
 				Description: "The name of the PostgreSQL instance.",
 				Required:    true,
 			},
-			"postgres_version": schema.StringAttribute{
+			"version": schema.StringAttribute{
 				Description: "The PostgreSQL version (e.g. \"15\", \"16\").",
 				Required:    true,
 				PlanModifiers: []planmodifier.String{

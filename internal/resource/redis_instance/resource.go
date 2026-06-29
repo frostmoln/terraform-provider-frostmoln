@@ -65,7 +65,7 @@ func (r *redisInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				Description: "The name of the Redis instance.",
 				Required:    true,
 			},
-			"engine_version": schema.StringAttribute{
+			"version": schema.StringAttribute{
 				Description: "The Redis version (e.g. \"7.2\", \"7.4\").",
 				Required:    true,
 				PlanModifiers: []planmodifier.String{

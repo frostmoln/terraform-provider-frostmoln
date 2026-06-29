@@ -65,7 +65,7 @@ func (r *valkeyInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 				Description: "The name of the Valkey instance.",
 				Required:    true,
 			},
-			"engine_version": schema.StringAttribute{
+			"version": schema.StringAttribute{
 				Description: "The Valkey version (e.g. \"8.0\").",
 				Required:    true,
 				PlanModifiers: []planmodifier.String{

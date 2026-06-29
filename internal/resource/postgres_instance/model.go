@@ -12,7 +12,7 @@ import (
 type PostgresInstanceModel struct {
 	ID                  types.String `tfsdk:"id"`
 	Name                types.String `tfsdk:"name"`
-	PostgresVersion     types.String `tfsdk:"postgres_version"`
+	Version             types.String `tfsdk:"version"`
 	Flavor              types.String `tfsdk:"flavor"`
 	StorageGB           types.Int64  `tfsdk:"storage_gb"`
 	VPCID               types.String `tfsdk:"vpc_id"`
@@ -86,7 +86,7 @@ type apiUpdatePostgresInstanceRequest struct {
 func (m *PostgresInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnostics) apiCreatePostgresInstanceRequest {
 	req := apiCreatePostgresInstanceRequest{
 		Name:            m.Name.ValueString(),
-		PostgresVersion: m.PostgresVersion.ValueString(),
+		PostgresVersion: m.Version.ValueString(),
 		Flavor:          m.Flavor.ValueString(),
 		StorageGB:       int(m.StorageGB.ValueInt64()),
 		VPCID:           m.VPCID.ValueString(),
@@ -155,7 +155,7 @@ func (m *PostgresInstanceModel) toUpdateRequest(state *PostgresInstanceModel) ap
 func (m *PostgresInstanceModel) fromAPI(_ context.Context, inst *apiPostgresInstance, _ *diag.Diagnostics) {
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
-	m.PostgresVersion = types.StringValue(inst.PostgresVersion)
+	m.Version = types.StringValue(inst.PostgresVersion)
 	m.Flavor = types.StringValue(inst.Flavor)
 	m.StorageGB = types.Int64Value(int64(inst.StorageGB))
 	m.VPCID = types.StringValue(inst.VPCID)

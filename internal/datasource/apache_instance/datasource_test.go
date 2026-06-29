@@ -38,8 +38,8 @@ func TestSchema(t *testing.T) {
 	ds.Schema(context.Background(), datasource.SchemaRequest{}, &resp)
 
 	expectedAttrs := []string{
-		"id", "name", "engine_version", "flavor", "storage_gb", "tls_enabled",
-		"php_enabled", "php_version", "engine_config", "status", "private_ip",
+		"id", "name", "version", "flavor", "storage_gb", "tls_enabled",
+		"php_enabled", "php_version", "config", "status", "private_ip",
 		"port", "created_at", "updated_at", "tenant_id",
 	}
 	for _, attr := range expectedAttrs {
@@ -110,21 +110,21 @@ func configVal(t *testing.T, id string) tftypes.Value {
 	schemaResp := getDSSchema(t)
 	tfType := schemaResp.Schema.Type().TerraformType(context.Background())
 	return tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":             tftypes.NewValue(tftypes.String, id),
-		"name":           tftypes.NewValue(tftypes.String, nil),
-		"engine_version": tftypes.NewValue(tftypes.String, nil),
-		"flavor":         tftypes.NewValue(tftypes.String, nil),
-		"storage_gb":     tftypes.NewValue(tftypes.Number, nil),
-		"tls_enabled":    tftypes.NewValue(tftypes.Bool, nil),
-		"php_enabled":    tftypes.NewValue(tftypes.Bool, nil),
-		"php_version":    tftypes.NewValue(tftypes.String, nil),
-		"engine_config":  tftypes.NewValue(tftypes.String, nil),
-		"status":         tftypes.NewValue(tftypes.String, nil),
-		"private_ip":     tftypes.NewValue(tftypes.String, nil),
-		"port":           tftypes.NewValue(tftypes.Number, nil),
-		"created_at":     tftypes.NewValue(tftypes.String, nil),
-		"updated_at":     tftypes.NewValue(tftypes.String, nil),
-		"tenant_id":      tftypes.NewValue(tftypes.String, nil),
+		"id":          tftypes.NewValue(tftypes.String, id),
+		"name":        tftypes.NewValue(tftypes.String, nil),
+		"version":     tftypes.NewValue(tftypes.String, nil),
+		"flavor":      tftypes.NewValue(tftypes.String, nil),
+		"storage_gb":  tftypes.NewValue(tftypes.Number, nil),
+		"tls_enabled": tftypes.NewValue(tftypes.Bool, nil),
+		"php_enabled": tftypes.NewValue(tftypes.Bool, nil),
+		"php_version": tftypes.NewValue(tftypes.String, nil),
+		"config":      tftypes.NewValue(tftypes.String, nil),
+		"status":      tftypes.NewValue(tftypes.String, nil),
+		"private_ip":  tftypes.NewValue(tftypes.String, nil),
+		"port":        tftypes.NewValue(tftypes.Number, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, nil),
+		"updated_at":  tftypes.NewValue(tftypes.String, nil),
+		"tenant_id":   tftypes.NewValue(tftypes.String, nil),
 	})
 }
 
@@ -186,8 +186,8 @@ func TestReadByID(t *testing.T) {
 	if state.Name.ValueString() != "my-apache" {
 		t.Errorf("expected Name my-apache, got %s", state.Name.ValueString())
 	}
-	if state.EngineVersion.ValueString() != "2.4" {
-		t.Errorf("expected EngineVersion 2.4, got %s", state.EngineVersion.ValueString())
+	if state.Version.ValueString() != "2.4" {
+		t.Errorf("expected Version 2.4, got %s", state.Version.ValueString())
 	}
 	if state.StorageGB.ValueInt64() != 20 {
 		t.Errorf("expected StorageGB 20, got %d", state.StorageGB.ValueInt64())
@@ -256,8 +256,8 @@ func TestReadByIDNullableFieldsEmpty(t *testing.T) {
 	if !state.PHPVersion.IsNull() {
 		t.Error("expected null php_version")
 	}
-	if !state.EngineConfig.IsNull() {
-		t.Error("expected null engine_config")
+	if !state.Config.IsNull() {
+		t.Error("expected null config")
 	}
 	if !state.PrivateIP.IsNull() {
 		t.Error("expected null private_ip")

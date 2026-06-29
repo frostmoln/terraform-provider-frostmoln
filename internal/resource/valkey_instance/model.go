@@ -12,7 +12,7 @@ import (
 type ValkeyInstanceModel struct {
 	ID              types.String `tfsdk:"id"`
 	Name            types.String `tfsdk:"name"`
-	EngineVersion   types.String `tfsdk:"engine_version"`
+	Version         types.String `tfsdk:"version"`
 	FlavorID        types.String `tfsdk:"flavor_id"`
 	VPCID           types.String `tfsdk:"vpc_id"`
 	SubnetID        types.String `tfsdk:"subnet_id"`
@@ -70,7 +70,7 @@ func (m *ValkeyInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnos
 	req := apiCreateValkeyInstanceRequest{
 		Name:          m.Name.ValueString(),
 		Engine:        "valkey",
-		EngineVersion: m.EngineVersion.ValueString(),
+		EngineVersion: m.Version.ValueString(),
 		FlavorID:      m.FlavorID.ValueString(),
 		VPCID:         m.VPCID.ValueString(),
 		SubnetID:      m.SubnetID.ValueString(),
@@ -114,7 +114,7 @@ func (m *ValkeyInstanceModel) toUpdateRequest(state *ValkeyInstanceModel) apiUpd
 func (m *ValkeyInstanceModel) fromAPI(_ context.Context, inst *apiValkeyInstance, _ *diag.Diagnostics) {
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
-	m.EngineVersion = types.StringValue(inst.EngineVersion)
+	m.Version = types.StringValue(inst.EngineVersion)
 	m.FlavorID = types.StringValue(inst.FlavorID)
 	m.VPCID = types.StringValue(inst.VPCID)
 	m.SubnetID = types.StringValue(inst.SubnetID)

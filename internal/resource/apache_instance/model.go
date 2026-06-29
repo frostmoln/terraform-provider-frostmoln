@@ -10,21 +10,21 @@ import (
 
 // ApacheInstanceModel is the Terraform state model for a managed Apache webserver instance.
 type ApacheInstanceModel struct {
-	ID            types.String `tfsdk:"id"`
-	Name          types.String `tfsdk:"name"`
-	EngineVersion types.String `tfsdk:"engine_version"`
-	Flavor        types.String `tfsdk:"flavor"`
-	StorageGB     types.Int64  `tfsdk:"storage_gb"`
-	TLSEnabled    types.Bool   `tfsdk:"tls_enabled"`
-	PHPEnabled    types.Bool   `tfsdk:"php_enabled"`
-	PHPVersion    types.String `tfsdk:"php_version"`
-	EngineConfig  types.String `tfsdk:"engine_config"`
-	Status        types.String `tfsdk:"status"`
-	PrivateIP     types.String `tfsdk:"private_ip"`
-	Port          types.Int64  `tfsdk:"port"`
-	CreatedAt     types.String `tfsdk:"created_at"`
-	UpdatedAt     types.String `tfsdk:"updated_at"`
-	TenantID      types.String `tfsdk:"tenant_id"`
+	ID         types.String `tfsdk:"id"`
+	Name       types.String `tfsdk:"name"`
+	Version    types.String `tfsdk:"version"`
+	Flavor     types.String `tfsdk:"flavor"`
+	StorageGB  types.Int64  `tfsdk:"storage_gb"`
+	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
+	PHPEnabled types.Bool   `tfsdk:"php_enabled"`
+	PHPVersion types.String `tfsdk:"php_version"`
+	Config     types.String `tfsdk:"config"`
+	Status     types.String `tfsdk:"status"`
+	PrivateIP  types.String `tfsdk:"private_ip"`
+	Port       types.Int64  `tfsdk:"port"`
+	CreatedAt  types.String `tfsdk:"created_at"`
+	UpdatedAt  types.String `tfsdk:"updated_at"`
+	TenantID   types.String `tfsdk:"tenant_id"`
 }
 
 // apiWebserverInstance is the API representation of a managed webserver instance.
@@ -76,7 +76,7 @@ func (m *ApacheInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnos
 	req := apiCreateWebserverInstanceRequest{
 		Name:          m.Name.ValueString(),
 		Engine:        "apache",
-		EngineVersion: m.EngineVersion.ValueString(),
+		EngineVersion: m.Version.ValueString(),
 		Flavor:        m.Flavor.ValueString(),
 		StorageGB:     int(m.StorageGB.ValueInt64()),
 	}
@@ -92,8 +92,8 @@ func (m *ApacheInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnos
 	if !m.PHPVersion.IsNull() && !m.PHPVersion.IsUnknown() {
 		req.PHPVersion = m.PHPVersion.ValueString()
 	}
-	if !m.EngineConfig.IsNull() && !m.EngineConfig.IsUnknown() {
-		req.EngineConfig = m.EngineConfig.ValueString()
+	if !m.Config.IsNull() && !m.Config.IsUnknown() {
+		req.EngineConfig = m.Config.ValueString()
 	}
 
 	return req
@@ -127,8 +127,8 @@ func (m *ApacheInstanceModel) toUpdateRequest(state *ApacheInstanceModel) apiUpd
 		v := m.PHPVersion.ValueString()
 		req.PHPVersion = &v
 	}
-	if !m.EngineConfig.Equal(state.EngineConfig) {
-		v := m.EngineConfig.ValueString()
+	if !m.Config.Equal(state.Config) {
+		v := m.Config.ValueString()
 		req.EngineConfig = &v
 	}
 
@@ -139,7 +139,7 @@ func (m *ApacheInstanceModel) toUpdateRequest(state *ApacheInstanceModel) apiUpd
 func (m *ApacheInstanceModel) fromAPI(_ context.Context, inst *apiWebserverInstance, _ *diag.Diagnostics) {
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
-	m.EngineVersion = types.StringValue(inst.EngineVersion)
+	m.Version = types.StringValue(inst.EngineVersion)
 	m.Flavor = types.StringValue(inst.Flavor)
 	m.StorageGB = types.Int64Value(int64(inst.StorageGB))
 	m.TLSEnabled = types.BoolValue(inst.TLSEnabled)
@@ -154,9 +154,9 @@ func (m *ApacheInstanceModel) fromAPI(_ context.Context, inst *apiWebserverInsta
 	}
 
 	if inst.EngineConfig != "" {
-		m.EngineConfig = types.StringValue(inst.EngineConfig)
+		m.Config = types.StringValue(inst.EngineConfig)
 	} else {
-		m.EngineConfig = types.StringNull()
+		m.Config = types.StringNull()
 	}
 
 	if inst.PrivateIP != "" {

@@ -67,7 +67,7 @@ func (r *mysqlInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				Description: "The name of the MySQL instance.",
 				Required:    true,
 			},
-			"mysql_version": schema.StringAttribute{
+			"version": schema.StringAttribute{
 				Description: "The MySQL version (e.g. \"8.0\", \"8.4\", \"9.2\").",
 				Required:    true,
 				PlanModifiers: []planmodifier.String{

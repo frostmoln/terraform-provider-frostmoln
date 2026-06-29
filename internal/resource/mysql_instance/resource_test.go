@@ -26,13 +26,13 @@ func TestMysqlInstanceModelToCreateRequest(t *testing.T) {
 	diags := diag.Diagnostics{}
 
 	model := MysqlInstanceModel{
-		Name:         types.StringValue("my-mysql"),
-		MysqlVersion: types.StringValue("8.4"),
-		Flavor:       types.StringValue("db.small"),
-		StorageGB:    types.Int64Value(50),
-		VPCID:        types.StringValue("vpc-123"),
-		SubnetID:     types.StringValue("subnet-456"),
-		HAEnabled:    types.BoolNull(),
+		Name:      types.StringValue("my-mysql"),
+		Version:   types.StringValue("8.4"),
+		Flavor:    types.StringValue("db.small"),
+		StorageGB: types.Int64Value(50),
+		VPCID:     types.StringValue("vpc-123"),
+		SubnetID:  types.StringValue("subnet-456"),
+		HAEnabled: types.BoolNull(),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
@@ -72,7 +72,7 @@ func TestMysqlInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 
 	model := MysqlInstanceModel{
 		Name:                types.StringValue("my-mysql"),
-		MysqlVersion:        types.StringValue("9.2"),
+		Version:             types.StringValue("9.2"),
 		Flavor:              types.StringValue("db.medium"),
 		StorageGB:           types.Int64Value(100),
 		VPCID:               types.StringValue("vpc-123"),
@@ -179,8 +179,8 @@ func TestMysqlInstanceModelFromAPI(t *testing.T) {
 	if model.ID.ValueString() != "db-123" {
 		t.Errorf("expected ID db-123, got %s", model.ID.ValueString())
 	}
-	if model.MysqlVersion.ValueString() != "8.4" {
-		t.Errorf("expected mysql_version 8.4, got %s", model.MysqlVersion.ValueString())
+	if model.Version.ValueString() != "8.4" {
+		t.Errorf("expected version 8.4, got %s", model.Version.ValueString())
 	}
 	if model.Port.ValueInt64() != 3306 {
 		t.Errorf("expected port 3306, got %d", model.Port.ValueInt64())
@@ -261,7 +261,7 @@ func TestSchema(t *testing.T) {
 	var resp resource.SchemaResponse
 	r.Schema(context.Background(), req, &resp)
 
-	requiredAttrs := []string{"name", "mysql_version", "flavor", "storage_gb", "vpc_id", "subnet_id"}
+	requiredAttrs := []string{"name", "version", "flavor", "storage_gb", "vpc_id", "subnet_id"}
 	for _, attr := range requiredAttrs {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %s in schema", attr)
@@ -406,12 +406,12 @@ func TestCreate(t *testing.T) {
 	}
 
 	plan := buildMysqlInstancePlan(t, MysqlInstanceModel{
-		Name:         types.StringValue("test-mysql"),
-		MysqlVersion: types.StringValue("8.4"),
-		Flavor:       types.StringValue("db.small"),
-		StorageGB:    types.Int64Value(50),
-		VPCID:        types.StringValue("vpc-1"),
-		SubnetID:     types.StringValue("sn-1"),
+		Name:      types.StringValue("test-mysql"),
+		Version:   types.StringValue("8.4"),
+		Flavor:    types.StringValue("db.small"),
+		StorageGB: types.Int64Value(50),
+		VPCID:     types.StringValue("vpc-1"),
+		SubnetID:  types.StringValue("sn-1"),
 	})
 
 	createResp := resource.CreateResponse{State: emptyMysqlInstanceState(t)}
@@ -463,15 +463,15 @@ func TestRead(t *testing.T) {
 	r := &mysqlInstanceResource{client: c}
 
 	state := buildMysqlInstanceState(t, MysqlInstanceModel{
-		ID:           types.StringValue("db-123"),
-		Name:         types.StringValue("my-mysql"),
-		MysqlVersion: types.StringValue("8.0"),
-		Flavor:       types.StringValue("db.small"),
-		StorageGB:    types.Int64Value(50),
-		VPCID:        types.StringValue("vpc-1"),
-		SubnetID:     types.StringValue("sn-1"),
-		Status:       types.StringValue("running"),
-		CreatedAt:    types.StringValue("2025-01-01T00:00:00Z"),
+		ID:        types.StringValue("db-123"),
+		Name:      types.StringValue("my-mysql"),
+		Version:   types.StringValue("8.0"),
+		Flavor:    types.StringValue("db.small"),
+		StorageGB: types.Int64Value(50),
+		VPCID:     types.StringValue("vpc-1"),
+		SubnetID:  types.StringValue("sn-1"),
+		Status:    types.StringValue("running"),
+		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
 	})
 
 	readResp := resource.ReadResponse{State: state}
@@ -503,15 +503,15 @@ func TestReadNotFound(t *testing.T) {
 	r := &mysqlInstanceResource{client: c}
 
 	state := buildMysqlInstanceState(t, MysqlInstanceModel{
-		ID:           types.StringValue("db-gone"),
-		Name:         types.StringValue("gone"),
-		MysqlVersion: types.StringValue("8.0"),
-		Flavor:       types.StringValue("db.small"),
-		StorageGB:    types.Int64Value(50),
-		VPCID:        types.StringValue("vpc-1"),
-		SubnetID:     types.StringValue("sn-1"),
-		Status:       types.StringValue("running"),
-		CreatedAt:    types.StringValue("2025-01-01T00:00:00Z"),
+		ID:        types.StringValue("db-gone"),
+		Name:      types.StringValue("gone"),
+		Version:   types.StringValue("8.0"),
+		Flavor:    types.StringValue("db.small"),
+		StorageGB: types.Int64Value(50),
+		VPCID:     types.StringValue("vpc-1"),
+		SubnetID:  types.StringValue("sn-1"),
+		Status:    types.StringValue("running"),
+		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
 	})
 
 	readResp := resource.ReadResponse{State: state}
@@ -567,15 +567,15 @@ func TestDelete(t *testing.T) {
 	}
 
 	state := buildMysqlInstanceState(t, MysqlInstanceModel{
-		ID:           types.StringValue("db-123"),
-		Name:         types.StringValue("my-mysql"),
-		MysqlVersion: types.StringValue("8.0"),
-		Flavor:       types.StringValue("db.small"),
-		StorageGB:    types.Int64Value(50),
-		VPCID:        types.StringValue("vpc-1"),
-		SubnetID:     types.StringValue("sn-1"),
-		Status:       types.StringValue("running"),
-		CreatedAt:    types.StringValue("2025-01-01T00:00:00Z"),
+		ID:        types.StringValue("db-123"),
+		Name:      types.StringValue("my-mysql"),
+		Version:   types.StringValue("8.0"),
+		Flavor:    types.StringValue("db.small"),
+		StorageGB: types.Int64Value(50),
+		VPCID:     types.StringValue("vpc-1"),
+		SubnetID:  types.StringValue("sn-1"),
+		Status:    types.StringValue("running"),
+		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
 	})
 
 	deleteResp := resource.DeleteResponse{State: state}
@@ -625,27 +625,27 @@ func TestUpdate(t *testing.T) {
 	}
 
 	state := buildMysqlInstanceState(t, MysqlInstanceModel{
-		ID:           types.StringValue("db-123"),
-		Name:         types.StringValue("old-mysql"),
-		MysqlVersion: types.StringValue("8.4"),
-		Flavor:       types.StringValue("db.small"),
-		StorageGB:    types.Int64Value(100),
-		VPCID:        types.StringValue("vpc-1"),
-		SubnetID:     types.StringValue("sn-1"),
-		Status:       types.StringValue("running"),
-		CreatedAt:    types.StringValue("2025-01-01T00:00:00Z"),
+		ID:        types.StringValue("db-123"),
+		Name:      types.StringValue("old-mysql"),
+		Version:   types.StringValue("8.4"),
+		Flavor:    types.StringValue("db.small"),
+		StorageGB: types.Int64Value(100),
+		VPCID:     types.StringValue("vpc-1"),
+		SubnetID:  types.StringValue("sn-1"),
+		Status:    types.StringValue("running"),
+		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
 	})
 
 	plan := buildMysqlInstancePlan(t, MysqlInstanceModel{
-		ID:           types.StringValue("db-123"),
-		Name:         types.StringValue("updated-mysql"),
-		MysqlVersion: types.StringValue("8.4"),
-		Flavor:       types.StringValue("db.large"),
-		StorageGB:    types.Int64Value(200),
-		VPCID:        types.StringValue("vpc-1"),
-		SubnetID:     types.StringValue("sn-1"),
-		Status:       types.StringValue("running"),
-		CreatedAt:    types.StringValue("2025-01-01T00:00:00Z"),
+		ID:        types.StringValue("db-123"),
+		Name:      types.StringValue("updated-mysql"),
+		Version:   types.StringValue("8.4"),
+		Flavor:    types.StringValue("db.large"),
+		StorageGB: types.Int64Value(200),
+		VPCID:     types.StringValue("vpc-1"),
+		SubnetID:  types.StringValue("sn-1"),
+		Status:    types.StringValue("running"),
+		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
 	})
 
 	updateResp := resource.UpdateResponse{State: state}

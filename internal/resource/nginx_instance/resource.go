@@ -65,7 +65,7 @@ func (r *nginxInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				Description: "The name of the Nginx instance.",
 				Required:    true,
 			},
-			"engine_version": schema.StringAttribute{
+			"version": schema.StringAttribute{
 				Description: "The Nginx version (e.g. \"1.24\", \"1.26\").",
 				Required:    true,
 				PlanModifiers: []planmodifier.String{
@@ -108,7 +108,7 @@ func (r *nginxInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				Description: "The proxy_pass upstream URL (e.g. \"http://backend:8080\").",
 				Optional:    true,
 			},
-			"engine_config": schema.StringAttribute{
+			"config": schema.StringAttribute{
 				Description: "Custom engine configuration as a JSON string.",
 				Optional:    true,
 			},

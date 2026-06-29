@@ -14,12 +14,12 @@ Manages a managed messaging (LavinMQ) instance in the Frostmoln platform.
 
 ```terraform
 resource "frostmoln_messaging_instance" "broker" {
-  name           = "my-broker"
-  engine         = "lavinmq"
-  engine_version = "2.3"
-  flavor_id      = "mq.gp1.small"
-  vpc_id         = frostmoln_vpc.main.id
-  subnet_id      = frostmoln_subnet.private.id
+  name      = "my-broker"
+  engine    = "lavinmq"
+  version   = "2.3"
+  flavor_id = "mq.gp1.small"
+  vpc_id    = frostmoln_vpc.main.id
+  subnet_id = frostmoln_subnet.private.id
 
   persistence_mode = "persistent"
 }
@@ -38,7 +38,7 @@ resource "frostmoln_messaging_instance" "broker" {
 ### Optional
 
 - `engine` (String) The messaging engine type. Only "lavinmq" is currently supported. Defaults to "lavinmq".
-- `engine_version` (String) The engine version (e.g. "2.3"). Defaults to the recommended version when omitted.
+- `version` (String) The engine version (e.g. "2.3"). Defaults to the recommended version when omitted.
 - `persistence_mode` (String) The persistence mode for the messaging instance ("none" or "persistent"). Defaults to "persistent".
 
 ### Read-Only

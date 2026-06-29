@@ -26,21 +26,21 @@ type apacheInstanceDataSource struct {
 
 // apacheInstanceModel is the Terraform state model for an Apache instance data source.
 type apacheInstanceModel struct {
-	ID            types.String `tfsdk:"id"`
-	Name          types.String `tfsdk:"name"`
-	EngineVersion types.String `tfsdk:"engine_version"`
-	Flavor        types.String `tfsdk:"flavor"`
-	StorageGB     types.Int64  `tfsdk:"storage_gb"`
-	TLSEnabled    types.Bool   `tfsdk:"tls_enabled"`
-	PHPEnabled    types.Bool   `tfsdk:"php_enabled"`
-	PHPVersion    types.String `tfsdk:"php_version"`
-	EngineConfig  types.String `tfsdk:"engine_config"`
-	Status        types.String `tfsdk:"status"`
-	PrivateIP     types.String `tfsdk:"private_ip"`
-	Port          types.Int64  `tfsdk:"port"`
-	CreatedAt     types.String `tfsdk:"created_at"`
-	UpdatedAt     types.String `tfsdk:"updated_at"`
-	TenantID      types.String `tfsdk:"tenant_id"`
+	ID         types.String `tfsdk:"id"`
+	Name       types.String `tfsdk:"name"`
+	Version    types.String `tfsdk:"version"`
+	Flavor     types.String `tfsdk:"flavor"`
+	StorageGB  types.Int64  `tfsdk:"storage_gb"`
+	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
+	PHPEnabled types.Bool   `tfsdk:"php_enabled"`
+	PHPVersion types.String `tfsdk:"php_version"`
+	Config     types.String `tfsdk:"config"`
+	Status     types.String `tfsdk:"status"`
+	PrivateIP  types.String `tfsdk:"private_ip"`
+	Port       types.Int64  `tfsdk:"port"`
+	CreatedAt  types.String `tfsdk:"created_at"`
+	UpdatedAt  types.String `tfsdk:"updated_at"`
+	TenantID   types.String `tfsdk:"tenant_id"`
 }
 
 // apiWebserverInstance is the API representation of a managed webserver instance.
@@ -79,7 +79,7 @@ func (d *apacheInstanceDataSource) Schema(_ context.Context, _ datasource.Schema
 				Description: "The name of the Apache instance.",
 				Computed:    true,
 			},
-			"engine_version": schema.StringAttribute{
+			"version": schema.StringAttribute{
 				Description: "The Apache version.",
 				Computed:    true,
 			},
@@ -103,7 +103,7 @@ func (d *apacheInstanceDataSource) Schema(_ context.Context, _ datasource.Schema
 				Description: "The PHP version.",
 				Computed:    true,
 			},
-			"engine_config": schema.StringAttribute{
+			"config": schema.StringAttribute{
 				Description: "Custom engine configuration.",
 				Computed:    true,
 			},
@@ -171,7 +171,7 @@ func (d *apacheInstanceDataSource) Read(ctx context.Context, req datasource.Read
 
 	state.ID = types.StringValue(inst.ID)
 	state.Name = types.StringValue(inst.Name)
-	state.EngineVersion = types.StringValue(inst.EngineVersion)
+	state.Version = types.StringValue(inst.EngineVersion)
 	state.Flavor = types.StringValue(inst.Flavor)
 	state.StorageGB = types.Int64Value(int64(inst.StorageGB))
 	state.TLSEnabled = types.BoolValue(inst.TLSEnabled)
@@ -186,9 +186,9 @@ func (d *apacheInstanceDataSource) Read(ctx context.Context, req datasource.Read
 	}
 
 	if inst.EngineConfig != "" {
-		state.EngineConfig = types.StringValue(inst.EngineConfig)
+		state.Config = types.StringValue(inst.EngineConfig)
 	} else {
-		state.EngineConfig = types.StringNull()
+		state.Config = types.StringNull()
 	}
 
 	if inst.PrivateIP != "" {

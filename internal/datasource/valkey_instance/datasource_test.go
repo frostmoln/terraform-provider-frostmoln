@@ -38,7 +38,7 @@ func TestSchema(t *testing.T) {
 	ds.Schema(context.Background(), datasource.SchemaRequest{}, &resp)
 
 	expectedAttrs := []string{
-		"id", "name", "engine_version", "flavor_id", "vpc_id", "subnet_id",
+		"id", "name", "version", "flavor_id", "vpc_id", "subnet_id",
 		"persistence_mode", "eviction_policy", "status", "private_ip", "port",
 		"admin_username", "created_at", "updated_at",
 	}
@@ -112,7 +112,7 @@ func configVal(t *testing.T, id string) tftypes.Value {
 	return tftypes.NewValue(tfType, map[string]tftypes.Value{
 		"id":               tftypes.NewValue(tftypes.String, id),
 		"name":             tftypes.NewValue(tftypes.String, nil),
-		"engine_version":   tftypes.NewValue(tftypes.String, nil),
+		"version":          tftypes.NewValue(tftypes.String, nil),
 		"flavor_id":        tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":           tftypes.NewValue(tftypes.String, nil),
 		"subnet_id":        tftypes.NewValue(tftypes.String, nil),
@@ -184,8 +184,8 @@ func TestReadByID(t *testing.T) {
 	if state.Name.ValueString() != "my-valkey" {
 		t.Errorf("expected Name my-valkey, got %s", state.Name.ValueString())
 	}
-	if state.EngineVersion.ValueString() != "8.0" {
-		t.Errorf("expected EngineVersion 8.0, got %s", state.EngineVersion.ValueString())
+	if state.Version.ValueString() != "8.0" {
+		t.Errorf("expected Version 8.0, got %s", state.Version.ValueString())
 	}
 	if state.FlavorID.ValueString() != "cache.small" {
 		t.Errorf("expected FlavorID cache.small, got %s", state.FlavorID.ValueString())

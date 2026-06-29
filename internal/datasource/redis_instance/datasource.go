@@ -28,7 +28,7 @@ type redisInstanceDataSource struct {
 type redisInstanceModel struct {
 	ID              types.String `tfsdk:"id"`
 	Name            types.String `tfsdk:"name"`
-	EngineVersion   types.String `tfsdk:"engine_version"`
+	Version         types.String `tfsdk:"version"`
 	FlavorID        types.String `tfsdk:"flavor_id"`
 	VPCID           types.String `tfsdk:"vpc_id"`
 	SubnetID        types.String `tfsdk:"subnet_id"`
@@ -76,7 +76,7 @@ func (d *redisInstanceDataSource) Schema(_ context.Context, _ datasource.SchemaR
 				Description: "The name of the Redis instance.",
 				Computed:    true,
 			},
-			"engine_version": schema.StringAttribute{
+			"version": schema.StringAttribute{
 				Description: "The Redis version.",
 				Computed:    true,
 			},
@@ -164,7 +164,7 @@ func (d *redisInstanceDataSource) Read(ctx context.Context, req datasource.ReadR
 
 	state.ID = types.StringValue(inst.ID)
 	state.Name = types.StringValue(inst.Name)
-	state.EngineVersion = types.StringValue(inst.EngineVersion)
+	state.Version = types.StringValue(inst.EngineVersion)
 	state.FlavorID = types.StringValue(inst.FlavorID)
 	state.VPCID = types.StringValue(inst.VPCID)
 	state.SubnetID = types.StringValue(inst.SubnetID)

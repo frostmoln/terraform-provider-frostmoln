@@ -19,7 +19,7 @@ Manages a managed PostgreSQL database instance in the Frostmoln platform.
 
 - `flavor` (String) The flavor/size for the database instance (e.g. "db.gp1.small", "db.gp1.medium").
 - `name` (String) The name of the PostgreSQL instance.
-- `postgres_version` (String) The PostgreSQL version (e.g. "15", "16").
+- `version` (String) The PostgreSQL version (e.g. "15", "16").
 - `storage_gb` (Number) The storage size in gigabytes.
 - `subnet_id` (String) The subnet ID where the database instance will be deployed.
 - `vpc_id` (String) The VPC ID where the database instance will be deployed.

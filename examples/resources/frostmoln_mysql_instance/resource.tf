@@ -1,10 +1,10 @@
 resource "frostmoln_mysql_instance" "main" {
-  name          = "my-mysql-db"
-  mysql_version = "8.4"
-  flavor        = "db.small"
-  storage_gb    = 50
-  vpc_id        = frostmoln_vpc.main.id
-  subnet_id     = frostmoln_subnet.db.id
+  name       = "my-mysql-db"
+  version    = "8.4"
+  flavor     = "db.small"
+  storage_gb = 50
+  vpc_id     = frostmoln_vpc.main.id
+  subnet_id  = frostmoln_subnet.db.id
 
   ha_enabled            = true
   backup_enabled        = true

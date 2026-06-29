@@ -28,7 +28,7 @@ type nginxInstanceDataSource struct {
 type nginxInstanceModel struct {
 	ID              types.String `tfsdk:"id"`
 	Name            types.String `tfsdk:"name"`
-	EngineVersion   types.String `tfsdk:"engine_version"`
+	Version         types.String `tfsdk:"version"`
 	Flavor          types.String `tfsdk:"flavor"`
 	StorageGB       types.Int64  `tfsdk:"storage_gb"`
 	TLSEnabled      types.Bool   `tfsdk:"tls_enabled"`
@@ -36,7 +36,7 @@ type nginxInstanceModel struct {
 	GzipEnabled     types.Bool   `tfsdk:"gzip_enabled"`
 	TryFiles        types.String `tfsdk:"try_files"`
 	ProxyPass       types.String `tfsdk:"proxy_pass"`
-	EngineConfig    types.String `tfsdk:"engine_config"`
+	Config          types.String `tfsdk:"config"`
 	Status          types.String `tfsdk:"status"`
 	PrivateIP       types.String `tfsdk:"private_ip"`
 	Port            types.Int64  `tfsdk:"port"`
@@ -83,7 +83,7 @@ func (d *nginxInstanceDataSource) Schema(_ context.Context, _ datasource.SchemaR
 				Description: "The name of the Nginx instance.",
 				Computed:    true,
 			},
-			"engine_version": schema.StringAttribute{
+			"version": schema.StringAttribute{
 				Description: "The Nginx version.",
 				Computed:    true,
 			},
@@ -115,7 +115,7 @@ func (d *nginxInstanceDataSource) Schema(_ context.Context, _ datasource.SchemaR
 				Description: "The proxy_pass upstream URL.",
 				Computed:    true,
 			},
-			"engine_config": schema.StringAttribute{
+			"config": schema.StringAttribute{
 				Description: "Custom engine configuration.",
 				Computed:    true,
 			},
@@ -183,7 +183,7 @@ func (d *nginxInstanceDataSource) Read(ctx context.Context, req datasource.ReadR
 
 	state.ID = types.StringValue(inst.ID)
 	state.Name = types.StringValue(inst.Name)
-	state.EngineVersion = types.StringValue(inst.EngineVersion)
+	state.Version = types.StringValue(inst.EngineVersion)
 	state.Flavor = types.StringValue(inst.Flavor)
 	state.StorageGB = types.Int64Value(int64(inst.StorageGB))
 	state.TLSEnabled = types.BoolValue(inst.TLSEnabled)
@@ -210,9 +210,9 @@ func (d *nginxInstanceDataSource) Read(ctx context.Context, req datasource.ReadR
 	}
 
 	if inst.EngineConfig != "" {
-		state.EngineConfig = types.StringValue(inst.EngineConfig)
+		state.Config = types.StringValue(inst.EngineConfig)
 	} else {
-		state.EngineConfig = types.StringNull()
+		state.Config = types.StringNull()
 	}
 
 	if inst.PrivateIP != "" {

@@ -37,7 +37,7 @@ output "redis_port" {
 
 - `admin_username` (String) The admin username for the Redis instance.
 - `created_at` (String) The timestamp when the instance was created.
-- `engine_version` (String) The Redis version.
+- `version` (String) The Redis version.
 - `eviction_policy` (String) The eviction policy of the Redis instance.
 - `flavor_id` (String) The flavor/size of the Redis instance.
 - `name` (String) The name of the Redis instance.
