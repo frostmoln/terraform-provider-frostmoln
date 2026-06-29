@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-06-29
+
+### 🚀 Features
+
+- *(database)* Backup_retention_days [35,90] validator + docs (ADR-0085) (#89)
+- Drop generic cache resource, normalize version/config attrs (#91)
+- Authenticate from an fm CLI session (api_key + OIDC bearer w/ refresh) (#93)
+- Shared oidc module + X-FM-Provider-Version gate (#95)
+- *(provider)* Provider-level tenant_id to select the operating tenant (#97)
+- Adopt oidc v0.3.0 — re-login on dead refresh token + identifying User-Agent (#99)
+
+### 🐛 Bug Fixes
+
+- *(network)* Align VPC/subnet wire tags to contract, drop vestigial region (#101)
+- *(network)* Remove unbacked subnet is_public attribute (#103)
+- Harden provider OIDC refresh against Zitadel reuse-detection (#105)
+
 ## [0.2.0] - 2026-06-28
 
 ### 🚀 Features
