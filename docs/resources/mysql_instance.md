@@ -24,7 +24,7 @@ resource "frostmoln_mysql_instance" "main" {
   ha_enabled            = true
   backup_enabled        = true
   backup_schedule       = "0 2 * * *"
-  backup_retention_days = 7
+  backup_retention_days = 35
 }
 
 output "mysql_endpoint" {
@@ -47,7 +47,7 @@ output "mysql_endpoint" {
 ### Optional
 
 - `backup_enabled` (Boolean) Whether automated backups are enabled.
-- `backup_retention_days` (Number) Number of days to retain backups.
+- `backup_retention_days` (Number) Number of days to retain backups. Minimum 35 (backups are immutably object-locked for 35 days, ADR-0085); maximum 90.
 - `backup_schedule` (String) Cron expression for the backup schedule (e.g. "0 2 * * *").
 - `ha_enabled` (Boolean) Whether high availability is enabled with a standby replica.
 - `parameter_group_id` (String) The ID of the parameter group to apply to the instance.

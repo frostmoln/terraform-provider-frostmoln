@@ -9,7 +9,7 @@ resource "frostmoln_mysql_instance" "main" {
   ha_enabled            = true
   backup_enabled        = true
   backup_schedule       = "0 2 * * *"
-  backup_retention_days = 7
+  backup_retention_days = 35
 }
 
 output "mysql_endpoint" {

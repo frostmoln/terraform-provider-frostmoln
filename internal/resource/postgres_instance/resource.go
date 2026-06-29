@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -12,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
@@ -116,8 +118,11 @@ func (r *postgresInstanceResource) Schema(_ context.Context, _ resource.SchemaRe
 				Optional:    true,
 			},
 			"backup_retention_days": schema.Int64Attribute{
-				Description: "Number of days to retain backups.",
+				Description: "Number of days to retain backups. Minimum 35 (backups are immutably object-locked for 35 days, ADR-0085); maximum 90.",
 				Optional:    true,
+				Validators: []validator.Int64{
+					int64validator.Between(35, 90),
+				},
 			},
 			"parameter_group_id": schema.StringAttribute{
 				Description: "The ID of the parameter group to apply to the instance.",
