@@ -30,7 +30,11 @@ type Client struct {
 	// version. Empty sends no header (the gateway's gate fails open).
 	version  string
 	tenantID string
-	userID   string
+	// tenantOverridden marks tenantID as explicitly set via WithTenantID (the
+	// provider-level tenant_id selector). When set, Configure keeps it instead
+	// of adopting the default tenant from GET /v1/me.
+	tenantOverridden bool
+	userID           string
 }
 
 // ProviderVersionHeader carries the Frostmoln Terraform provider build version
@@ -103,6 +107,20 @@ func WithClientVersion(version string) Option {
 	}
 }
 
+// WithTenantID pre-sets the operating tenant, overriding the default tenant
+// resolved from GET /v1/me. The provider's tenant_id attribute (or
+// FROSTMOLN_TENANT_ID) uses this to target any tenant the credential is
+// entitled to. Entitlement is enforced by the gateway (TENANT_ACCESS_DENIED),
+// not here. An empty id is a no-op (keep the /v1/me default).
+func WithTenantID(tenantID string) Option {
+	return func(c *Client) {
+		if tenantID != "" {
+			c.tenantID = tenantID
+			c.tenantOverridden = true
+		}
+	}
+}
+
 // UserProfile represents the response from GET /v1/me.
 type UserProfile struct {
 	ID       string `json:"id"`
@@ -111,8 +129,9 @@ type UserProfile struct {
 	Name     string `json:"name"`
 }
 
-// Configure resolves the tenant ID and user ID by calling GET /v1/me.
-// This must be called once during provider configuration.
+// Configure resolves the user ID (and, unless a tenant was pre-set via
+// WithTenantID, the default tenant ID) by calling GET /v1/me. This must be
+// called once during provider configuration.
 func (c *Client) Configure(ctx context.Context) error {
 	resp, err := c.Get(ctx, "/v1/me", nil)
 	if err != nil {
@@ -124,12 +143,28 @@ func (c *Client) Configure(ctx context.Context) error {
 		return fmt.Errorf("failed to parse user profile: %w", err)
 	}
 
-	if profile.TenantID == "" {
-		return fmt.Errorf("no tenant ID found for current user")
+	c.userID = profile.ID
+
+	// Keep an explicit tenant_id override; otherwise adopt the caller's default
+	// tenant. The override may target a tenant other than the /v1/me default, so
+	// don't require profile.TenantID in that case.
+	if !c.tenantOverridden {
+		if profile.TenantID == "" {
+			return fmt.Errorf("no tenant ID found for current user")
+		}
+		c.tenantID = profile.TenantID
+		return nil
 	}
 
-	c.tenantID = profile.TenantID
-	c.userID = profile.ID
+	// An API key is bound to a single tenant: the gateway rejects any other
+	// tenant in the request path with TENANT_ACCESS_DENIED (api-gateway
+	// middleware/tenant.go). Catch that here — at configure time with a clear,
+	// actionable message — instead of letting every resource operation fail 403
+	// mid-apply. The OIDC / fm CLI session path (c.bearer != nil) can legitimately
+	// target any tenant the user belongs to, so that is left to the gateway.
+	if c.bearer == nil && profile.TenantID != "" && c.tenantID != profile.TenantID {
+		return fmt.Errorf("tenant_id %q does not match this API key's tenant %q: an API key is bound to a single tenant. Omit tenant_id (or set it to the key's tenant), or authenticate with an fm CLI / OIDC session to manage multiple tenants", c.tenantID, profile.TenantID)
+	}
 	return nil
 }
 
@@ -153,9 +188,11 @@ func (c *Client) SetUserIDForTest(userID string) {
 	c.userID = userID
 }
 
-// TenantPath builds a tenant-scoped API path.
+// TenantPath builds a tenant-scoped API path. The tenant id is percent-escaped
+// so a malformed tenant_id override stays a single, literal path segment the
+// gateway rejects cleanly, rather than restructuring the URL via path cleaning.
 func (c *Client) TenantPath(subpath string) string {
-	return fmt.Sprintf("/v1/tenants/%s%s", c.tenantID, subpath)
+	return fmt.Sprintf("/v1/tenants/%s%s", url.PathEscape(c.tenantID), subpath)
 }
 
 // UserPath builds a user-scoped API path.

@@ -83,6 +83,7 @@ type FrostmolnProvider struct {
 type FrostmolnProviderModel struct {
 	APIEndpoint   types.String `tfsdk:"api_endpoint"`
 	APIKey        types.String `tfsdk:"api_key"`
+	TenantID      types.String `tfsdk:"tenant_id"`
 	UseCLIConfig  types.Bool   `tfsdk:"use_cli_config"`
 	CLIConfigPath types.String `tfsdk:"cli_config_path"`
 	CLIContext    types.String `tfsdk:"cli_context"`
@@ -115,6 +116,13 @@ func (p *FrostmolnProvider) Schema(_ context.Context, _ provider.SchemaRequest, 
 					"When unset, the provider falls back to an existing fm CLI session (see use_cli_config).",
 				Optional:  true,
 				Sensitive: true,
+			},
+			"tenant_id": schema.StringAttribute{
+				Description: "The tenant to manage resources in. Defaults to your account's default tenant. " +
+					"Targeting another tenant requires an fm CLI / OIDC session whose user belongs to multiple tenants; " +
+					"an API key is bound to a single tenant. One tenant per provider instance — use a second provider with " +
+					"an alias to span tenants. Can also be set via the FROSTMOLN_TENANT_ID environment variable.",
+				Optional: true,
 			},
 			"use_cli_config": schema.BoolAttribute{
 				Description: "When no api_key is configured, fall back to the credentials in the fm CLI config " +
@@ -159,6 +167,9 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 	// Stamp the provider build version so the gateway can enforce a minimum
 	// supported version (X-FM-Provider-Version, ADR-0088).
 	ver := client.WithClientVersion(p.version)
+	// Select the operating tenant (tenant_id attr > FROSTMOLN_TENANT_ID > the
+	// /v1/me default). A no-op when empty; the gateway authorizes the selection.
+	tenantOpt := client.WithTenantID(resolveTenantID(config))
 
 	useCLI, err := resolveUseCLIConfig(config)
 	if err != nil {
@@ -180,7 +191,7 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 
 	switch {
 	case apiKey != "":
-		c = client.NewClient(apiEndpoint, apiKey, ua, ver)
+		c = client.NewClient(apiEndpoint, apiKey, ua, ver, tenantOpt)
 
 	case useCLI:
 		resolved, rerr := clicreds.Resolve(clicreds.Options{
@@ -202,7 +213,7 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 			endpoint := chooseCLIEndpoint(endpointExplicit, apiEndpoint, resolved.APIEndpoint)
 			switch {
 			case resolved.APIKey != "":
-				c = client.NewClient(endpoint, resolved.APIKey, ua, ver)
+				c = client.NewClient(endpoint, resolved.APIKey, ua, ver, tenantOpt)
 			case resolved.AccessToken != "":
 				// The OIDC bearer token (and the refresh token it is exchanged
 				// with) must only travel over https; refuse an insecure endpoint.
@@ -213,7 +224,7 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 					)
 					return
 				}
-				c = client.NewClient(endpoint, "", ua, ver, client.WithTokenSource(client.TokenSourceConfig{
+				c = client.NewClient(endpoint, "", ua, ver, tenantOpt, client.WithTokenSource(client.TokenSourceConfig{
 					AccessToken:  resolved.AccessToken,
 					RefreshToken: resolved.RefreshToken,
 					ExpiresAt:    resolved.ExpiresAt,
@@ -279,6 +290,15 @@ func resolveUseCLIConfig(config FrostmolnProviderModel) (bool, error) {
 		return b, nil
 	}
 	return true, nil
+}
+
+// resolveTenantID picks the operating tenant: the tenant_id attribute wins,
+// else FROSTMOLN_TENANT_ID, else "" (the client adopts the /v1/me default).
+func resolveTenantID(config FrostmolnProviderModel) string {
+	if v := stringValue(config.TenantID); v != "" {
+		return v
+	}
+	return os.Getenv("FROSTMOLN_TENANT_ID")
 }
 
 // chooseCLIEndpoint picks the API endpoint for a CLI-sourced credential: an

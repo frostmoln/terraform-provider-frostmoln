@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 )
@@ -42,7 +43,7 @@ func TestProviderSchema(t *testing.T) {
 	for _, attr := range resp.Provider.Block.Attributes {
 		attrs[attr.Name] = true
 	}
-	for _, expected := range []string{"api_endpoint", "api_key", "use_cli_config", "cli_config_path", "cli_context"} {
+	for _, expected := range []string{"api_endpoint", "api_key", "tenant_id", "use_cli_config", "cli_config_path", "cli_context"} {
 		if !attrs[expected] {
 			t.Errorf("expected provider schema to have attribute %q", expected)
 		}
@@ -97,6 +98,7 @@ func providerConfigType() tftypes.Object {
 		AttributeTypes: map[string]tftypes.Type{
 			"api_endpoint":    tftypes.String,
 			"api_key":         tftypes.String,
+			"tenant_id":       tftypes.String,
 			"use_cli_config":  tftypes.Bool,
 			"cli_config_path": tftypes.String,
 			"cli_context":     tftypes.String,
@@ -116,6 +118,7 @@ func newProviderDynamicValue(t *testing.T, endpoint, apiKey string) *tfprotov6.D
 type providerConfigValues struct {
 	endpoint      *string
 	apiKey        *string
+	tenantID      *string
 	useCLIConfig  *bool
 	cliConfigPath *string
 	cliContext    *string
@@ -139,6 +142,7 @@ func newProviderConfig(t *testing.T, v providerConfigValues) *tfprotov6.DynamicV
 	val := tftypes.NewValue(typ, map[string]tftypes.Value{
 		"api_endpoint":    strVal(v.endpoint),
 		"api_key":         strVal(v.apiKey),
+		"tenant_id":       strVal(v.tenantID),
 		"use_cli_config":  boolVal(v.useCLIConfig),
 		"cli_config_path": strVal(v.cliConfigPath),
 		"cli_context":     strVal(v.cliContext),
@@ -362,7 +366,7 @@ func clearCredentialEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
 		"FROSTMOLN_API_KEY", "FROSTMOLN_API_ENDPOINT", "FROSTMOLN_USE_CLI_CONFIG",
-		"FM_CONFIG", "FROSTMOLN_CLI_CONFIG",
+		"FM_CONFIG", "FROSTMOLN_CLI_CONFIG", "FROSTMOLN_TENANT_ID",
 	} {
 		t.Setenv(k, "")
 	}
@@ -495,6 +499,93 @@ func TestResolveUseCLIConfigEnvParse(t *testing.T) {
 	if _, err := resolveUseCLIConfig(FrostmolnProviderModel{}); err == nil {
 		t.Error("expected an error for an unparseable FROSTMOLN_USE_CLI_CONFIG (must not fail open)")
 	}
+}
+
+func TestResolveTenantID(t *testing.T) {
+	clearCredentialEnv(t)
+
+	// Attribute wins over the env var.
+	t.Setenv("FROSTMOLN_TENANT_ID", "t-env")
+	if got := resolveTenantID(FrostmolnProviderModel{TenantID: types.StringValue("t-attr")}); got != "t-attr" {
+		t.Errorf("attr should win, got %q", got)
+	}
+	// Env var used when the attribute is null.
+	if got := resolveTenantID(FrostmolnProviderModel{}); got != "t-env" {
+		t.Errorf("env should be used, got %q", got)
+	}
+	// Neither set -> empty (client adopts the /v1/me default tenant).
+	t.Setenv("FROSTMOLN_TENANT_ID", "")
+	if got := resolveTenantID(FrostmolnProviderModel{}); got != "" {
+		t.Errorf("expected empty, got %q", got)
+	}
+}
+
+// meServer returns an httptest server whose /v1/me reports the given default
+// tenant for a valid X-API-Key, recording the last tenant-scoped path it saw.
+func meServer(t *testing.T, defaultTenant string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/me" || r.Header.Get("X-API-Key") != "k" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "u1", "tenantId": defaultTenant})
+	}))
+}
+
+func TestConfigureAPIKeyTenantIDMatches(t *testing.T) {
+	// tenant_id equal to the API key's own tenant is accepted.
+	clearCredentialEnv(t)
+	server := meServer(t, "default-tenant")
+	defer server.Close()
+
+	endpoint, apiKey, tenant := server.URL, "k", "default-tenant" // pragma: allowlist secret
+	protoServer := providerserver.NewProtocol6(New("test")())()
+	resp, err := protoServer.ConfigureProvider(context.Background(), &tfprotov6.ConfigureProviderRequest{
+		Config: newProviderConfig(t, providerConfigValues{endpoint: &endpoint, apiKey: &apiKey, tenantID: &tenant}),
+	})
+	if err != nil {
+		t.Fatalf("ConfigureProvider: %v", err)
+	}
+	assertNoErrorDiagnostics(t, resp.Diagnostics)
+}
+
+func TestConfigureAPIKeyTenantIDMismatchErrors(t *testing.T) {
+	// An API key is single-tenant: a tenant_id other than the key's tenant must
+	// fail fast at configure with a clear diagnostic, not mid-apply.
+	clearCredentialEnv(t)
+	server := meServer(t, "default-tenant")
+	defer server.Close()
+
+	endpoint, apiKey, tenant := server.URL, "k", "other-tenant" // pragma: allowlist secret
+	protoServer := providerserver.NewProtocol6(New("test")())()
+	resp, err := protoServer.ConfigureProvider(context.Background(), &tfprotov6.ConfigureProviderRequest{
+		Config: newProviderConfig(t, providerConfigValues{endpoint: &endpoint, apiKey: &apiKey, tenantID: &tenant}),
+	})
+	if err != nil {
+		t.Fatalf("ConfigureProvider: %v", err)
+	}
+	assertHasErrorDiagnostic(t, resp.Diagnostics)
+}
+
+func TestConfigureTenantIDFromEnvReachesOverride(t *testing.T) {
+	// FROSTMOLN_TENANT_ID flows through resolveTenantID into the override: a
+	// mismatched env tenant on the API-key path trips the same single-tenant check.
+	clearCredentialEnv(t)
+	server := meServer(t, "default-tenant")
+	defer server.Close()
+
+	t.Setenv("FROSTMOLN_TENANT_ID", "other-tenant")
+	endpoint, apiKey := server.URL, "k" // pragma: allowlist secret
+	protoServer := providerserver.NewProtocol6(New("test")())()
+	resp, err := protoServer.ConfigureProvider(context.Background(), &tfprotov6.ConfigureProviderRequest{
+		Config: newProviderConfig(t, providerConfigValues{endpoint: &endpoint, apiKey: &apiKey}),
+	})
+	if err != nil {
+		t.Fatalf("ConfigureProvider: %v", err)
+	}
+	assertHasErrorDiagnostic(t, resp.Diagnostics)
 }
 
 func TestConfigureExplicitAPIKeyWinsOverCLI(t *testing.T) {

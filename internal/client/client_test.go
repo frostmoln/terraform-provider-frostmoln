@@ -101,6 +101,84 @@ func TestConfigure(t *testing.T) {
 	}
 }
 
+func TestWithTenantIDBearerDistinctTenant(t *testing.T) {
+	// On the OIDC/bearer path, a tenant_id override to a tenant other than the
+	// /v1/me default is allowed (the gateway authorizes against the user's
+	// accessible set); the override wins and userID is still resolved.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(UserProfile{ID: "user-123", TenantID: "default-tenant"})
+	}))
+	defer server.Close()
+
+	// Fresh token (far-future expiry) → no refresh, so no token Source needed.
+	c := NewClient(server.URL, "", WithTenantID("other-tenant"), WithTokenSource(TokenSourceConfig{
+		AccessToken: "tok",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	}))
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+	if c.TenantID() != "other-tenant" {
+		t.Errorf("expected override tenant other-tenant, got %s", c.TenantID())
+	}
+	if c.UserID() != "user-123" {
+		t.Errorf("expected user ID user-123, got %s", c.UserID())
+	}
+	if got := c.TenantPath("/vpcs"); got != "/v1/tenants/other-tenant/vpcs" {
+		t.Errorf("expected /v1/tenants/other-tenant/vpcs, got %s", got)
+	}
+}
+
+func TestWithTenantIDAPIKeyMatchOK(t *testing.T) {
+	// On the API-key path, a tenant_id equal to the key's own tenant is accepted.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(UserProfile{ID: "user-123", TenantID: "default-tenant"})
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "test-key", WithTenantID("default-tenant"))
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+	if c.TenantID() != "default-tenant" {
+		t.Errorf("expected default-tenant, got %s", c.TenantID())
+	}
+}
+
+func TestWithTenantIDAPIKeyMismatchErrors(t *testing.T) {
+	// An API key is single-tenant: a tenant_id other than the key's tenant must
+	// fail at Configure with a clear message, not silently mis-route.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(UserProfile{ID: "user-123", TenantID: "default-tenant"})
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "test-key", WithTenantID("other-tenant"))
+	err := c.Configure(context.Background())
+	if err == nil {
+		t.Fatal("expected error for API-key tenant mismatch")
+	}
+	if !strings.Contains(err.Error(), "single tenant") {
+		t.Errorf("expected single-tenant message, got %v", err)
+	}
+}
+
+func TestWithTenantIDEmptyKeepsDefault(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(UserProfile{ID: "user-123", TenantID: "default-tenant"})
+	}))
+	defer server.Close()
+
+	// An empty override is a no-op: the /v1/me default tenant is adopted.
+	c := NewClient(server.URL, "test-key", WithTenantID(""))
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+	if c.TenantID() != "default-tenant" {
+		t.Errorf("expected default-tenant, got %s", c.TenantID())
+	}
+}
+
 func TestConfigureNoTenantID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(UserProfile{ID: "user-123"})
@@ -139,6 +217,16 @@ func TestTenantPath(t *testing.T) {
 	path := c.TenantPath("/vpcs")
 	if path != "/v1/tenants/t-123/vpcs" {
 		t.Errorf("expected /v1/tenants/t-123/vpcs, got %s", path)
+	}
+}
+
+func TestTenantPathEscapesMalformedID(t *testing.T) {
+	c := NewClient("https://api.example.com", "key")
+	c.tenantID = "a/../../v1/admin"
+	// A malformed override must stay a single literal segment, not restructure
+	// the URL via path cleaning.
+	if got := c.TenantPath("/vpcs"); got != "/v1/tenants/a%2F..%2F..%2Fv1%2Fadmin/vpcs" {
+		t.Errorf("expected escaped tenant segment, got %s", got)
 	}
 }
 

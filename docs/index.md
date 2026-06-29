@@ -23,6 +23,11 @@ terraform {
 provider "frostmoln" {
   api_endpoint = "https://api.frostmoln.cloud"
   api_key      = var.frostmoln_api_key
+
+  # Optional: select the tenant to manage resources in (defaults to your
+  # account's default tenant). Targeting another tenant needs an fm CLI / OIDC
+  # session — an API key is bound to a single tenant. Also FROSTMOLN_TENANT_ID.
+  # tenant_id = "00000000-0000-0000-0000-000000000000"
 }
 
 variable "frostmoln_api_key" {
@@ -51,4 +56,5 @@ This lets the provider "just work" after `fm auth login`, like `kubectl`, `aws`,
 - `api_key` (String, Sensitive) The API key for authentication. Can also be set via the FROSTMOLN_API_KEY environment variable. When unset, the provider falls back to an existing fm CLI session (see use_cli_config).
 - `cli_config_path` (String) Path to the fm CLI config file. Defaults to ~/.fm/config.yaml. Can also be set via the FROSTMOLN_CLI_CONFIG environment variable.
 - `cli_context` (String) Name of the fm CLI context to read credentials from. Defaults to the config file's current_context.
+- `tenant_id` (String) The tenant to manage resources in. Defaults to your account's default tenant. Targeting another tenant requires an fm CLI / OIDC session whose user belongs to multiple tenants; an API key is bound to a single tenant. One tenant per provider instance — use a second provider with an alias to span tenants. Can also be set via the FROSTMOLN_TENANT_ID environment variable.
 - `use_cli_config` (Boolean) When no api_key is configured, fall back to the credentials in the fm CLI config (~/.fm/config.yaml): its stored API key, or its OIDC session (with automatic token refresh). Defaults to true. Can also be set via FROSTMOLN_USE_CLI_CONFIG. Set to false in CI to require an explicit api_key.
