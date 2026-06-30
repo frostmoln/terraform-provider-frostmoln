@@ -46,7 +46,7 @@ resource "frostmoln_instance" "example" {
 ### Optional
 
 - `console_password` (String, Sensitive) Password for the default OS user, usable only at the VNC console; SSH stays key-only. Changing forces replacement.
-- `security_groups` (Set of String) The security group IDs attached to the instance. Changing this forces a new instance (the API does not support changing security groups in place).
+- `security_groups` (Set of String) The security group IDs attached to the instance. Updated in place (replace semantics): changing the set replaces the instance's security groups across all its ports. Setting it to [] or removing the attribute clears ALL security groups (the instance falls back to default-drop — typically no inbound access).
 - `ssh_key_names` (Set of String) The SSH key names to inject into the instance.
 - `subnet_id` (String) The subnet ID for the instance.
 - `tags` (Map of String) Key-value tags for the instance.

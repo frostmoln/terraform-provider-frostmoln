@@ -1783,11 +1783,27 @@ func TestInstanceResource_TFSDKUpdateResize(t *testing.T) {
 
 func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 	var patchCalled bool
+	var sgPutCalled bool
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+
+		// Security-group change → async PUT (202 + Operation), then the provider
+		// waits for the operation to complete before reading back.
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-tags-1/security-groups":
+			sgPutCalled = true
+			var req apiSetInstanceSecurityGroupsRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if len(req.SecurityGroupIDs) != 2 || req.ClearSecurityGroups {
+				t.Errorf("expected 2 SG ids + clear=false, got %+v", req)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-sg-1", Status: "pending", ResourceType: "instance", ResourceID: "inst-tags-1"})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-sg-1":
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-sg-1", Status: "completed", ResourceType: "instance", ResourceID: "inst-tags-1"})
 
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-tags-1":
 			patchCalled = true
@@ -1901,7 +1917,10 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 	}
 
 	if !patchCalled {
-		t.Error("expected PATCH to be called for tags/security_groups change")
+		t.Error("expected PATCH to be called for the tags change")
+	}
+	if !sgPutCalled {
+		t.Error("expected PUT /security-groups to be called for the in-place SG change")
 	}
 
 	var model InstanceModel
@@ -1917,6 +1936,83 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 	model.Tags.ElementsAs(ctx, &tags, false)
 	if tags["env"] != "prod" {
 		t.Errorf("expected tag env=prod, got %v", tags)
+	}
+}
+
+// Emptying security_groups (→ null) must send clear=true + an empty list (the
+// strict-validation clear branch) and leave state with no SGs (no perpetual diff).
+func TestInstanceResource_TFSDKClearSecurityGroups(t *testing.T) {
+	var sgPutBody apiSetInstanceSecurityGroupsRequest
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-clear-1/security-groups":
+			_ = json.NewDecoder(r.Body).Decode(&sgPutBody)
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-clr-1", Status: "pending", ResourceType: "instance", ResourceID: "inst-clear-1"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-clr-1":
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-clr-1", Status: "completed", ResourceType: "instance", ResourceID: "inst-clear-1"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-clear-1":
+			_ = json.NewEncoder(w).Encode(apiInstance{ID: "inst-clear-1", Name: "clr-vm", Status: "running", FlavorID: "flavor-small", ImageID: "img-ubuntu", CreatedAt: "2025-06-01T12:00:00Z"})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key")
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+	r := &instanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+	schemaResp := getInstanceSchema(t)
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	base := map[string]tftypes.Value{
+		"id": tftypes.NewValue(tftypes.String, "inst-clear-1"), "name": tftypes.NewValue(tftypes.String, "clr-vm"),
+		"flavor_id": tftypes.NewValue(tftypes.String, "flavor-small"), "image_id": tftypes.NewValue(tftypes.String, "img-ubuntu"),
+		"status":      tftypes.NewValue(tftypes.String, "running"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"flavor_name": tftypes.NewValue(tftypes.String, nil), "image_name": tftypes.NewValue(tftypes.String, nil),
+		"private_ip": tftypes.NewValue(tftypes.String, nil), "public_ip": tftypes.NewValue(tftypes.String, nil),
+		"user_data": tftypes.NewValue(tftypes.String, nil), "user_data_hash": tftypes.NewValue(tftypes.String, nil),
+		"created_at": tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	}
+	withSGs := func(sgs *tftypes.Value) map[string]tftypes.Value {
+		m := make(map[string]tftypes.Value, len(base)+1)
+		for k, v := range base {
+			m[k] = v
+		}
+		m["security_groups"] = *sgs
+		return m
+	}
+	oldSG := tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, []tftypes.Value{tftypes.NewValue(tftypes.String, "sg-old")})
+	nullSG := tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, nil)
+
+	updateResp := &resource.UpdateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	r.Update(ctx, resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: schemaResp.Schema, Raw: instanceTFValue(t, tfType, withSGs(&nullSG))},
+		State: tfsdk.State{Schema: schemaResp.Schema, Raw: instanceTFValue(t, tfType, withSGs(&oldSG))},
+	}, updateResp)
+
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("Update failed: %v", updateResp.Diagnostics.Errors())
+	}
+	if !sgPutBody.ClearSecurityGroups || len(sgPutBody.SecurityGroupIDs) != 0 {
+		t.Fatalf("expected clear=true + empty list, got %+v", sgPutBody)
+	}
+	var model InstanceModel
+	updateResp.State.Get(ctx, &model)
+	if !model.SecurityGroups.IsNull() {
+		var sgs []string
+		model.SecurityGroups.ElementsAs(ctx, &sgs, false)
+		if len(sgs) != 0 {
+			t.Errorf("expected no security groups after clear, got %v", sgs)
+		}
 	}
 }
 

@@ -99,14 +99,15 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				},
 			},
 			"security_groups": schema.SetAttribute{
-				// The compute update API has no security-group field — SGs can only
-				// be set at create — so a change forces replacement (like ssh_key_names).
-				Description: "The security group IDs attached to the instance. Changing this forces a new instance (the API does not support changing security groups in place).",
+				// Updated IN PLACE via PUT /instances/{id}/security-groups (replace
+				// semantics, by Neutron SG UUID). Plain Optional (no RequiresReplace):
+				// a change runs Update, which applies the new set and waits for the
+				// async apply to converge. State keeps the configured set (preserved
+				// from plan in fromAPI, since the instance read returns SG NAMES, not
+				// the UUIDs the user supplied — same identifier-space reason as before).
+				Description: "The security group IDs attached to the instance. Updated in place (replace semantics): changing the set replaces the instance's security groups across all its ports. Setting it to [] or removing the attribute clears ALL security groups (the instance falls back to default-drop — typically no inbound access).",
 				Optional:    true,
 				ElementType: types.StringType,
-				PlanModifiers: []planmodifier.Set{
-					setplanmodifier.RequiresReplace(),
-				},
 			},
 			"ssh_key_names": schema.SetAttribute{
 				Description: "The SSH key names to inject into the instance.",
@@ -329,8 +330,24 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 		}
 	}
 
-	// Only name + tags are updatable in place (security_groups is RequiresReplace —
-	// the compute update API has no SG field).
+	// Security groups change in place via the dedicated subresource (replace
+	// semantics). The write is async; setSecurityGroups waits for the backend to
+	// converge so a dependent resource / subsequent read sees the applied set.
+	if !plan.SecurityGroups.Equal(state.SecurityGroups) {
+		var sgIDs []string
+		if !plan.SecurityGroups.IsNull() && !plan.SecurityGroups.IsUnknown() {
+			resp.Diagnostics.Append(plan.SecurityGroups.ElementsAs(ctx, &sgIDs, false)...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
+		}
+		if err := r.setSecurityGroups(ctx, id, sgIDs); err != nil {
+			resp.Diagnostics.AddError("Failed to update security groups", err.Error())
+			return
+		}
+	}
+
+	// name + tags are updatable in place via the compute update API.
 	nameChanged := !plan.Name.Equal(state.Name)
 	tagsChanged := !plan.Tags.Equal(state.Tags)
 
@@ -436,6 +453,34 @@ func (r *instanceResource) resizeInstance(ctx context.Context, id, newFlavorID s
 		return fmt.Errorf("instance failed to reach running state after resize: %w", err)
 	}
 
+	return nil
+}
+
+// setSecurityGroups REPLACES the instance's security groups in place via
+// PUT /instances/{id}/security-groups (replace semantics, Neutron SG UUIDs).
+// An empty sgIDs clears all SGs (clear flag set so the backend doesn't reject it
+// as a probable dropped field). The PUT routes through provisioning and returns
+// 202 + an Operation; we wait for it to complete so the applied set is visible to
+// a subsequent read / dependent resource (the change lands asynchronously — do
+// not race the read).
+func (r *instanceResource) setSecurityGroups(ctx context.Context, id string, sgIDs []string) error {
+	body := apiSetInstanceSecurityGroupsRequest{
+		SecurityGroupIDs:    sgIDs,
+		ClearSecurityGroups: len(sgIDs) == 0,
+	}
+	apiResp, err := r.client.Put(ctx, r.client.TenantPath("/instances/"+id+"/security-groups"), body)
+	if err != nil {
+		return err
+	}
+	if apiResp.IsAccepted() {
+		op, opErr := client.ParseResponse[client.Operation](apiResp)
+		if opErr != nil {
+			return fmt.Errorf("parse security-group operation response: %w", opErr)
+		}
+		if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout()); waitErr != nil {
+			return fmt.Errorf("security-group update did not complete: %w", waitErr)
+		}
+	}
 	return nil
 }
 

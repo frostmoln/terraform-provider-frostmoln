@@ -66,7 +66,10 @@ type apiInstance struct {
 	PublicIPs  []string             `json:"publicIps,omitempty"`
 	// Returned as the OpenStack-internal SG NAME (sg-<tenant>-<vpc>-<name>), not
 	// the customer SG UUID. Intentionally NOT mapped to state in fromAPI — doing
-	// so triggers "inconsistent result after apply" on this RequiresReplace attr.
+	// so would compare a name against the UUID set the user configured (different
+	// identifier spaces) and trigger "inconsistent result after apply". The
+	// security_groups attr is preserved from plan/state; in-place changes go
+	// through the dedicated PUT /instances/{id}/security-groups subresource.
 	SecurityGroups []string          `json:"securityGroups,omitempty"`
 	Metadata       map[string]string `json:"metadata,omitempty"`
 	CreatedAt      string            `json:"createdAt"`
@@ -93,8 +96,8 @@ type apiCreateInstanceRequest struct {
 // apiUpdateInstanceRequest is the API request to update an instance. Update
 // routes to the compute service, which reads user tags under "metadata" (not the
 // OpenStack []string "tags"); sending the map as "metadata" makes tags persist.
-// The backend has no security-group update field — changing SGs post-create is
-// not supported by the API, so it is omitted here.
+// Security groups are NOT in this body — they change via the dedicated
+// PUT /instances/{id}/security-groups subresource (see setSecurityGroups).
 type apiUpdateInstanceRequest struct {
 	Name *string           `json:"name,omitempty"`
 	Tags map[string]string `json:"metadata,omitempty"`
@@ -103,6 +106,15 @@ type apiUpdateInstanceRequest struct {
 // apiResizeInstanceRequest is the body for POST /instances/{id}/resize.
 type apiResizeInstanceRequest struct {
 	FlavorID string `json:"flavorId"`
+}
+
+// apiSetInstanceSecurityGroupsRequest is the body for
+// PUT /instances/{id}/security-groups (replace semantics, Neutron SG UUIDs).
+// ClearSecurityGroups must be true to remove all SGs (empty list); an empty
+// list without the flag is rejected by the backend as a probable dropped field.
+type apiSetInstanceSecurityGroupsRequest struct {
+	SecurityGroupIDs    []string `json:"securityGroupIds"`
+	ClearSecurityGroups bool     `json:"clearSecurityGroups,omitempty"`
 }
 
 // computeUserDataHash returns the SHA256 hash of user data.
@@ -224,11 +236,13 @@ func (m *InstanceModel) fromAPI(ctx context.Context, inst *apiInstance, diags *d
 	// at create is preserved on every refresh; overwriting from the response
 	// would either null out the user's value or trigger a spurious replace.
 
-	// security_groups is RequiresReplace and create-time. The backend read
-	// returns the OpenStack-internal SG NAME (e.g. "sg-<tenant>-<vpc>-<name>",
-	// compute mapper.go), not the customer SG UUID the user supplied at create.
-	// It is therefore left untouched and preserved from plan/state — overwriting
-	// from the response would trigger a spurious replace / inconsistent-result.
+	// security_groups is updated in place (PUT subresource), but the instance
+	// read returns the OpenStack-internal SG NAME (e.g. "sg-<tenant>-<vpc>-<name>",
+	// compute mapper.go), not the customer SG UUID the user configures. Mapping
+	// the name into a UUID-set attribute would trigger "inconsistent result after
+	// apply", so it is left untouched and preserved from plan/state. (Authoritative
+	// UUID drift-detection via GET /instances/{id}/security-groups is a tracked
+	// follow-up — see the plan doc.)
 
 	// ssh_key_names is RequiresReplace and write-only on the wire (the backend
 	// returns a single keyName, not the set the user supplied), so it is left
