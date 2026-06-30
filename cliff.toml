@@ -66,3 +66,8 @@ sort_commits = "oldest"
 [bump]
 # initial version when no tags exist (v prefix for Go module compatibility)
 initial_tag = "v0.1.0"
+# the provider is pre-1.0: a breaking change (feat!/BREAKING CHANGE) must bump the
+# MINOR, not graduate the provider to v1.0.0. git-cliff defaults this to true
+# (0.x -> 1.0.0); keep it false until the provider is deliberately promoted to a
+# stable v1.
+breaking_always_bump_major = false
