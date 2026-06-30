@@ -313,6 +313,93 @@ func TestInstanceModelFromAPIMinimalFields(t *testing.T) {
 	}
 }
 
+func TestInstanceModelFromAPIFiltersReservedTags(t *testing.T) {
+	ctx := context.Background()
+
+	// Case 1: a null tags plan must stay null even though the backend injects
+	// frostmoln_* system metadata — otherwise Create's read-back produces
+	// "inconsistent result after apply" on .tags.
+	// frostmoln_engine (and other frostmoln_* keys) are also stamped by the
+	// backend — assert the whole prefix is filtered, not just id/type, so the
+	// filter can't be narrowed to exact keys without this test failing.
+	t.Run("system metadata only keeps tags null", func(t *testing.T) {
+		diags := diag.Diagnostics{}
+		inst := &apiInstance{
+			ID:        "inst-1",
+			Name:      "vm",
+			Status:    "running",
+			FlavorID:  "flavor-small",
+			ImageID:   "img",
+			CreatedAt: "2025-06-01T12:00:00Z",
+			Metadata:  map[string]string{"frostmoln_id": "7f58a27e-...", "frostmoln_type": "compute", "frostmoln_engine": "mysql"},
+		}
+		model := InstanceModel{Tags: types.MapNull(types.StringType)}
+		model.fromAPI(ctx, inst, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+		}
+		if !model.Tags.IsNull() {
+			t.Errorf("expected tags to stay null when only frostmoln_* metadata present, got %v", model.Tags)
+		}
+	})
+
+	// A non-null empty-map plan must stay an empty map (the middle branch), not
+	// flip to null or pick up system keys.
+	t.Run("empty-map plan stays empty map", func(t *testing.T) {
+		diags := diag.Diagnostics{}
+		emptyTags, d := types.MapValueFrom(ctx, types.StringType, map[string]string{})
+		diags.Append(d...)
+		inst := &apiInstance{
+			ID:        "inst-3",
+			Name:      "vm",
+			Status:    "running",
+			FlavorID:  "flavor-small",
+			ImageID:   "img",
+			CreatedAt: "2025-06-01T12:00:00Z",
+			Metadata:  map[string]string{"frostmoln_id": "abc", "frostmoln_type": "compute"},
+		}
+		model := InstanceModel{Tags: emptyTags}
+		model.fromAPI(ctx, inst, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+		}
+		if model.Tags.IsNull() {
+			t.Error("expected tags to stay an empty map, got null")
+		}
+		var gotTags map[string]string
+		diags.Append(model.Tags.ElementsAs(ctx, &gotTags, false)...)
+		if len(gotTags) != 0 {
+			t.Errorf("expected empty tags map, got %v", gotTags)
+		}
+	})
+
+	// Case 2: user tags round-trip; only the reserved frostmoln_* keys are dropped.
+	t.Run("user tags survive, reserved keys dropped", func(t *testing.T) {
+		diags := diag.Diagnostics{}
+		priorTags, d := types.MapValueFrom(ctx, types.StringType, map[string]string{"env": "prod"})
+		diags.Append(d...)
+		inst := &apiInstance{
+			ID:        "inst-2",
+			Name:      "vm",
+			Status:    "running",
+			FlavorID:  "flavor-small",
+			ImageID:   "img",
+			CreatedAt: "2025-06-01T12:00:00Z",
+			Metadata:  map[string]string{"env": "prod", "frostmoln_id": "abc", "frostmoln_type": "compute"},
+		}
+		model := InstanceModel{Tags: priorTags}
+		model.fromAPI(ctx, inst, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+		}
+		var gotTags map[string]string
+		diags.Append(model.Tags.ElementsAs(ctx, &gotTags, false)...)
+		if len(gotTags) != 1 || gotTags["env"] != "prod" {
+			t.Errorf("expected tags {env: prod} with reserved keys filtered, got %v", gotTags)
+		}
+	})
+}
+
 // --- HTTP integration tests ---
 
 func newTestClient(t *testing.T, server *httptest.Server) *client.Client {
