@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0] - 2026-06-30
+
+### 🚀 Features
+
+- *(provider)* Frostmoln_volume_tiers data source (#135)
+
 ## [0.7.0] - 2026-06-30
 
 ### 🚀 Features
