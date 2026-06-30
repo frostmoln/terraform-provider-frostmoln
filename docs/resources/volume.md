@@ -26,7 +26,7 @@ Manages a block storage volume in the Frostmoln platform.
 - `encrypted` (Boolean) Whether the volume is encrypted.
 - `snapshot_id` (String) The snapshot ID to create the volume from.
 - `tags` (Map of String) Key-value tags for the volume.
-- `volume_type` (String) The type of volume. Valid values: ssd, hdd, nvme, premium.
+- `volume_type` (String) The volume tier key (e.g. "ssd"). The set of selectable tiers is server-defined and may change without a provider release — read it from the frostmoln_volume_tiers data source (only tiers with status "offered" are accepted; a non-offered tier is rejected by the API). Defaults to the platform default tier when omitted.
 - `zone` (String) The availability zone for the volume.
 
 ### Read-Only

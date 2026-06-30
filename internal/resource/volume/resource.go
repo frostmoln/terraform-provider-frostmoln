@@ -59,7 +59,7 @@ func (r *volumeResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Required:    true,
 			},
 			"volume_type": schema.StringAttribute{
-				Description: "The type of volume. Valid values: ssd, hdd, nvme, premium.",
+				Description: "The volume tier key (e.g. \"ssd\"). The set of selectable tiers is server-defined and may change without a provider release — read it from the frostmoln_volume_tiers data source (only tiers with status \"offered\" are accepted; a non-offered tier is rejected by the API). Defaults to the platform default tier when omitted.",
 				Optional:    true,
 				Computed:    true,
 				PlanModifiers: []planmodifier.String{

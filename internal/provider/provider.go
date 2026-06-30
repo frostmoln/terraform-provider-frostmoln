@@ -34,6 +34,7 @@ import (
 	secretds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/secret"
 	subnetds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/subnet"
 	valkeyinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/valkey_instance"
+	volumetiersds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/volume_tiers"
 	vpcds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/vpc"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/apache_instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/api_key"
@@ -395,5 +396,6 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		apacheinstanceds.NewDataSource,
 		nginxinstanceds.NewDataSource,
 		regionsds.NewDataSource,
+		volumetiersds.NewDataSource,
 	}
 }
