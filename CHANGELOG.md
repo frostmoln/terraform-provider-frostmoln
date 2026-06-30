@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-06-30
+
+### 🐛 Bug Fixes
+
+- *(provider)* [**breaking**] Align resource/datasource types with backend API contracts (#109)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.5.0 (#107)
+
 ## [0.3.0] - 2026-06-29
 
 ### 🚀 Features
