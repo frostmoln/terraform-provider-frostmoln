@@ -1726,3 +1726,90 @@ func TestVolumeResource_TFSDKImportState(t *testing.T) {
 		t.Errorf("expected ID vol-import-1, got %s", model.ID.ValueString())
 	}
 }
+
+// TestVolumeModelFromAPIFiltersReservedTags asserts the backend-stamped reserved
+// metadata (bare *-id keys + the frostmoln_* namespace) never surfaces as a
+// customer tag, mirroring the instance filter. Without it a null/unset tags plan
+// reads back the system keys → "inconsistent result after apply".
+func TestVolumeModelFromAPIFiltersReservedTags(t *testing.T) {
+	ctx := context.Background()
+
+	// Case 1: a null tags plan stays null even though the backend stamps the bare
+	// *-id keys and frostmoln_type onto every volume at create.
+	t.Run("system metadata only keeps tags null", func(t *testing.T) {
+		diags := diag.Diagnostics{}
+		vol := &apiVolume{
+			ID:     "vol-1",
+			Name:   "data",
+			Status: "available",
+			Metadata: map[string]string{
+				"customer-id":    "c1",
+				"request-id":     "r1",
+				"project-id":     "p1",
+				"frostmoln_type": "managed",
+			},
+		}
+		model := VolumeModel{Tags: types.MapNull(types.StringType)}
+		model.fromAPI(ctx, vol, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+		}
+		if !model.Tags.IsNull() {
+			t.Errorf("expected tags to stay null when only reserved metadata present, got %v", model.Tags)
+		}
+	})
+
+	// A non-null empty-map plan stays an empty map (the middle branch).
+	t.Run("empty-map plan stays empty map", func(t *testing.T) {
+		diags := diag.Diagnostics{}
+		emptyTags, d := types.MapValueFrom(ctx, types.StringType, map[string]string{})
+		diags.Append(d...)
+		vol := &apiVolume{
+			ID:       "vol-3",
+			Name:     "data",
+			Status:   "available",
+			Metadata: map[string]string{"customer-id": "c1", "project-id": "p1"},
+		}
+		model := VolumeModel{Tags: emptyTags}
+		model.fromAPI(ctx, vol, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+		}
+		if model.Tags.IsNull() {
+			t.Error("expected tags to stay an empty map, got null")
+		}
+		var gotTags map[string]string
+		diags.Append(model.Tags.ElementsAs(ctx, &gotTags, false)...)
+		if len(gotTags) != 0 {
+			t.Errorf("expected empty tags map, got %v", gotTags)
+		}
+	})
+
+	// Case 2: user tags round-trip; only the reserved keys are dropped.
+	t.Run("user tags survive, reserved keys dropped", func(t *testing.T) {
+		diags := diag.Diagnostics{}
+		priorTags, d := types.MapValueFrom(ctx, types.StringType, map[string]string{"env": "prod"})
+		diags.Append(d...)
+		vol := &apiVolume{
+			ID:     "vol-2",
+			Name:   "data",
+			Status: "available",
+			Metadata: map[string]string{
+				"env":         "prod",
+				"customer-id": "c1",
+				"request-id":  "r1",
+				"project-id":  "p1",
+			},
+		}
+		model := VolumeModel{Tags: priorTags}
+		model.fromAPI(ctx, vol, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+		}
+		var gotTags map[string]string
+		diags.Append(model.Tags.ElementsAs(ctx, &gotTags, false)...)
+		if len(gotTags) != 1 || gotTags["env"] != "prod" {
+			t.Errorf("expected tags {env: prod} with reserved keys filtered, got %v", gotTags)
+		}
+	})
+}

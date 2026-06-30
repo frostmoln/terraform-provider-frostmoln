@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
 )
 
 // VolumeModel is the Terraform state model for a volume.
@@ -156,8 +158,14 @@ func (m *VolumeModel) fromAPI(ctx context.Context, vol *apiVolume, diags *diag.D
 		m.DevicePath = types.StringNull()
 	}
 
-	if len(vol.Metadata) > 0 {
-		tagMap, d := types.MapValueFrom(ctx, types.StringType, vol.Metadata)
+	// Backend stamps reserved metadata (bare request-id/customer-id/project-id +
+	// the frostmoln_* namespace) onto every volume at create; the customer GET
+	// returns it unfiltered. It is NOT a customer tag — filter it out, otherwise
+	// a null/unset tags plan is overwritten on read-back ("inconsistent result
+	// after apply"). Shared with the instance filter via reservedmeta.
+	userTags := reservedmeta.FilterVolume(vol.Metadata)
+	if len(userTags) > 0 {
+		tagMap, d := types.MapValueFrom(ctx, types.StringType, userTags)
 		diags.Append(d...)
 		m.Tags = tagMap
 	} else if !m.Tags.IsNull() {

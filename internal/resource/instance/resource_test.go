@@ -398,6 +398,35 @@ func TestInstanceModelFromAPIFiltersReservedTags(t *testing.T) {
 			t.Errorf("expected tags {env: prod} with reserved keys filtered, got %v", gotTags)
 		}
 	})
+
+	// Compute reserves ONLY the frostmoln_ prefix — it never stamps or reserves the
+	// bare *-id keys (those are storage-side). A customer may legally set an instance
+	// tag literally named customer-id, so it MUST round-trip (filtering it would
+	// reintroduce the inconsistent-result bug for instances).
+	t.Run("bare *-id user tag survives on instance", func(t *testing.T) {
+		diags := diag.Diagnostics{}
+		priorTags, d := types.MapValueFrom(ctx, types.StringType, map[string]string{"customer-id": "mine"})
+		diags.Append(d...)
+		inst := &apiInstance{
+			ID:        "inst-4",
+			Name:      "vm",
+			Status:    "running",
+			FlavorID:  "flavor-small",
+			ImageID:   "img",
+			CreatedAt: "2025-06-01T12:00:00Z",
+			Metadata:  map[string]string{"customer-id": "mine", "frostmoln_id": "abc"},
+		}
+		model := InstanceModel{Tags: priorTags}
+		model.fromAPI(ctx, inst, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+		}
+		var gotTags map[string]string
+		diags.Append(model.Tags.ElementsAs(ctx, &gotTags, false)...)
+		if len(gotTags) != 1 || gotTags["customer-id"] != "mine" {
+			t.Errorf("expected tags {customer-id: mine} (bare key not reserved on instances), got %v", gotTags)
+		}
+	})
 }
 
 // --- HTTP integration tests ---

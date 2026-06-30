@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
 )
 
 var _ datasource.DataSource = &instanceDataSource{}
@@ -219,8 +220,11 @@ func (d *instanceDataSource) Read(ctx context.Context, req datasource.ReadReques
 		state.SubnetID = types.StringNull()
 	}
 
-	if len(inst.Metadata) > 0 {
-		tagsMap, diags := types.MapValueFrom(ctx, types.StringType, inst.Metadata)
+	// Filter platform-internal metadata (the frostmoln_ namespace) so the computed
+	// tags attribute exposes only customer tags, not tenant/billing/provenance keys.
+	userTags := reservedmeta.FilterInstance(inst.Metadata)
+	if len(userTags) > 0 {
+		tagsMap, diags := types.MapValueFrom(ctx, types.StringType, userTags)
 		resp.Diagnostics.Append(diags...)
 		state.Tags = tagsMap
 	} else {

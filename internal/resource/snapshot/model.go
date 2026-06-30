@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
 )
 
 // SnapshotModel is the Terraform state model for a snapshot.
@@ -79,8 +81,13 @@ func (m *SnapshotModel) fromAPI(ctx context.Context, snap *apiSnapshot, diags *d
 		m.Description = types.StringValue("")
 	}
 
-	if len(snap.Metadata) > 0 {
-		tagMap, d := types.MapValueFrom(ctx, types.StringType, snap.Metadata)
+	// A Cinder snapshot inherits its source volume's metadata, which the backend
+	// stamps with reserved keys (bare *-id + frostmoln_*). They are NOT customer
+	// tags — filter them out (same storage set as volumes), otherwise a null/unset
+	// tags plan reads back the system keys ("inconsistent result after apply").
+	userTags := reservedmeta.FilterVolume(snap.Metadata)
+	if len(userTags) > 0 {
+		tagMap, d := types.MapValueFrom(ctx, types.StringType, userTags)
 		diags.Append(d...)
 		m.Tags = tagMap
 	} else if !m.Tags.IsNull() {

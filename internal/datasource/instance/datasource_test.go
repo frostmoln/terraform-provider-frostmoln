@@ -433,3 +433,71 @@ func TestAPIInstanceWithEmptyOptionalFields(t *testing.T) {
 		t.Errorf("expected nil metadata, got %v", decoded.Metadata)
 	}
 }
+
+// TestTFSDK_ReadInstanceFiltersReservedTags asserts the data source's computed
+// tags attribute excludes platform-internal metadata (the frostmoln_ namespace),
+// exposing only customer tags — not tenant/billing/provenance keys.
+func TestTFSDK_ReadInstanceFiltersReservedTags(t *testing.T) {
+	instances := map[string]apiInstance{
+		"inst-1": {
+			ID:        "inst-1",
+			Name:      "web-server-1",
+			Status:    "active",
+			FlavorID:  "flv-1",
+			ImageID:   "img-1",
+			Metadata:  map[string]string{"env": "prod", "frostmoln_id": "x", "frostmoln_type": "compute"},
+			CreatedAt: "2025-01-01T00:00:00Z",
+		},
+	}
+	server := newTestServer(t, instances)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureInstanceDS(t, ds, c)
+	schemaResp := getInstanceDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "inst-1"),
+		"name":        tftypes.NewValue(tftypes.String, nil),
+		"flavor_id":   tftypes.NewValue(tftypes.String, nil),
+		"flavor_name": tftypes.NewValue(tftypes.String, nil),
+		"image_id":    tftypes.NewValue(tftypes.String, nil),
+		"image_name":  tftypes.NewValue(tftypes.String, nil),
+		"zone":        tftypes.NewValue(tftypes.String, nil),
+		"vpc_id":      tftypes.NewValue(tftypes.String, nil),
+		"subnet_id":   tftypes.NewValue(tftypes.String, nil),
+		"private_ip":  tftypes.NewValue(tftypes.String, nil),
+		"public_ip":   tftypes.NewValue(tftypes.String, nil),
+		"status":      tftypes.NewValue(tftypes.String, nil),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, nil),
+	})
+
+	readReq := datasource.ReadRequest{
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal},
+	}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	ds.Read(ctx, readReq, &readResp)
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	var state instanceModel
+	readResp.State.Get(ctx, &state)
+
+	var gotTags map[string]string
+	readResp.Diagnostics.Append(state.Tags.ElementsAs(ctx, &gotTags, false)...)
+	if len(gotTags) != 1 || gotTags["env"] != "prod" {
+		t.Errorf("expected tags {env: prod} with frostmoln_ keys filtered, got %v", gotTags)
+	}
+}

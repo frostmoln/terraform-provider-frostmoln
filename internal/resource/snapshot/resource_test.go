@@ -847,3 +847,60 @@ func TestSnapshotResource_ImportState_TFSDK(t *testing.T) {
 		t.Errorf("expected imported ID snap-abc, got %s", model.ID.ValueString())
 	}
 }
+
+// TestSnapshotModel_fromAPI_FiltersReservedTags asserts a snapshot that inherits
+// its source volume's backend-stamped reserved metadata (bare *-id + frostmoln_*)
+// never surfaces those as customer tags, mirroring the volume filter. Without it a
+// null/unset tags plan reads back the system keys → "inconsistent result after apply".
+func TestSnapshotModel_fromAPI_FiltersReservedTags(t *testing.T) {
+	ctx := context.Background()
+
+	// null tags plan stays null despite inherited reserved metadata.
+	t.Run("system metadata only keeps tags null", func(t *testing.T) {
+		diags := diag.Diagnostics{}
+		snap := &apiSnapshot{
+			ID:       "snap-1",
+			Name:     "snap",
+			VolumeID: "vol-1",
+			Status:   "available",
+			Metadata: map[string]string{
+				"customer-id":    "c1",
+				"request-id":     "r1",
+				"project-id":     "p1",
+				"frostmoln_type": "managed",
+			},
+		}
+		model := &SnapshotModel{Tags: types.MapNull(types.StringType)}
+		model.fromAPI(ctx, snap, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+		}
+		if !model.Tags.IsNull() {
+			t.Errorf("expected tags to stay null when only reserved metadata present, got %v", model.Tags)
+		}
+	})
+
+	// user tags round-trip; only reserved keys are dropped.
+	t.Run("user tags survive, reserved keys dropped", func(t *testing.T) {
+		diags := diag.Diagnostics{}
+		priorTags, d := types.MapValueFrom(ctx, types.StringType, map[string]string{"backup": "daily"})
+		diags.Append(d...)
+		snap := &apiSnapshot{
+			ID:       "snap-2",
+			Name:     "snap",
+			VolumeID: "vol-1",
+			Status:   "available",
+			Metadata: map[string]string{"backup": "daily", "customer-id": "c1", "project-id": "p1"},
+		}
+		model := &SnapshotModel{Tags: priorTags}
+		model.fromAPI(ctx, snap, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+		}
+		var gotTags map[string]string
+		diags.Append(model.Tags.ElementsAs(ctx, &gotTags, false)...)
+		if len(gotTags) != 1 || gotTags["backup"] != "daily" {
+			t.Errorf("expected tags {backup: daily} with reserved keys filtered, got %v", gotTags)
+		}
+	})
+}

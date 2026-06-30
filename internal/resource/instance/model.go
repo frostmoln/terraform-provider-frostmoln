@@ -5,16 +5,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-)
 
-// reservedTagPrefix marks platform-internal instance metadata (e.g. frostmoln_id,
-// frostmoln_type, injected by provisioning) that is NOT a customer tag. Keys with
-// this prefix are filtered out of the tags attribute on read-back.
-const reservedTagPrefix = "frostmoln_"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
+)
 
 // InstanceModel is the Terraform state model for a compute instance.
 type InstanceModel struct {
@@ -239,16 +235,10 @@ func (m *InstanceModel) fromAPI(ctx context.Context, inst *apiInstance, diags *d
 	// untouched and preserved from plan/state.
 
 	// Tags come from the user metadata map (the backend has no top-level `tags`).
-	// Platform-internal metadata (reservedTagPrefix keys) is injected by the backend
+	// Platform-internal metadata (the frostmoln_ namespace) is injected by the backend
 	// and is NOT a customer tag — filter it out, otherwise a null/unset tags plan is
 	// overwritten by system keys on read-back ("inconsistent result after apply").
-	userTags := make(map[string]string, len(inst.Metadata))
-	for k, v := range inst.Metadata {
-		if strings.HasPrefix(k, reservedTagPrefix) {
-			continue
-		}
-		userTags[k] = v
-	}
+	userTags := reservedmeta.FilterInstance(inst.Metadata)
 	if len(userTags) > 0 {
 		tagMap, d := types.MapValueFrom(ctx, types.StringType, userTags)
 		diags.Append(d...)
