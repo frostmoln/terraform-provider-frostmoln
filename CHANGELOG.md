@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2026-06-30
+
+### 🚀 Features
+
+- Tolerate async 202 operation on managed-service create (#131)
+
+### 🐛 Bug Fixes
+
+- *(provider)* Retry transient OIDC bearer refresh failures once (#132)
+
 ## [0.6.0] - 2026-06-30
 
 ### 🐛 Bug Fixes
