@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-06-30
+
+### 🚀 Features
+
+- *(instance)* In-place security_groups update (replace semantics) (#125)
+
+### 📚 Documentation
+
+- Managed-service version/config + engine-specific resource convention (#123)
+
 ## [0.4.5] - 2026-06-30
 
 ### 🐛 Bug Fixes
