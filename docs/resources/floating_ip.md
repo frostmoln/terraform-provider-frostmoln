@@ -14,7 +14,6 @@ Manages a floating IP in the Frostmoln Cloud Platform.
 
 ```terraform
 resource "frostmoln_floating_ip" "example" {
-  region      = "sweden"
   instance_id = frostmoln_instance.example.id
 
   tags = {
@@ -29,7 +28,6 @@ resource "frostmoln_floating_ip" "example" {
 ### Optional
 
 - `instance_id` (String) The ID of the instance to associate with. Set to associate, remove to disassociate.
-- `region` (String) The region for the floating IP.
 - `tags` (Map of String) Tags for the floating IP.
 
 ### Read-Only

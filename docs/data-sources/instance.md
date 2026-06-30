@@ -39,7 +39,6 @@ output "instance_ip" {
 - `name` (String) The name of the instance.
 - `private_ip` (String) The private IP address of the instance.
 - `public_ip` (String) The public IP address of the instance.
-- `region` (String) The region of the instance.
 - `status` (String) The status of the instance.
 - `subnet_id` (String) The subnet ID of the instance.
 - `tags` (Map of String) The tags associated with the instance.

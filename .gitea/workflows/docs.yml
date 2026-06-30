@@ -1,0 +1,53 @@
+name: Docs
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  docs-drift:
+    runs-on: ubuntu-latest
+    env:
+      GOPRIVATE: go.frostmoln.internal/*
+      GONOSUMCHECK: go.frostmoln.internal/*
+      GOINSECURE: go.frostmoln.internal,git.sm.internal
+      GIT_SSL_NO_VERIFY: "true"
+      GIT_CONFIG_GLOBAL: /tmp/.gitconfig-ci
+    steps:
+      - uses: actions/checkout@v7
+      # Go is baked into the anchor-runner image (GOTOOLCHAIN=auto). gen-docs.sh
+      # builds the provider (`go build ./cmd/...`), which imports
+      # go.frostmoln.internal/oidc, so it needs the private-module rewrite
+      # (ci-runner token, git.sm.internal — the k3s dind runners NXDOMAIN on `gitea`).
+      - name: Configure Go private modules
+        env:
+          GITEA_TOKEN: ${{ secrets.CI_GITEA_TOKEN }}
+        run: |  # pragma: allowlist secret
+          printf '[url "https://ci-runner:%s@git.sm.internal/frostmoln/"]\n  insteadOf = http://go.frostmoln.internal/\n  insteadOf = https://go.frostmoln.internal/\n  insteadOf = http://git.sm.internal/frostmoln/\n  insteadOf = https://git.sm.internal/frostmoln/\n' "$GITEA_TOKEN" > /tmp/.gitconfig-ci
+      # gen-docs.sh dumps the schema via the Terraform CLI; it isn't in the
+      # anchor-runner image, so install a pinned build. The image has no `unzip`
+      # (minimal base), so extract with python3 (baked in) — zipfile -e drops the
+      # stored exec bit, hence the chmod.
+      # ponytail: integrity = pinned version + SHA256SUMS check over HTTPS; add
+      # GPG-signature verification against HashiCorp's pinned key if CDN tamper
+      # (not just corruption / wrong-file) is in scope.
+      - name: Install Terraform
+        run: |
+          # renovate: datasource=github-releases depName=hashicorp/terraform
+          TERRAFORM_VERSION=1.15.2
+          base="https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}"
+          zip="terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+          curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "${base}/${zip}" -o "/tmp/${zip}"
+          curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "${base}/terraform_${TERRAFORM_VERSION}_SHA256SUMS" -o /tmp/terraform.sums
+          ( cd /tmp && grep " ${zip}\$" terraform.sums | sha256sum -c - )
+          python3 -m zipfile -e "/tmp/${zip}" /usr/local/bin/
+          chmod +x /usr/local/bin/terraform
+          terraform version
+      - name: Regenerate docs
+        run: make docs
+      - name: Fail on docs drift
+        run: |
+          if ! git diff --exit-code -- docs/; then
+            echo "::error::docs/ is out of date with the provider schema. Run 'make docs' and commit the result."
+            exit 1
+          fi

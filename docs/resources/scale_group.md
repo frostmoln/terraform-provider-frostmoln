@@ -14,12 +14,12 @@ Manages an auto-scaling group in the Frostmoln platform.
 
 ```terraform
 resource "frostmoln_scale_group" "web" {
-  name                 = "web-servers"
-  launch_template_id   = frostmoln_launch_template.web.id
-  min_size             = 2
-  max_size             = 10
-  desired_capacity     = 3
-  subnet_ids           = [frostmoln_subnet.a.id, frostmoln_subnet.b.id]
+  name                   = "web-servers"
+  launch_template_id     = frostmoln_launch_template.web.id
+  min_size               = 2
+  max_size               = 10
+  desired_capacity       = 3
+  subnet_ids             = [frostmoln_subnet.a.id, frostmoln_subnet.b.id]
   load_balancer_pool_ids = [frostmoln_load_balancer_pool.web.id]
 
   health_check_type         = "elb"

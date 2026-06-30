@@ -17,7 +17,6 @@ resource "frostmoln_instance" "example" {
   name      = "web-server-01"
   flavor_id = data.frostmoln_flavor.medium.id
   image_id  = data.frostmoln_image.ubuntu.id
-  region    = "sweden"
   zone      = "sweden-a"
   vpc_id    = frostmoln_vpc.example.id
   subnet_id = frostmoln_subnet.example.id
@@ -47,8 +46,7 @@ resource "frostmoln_instance" "example" {
 ### Optional
 
 - `console_password` (String, Sensitive) Password for the default OS user, usable only at the VNC console; SSH stays key-only. Changing forces replacement.
-- `region` (String) The region for the instance.
-- `security_groups` (Set of String) The security group IDs attached to the instance.
+- `security_groups` (Set of String) The security group IDs attached to the instance. Changing this forces a new instance (the API does not support changing security groups in place).
 - `ssh_key_names` (Set of String) The SSH key names to inject into the instance.
 - `subnet_id` (String) The subnet ID for the instance.
 - `tags` (Map of String) Key-value tags for the instance.

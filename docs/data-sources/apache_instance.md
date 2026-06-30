@@ -21,9 +21,8 @@ Look up a managed Apache webserver instance by ID.
 
 ### Read-Only
 
+- `config` (Map of String) Engine-specific configuration as key/value pairs.
 - `created_at` (String) The timestamp when the instance was created.
-- `config` (String) Custom engine configuration.
-- `version` (String) The Apache version.
 - `flavor` (String) The flavor/size of the Apache instance.
 - `name` (String) The name of the Apache instance.
 - `php_enabled` (Boolean) Whether PHP support is enabled.
@@ -32,6 +31,9 @@ Look up a managed Apache webserver instance by ID.
 - `private_ip` (String) The private IP address of the Apache instance.
 - `status` (String) The current status of the Apache instance.
 - `storage_gb` (Number) The storage size in gigabytes.
+- `subnet_id` (String) The subnet ID where the instance is deployed.
 - `tenant_id` (String) The tenant ID that owns this instance.
 - `tls_enabled` (Boolean) Whether TLS is enabled.
 - `updated_at` (String) The timestamp when the instance was last updated.
+- `version` (String) The Apache version.
+- `vpc_id` (String) The VPC ID where the instance is deployed.

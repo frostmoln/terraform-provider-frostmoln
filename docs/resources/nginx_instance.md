@@ -17,19 +17,17 @@ Manages a managed Nginx webserver instance in the Frostmoln platform.
 
 ### Required
 
-- `version` (String) The Nginx version (e.g. "1.24", "1.26").
 - `flavor` (String) The flavor/size for the webserver instance (e.g. "web.gp1.small", "web.gp1.medium").
 - `name` (String) The name of the Nginx instance.
 - `storage_gb` (Number) The storage size in gigabytes.
+- `subnet_id` (String) The subnet ID where the webserver instance will be deployed.
+- `version` (String) The Nginx version (e.g. "1.24", "1.26").
+- `vpc_id` (String) The VPC ID where the webserver instance will be deployed.
 
 ### Optional
 
-- `config` (String) Custom engine configuration as a JSON string.
-- `gzip_enabled` (Boolean) Whether gzip compression is enabled.
-- `proxy_pass` (String) The proxy_pass upstream URL (e.g. "http://backend:8080").
+- `config` (Map of String) Engine-specific configuration as key/value pairs (sent as the engineConfig object).
 - `tls_enabled` (Boolean) Whether TLS is enabled for the webserver.
-- `try_files` (String) The try_files directive value (e.g. "$uri $uri/ /index.html").
-- `worker_processes` (Number) The number of Nginx worker processes. Defaults to auto (based on CPU cores).
 
 ### Read-Only
 

@@ -30,16 +30,17 @@ resource "frostmoln_redis_instance" "cache" {
 
 ### Required
 
-- `version` (String) The Redis version (e.g. "7.2", "7.4").
 - `flavor_id` (String) The flavor/size for the Redis instance (e.g. "cache.gp1.small", "cache.gp1.medium").
 - `name` (String) The name of the Redis instance.
 - `subnet_id` (String) The subnet ID where the Redis instance will be deployed.
+- `version` (String) The Redis version (e.g. "7.2", "7.4").
 - `vpc_id` (String) The VPC ID where the Redis instance will be deployed.
 
 ### Optional
 
 - `eviction_policy` (String) The eviction policy for the Redis instance (e.g. "noeviction", "allkeys-lru"). Defaults to "noeviction".
 - `persistence_mode` (String) The persistence mode for the Redis instance ("rdb", "aof", or "none"). Defaults to "rdb".
+- `storage_gb` (Number) The storage size in gigabytes (defaults to 10 if unset).
 
 ### Read-Only
 

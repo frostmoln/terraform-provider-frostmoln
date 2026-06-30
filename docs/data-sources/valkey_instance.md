@@ -23,7 +23,6 @@ Look up a managed Valkey instance by ID.
 
 - `admin_username` (String) The admin username for the Valkey instance.
 - `created_at` (String) The timestamp when the instance was created.
-- `version` (String) The Valkey version.
 - `eviction_policy` (String) The eviction policy of the Valkey instance.
 - `flavor_id` (String) The flavor/size of the Valkey instance.
 - `name` (String) The name of the Valkey instance.
@@ -33,4 +32,5 @@ Look up a managed Valkey instance by ID.
 - `status` (String) The current status of the Valkey instance.
 - `subnet_id` (String) The subnet ID where the Valkey instance is deployed.
 - `updated_at` (String) The timestamp when the instance was last updated.
+- `version` (String) The Valkey version.
 - `vpc_id` (String) The VPC ID where the Valkey instance is deployed.

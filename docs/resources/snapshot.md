@@ -29,6 +29,5 @@ Manages a volume snapshot in the Frostmoln platform. Snapshots are immutable aft
 
 - `created_at` (String) The timestamp when the snapshot was created.
 - `id` (String) The unique identifier of the snapshot.
-- `region` (String) The region where the snapshot is stored.
 - `size_gb` (Number) The size of the snapshot in gigabytes.
 - `status` (String) The current status of the snapshot.

@@ -36,6 +36,5 @@ Manages a block storage volume in the Frostmoln platform.
 - `device_path` (String) The device path on the instance, if attached.
 - `id` (String) The unique identifier of the volume.
 - `iops` (Number) The provisioned IOPS of the volume.
-- `region` (String) The region where the volume is located.
 - `status` (String) The current status of the volume.
 - `throughput` (Number) The throughput of the volume in MB/s.

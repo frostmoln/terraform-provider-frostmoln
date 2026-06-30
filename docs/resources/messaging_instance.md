@@ -38,8 +38,8 @@ resource "frostmoln_messaging_instance" "broker" {
 ### Optional
 
 - `engine` (String) The messaging engine type. Only "lavinmq" is currently supported. Defaults to "lavinmq".
-- `version` (String) The engine version (e.g. "2.3"). Defaults to the recommended version when omitted.
 - `persistence_mode` (String) The persistence mode for the messaging instance ("none" or "persistent"). Defaults to "persistent".
+- `version` (String) The engine version (e.g. "2.3"). Defaults to the recommended version when omitted.
 
 ### Read-Only
 

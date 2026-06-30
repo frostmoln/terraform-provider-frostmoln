@@ -17,16 +17,17 @@ Manages a managed Valkey instance in the Frostmoln platform.
 
 ### Required
 
-- `version` (String) The Valkey version (e.g. "8.0").
 - `flavor_id` (String) The flavor/size for the Valkey instance (e.g. "cache.gp1.small", "cache.gp1.medium").
 - `name` (String) The name of the Valkey instance.
 - `subnet_id` (String) The subnet ID where the Valkey instance will be deployed.
+- `version` (String) The Valkey version (e.g. "8.0").
 - `vpc_id` (String) The VPC ID where the Valkey instance will be deployed.
 
 ### Optional
 
 - `eviction_policy` (String) The eviction policy for the Valkey instance (e.g. "noeviction", "allkeys-lru"). Defaults to "noeviction".
 - `persistence_mode` (String) The persistence mode for the Valkey instance ("rdb", "aof", or "none"). Defaults to "rdb".
+- `storage_gb` (Number) The storage size in gigabytes (defaults to 10 if unset).
 
 ### Read-Only
 

@@ -28,8 +28,6 @@ Manages an object storage bucket in the Frostmoln platform.
 
 ### Read-Only
 
-- `access_key` (String, Sensitive) The access key for the bucket.
 - `created_at` (String) The timestamp when the bucket was created.
-- `endpoint` (String) The S3-compatible endpoint URL for the bucket.
 - `object_count` (Number) The number of objects in the bucket.
 - `size_bytes` (Number) The total size of all objects in the bucket, in bytes.

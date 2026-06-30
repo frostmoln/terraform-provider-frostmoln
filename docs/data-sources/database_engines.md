@@ -3,12 +3,12 @@
 page_title: "frostmoln_database_engines Data Source - Frostmoln"
 subcategory: ""
 description: |-
-  Lists all available database engines for managed database instances.
+  Lists all available database engines and their versions for managed database instances.
 ---
 
 # frostmoln_database_engines (Data Source)
 
-Lists all available database engines for managed database instances.
+Lists all available database engines and their versions for managed database instances.
 
 ## Example Usage
 
@@ -32,6 +32,15 @@ output "supported_engines" {
 
 Read-Only:
 
-- `description` (String) A human-readable description of the engine.
-- `name` (String) The engine name (e.g. "postgresql", "mysql").
-- `versions` (List of String) The list of supported version strings for this engine.
+- `engine` (String) The engine name (e.g. "postgresql", "mysql").
+- `versions` (Attributes List) The supported versions for this engine. (see [below for nested schema](#nestedatt--engines--versions))
+
+<a id="nestedatt--engines--versions"></a>
+### Nested Schema for `engines.versions`
+
+Read-Only:
+
+- `end_of_life` (String) The end-of-life date for this version.
+- `is_default` (Boolean) Whether this is the recommended default version.
+- `status` (String) The version lifecycle status (current/supported/deprecated/eol/innovation).
+- `version` (String) The version string (e.g. "16").

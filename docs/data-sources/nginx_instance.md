@@ -21,19 +21,17 @@ Look up a managed Nginx webserver instance by ID.
 
 ### Read-Only
 
+- `config` (Map of String) Engine-specific configuration as key/value pairs.
 - `created_at` (String) The timestamp when the instance was created.
-- `config` (String) Custom engine configuration.
-- `version` (String) The Nginx version.
 - `flavor` (String) The flavor/size of the Nginx instance.
-- `gzip_enabled` (Boolean) Whether gzip compression is enabled.
 - `name` (String) The name of the Nginx instance.
 - `port` (Number) The port number the Nginx instance is listening on.
 - `private_ip` (String) The private IP address of the Nginx instance.
-- `proxy_pass` (String) The proxy_pass upstream URL.
 - `status` (String) The current status of the Nginx instance.
 - `storage_gb` (Number) The storage size in gigabytes.
+- `subnet_id` (String) The subnet ID where the instance is deployed.
 - `tenant_id` (String) The tenant ID that owns this instance.
 - `tls_enabled` (Boolean) Whether TLS is enabled.
-- `try_files` (String) The try_files directive value.
 - `updated_at` (String) The timestamp when the instance was last updated.
-- `worker_processes` (Number) The number of Nginx worker processes.
+- `version` (String) The Nginx version.
+- `vpc_id` (String) The VPC ID where the instance is deployed.

@@ -29,4 +29,3 @@ Manages a domain binding for a webserver instance in the Frostmoln platform. Thi
 
 - `created_at` (String) The timestamp when the domain binding was created.
 - `id` (String) The unique identifier of the domain binding.
-- `status` (String) The current status of the domain binding.
