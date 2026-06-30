@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.4] - 2026-06-30
+
+### 🐛 Bug Fixes
+
+- *(provider)* Preserve null description on volume/snapshot read-back (#119)
+
 ## [0.4.3] - 2026-06-30
 
 ### 🐛 Bug Fixes
