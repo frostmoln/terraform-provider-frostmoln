@@ -24,4 +24,4 @@ Manages an SSH key in the Frostmoln platform.
 
 - `created_at` (String) The timestamp when the SSH key was created.
 - `fingerprint` (String) The fingerprint of the SSH key.
-- `id` (String) The unique identifier of the SSH key.
+- `id` (String) The identifier of the SSH key. Compute identifies keys by name within a tenant, so this equals the key name. Import by name: `terraform import frostmoln_ssh_key.<label> <key-name>`.

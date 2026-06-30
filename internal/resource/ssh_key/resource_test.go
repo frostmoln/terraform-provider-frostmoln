@@ -43,8 +43,10 @@ func TestSSHKeyModelFromAPI(t *testing.T) {
 	var model SSHKeyModel
 	model.fromAPI(key)
 
-	if model.ID.ValueString() != "key-123" {
-		t.Errorf("expected ID key-123, got %s", model.ID.ValueString())
+	// ID is the key name (compute keys SSH keys by name, not uuid), so the
+	// uuid "key-123" must NOT become the ID.
+	if model.ID.ValueString() != "my-key" {
+		t.Errorf("expected ID to be the name my-key, got %s", model.ID.ValueString())
 	}
 	if model.Name.ValueString() != "my-key" {
 		t.Errorf("expected name my-key, got %s", model.Name.ValueString())
@@ -406,8 +408,8 @@ func TestSSHKeyResource_Create_TFSDK(t *testing.T) {
 
 	var model SSHKeyModel
 	createResp.State.Get(ctx, &model)
-	if model.ID.ValueString() != "key-abc" {
-		t.Errorf("expected ID key-abc, got %s", model.ID.ValueString())
+	if model.ID.ValueString() != "test-key" {
+		t.Errorf("expected ID to be the name test-key, got %s", model.ID.ValueString())
 	}
 	if model.Name.ValueString() != "test-key" {
 		t.Errorf("expected name test-key, got %s", model.Name.ValueString())
@@ -502,8 +504,9 @@ func TestSSHKeyResource_Read_TFSDK(t *testing.T) {
 
 	var model SSHKeyModel
 	readResp.State.Get(ctx, &model)
-	if model.ID.ValueString() != "key-abc" {
-		t.Errorf("expected ID key-abc, got %s", model.ID.ValueString())
+	// fromAPI sets ID to the name (not the uuid "key-abc" in the response).
+	if model.ID.ValueString() != "test-key" {
+		t.Errorf("expected ID to be the name test-key, got %s", model.ID.ValueString())
 	}
 	if model.Name.ValueString() != "test-key" {
 		t.Errorf("expected name test-key, got %s", model.Name.ValueString())
@@ -740,7 +743,8 @@ func TestSSHKeyResource_ImportState_TFSDK(t *testing.T) {
 		"created_at":  tftypes.NewValue(tftypes.String, nil),
 	})
 
-	importReq := resource.ImportStateRequest{ID: "key-abc"}
+	// Import ID is the key name (compute's per-tenant identifier).
+	importReq := resource.ImportStateRequest{ID: "frostmoln"}
 	importResp := &resource.ImportStateResponse{
 		State: tfsdk.State{Schema: s, Raw: initVal},
 	}
@@ -753,7 +757,139 @@ func TestSSHKeyResource_ImportState_TFSDK(t *testing.T) {
 
 	var model SSHKeyModel
 	importResp.State.Get(context.Background(), &model)
-	if model.ID.ValueString() != "key-abc" {
-		t.Errorf("expected imported ID key-abc, got %s", model.ID.ValueString())
+	if model.ID.ValueString() != "frostmoln" {
+		t.Errorf("expected imported ID frostmoln, got %s", model.ID.ValueString())
+	}
+}
+
+// TestSSHKeyResource_ReadDelete_ByName guards Finding 1: compute has no
+// get/delete-by-uuid route, so Read and Delete must key off the name held in
+// state.ID. A uuid-shaped path would hit the default 404 branch and fail.
+func TestSSHKeyResource_ReadDelete_ByName(t *testing.T) {
+	const keyName = "frostmoln"
+	deleted := false
+	server := newMeAndSSHKeyServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/sshkeys/"+keyName:
+			_ = json.NewEncoder(w).Encode(apiSSHKey{
+				ID:          "11111111-2222-3333-4444-555555555555",
+				Name:        keyName,
+				PublicKey:   "ssh-ed25519 AAAA...",
+				Fingerprint: "SHA256:xyz",
+				CreatedAt:   "2025-06-01T12:00:00Z",
+			})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-456/sshkeys/"+keyName:
+			deleted = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			// A uuid lookup (the old buggy behaviour) lands here.
+			t.Errorf("unexpected non-name request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredSSHKeyResource(t, server.URL)
+	s := sshKeySchema(t)
+	tfType := sshKeyTFType(t)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, keyName),
+		"name":        tftypes.NewValue(tftypes.String, keyName),
+		"public_key":  tftypes.NewValue(tftypes.String, "ssh-ed25519 AAAA..."),
+		"fingerprint": tftypes.NewValue(tftypes.String, "SHA256:xyz"),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	// Read keys off the name.
+	readResp := &resource.ReadResponse{State: tfsdk.State{Schema: s}}
+	res.Read(ctx, resource.ReadRequest{State: tfsdk.State{Schema: s, Raw: stateVal}}, readResp)
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("read by name failed: %v", readResp.Diagnostics.Errors())
+	}
+	var model SSHKeyModel
+	readResp.State.Get(ctx, &model)
+	if model.ID.ValueString() != keyName {
+		t.Errorf("expected ID %s, got %s", keyName, model.ID.ValueString())
+	}
+
+	// Delete keys off the name.
+	deleteResp := &resource.DeleteResponse{}
+	res.Delete(ctx, resource.DeleteRequest{State: tfsdk.State{Schema: s, Raw: stateVal}}, deleteResp)
+	if deleteResp.Diagnostics.HasError() {
+		t.Fatalf("delete by name failed: %v", deleteResp.Diagnostics.Errors())
+	}
+	if !deleted {
+		t.Error("expected DELETE /sshkeys/{name} to be called")
+	}
+}
+
+// TestSSHKeyModelFromAPI_PreservesConfiguredPublicKey guards the read-back
+// bug class: public_key is Required + RequiresReplace, so fromAPI must not
+// overwrite a configured value with a (possibly normalized) API value, but
+// must populate it on import where no prior value exists.
+func TestSSHKeyModelFromAPI_PreservesConfiguredPublicKey(t *testing.T) {
+	// Create/Read: state holds the configured key; a normalized API value
+	// (comment stripped) must not replace it.
+	model := SSHKeyModel{PublicKey: types.StringValue("ssh-ed25519 AAAA... user@host")}
+	model.fromAPI(&apiSSHKey{ID: "uuid", Name: "k", PublicKey: "ssh-ed25519 AAAA..."})
+	if model.PublicKey.ValueString() != "ssh-ed25519 AAAA... user@host" {
+		t.Errorf("expected configured public_key preserved, got %s", model.PublicKey.ValueString())
+	}
+
+	// Import: no prior value → take the API value.
+	imported := SSHKeyModel{}
+	imported.fromAPI(&apiSSHKey{Name: "k", PublicKey: "ssh-ed25519 ZZZZ..."})
+	if imported.PublicKey.ValueString() != "ssh-ed25519 ZZZZ..." {
+		t.Errorf("expected API public_key on import, got %s", imported.PublicKey.ValueString())
+	}
+}
+
+// TestSSHKeyResource_UpgradeState_V0ToV1 guards the v0→v1 migration: a v0 state
+// row carries id=uuid; the upgrader must rewrite id to the key name so the
+// first post-upgrade refresh hits GET /sshkeys/{name} instead of 404'ing on the
+// uuid and forcing a recreate (which 409s).
+func TestSSHKeyResource_UpgradeState_V0ToV1(t *testing.T) {
+	ctx := context.Background()
+	r := &sshKeyResource{}
+
+	up, ok := r.UpgradeState(ctx)[0]
+	if !ok {
+		t.Fatal("expected a v0 state upgrader")
+	}
+	if up.PriorSchema == nil {
+		t.Fatal("expected PriorSchema for v0")
+	}
+
+	priorSchema := *up.PriorSchema
+	priorType := priorSchema.Type().TerraformType(ctx)
+	priorVal := tftypes.NewValue(priorType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "89d71de7-b284-4ecc-a182-4c1d70e0e7d0"),
+		"name":        tftypes.NewValue(tftypes.String, "frostmoln"),
+		"public_key":  tftypes.NewValue(tftypes.String, "ssh-ed25519 AAAA..."),
+		"fingerprint": tftypes.NewValue(tftypes.String, "SHA256:xyz"),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	req := resource.UpgradeStateRequest{
+		State: &tfsdk.State{Schema: priorSchema, Raw: priorVal},
+	}
+	resp := &resource.UpgradeStateResponse{
+		State: tfsdk.State{Schema: sshKeySchema(t)},
+	}
+
+	up.StateUpgrader(ctx, req, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics.Errors())
+	}
+	var model SSHKeyModel
+	resp.State.Get(ctx, &model)
+	if model.ID.ValueString() != "frostmoln" {
+		t.Errorf("expected upgraded ID to be the name frostmoln, got %s", model.ID.ValueString())
+	}
+	if model.PublicKey.ValueString() != "ssh-ed25519 AAAA..." {
+		t.Errorf("expected public_key carried through upgrade, got %s", model.PublicKey.ValueString())
 	}
 }

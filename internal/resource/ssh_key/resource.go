@@ -14,8 +14,9 @@ import (
 )
 
 var (
-	_ resource.Resource                = &sshKeyResource{}
-	_ resource.ResourceWithImportState = &sshKeyResource{}
+	_ resource.Resource                 = &sshKeyResource{}
+	_ resource.ResourceWithImportState  = &sshKeyResource{}
+	_ resource.ResourceWithUpgradeState = &sshKeyResource{}
 )
 
 // NewResource returns a new SSH key resource factory.
@@ -33,11 +34,16 @@ func (r *sshKeyResource) Metadata(_ context.Context, req resource.MetadataReques
 
 func (r *sshKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		// v1: the resource ID moved from the backend uuid to the key name. See
+		// UpgradeState for the v0→v1 migration.
+		Version:     1,
 		Description: "Manages an SSH key in the Frostmoln platform.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
-				Description: "The unique identifier of the SSH key.",
-				Computed:    true,
+				Description: "The identifier of the SSH key. Compute identifies keys by name " +
+					"within a tenant, so this equals the key name. Import by name: " +
+					"`terraform import frostmoln_ssh_key.<label> <key-name>`.",
+				Computed: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -164,5 +170,38 @@ func (r *sshKeyResource) Delete(ctx context.Context, req resource.DeleteRequest,
 }
 
 func (r *sshKeyResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// Import ID is the key name (compute's per-tenant identifier); Read then
+	// populates the rest from GET /sshkeys/{name}.
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// UpgradeState migrates v0 state (resource ID = backend uuid) to v1 (ID = key
+// name). v0 Created keys with id=uuid; the key name is already present in v0
+// state, so the migration is purely local (no API call). Without it, the first
+// post-upgrade refresh would GET /sshkeys/{uuid} → 404 → recreate → POST →
+// 409 conflict (the name still exists), failing the apply.
+func (r *sshKeyResource) UpgradeState(context.Context) map[int64]resource.StateUpgrader {
+	return map[int64]resource.StateUpgrader{
+		0: {
+			PriorSchema: &schema.Schema{
+				Attributes: map[string]schema.Attribute{
+					"id":          schema.StringAttribute{Computed: true},
+					"name":        schema.StringAttribute{Required: true},
+					"public_key":  schema.StringAttribute{Required: true},
+					"fingerprint": schema.StringAttribute{Computed: true},
+					"created_at":  schema.StringAttribute{Computed: true},
+				},
+			},
+			StateUpgrader: func(ctx context.Context, req resource.UpgradeStateRequest, resp *resource.UpgradeStateResponse) {
+				var prior SSHKeyModel
+				resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+				if resp.Diagnostics.HasError() {
+					return
+				}
+				// The ID is now the key name, not the backend uuid.
+				prior.ID = prior.Name
+				resp.Diagnostics.Append(resp.State.Set(ctx, &prior)...)
+			},
+		},
+	}
 }
