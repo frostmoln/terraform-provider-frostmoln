@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.5] - 2026-06-30
+
+### 🐛 Bug Fixes
+
+- *(provider)* Operate ssh_key by name so import/destroy work (#121)
+
 ## [0.4.4] - 2026-06-30
 
 ### 🐛 Bug Fixes
