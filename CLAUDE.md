@@ -117,6 +117,27 @@ Unit tests use `httptest` for HTTP mocking. Each resource test should:
 5. Register the resource in `internal/provider/provider.go` `Resources()` method
 6. Add example HCL in `examples/resources/frostmoln_<name>/resource.tf`
 
+### Managed-service instance resource conventions
+
+Managed-service offers (databases, caches, web servers, messaging, and the
+coming managed Kubernetes) follow one HCL surface — keep new ones consistent:
+
+- **Engine-specific resources, no generic `*_instance`.** Each engine gets its
+  own resource (`frostmoln_redis_instance`, `frostmoln_valkey_instance`, …).
+  There is no generic `frostmoln_cache_instance`-style umbrella resource (the
+  one that existed was removed in #91).
+- **Expose `version`, never an engine-prefixed name.** Use the bare `version`
+  attribute — not `engine_version` / `mysql_version` / `postgres_version`. The
+  backend JSON wire tag stays engine-specific (`engineVersion` / `postgresVersion`);
+  the rename is HCL-surface only (the model's `toCreateRequest`/`fromAPI` map
+  `version` ↔ the wire tag), so CLI/portals are unaffected (CLAUDE.md #10).
+- **Freeform config is `config` (Map of String)**, not `engine_config`, sent as
+  the `engineConfig` object on the wire.
+- **Flavor:** today db/web resources use `flavor` and cache/messaging use
+  `flavor_id` for the same concept — a known inconsistency to normalize in a
+  future breaking release (Ambix 019f132b-db61); match the sibling engine's
+  existing attribute until then.
+
 ### Adding New Data Sources
 
 1. Create a new directory under `internal/datasource/<name>/`
