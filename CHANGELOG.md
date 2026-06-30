@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.3] - 2026-06-30
+
+### 🐛 Bug Fixes
+
+- *(provider)* Filter reserved metadata from tags read-back (volume, snapshot, instance datasource) (#117)
+
 ## [0.4.2] - 2026-06-30
 
 ### 🐛 Bug Fixes
