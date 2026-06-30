@@ -123,7 +123,9 @@ func TestVolumeModel_fromAPI(t *testing.T) {
 		CreatedAt:   "2025-01-01T00:00:00Z",
 	}
 
-	model := &VolumeModel{}
+	// description is Optional-only and preserved from plan/state on read: a
+	// user-set description (non-null) adopts the backend value.
+	model := &VolumeModel{Description: types.StringValue("test description")}
 	model.fromAPI(ctx, apiVol, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %s", diags.Errors())
@@ -1812,4 +1814,28 @@ func TestVolumeModelFromAPIFiltersReservedTags(t *testing.T) {
 			t.Errorf("expected tags {env: prod} with reserved keys filtered, got %v", gotTags)
 		}
 	})
+}
+
+// TestVolumeModelFromAPIPreservesNullDescription guards bug (A): the backend
+// stamps a provisioning default description on every provisioned volume. A null
+// description plan MUST read back null (Optional-only attr), else apply fails with
+// "inconsistent result after apply: .description was null, but now <default>".
+func TestVolumeModelFromAPIPreservesNullDescription(t *testing.T) {
+	ctx := context.Background()
+	diags := diag.Diagnostics{}
+
+	apiVol := &apiVolume{
+		ID:          "vol-1",
+		Name:        "data",
+		Status:      "available",
+		Description: "Created by provisioning for customer 94981d9c-8d35-4fa2-9704-2bc34cca0836",
+	}
+	model := &VolumeModel{Description: types.StringNull()}
+	model.fromAPI(ctx, apiVol, &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+	}
+	if !model.Description.IsNull() {
+		t.Errorf("expected description to stay null despite backend provisioning default, got %q", model.Description.ValueString())
+	}
 }

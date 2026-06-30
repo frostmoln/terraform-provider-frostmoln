@@ -73,10 +73,15 @@ func (m *SnapshotModel) fromAPI(ctx context.Context, snap *apiSnapshot, diags *d
 	m.SizeGB = types.Int64Value(snap.Size)
 	m.CreatedAt = types.StringValue(snap.CreatedAt)
 
-	if snap.Description != "" {
+	// description is Optional-only, so a null plan MUST read back null. The snapshot
+	// backend currently honors the user description (CreateVolumeSnapshot passes it
+	// through), so this is defensive — but preserving null keeps the Optional contract
+	// robust if it ever stamps a default like the volume path does (provisioning
+	// CreateVolume), which would otherwise trip "inconsistent result after apply".
+	if m.Description.IsNull() {
+		m.Description = types.StringNull()
+	} else if snap.Description != "" {
 		m.Description = types.StringValue(snap.Description)
-	} else if m.Description.IsNull() {
-		// Keep null
 	} else {
 		m.Description = types.StringValue("")
 	}

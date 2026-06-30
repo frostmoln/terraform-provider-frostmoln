@@ -98,7 +98,9 @@ func TestSnapshotModel_fromAPI(t *testing.T) {
 		CreatedAt:   "2025-01-01T00:00:00Z",
 	}
 
-	model := &SnapshotModel{}
+	// description is Optional-only and preserved from plan/state on read: a
+	// user-set description (non-null) adopts the backend value.
+	model := &SnapshotModel{Description: types.StringValue("test description")}
 	model.fromAPI(ctx, apiSnap, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %s", diags.Errors())
@@ -903,4 +905,28 @@ func TestSnapshotModel_fromAPI_FiltersReservedTags(t *testing.T) {
 			t.Errorf("expected tags {backup: daily} with reserved keys filtered, got %v", gotTags)
 		}
 	})
+}
+
+// TestSnapshotModelFromAPIPreservesNullDescription guards bug (A) for snapshots:
+// a null description plan must read back null even if the backend returns a
+// stamped default (Optional-only attr), else "inconsistent result after apply".
+func TestSnapshotModelFromAPIPreservesNullDescription(t *testing.T) {
+	ctx := context.Background()
+	diags := diag.Diagnostics{}
+
+	apiSnap := &apiSnapshot{
+		ID:          "snap-1",
+		Name:        "snap",
+		VolumeID:    "vol-1",
+		Status:      "available",
+		Description: "Created by provisioning for customer 94981d9c-8d35-4fa2-9704-2bc34cca0836",
+	}
+	model := &SnapshotModel{Description: types.StringNull()}
+	model.fromAPI(ctx, apiSnap, &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+	}
+	if !model.Description.IsNull() {
+		t.Errorf("expected description to stay null despite backend default, got %q", model.Description.ValueString())
+	}
 }

@@ -124,10 +124,14 @@ func (m *VolumeModel) fromAPI(ctx context.Context, vol *apiVolume, diags *diag.D
 	m.Throughput = types.Int64Value(int64(vol.Throughput))
 	m.CreatedAt = types.StringValue(vol.CreatedAt)
 
-	if vol.Description != "" {
+	// description is Optional-only, so a null plan MUST read back null. The backend
+	// stamps a provisioning default ("Created by provisioning for customer …") on
+	// every provisioned volume, so adopting vol.Description when the user set none
+	// produces "inconsistent result after apply". Preserve the user's value (or null).
+	if m.Description.IsNull() {
+		m.Description = types.StringNull()
+	} else if vol.Description != "" {
 		m.Description = types.StringValue(vol.Description)
-	} else if m.Description.IsNull() {
-		// Keep null if it was null before
 	} else {
 		m.Description = types.StringValue("")
 	}
@@ -138,7 +142,13 @@ func (m *VolumeModel) fromAPI(ctx context.Context, vol *apiVolume, diags *diag.D
 		m.Zone = types.StringNull()
 	}
 
-	if vol.SourceSnapshotID != "" {
+	// snapshot_id is Optional-only and create-time (RequiresReplace). Preserve the
+	// plan/state value: when the user set none it stays null (the backend only
+	// returns sourceSnapshotId when one was requested, but guarding keeps the
+	// Optional contract robust against an unexpected backend echo).
+	if m.SnapshotID.IsNull() {
+		m.SnapshotID = types.StringNull()
+	} else if vol.SourceSnapshotID != "" {
 		m.SnapshotID = types.StringValue(vol.SourceSnapshotID)
 	} else {
 		m.SnapshotID = types.StringNull()
