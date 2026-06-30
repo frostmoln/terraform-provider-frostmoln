@@ -3,6 +3,7 @@ package clicreds
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"go.frostmoln.internal/oidc"
 )
 
 const sampleConfig = `api_endpoint: https://api.frostmoln.cloud/api
@@ -450,6 +453,139 @@ func TestRefreshBoundsLockHoldBelowStale(t *testing.T) {
 		t.Fatalf("lock not released after the bounded refresh: %v", lerr)
 	}
 	unlock()
+}
+
+// TestRefreshRetriesTransientThenSucceeds is the MED-4 happy path: a single
+// transient token-endpoint blip (a bare gateway 503, no OAuth body) is retried
+// once and the refresh recovers. Exactly one retry — two /token hits. The
+// in-memory expiry equals the on-disk one, so the freshness gate does not adopt
+// and a real grant runs.
+func TestRefreshRetriesTransientThenSucceeds(t *testing.T) {
+	old := refreshBackoff
+	refreshBackoff = time.Millisecond
+	defer func() { refreshBackoff = old }()
+
+	s := newOIDCServer(t)
+	s.tokenStatus = http.StatusServiceUnavailable
+	s.tokenFailN = 1 // 503 once (bare body -> "token endpoint HTTP 503"), then succeed
+	path := writeConfigFile(t, sampleConfig, 0o600)
+	r, err := Resolve(Options{Path: path})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	tok, err := r.Bearer.Refresh(context.Background(), s.Client(), s.URL, r.RefreshToken, r.ExpiresAt)
+	if err != nil {
+		t.Fatalf("expected the retry to recover, got %v", err)
+	}
+	if tok.AccessToken != "fresh-access" {
+		t.Errorf("expected rotated token after retry, got %q", tok.AccessToken)
+	}
+	if s.tokenHits != 2 {
+		t.Errorf("expected exactly one retry (2 token hits), got %d", s.tokenHits)
+	}
+}
+
+// TestRefreshRetriesTemporarilyUnavailable covers the typed retryable branch: an
+// explicit temporarily_unavailable OAuth error means the IdP did not process the
+// request, so it is retried once.
+func TestRefreshRetriesTemporarilyUnavailable(t *testing.T) {
+	old := refreshBackoff
+	refreshBackoff = time.Millisecond
+	defer func() { refreshBackoff = old }()
+
+	s := newOIDCServer(t)
+	s.tokenStatus = http.StatusServiceUnavailable
+	s.tokenBody = `{"error":"temporarily_unavailable"}`
+	s.tokenFailN = 1
+	path := writeConfigFile(t, sampleConfig, 0o600)
+	r, err := Resolve(Options{Path: path})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if _, err := r.Bearer.Refresh(context.Background(), s.Client(), s.URL, r.RefreshToken, r.ExpiresAt); err != nil {
+		t.Fatalf("expected temporarily_unavailable to be retried, got %v", err)
+	}
+	if s.tokenHits != 2 {
+		t.Errorf("expected exactly one retry (2 token hits), got %d", s.tokenHits)
+	}
+}
+
+// TestRefreshDoesNotRetryServerError pins the consumed-token guard: server_error
+// is ambiguous (the grant may have partially consumed the refresh token), so it
+// must NOT be retried — a re-POST could trip Zitadel reuse-detection. One hit.
+func TestRefreshDoesNotRetryServerError(t *testing.T) {
+	old := refreshBackoff
+	refreshBackoff = time.Millisecond
+	defer func() { refreshBackoff = old }()
+
+	s := newOIDCServer(t)
+	s.tokenStatus = http.StatusInternalServerError
+	s.tokenBody = `{"error":"server_error"}`
+	path := writeConfigFile(t, sampleConfig, 0o600)
+	r, err := Resolve(Options{Path: path})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if _, err := r.Bearer.Refresh(context.Background(), s.Client(), s.URL, r.RefreshToken, r.ExpiresAt); err == nil {
+		t.Fatal("expected server_error to be terminal, got nil")
+	}
+	if s.tokenHits != 1 {
+		t.Errorf("server_error must NOT be retried; got %d token hits", s.tokenHits)
+	}
+}
+
+// TestRefreshDoesNotRetryInvalidGrant: a dead refresh token (invalid_grant) is
+// terminal — retrying would re-POST a token reuse-detection already flagged.
+func TestRefreshDoesNotRetryInvalidGrant(t *testing.T) {
+	old := refreshBackoff
+	refreshBackoff = time.Millisecond
+	defer func() { refreshBackoff = old }()
+
+	s := newOIDCServer(t)
+	s.tokenStatus = http.StatusBadRequest
+	s.tokenBody = `{"error":"invalid_grant"}`
+	path := writeConfigFile(t, sampleConfig, 0o600)
+	r, err := Resolve(Options{Path: path})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	_, err = r.Bearer.Refresh(context.Background(), s.Client(), s.URL, r.RefreshToken, r.ExpiresAt)
+	if !IsRefreshTokenDead(err) {
+		t.Fatalf("expected a dead refresh token, got %v", err)
+	}
+	if s.tokenHits != 1 {
+		t.Errorf("invalid_grant must NOT be retried; got %d token hits", s.tokenHits)
+	}
+}
+
+// TestIsRetryable pins the classification directly — notably the context-error
+// exclusion (a grant cancelled / past lockMaxRefresh must NOT loop-retry), which
+// the HTTP-driven tests above do not reach.
+func TestIsRetryable(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"temporarily_unavailable", &oidc.OAuthError{Code: "temporarily_unavailable"}, true},
+		{"server_error", &oidc.OAuthError{Code: "server_error"}, false},
+		{"invalid_grant", &oidc.OAuthError{Code: "invalid_grant"}, false},
+		{"pre-response transport", errors.New("dial tcp: connection refused"), true},
+		// Post-consumption residuals (bare 5xx, missing-token 2xx, decode failure)
+		// are retried BY DESIGN — safe via the monotonic-benefit invariant; see the
+		// IsRetryable doc. Pinned so the behavior is deliberate, not incidental.
+		{"bare 5xx (post-consumption residual)", errors.New("token endpoint HTTP 502"), true},
+		// A 426 version gate is deterministic — fail fast, do not burn a retry.
+		{"version gate 426", &oidc.UpgradeRequiredError{Msg: "upgrade fm"}, false},
+		{"context canceled", context.Canceled, false},
+		{"wrapped deadline", fmt.Errorf("grant: %w", context.DeadlineExceeded), false},
+		{"nil", nil, false},
+	}
+	for _, tt := range tests {
+		if got := IsRetryable(tt.err); got != tt.want {
+			t.Errorf("IsRetryable(%s) = %v, want %v", tt.name, got, tt.want)
+		}
+	}
 }
 
 func TestLockFileExclusive(t *testing.T) {

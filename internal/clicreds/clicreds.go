@@ -200,6 +200,59 @@ func IsRefreshTokenDead(err error) bool {
 	return errors.As(err, &oe) && oe.Code == "invalid_grant"
 }
 
+// IsRetryable reports whether a failed bearer-refresh grant should be retried
+// with the SAME refresh token (MED-4). The retry re-POSTs that token, so the
+// sole hard constraint is Zitadel reuse-detection safety. We retry:
+//
+//   - *oidc.OAuthError{Code: "temporarily_unavailable"} — the IdP's explicit
+//     "I did not process this" signal (RFC 6749 §5.2): the token was not consumed.
+//   - a transport/proxy failure: anything that is NOT an *oidc.OAuthError, NOT a
+//     426 version-gate rejection, and NOT a context error — a dropped connection
+//     at any hop, or a bare gateway 5xx (oidc surfaces "token endpoint HTTP %d").
+//
+// It does NOT retry any other *oidc.OAuthError — server_error (may follow a
+// partially-processed grant), invalid_grant (dead token), and the rest are
+// excluded by the first branch — nor a context error (a cancelled /
+// lock-budget-expired apply), nor a 426 version gate (deterministic; a retry
+// just burns the backoff and fails identically). Callers feed it only the grant
+// error — a config-lock error is raised before the grant runs, so it never
+// reaches here.
+//
+// Reuse-detection safety of the transport/proxy bucket — this is NOT "provably
+// not consumed". A connection reset or a proxy 502/504 can land AFTER the IdP
+// committed the rotation (R consumed, R' issued) but BEFORE the 2xx reached us;
+// a truncated-2xx body or a 2xx missing access_token is likewise
+// post-consumption. Retrying those re-POSTs a consumed token. It is safe anyway
+// by a monotonic-benefit invariant: in every such case we hold the consumed R
+// and never received R', and the file lock — held across the whole retry — bars
+// any peer from minting a live R' in the meantime, so the session is ALREADY
+// doomed (the next refresh would re-POST R and trip reuse-detection regardless).
+// The retry only front-runs that inevitable trip by one backoff and surfaces a
+// clean invalid_grant -> ErrSessionExpired ("run `fm auth login`") instead of a
+// bare 5xx now plus a confusing invalid_grant on the next apply — WHILE
+// recovering the genuinely pre-consumption blips (IdP down / restarting, request
+// never processed) that are MED-4's whole point. So the retry never kills a
+// session that would otherwise have survived; it strictly dominates not
+// retrying. A typed pre-POST-vs-at-POST error in the oidc module could make the
+// distinction exact, but it is not needed for safety — only to skip the wasted
+// retry on the already-doomed cases.
+func IsRetryable(err error) bool {
+	var oe *oidc.OAuthError
+	if errors.As(err, &oe) {
+		return oe.Code == "temporarily_unavailable"
+	}
+	// A 426 version-gate rejection is deterministic — fail fast rather than burn
+	// a backoff re-POSTing into the same gate.
+	var ue *oidc.UpgradeRequiredError
+	if errors.As(err, &ue) {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	return err != nil
+}
+
 // FileSource refreshes an fm-CLI OIDC bearer credential bound to a config file
 // and context. Refresh performs the whole refresh as one locked
 // read-modify-write so that aliased provider instances and a concurrent `fm`
@@ -281,7 +334,24 @@ func (s *FileSource) Refresh(ctx context.Context, httpClient *http.Client, apiEn
 	// per-hop transport guard (ADR-0087). The injected httpClient sets
 	// RefuseUnsafeRedirect (see client.NewClient); the shared client also
 	// re-applies it defensively for a client that didn't.
-	tok, err := (oidc.Client{HTTPClient: httpClient, UserAgent: s.userAgent}).RefreshViaGateway(grantCtx, apiEndpoint, refreshToken)
+	//
+	// MED-4: a transient IdP blip should not abort a resource op mid-apply. Retry
+	// the grant ONCE, for IsRetryable failures only (see its reuse-detection
+	// rationale). The whole loop stays inside grantCtx, so a slow IdP plus the
+	// backoff can never push the lock-hold past lockMaxRefresh (< lockStaleAfter).
+	grant := oidc.Client{HTTPClient: httpClient, UserAgent: s.userAgent}
+	var tok *oidc.Token
+	for attempt := 0; ; attempt++ {
+		tok, err = grant.RefreshViaGateway(grantCtx, apiEndpoint, refreshToken)
+		if err == nil || attempt >= refreshRetries || !IsRetryable(err) {
+			break
+		}
+		select {
+		case <-grantCtx.Done():
+			return nil, err // out of lock budget — surface the transient grant error
+		case <-time.After(refreshBackoff):
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -419,6 +489,12 @@ var (
 	// below lockStaleAfter so the lock is provably released before the stale
 	// threshold even with a timeout-less injected HTTP client (LOW-5).
 	lockMaxRefresh = 90 * time.Second
+	// refreshRetries is the number of extra grant attempts after the first for
+	// an IsRetryable failure (MED-4); refreshBackoff is the pause between them,
+	// tiny relative to lockMaxRefresh so the retry can't blow the lock budget.
+	// Vars so tests can shrink/disable them.
+	refreshRetries = 1
+	refreshBackoff = 250 * time.Millisecond
 )
 
 func lockFile(path string) (func(), error) {

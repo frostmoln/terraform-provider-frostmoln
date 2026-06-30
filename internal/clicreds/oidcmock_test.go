@@ -20,6 +20,8 @@ type oidcServer struct {
 	gotUserAgent string        // User-Agent seen on the token request
 	tokenStatus  int           // override token endpoint status; 0 = 200
 	tokenBody    string        // override token endpoint body
+	tokenFailN   int           // serve tokenStatus/tokenBody for the first N /token hits, then succeed (0 = apply tokenStatus to every hit)
+	tokenHits    int           // count of /token requests that reached the handler
 	tokenBlock   chan struct{} // if non-nil, /token stalls until this channel is closed
 	issuerOverri string        // override the issuer returned by cli-config
 	tokenEPOverr string        // override the token_endpoint returned by discovery
@@ -56,7 +58,10 @@ func newOIDCServer(t *testing.T) *oidcServer {
 			for k := range r.Form {
 				s.gotForm[k] = r.Form.Get(k)
 			}
-			if s.tokenStatus != 0 {
+			s.tokenHits++
+			// tokenFailN>0: fail for the first N hits then succeed (the
+			// retry path); tokenFailN==0: apply tokenStatus to every hit.
+			if s.tokenStatus != 0 && (s.tokenFailN == 0 || s.tokenHits <= s.tokenFailN) {
 				w.WriteHeader(s.tokenStatus)
 				_, _ = w.Write([]byte(s.tokenBody))
 				return
