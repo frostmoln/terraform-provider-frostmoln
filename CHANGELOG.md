@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.2] - 2026-06-30
+
+### 🐛 Bug Fixes
+
+- *(instance)* Filter reserved frostmoln_* metadata out of tags read-back (#115)
+
 ## [0.4.1] - 2026-06-30
 
 ### 🐛 Bug Fixes
