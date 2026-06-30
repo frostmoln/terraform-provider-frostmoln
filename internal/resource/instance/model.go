@@ -51,20 +51,23 @@ type apiInstanceNetwork struct {
 // flavor/image are nested objects, IPs are arrays, user tags live under metadata,
 // VPC/subnet only appear inside networks[], and there is no top-level region.
 type apiInstance struct {
-	ID             string               `json:"id"`
-	Name           string               `json:"name"`
-	Status         string               `json:"status"`
-	FlavorID       string               `json:"flavorId"`
-	Flavor         *apiNestedRef        `json:"flavor,omitempty"`
-	ImageID        string               `json:"imageId"`
-	Image          *apiNestedRef        `json:"image,omitempty"`
-	Zone           string               `json:"availabilityZone,omitempty"`
-	Networks       []apiInstanceNetwork `json:"networks,omitempty"`
-	PrivateIPs     []string             `json:"privateIps,omitempty"`
-	PublicIPs      []string             `json:"publicIps,omitempty"`
-	SecurityGroups []string             `json:"securityGroups,omitempty"`
-	Metadata       map[string]string    `json:"metadata,omitempty"`
-	CreatedAt      string               `json:"createdAt"`
+	ID         string               `json:"id"`
+	Name       string               `json:"name"`
+	Status     string               `json:"status"`
+	FlavorID   string               `json:"flavorId"`
+	Flavor     *apiNestedRef        `json:"flavor,omitempty"`
+	ImageID    string               `json:"imageId"`
+	Image      *apiNestedRef        `json:"image,omitempty"`
+	Zone       string               `json:"availabilityZone,omitempty"`
+	Networks   []apiInstanceNetwork `json:"networks,omitempty"`
+	PrivateIPs []string             `json:"privateIps,omitempty"`
+	PublicIPs  []string             `json:"publicIps,omitempty"`
+	// Returned as the OpenStack-internal SG NAME (sg-<tenant>-<vpc>-<name>), not
+	// the customer SG UUID. Intentionally NOT mapped to state in fromAPI — doing
+	// so triggers "inconsistent result after apply" on this RequiresReplace attr.
+	SecurityGroups []string          `json:"securityGroups,omitempty"`
+	Metadata       map[string]string `json:"metadata,omitempty"`
+	CreatedAt      string            `json:"createdAt"`
 }
 
 // apiCreateInstanceRequest is the API request to create an instance. The create
@@ -219,18 +222,11 @@ func (m *InstanceModel) fromAPI(ctx context.Context, inst *apiInstance, diags *d
 	// at create is preserved on every refresh; overwriting from the response
 	// would either null out the user's value or trigger a spurious replace.
 
-	// Security groups (the read returns the IDs).
-	if len(inst.SecurityGroups) > 0 {
-		sgSet, d := types.SetValueFrom(ctx, types.StringType, inst.SecurityGroups)
-		diags.Append(d...)
-		m.SecurityGroups = sgSet
-	} else if !m.SecurityGroups.IsNull() {
-		sgSet, d := types.SetValueFrom(ctx, types.StringType, []string{})
-		diags.Append(d...)
-		m.SecurityGroups = sgSet
-	} else {
-		m.SecurityGroups = types.SetNull(types.StringType)
-	}
+	// security_groups is RequiresReplace and create-time. The backend read
+	// returns the OpenStack-internal SG NAME (e.g. "sg-<tenant>-<vpc>-<name>",
+	// compute mapper.go), not the customer SG UUID the user supplied at create.
+	// It is therefore left untouched and preserved from plan/state — overwriting
+	// from the response would trigger a spurious replace / inconsistent-result.
 
 	// ssh_key_names is RequiresReplace and write-only on the wire (the backend
 	// returns a single keyName, not the set the user supplied), so it is left

@@ -178,28 +178,33 @@ func TestInstanceModelFromAPI(t *testing.T) {
 	diags := diag.Diagnostics{}
 
 	inst := &apiInstance{
-		ID:             "inst-abc",
-		Name:           "web-1",
-		Status:         "running",
-		FlavorID:       "flavor-small",
-		Flavor:         &apiNestedRef{Name: "Small"},
-		ImageID:        "img-ubuntu",
-		Image:          &apiNestedRef{Name: "Ubuntu 24.04"},
-		Zone:           "sweden-a",
-		Networks:       []apiInstanceNetwork{{NetworkID: "vpc-123", SubnetID: "subnet-456"}},
-		PrivateIPs:     []string{"10.0.1.5"},
-		PublicIPs:      []string{"203.0.113.10"},
-		SecurityGroups: []string{"sg-1"},
+		ID:         "inst-abc",
+		Name:       "web-1",
+		Status:     "running",
+		FlavorID:   "flavor-small",
+		Flavor:     &apiNestedRef{Name: "Small"},
+		ImageID:    "img-ubuntu",
+		Image:      &apiNestedRef{Name: "Ubuntu 24.04"},
+		Zone:       "sweden-a",
+		Networks:   []apiInstanceNetwork{{NetworkID: "vpc-123", SubnetID: "subnet-456"}},
+		PrivateIPs: []string{"10.0.1.5"},
+		PublicIPs:  []string{"203.0.113.10"},
+		// The read returns the OpenStack-internal SG NAME, not the customer UUID
+		// the user supplied at create — fromAPI must NOT overwrite from this.
+		SecurityGroups: []string{"sg-94981d9c-a01a60ab-ssh"},
 		Metadata:       map[string]string{"env": "test"},
 		CreatedAt:      "2025-06-01T12:00:00Z",
 	}
 
-	// vpc_id/subnet_id are preserved from prior state (the resource does not
-	// derive them from networks[]), so seed them as the user would have at create.
+	// vpc_id/subnet_id/security_groups are preserved from prior state (the
+	// resource does not derive them from the read), so seed them as the user
+	// would have at create.
+	priorSGs, d := types.SetValueFrom(ctx, types.StringType, []string{"8e75fb32-1111-2222-3333-444455556666"})
+	diags.Append(d...)
 	model := InstanceModel{
 		VPCID:          types.StringValue("vpc-123"),
 		SubnetID:       types.StringValue("subnet-456"),
-		SecurityGroups: types.SetNull(types.StringType),
+		SecurityGroups: priorSGs,
 		SSHKeyNames:    types.SetNull(types.StringType),
 		Tags:           types.MapNull(types.StringType),
 	}
@@ -237,6 +242,13 @@ func TestInstanceModelFromAPI(t *testing.T) {
 	}
 	if model.SubnetID.ValueString() != "subnet-456" {
 		t.Errorf("expected subnet_id subnet-456, got %s", model.SubnetID.ValueString())
+	}
+	// security_groups must be preserved from prior state (the customer UUID),
+	// NOT overwritten by the Nova name the read returned.
+	var gotSGs []string
+	diags.Append(model.SecurityGroups.ElementsAs(ctx, &gotSGs, false)...)
+	if len(gotSGs) != 1 || gotSGs[0] != "8e75fb32-1111-2222-3333-444455556666" {
+		t.Errorf("expected security_groups preserved as [8e75fb32-...], got %v", gotSGs)
 	}
 	if model.PrivateIP.ValueString() != "10.0.1.5" {
 		t.Errorf("expected private_ip 10.0.1.5, got %s", model.PrivateIP.ValueString())
