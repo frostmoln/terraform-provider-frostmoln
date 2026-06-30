@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] - 2026-06-30
+
+### 🐛 Bug Fixes
+
+- *(instance)* Preserve security_groups from state in fromAPI (#113)
+
+### 📚 Documentation
+
+- *(provider)* Regenerate docs for v0.4.0 schema + add make docs and CI drift gate (#111)
+
 ## [0.4.0] - 2026-06-30
 
 ### 🐛 Bug Fixes
