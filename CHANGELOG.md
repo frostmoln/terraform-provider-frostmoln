@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-06-30
+
+### 🐛 Bug Fixes
+
+- *(provider)* [**breaking**] Normalize flavor to flavor_id on db/web managed-service resources (#127)
+
+### ⚙️ Miscellaneous Tasks
+
+- Keep provider on minor bumps for breaking changes pre-1.0 (#129)
+
 ## [0.5.0] - 2026-06-30
 
 ### 🚀 Features
