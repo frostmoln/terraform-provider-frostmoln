@@ -13,7 +13,7 @@ type MysqlInstanceModel struct {
 	ID                  types.String `tfsdk:"id"`
 	Name                types.String `tfsdk:"name"`
 	Version             types.String `tfsdk:"version"`
-	Flavor              types.String `tfsdk:"flavor"`
+	FlavorID            types.String `tfsdk:"flavor_id"`
 	StorageGB           types.Int64  `tfsdk:"storage_gb"`
 	VPCID               types.String `tfsdk:"vpc_id"`
 	SubnetID            types.String `tfsdk:"subnet_id"`
@@ -38,7 +38,7 @@ type apiMysqlInstance struct {
 	Name                string `json:"name"`
 	Engine              string `json:"engine"`
 	EngineVersion       string `json:"engineVersion"`
-	Flavor              string `json:"flavorId"`
+	FlavorID            string `json:"flavorId"`
 	StorageGB           int    `json:"storageGb"`
 	VPCID               string `json:"vpcId"`
 	SubnetID            string `json:"subnetId"`
@@ -62,7 +62,7 @@ type apiCreateMysqlInstanceRequest struct {
 	Name                string `json:"name"`
 	Engine              string `json:"engine"`
 	EngineVersion       string `json:"engineVersion"`
-	Flavor              string `json:"flavorId"`
+	FlavorID            string `json:"flavorId"`
 	StorageGB           int    `json:"storageGb"`
 	VPCID               string `json:"vpcId"`
 	SubnetID            string `json:"subnetId"`
@@ -76,7 +76,7 @@ type apiCreateMysqlInstanceRequest struct {
 // apiUpdateMysqlInstanceRequest is the API request to update a managed MySQL instance.
 type apiUpdateMysqlInstanceRequest struct {
 	Name                *string `json:"name,omitempty"`
-	Flavor              *string `json:"flavorId,omitempty"`
+	FlavorID            *string `json:"flavorId,omitempty"`
 	StorageGB           *int    `json:"storageGb,omitempty"`
 	BackupEnabled       *bool   `json:"backupEnabled,omitempty"`
 	BackupSchedule      *string `json:"backupSchedule,omitempty"`
@@ -90,7 +90,7 @@ func (m *MysqlInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnost
 		Name:          m.Name.ValueString(),
 		Engine:        "mysql",
 		EngineVersion: m.Version.ValueString(),
-		Flavor:        m.Flavor.ValueString(),
+		FlavorID:      m.FlavorID.ValueString(),
 		StorageGB:     int(m.StorageGB.ValueInt64()),
 		VPCID:         m.VPCID.ValueString(),
 		SubnetID:      m.SubnetID.ValueString(),
@@ -126,9 +126,9 @@ func (m *MysqlInstanceModel) toUpdateRequest(state *MysqlInstanceModel) apiUpdat
 		v := m.Name.ValueString()
 		req.Name = &v
 	}
-	if !m.Flavor.Equal(state.Flavor) {
-		v := m.Flavor.ValueString()
-		req.Flavor = &v
+	if !m.FlavorID.Equal(state.FlavorID) {
+		v := m.FlavorID.ValueString()
+		req.FlavorID = &v
 	}
 	if !m.StorageGB.Equal(state.StorageGB) {
 		v := int(m.StorageGB.ValueInt64())
@@ -159,7 +159,7 @@ func (m *MysqlInstanceModel) fromAPI(_ context.Context, inst *apiMysqlInstance, 
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
 	m.Version = types.StringValue(inst.EngineVersion)
-	m.Flavor = types.StringValue(inst.Flavor)
+	m.FlavorID = types.StringValue(inst.FlavorID)
 	m.StorageGB = types.Int64Value(int64(inst.StorageGB))
 	m.VPCID = types.StringValue(inst.VPCID)
 	m.SubnetID = types.StringValue(inst.SubnetID)

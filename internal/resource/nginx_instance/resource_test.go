@@ -37,7 +37,7 @@ func TestNginxInstanceModelToCreateRequest(t *testing.T) {
 	model := NginxInstanceModel{
 		Name:       types.StringValue("my-nginx"),
 		Version:    types.StringValue("1.27"),
-		Flavor:     types.StringValue("web.gp1.small"),
+		FlavorID:   types.StringValue("web.gp1.small"),
 		StorageGB:  types.Int64Value(20),
 		VPCID:      types.StringValue("vpc-1"),
 		SubnetID:   types.StringValue("sn-1"),
@@ -56,8 +56,8 @@ func TestNginxInstanceModelToCreateRequest(t *testing.T) {
 	if req.Name != "my-nginx" {
 		t.Errorf("expected name my-nginx, got %s", req.Name)
 	}
-	if req.Flavor != "web.gp1.small" {
-		t.Errorf("expected flavorId web.gp1.small, got %s", req.Flavor)
+	if req.FlavorID != "web.gp1.small" {
+		t.Errorf("expected flavorId web.gp1.small, got %s", req.FlavorID)
 	}
 	if req.StorageGB != 20 {
 		t.Errorf("expected storageGb 20, got %d", req.StorageGB)
@@ -83,7 +83,7 @@ func TestNginxInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 	model := NginxInstanceModel{
 		Name:       types.StringValue("my-nginx"),
 		Version:    types.StringValue("1.27"),
-		Flavor:     types.StringValue("web.gp1.medium"),
+		FlavorID:   types.StringValue("web.gp1.medium"),
 		StorageGB:  types.Int64Value(40),
 		VPCID:      types.StringValue("vpc-1"),
 		SubnetID:   types.StringValue("sn-1"),
@@ -110,14 +110,14 @@ func TestNginxInstanceModelToUpdateRequest(t *testing.T) {
 
 	plan := NginxInstanceModel{
 		Name:       types.StringValue("new-name"),
-		Flavor:     types.StringValue("web.gp1.large"),
+		FlavorID:   types.StringValue("web.gp1.large"),
 		StorageGB:  types.Int64Value(80),
 		TLSEnabled: types.BoolValue(true),
 		Config:     mustCfgMap(map[string]string{"gzip": "on"}),
 	}
 	state := NginxInstanceModel{
 		Name:       types.StringValue("old-name"),
-		Flavor:     types.StringValue("web.gp1.small"),
+		FlavorID:   types.StringValue("web.gp1.small"),
 		StorageGB:  types.Int64Value(20),
 		TLSEnabled: types.BoolValue(false),
 		Config:     types.MapNull(types.StringType),
@@ -130,7 +130,7 @@ func TestNginxInstanceModelToUpdateRequest(t *testing.T) {
 	if req.Name == nil || *req.Name != "new-name" {
 		t.Error("expected name update")
 	}
-	if req.Flavor == nil || *req.Flavor != "web.gp1.large" {
+	if req.FlavorID == nil || *req.FlavorID != "web.gp1.large" {
 		t.Error("expected flavorId update")
 	}
 	if req.StorageGB == nil || *req.StorageGB != 80 {
@@ -150,7 +150,7 @@ func TestNginxInstanceModelToUpdateRequestNoChanges(t *testing.T) {
 
 	same := NginxInstanceModel{
 		Name:       types.StringValue("same"),
-		Flavor:     types.StringValue("web.gp1.small"),
+		FlavorID:   types.StringValue("web.gp1.small"),
 		StorageGB:  types.Int64Value(20),
 		TLSEnabled: types.BoolValue(true),
 		Config:     mustCfgMap(map[string]string{"gzip": "on"}),
@@ -160,7 +160,7 @@ func TestNginxInstanceModelToUpdateRequestNoChanges(t *testing.T) {
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
-	if req.Name != nil || req.Flavor != nil || req.StorageGB != nil || req.TLSEnabled != nil ||
+	if req.Name != nil || req.FlavorID != nil || req.StorageGB != nil || req.TLSEnabled != nil ||
 		req.EngineConfig != nil {
 		t.Error("expected no changes in update request")
 	}
@@ -175,7 +175,7 @@ func TestNginxInstanceModelFromAPI(t *testing.T) {
 		Name:          "my-nginx",
 		Engine:        "nginx",
 		EngineVersion: "1.27",
-		Flavor:        "web.gp1.small",
+		FlavorID:      "web.gp1.small",
 		StorageGB:     20,
 		VPCID:         "vpc-1",
 		SubnetID:      "sn-1",
@@ -198,8 +198,8 @@ func TestNginxInstanceModelFromAPI(t *testing.T) {
 	if model.ID.ValueString() != "nginx-123" {
 		t.Errorf("expected ID nginx-123, got %s", model.ID.ValueString())
 	}
-	if model.Flavor.ValueString() != "web.gp1.small" {
-		t.Errorf("expected flavor web.gp1.small, got %s", model.Flavor.ValueString())
+	if model.FlavorID.ValueString() != "web.gp1.small" {
+		t.Errorf("expected flavor web.gp1.small, got %s", model.FlavorID.ValueString())
 	}
 	if model.VPCID.ValueString() != "vpc-1" {
 		t.Errorf("expected vpc_id vpc-1, got %s", model.VPCID.ValueString())
@@ -229,7 +229,7 @@ func TestNginxInstanceModelFromAPINulls(t *testing.T) {
 		Name:          "my-nginx",
 		Engine:        "nginx",
 		EngineVersion: "1.27",
-		Flavor:        "web.gp1.small",
+		FlavorID:      "web.gp1.small",
 		StorageGB:     20,
 		VPCID:         "vpc-1",
 		SubnetID:      "sn-1",
@@ -285,7 +285,7 @@ func TestSchema(t *testing.T) {
 	var resp resource.SchemaResponse
 	r.Schema(context.Background(), req, &resp)
 
-	requiredAttrs := []string{"name", "version", "flavor", "storage_gb", "vpc_id", "subnet_id"}
+	requiredAttrs := []string{"name", "version", "flavor_id", "storage_gb", "vpc_id", "subnet_id"}
 	for _, attr := range requiredAttrs {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %s in schema", attr)
@@ -390,7 +390,7 @@ func baseNginxModel() NginxInstanceModel {
 	return NginxInstanceModel{
 		Name:       types.StringValue("my-nginx"),
 		Version:    types.StringValue("1.27"),
-		Flavor:     types.StringValue("web.gp1.small"),
+		FlavorID:   types.StringValue("web.gp1.small"),
 		StorageGB:  types.Int64Value(20),
 		VPCID:      types.StringValue("vpc-1"),
 		SubnetID:   types.StringValue("sn-1"),
@@ -414,8 +414,8 @@ func TestCreate(t *testing.T) {
 			if body.Engine != "nginx" {
 				t.Errorf("expected engine nginx, got %s", body.Engine)
 			}
-			if body.Flavor != "web.gp1.small" {
-				t.Errorf("expected flavorId web.gp1.small, got %s", body.Flavor)
+			if body.FlavorID != "web.gp1.small" {
+				t.Errorf("expected flavorId web.gp1.small, got %s", body.FlavorID)
 			}
 			if body.VPCID != "vpc-1" {
 				t.Errorf("expected vpcId vpc-1, got %s", body.VPCID)
@@ -432,7 +432,7 @@ func TestCreate(t *testing.T) {
 				Name:          body.Name,
 				Engine:        "nginx",
 				EngineVersion: body.EngineVersion,
-				Flavor:        body.Flavor,
+				FlavorID:      body.FlavorID,
 				StorageGB:     body.StorageGB,
 				VPCID:         body.VPCID,
 				SubnetID:      body.SubnetID,
@@ -451,7 +451,7 @@ func TestCreate(t *testing.T) {
 				Name:          "test-nginx",
 				Engine:        "nginx",
 				EngineVersion: "1.27",
-				Flavor:        "web.gp1.small",
+				FlavorID:      "web.gp1.small",
 				StorageGB:     20,
 				VPCID:         "vpc-1",
 				SubnetID:      "sn-1",
@@ -529,13 +529,13 @@ func TestCreatePollErrorState(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
 				ID: "nginx-err", Name: "x", Engine: "nginx", EngineVersion: "1.27",
-				Flavor: "f", StorageGB: 20, VPCID: "vpc-1", SubnetID: "sn-1",
+				FlavorID: "f", StorageGB: 20, VPCID: "vpc-1", SubnetID: "sn-1",
 				Status: "provisioning", CreatedAt: "2025-01-01T00:00:00Z",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-err":
 			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
 				ID: "nginx-err", Name: "x", Engine: "nginx", EngineVersion: "1.27",
-				Flavor: "f", StorageGB: 20, VPCID: "vpc-1", SubnetID: "sn-1",
+				FlavorID: "f", StorageGB: 20, VPCID: "vpc-1", SubnetID: "sn-1",
 				Status: "failed", CreatedAt: "2025-01-01T00:00:00Z",
 			})
 		default:
@@ -564,7 +564,7 @@ func TestRead(t *testing.T) {
 				Name:          "my-nginx",
 				Engine:        "nginx",
 				EngineVersion: "1.27",
-				Flavor:        "web.gp1.small",
+				FlavorID:      "web.gp1.small",
 				StorageGB:     20,
 				VPCID:         "vpc-1",
 				SubnetID:      "sn-1",
@@ -684,7 +684,7 @@ func TestUpdate(t *testing.T) {
 				Name:          "updated-nginx",
 				Engine:        "nginx",
 				EngineVersion: "1.27",
-				Flavor:        "web.gp1.large",
+				FlavorID:      "web.gp1.large",
 				StorageGB:     80,
 				VPCID:         "vpc-1",
 				SubnetID:      "sn-1",
@@ -714,7 +714,7 @@ func TestUpdate(t *testing.T) {
 
 	planModel := stateModel
 	planModel.Name = types.StringValue("updated-nginx")
-	planModel.Flavor = types.StringValue("web.gp1.large")
+	planModel.FlavorID = types.StringValue("web.gp1.large")
 	planModel.StorageGB = types.Int64Value(80)
 	plan := buildNginxInstancePlan(t, planModel)
 
@@ -728,7 +728,7 @@ func TestUpdate(t *testing.T) {
 	if updatedBody.Name == nil || *updatedBody.Name != "updated-nginx" {
 		t.Error("expected name in update request")
 	}
-	if updatedBody.Flavor == nil || *updatedBody.Flavor != "web.gp1.large" {
+	if updatedBody.FlavorID == nil || *updatedBody.FlavorID != "web.gp1.large" {
 		t.Error("expected flavorId in update request")
 	}
 	if updatedBody.StorageGB == nil || *updatedBody.StorageGB != 80 {
@@ -900,5 +900,62 @@ func TestImportState(t *testing.T) {
 	importResp.State.Get(context.Background(), &result)
 	if result.ID.ValueString() != "nginx-123" {
 		t.Errorf("expected imported ID nginx-123, got %s", result.ID.ValueString())
+	}
+}
+
+// TestUpgradeState_V0ToV1 guards the v0->v1 migration: a v0 state row carries
+// the old `flavor` attribute; the upgrader must copy it into `flavor_id` and
+// carry the other attributes through, so the first post-upgrade plan is clean
+// (no spurious update, no destroy). Other attributes are null-filled here --
+// only the rename behaviour is under test.
+func TestUpgradeState_V0ToV1(t *testing.T) {
+	ctx := context.Background()
+	r := &nginxInstanceResource{}
+
+	up, ok := r.UpgradeState(ctx)[0]
+	if !ok {
+		t.Fatal("expected a v0 state upgrader")
+	}
+	if up.PriorSchema == nil {
+		t.Fatal("expected PriorSchema for v0")
+	}
+	if _, ok := up.PriorSchema.Attributes["flavor"]; !ok {
+		t.Error("prior schema must carry the old `flavor` attribute")
+	}
+	if _, ok := up.PriorSchema.Attributes["flavor_id"]; ok {
+		t.Error("prior schema must not carry the new `flavor_id` attribute")
+	}
+
+	priorType := up.PriorSchema.Type().TerraformType(ctx)
+	raw := map[string]tftypes.Value{}
+	for name, at := range priorType.(tftypes.Object).AttributeTypes {
+		raw[name] = tftypes.NewValue(at, nil)
+	}
+	raw["id"] = tftypes.NewValue(tftypes.String, "inst-123")
+	raw["name"] = tftypes.NewValue(tftypes.String, "my-inst")
+	raw["flavor"] = tftypes.NewValue(tftypes.String, "web.gp1.small")
+	priorVal := tftypes.NewValue(priorType, raw)
+
+	var schemaResp resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
+
+	req := resource.UpgradeStateRequest{State: &tfsdk.State{Schema: *up.PriorSchema, Raw: priorVal}}
+	resp := &resource.UpgradeStateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+
+	up.StateUpgrader(ctx, req, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics.Errors())
+	}
+	var model NginxInstanceModel
+	resp.State.Get(ctx, &model)
+	if model.FlavorID.ValueString() != "web.gp1.small" {
+		t.Errorf("expected flavor_id web.gp1.small, got %s", model.FlavorID.ValueString())
+	}
+	if model.ID.ValueString() != "inst-123" {
+		t.Errorf("expected id carried through, got %s", model.ID.ValueString())
+	}
+	if model.Name.ValueString() != "my-inst" {
+		t.Errorf("expected name carried through, got %s", model.Name.ValueString())
 	}
 }

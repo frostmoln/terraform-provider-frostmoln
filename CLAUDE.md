@@ -133,10 +133,14 @@ coming managed Kubernetes) follow one HCL surface — keep new ones consistent:
   `version` ↔ the wire tag), so CLI/portals are unaffected (CLAUDE.md #10).
 - **Freeform config is `config` (Map of String)**, not `engine_config`, sent as
   the `engineConfig` object on the wire.
-- **Flavor:** today db/web resources use `flavor` and cache/messaging use
-  `flavor_id` for the same concept — a known inconsistency to normalize in a
-  future breaking release (Ambix 019f132b-db61); match the sibling engine's
-  existing attribute until then.
+- **Flavor is `flavor_id` everywhere.** All managed-service resources expose
+  `flavor_id` (the value is a flavor id, e.g. `db.gp1.small`; the wire tag is
+  `flavorId`). The db/web resources (mysql/postgres/apache/nginx) were
+  normalized from `flavor` to `flavor_id` in a breaking release (Ambix
+  019f132b-db61), matching the flagship `frostmoln_instance` and the
+  cache/messaging offers. Each bumped its schema `Version` to 1 with a
+  `flavor`→`flavor_id` StateUpgrader via the shared `internal/stateupgrade`
+  helper, so existing state upgrades cleanly (no spurious diff).
 
 ### Adding New Data Sources
 

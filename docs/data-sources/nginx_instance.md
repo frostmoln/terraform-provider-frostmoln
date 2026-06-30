@@ -23,7 +23,7 @@ Look up a managed Nginx webserver instance by ID.
 
 - `config` (Map of String) Engine-specific configuration as key/value pairs.
 - `created_at` (String) The timestamp when the instance was created.
-- `flavor` (String) The flavor/size of the Nginx instance.
+- `flavor_id` (String) The flavor ID/size of the Nginx instance.
 - `name` (String) The name of the Nginx instance.
 - `port` (Number) The port number the Nginx instance is listening on.
 - `private_ip` (String) The private IP address of the Nginx instance.

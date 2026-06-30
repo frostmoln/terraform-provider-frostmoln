@@ -38,7 +38,7 @@ func TestSchema(t *testing.T) {
 	ds.Schema(context.Background(), datasource.SchemaRequest{}, &resp)
 
 	expectedAttrs := []string{
-		"id", "name", "version", "flavor", "storage_gb", "vpc_id", "subnet_id",
+		"id", "name", "version", "flavor_id", "storage_gb", "vpc_id", "subnet_id",
 		"tls_enabled", "config", "status", "private_ip", "port", "created_at",
 		"updated_at", "tenant_id",
 	}
@@ -113,7 +113,7 @@ func configVal(t *testing.T, id string) tftypes.Value {
 		"id":          tftypes.NewValue(tftypes.String, id),
 		"name":        tftypes.NewValue(tftypes.String, nil),
 		"version":     tftypes.NewValue(tftypes.String, nil),
-		"flavor":      tftypes.NewValue(tftypes.String, nil),
+		"flavor_id":   tftypes.NewValue(tftypes.String, nil),
 		"storage_gb":  tftypes.NewValue(tftypes.Number, nil),
 		"vpc_id":      tftypes.NewValue(tftypes.String, nil),
 		"subnet_id":   tftypes.NewValue(tftypes.String, nil),
@@ -137,7 +137,7 @@ func TestReadByID(t *testing.T) {
 				Name:          "my-nginx",
 				Engine:        "nginx",
 				EngineVersion: "1.27",
-				Flavor:        "web.small",
+				FlavorID:      "web.small",
 				StorageGB:     20,
 				VPCID:         "vpc-1",
 				SubnetID:      "sn-1",
@@ -217,7 +217,7 @@ func TestReadByIDNullableFieldsEmpty(t *testing.T) {
 				Name:          "minimal",
 				Engine:        "nginx",
 				EngineVersion: "1.27",
-				Flavor:        "web.small",
+				FlavorID:      "web.small",
 				StorageGB:     10,
 				Status:        "provisioning",
 				CreatedAt:     "2025-01-01T00:00:00Z",

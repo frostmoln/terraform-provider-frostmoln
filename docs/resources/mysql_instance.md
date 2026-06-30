@@ -16,7 +16,7 @@ Manages a managed MySQL database instance in the Frostmoln platform.
 resource "frostmoln_mysql_instance" "main" {
   name       = "my-mysql-db"
   version    = "8.4"
-  flavor     = "db.small"
+  flavor_id  = "db.small"
   storage_gb = 50
   vpc_id     = frostmoln_vpc.main.id
   subnet_id  = frostmoln_subnet.db.id
@@ -37,7 +37,7 @@ output "mysql_endpoint" {
 
 ### Required
 
-- `flavor` (String) The flavor/size for the database instance (e.g. "db.gp1.small", "db.gp1.medium").
+- `flavor_id` (String) The flavor ID/size for the database instance (e.g. "db.gp1.small", "db.gp1.medium").
 - `name` (String) The name of the MySQL instance.
 - `storage_gb` (Number) The storage size in gigabytes.
 - `subnet_id` (String) The subnet ID where the database instance will be deployed.

@@ -19,7 +19,7 @@ import (
 func TestModelToUpdateRequestAllFields(t *testing.T) {
 	plan := MysqlInstanceModel{
 		Name:                types.StringValue("new-name"),
-		Flavor:              types.StringValue("db.large"),
+		FlavorID:            types.StringValue("db.large"),
 		StorageGB:           types.Int64Value(200),
 		BackupEnabled:       types.BoolValue(true),
 		BackupSchedule:      types.StringValue("0 3 * * *"),
@@ -28,7 +28,7 @@ func TestModelToUpdateRequestAllFields(t *testing.T) {
 	}
 	state := MysqlInstanceModel{
 		Name:                types.StringValue("old-name"),
-		Flavor:              types.StringValue("db.small"),
+		FlavorID:            types.StringValue("db.small"),
 		StorageGB:           types.Int64Value(100),
 		BackupEnabled:       types.BoolValue(false),
 		BackupSchedule:      types.StringValue("0 2 * * *"),
@@ -40,7 +40,7 @@ func TestModelToUpdateRequestAllFields(t *testing.T) {
 	if req.Name == nil || *req.Name != "new-name" {
 		t.Error("expected name change")
 	}
-	if req.Flavor == nil || *req.Flavor != "db.large" {
+	if req.FlavorID == nil || *req.FlavorID != "db.large" {
 		t.Error("expected flavor change")
 	}
 	if req.StorageGB == nil || *req.StorageGB != 200 {
@@ -65,7 +65,7 @@ func TestModelFromAPIFullyPopulated(t *testing.T) {
 		ID:                  "db-1",
 		Name:                "db",
 		EngineVersion:       "8.0",
-		Flavor:              "db.small",
+		FlavorID:            "db.small",
 		StorageGB:           100,
 		VPCID:               "vpc-1",
 		SubnetID:            "sn-1",
@@ -133,7 +133,7 @@ func mysqlPlan() MysqlInstanceModel {
 	return MysqlInstanceModel{
 		Name:      types.StringValue("db-1"),
 		Version:   types.StringValue("8.0"),
-		Flavor:    types.StringValue("db.small"),
+		FlavorID:  types.StringValue("db.small"),
 		StorageGB: types.Int64Value(100),
 		VPCID:     types.StringValue("vpc-1"),
 		SubnetID:  types.StringValue("sn-1"),
@@ -185,9 +185,9 @@ func TestCreatePollErrorState(t *testing.T) {
 		switch r.Method {
 		case http.MethodPost:
 			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":"db-err","name":"db-1","engineVersion":"8.0","flavor":"db.small","storageGb":100,"vpcId":"vpc-1","subnetId":"sn-1","status":"provisioning","createdAt":"2025-01-01T00:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"id":"db-err","name":"db-1","engineVersion":"8.0","flavorId":"db.small","storageGb":100,"vpcId":"vpc-1","subnetId":"sn-1","status":"provisioning","createdAt":"2025-01-01T00:00:00Z"}`))
 		case http.MethodGet:
-			_, _ = w.Write([]byte(`{"id":"db-err","name":"db-1","engineVersion":"8.0","flavor":"db.small","storageGb":100,"vpcId":"vpc-1","subnetId":"sn-1","status":"error","createdAt":"2025-01-01T00:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"id":"db-err","name":"db-1","engineVersion":"8.0","flavorId":"db.small","storageGb":100,"vpcId":"vpc-1","subnetId":"sn-1","status":"error","createdAt":"2025-01-01T00:00:00Z"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -220,7 +220,7 @@ func TestReadAPIError(t *testing.T) {
 		ID:        types.StringValue("db-1"),
 		Name:      types.StringValue("db-1"),
 		Version:   types.StringValue("8.0"),
-		Flavor:    types.StringValue("db.small"),
+		FlavorID:  types.StringValue("db.small"),
 		StorageGB: types.Int64Value(100),
 		VPCID:     types.StringValue("vpc-1"),
 		SubnetID:  types.StringValue("sn-1"),
@@ -253,7 +253,7 @@ func TestUpdateAPIError(t *testing.T) {
 		ID:        types.StringValue("db-1"),
 		Name:      types.StringValue("old"),
 		Version:   types.StringValue("8.0"),
-		Flavor:    types.StringValue("db.small"),
+		FlavorID:  types.StringValue("db.small"),
 		StorageGB: types.Int64Value(100),
 		VPCID:     types.StringValue("vpc-1"),
 		SubnetID:  types.StringValue("sn-1"),
@@ -264,7 +264,7 @@ func TestUpdateAPIError(t *testing.T) {
 		ID:        types.StringValue("db-1"),
 		Name:      types.StringValue("new"),
 		Version:   types.StringValue("8.0"),
-		Flavor:    types.StringValue("db.small"),
+		FlavorID:  types.StringValue("db.small"),
 		StorageGB: types.Int64Value(100),
 		VPCID:     types.StringValue("vpc-1"),
 		SubnetID:  types.StringValue("sn-1"),
@@ -293,7 +293,7 @@ func TestDeleteAlreadyGone(t *testing.T) {
 		ID:        types.StringValue("db-gone"),
 		Name:      types.StringValue("db-1"),
 		Version:   types.StringValue("8.0"),
-		Flavor:    types.StringValue("db.small"),
+		FlavorID:  types.StringValue("db.small"),
 		StorageGB: types.Int64Value(100),
 		VPCID:     types.StringValue("vpc-1"),
 		SubnetID:  types.StringValue("sn-1"),
@@ -326,7 +326,7 @@ func TestDeleteAPIError(t *testing.T) {
 		ID:        types.StringValue("db-1"),
 		Name:      types.StringValue("db-1"),
 		Version:   types.StringValue("8.0"),
-		Flavor:    types.StringValue("db.small"),
+		FlavorID:  types.StringValue("db.small"),
 		StorageGB: types.Int64Value(100),
 		VPCID:     types.StringValue("vpc-1"),
 		SubnetID:  types.StringValue("sn-1"),

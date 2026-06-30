@@ -17,7 +17,7 @@ Manages a managed PostgreSQL database instance in the Frostmoln platform.
 
 ### Required
 
-- `flavor` (String) The flavor/size for the database instance (e.g. "db.gp1.small", "db.gp1.medium").
+- `flavor_id` (String) The flavor ID/size for the database instance (e.g. "db.gp1.small", "db.gp1.medium").
 - `name` (String) The name of the PostgreSQL instance.
 - `storage_gb` (Number) The storage size in gigabytes.
 - `subnet_id` (String) The subnet ID where the database instance will be deployed.

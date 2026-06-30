@@ -28,7 +28,7 @@ func TestMysqlInstanceModelToCreateRequest(t *testing.T) {
 	model := MysqlInstanceModel{
 		Name:      types.StringValue("my-mysql"),
 		Version:   types.StringValue("8.4"),
-		Flavor:    types.StringValue("db.small"),
+		FlavorID:  types.StringValue("db.small"),
 		StorageGB: types.Int64Value(50),
 		VPCID:     types.StringValue("vpc-123"),
 		SubnetID:  types.StringValue("subnet-456"),
@@ -49,8 +49,8 @@ func TestMysqlInstanceModelToCreateRequest(t *testing.T) {
 	if req.EngineVersion != "8.4" {
 		t.Errorf("expected engineVersion 8.4, got %s", req.EngineVersion)
 	}
-	if req.Flavor != "db.small" {
-		t.Errorf("expected flavor db.small, got %s", req.Flavor)
+	if req.FlavorID != "db.small" {
+		t.Errorf("expected flavor db.small, got %s", req.FlavorID)
 	}
 	if req.StorageGB != 50 {
 		t.Errorf("expected storageGb 50, got %d", req.StorageGB)
@@ -73,7 +73,7 @@ func TestMysqlInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 	model := MysqlInstanceModel{
 		Name:                types.StringValue("my-mysql"),
 		Version:             types.StringValue("9.2"),
-		Flavor:              types.StringValue("db.medium"),
+		FlavorID:            types.StringValue("db.medium"),
 		StorageGB:           types.Int64Value(100),
 		VPCID:               types.StringValue("vpc-123"),
 		SubnetID:            types.StringValue("subnet-456"),
@@ -112,12 +112,12 @@ func TestMysqlInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 func TestMysqlInstanceModelToUpdateRequest(t *testing.T) {
 	plan := MysqlInstanceModel{
 		Name:      types.StringValue("new-name"),
-		Flavor:    types.StringValue("db.large"),
+		FlavorID:  types.StringValue("db.large"),
 		StorageGB: types.Int64Value(200),
 	}
 	state := MysqlInstanceModel{
 		Name:      types.StringValue("old-name"),
-		Flavor:    types.StringValue("db.small"),
+		FlavorID:  types.StringValue("db.small"),
 		StorageGB: types.Int64Value(100),
 	}
 
@@ -125,7 +125,7 @@ func TestMysqlInstanceModelToUpdateRequest(t *testing.T) {
 	if req.Name == nil || *req.Name != "new-name" {
 		t.Error("expected name update to new-name")
 	}
-	if req.Flavor == nil || *req.Flavor != "db.large" {
+	if req.FlavorID == nil || *req.FlavorID != "db.large" {
 		t.Error("expected flavor update to db.large")
 	}
 	if req.StorageGB == nil || *req.StorageGB != 200 {
@@ -136,12 +136,12 @@ func TestMysqlInstanceModelToUpdateRequest(t *testing.T) {
 func TestMysqlInstanceModelToUpdateRequestNoChanges(t *testing.T) {
 	same := MysqlInstanceModel{
 		Name:      types.StringValue("same"),
-		Flavor:    types.StringValue("db.small"),
+		FlavorID:  types.StringValue("db.small"),
 		StorageGB: types.Int64Value(50),
 	}
 
 	req := same.toUpdateRequest(&same)
-	if req.Name != nil || req.Flavor != nil || req.StorageGB != nil {
+	if req.Name != nil || req.FlavorID != nil || req.StorageGB != nil {
 		t.Error("expected no changes in update request")
 	}
 }
@@ -155,7 +155,7 @@ func TestMysqlInstanceModelFromAPI(t *testing.T) {
 		Name:          "my-mysql",
 		Engine:        "mysql",
 		EngineVersion: "8.4",
-		Flavor:        "db.small",
+		FlavorID:      "db.small",
 		StorageGB:     50,
 		VPCID:         "vpc-123",
 		SubnetID:      "subnet-456",
@@ -202,7 +202,7 @@ func TestMysqlInstanceModelFromAPINulls(t *testing.T) {
 		Name:          "my-mysql",
 		Engine:        "mysql",
 		EngineVersion: "8.0",
-		Flavor:        "db.small",
+		FlavorID:      "db.small",
 		StorageGB:     50,
 		VPCID:         "vpc-123",
 		SubnetID:      "subnet-456",
@@ -261,7 +261,7 @@ func TestSchema(t *testing.T) {
 	var resp resource.SchemaResponse
 	r.Schema(context.Background(), req, &resp)
 
-	requiredAttrs := []string{"name", "version", "flavor", "storage_gb", "vpc_id", "subnet_id"}
+	requiredAttrs := []string{"name", "version", "flavor_id", "storage_gb", "vpc_id", "subnet_id"}
 	for _, attr := range requiredAttrs {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %s in schema", attr)
@@ -360,7 +360,7 @@ func TestCreate(t *testing.T) {
 				Name:          body.Name,
 				Engine:        "mysql",
 				EngineVersion: body.EngineVersion,
-				Flavor:        body.Flavor,
+				FlavorID:      body.FlavorID,
 				StorageGB:     body.StorageGB,
 				VPCID:         body.VPCID,
 				SubnetID:      body.SubnetID,
@@ -378,7 +378,7 @@ func TestCreate(t *testing.T) {
 				Name:          "test-mysql",
 				Engine:        "mysql",
 				EngineVersion: "8.4",
-				Flavor:        "db.small",
+				FlavorID:      "db.small",
 				StorageGB:     50,
 				VPCID:         "vpc-1",
 				SubnetID:      "sn-1",
@@ -408,7 +408,7 @@ func TestCreate(t *testing.T) {
 	plan := buildMysqlInstancePlan(t, MysqlInstanceModel{
 		Name:      types.StringValue("test-mysql"),
 		Version:   types.StringValue("8.4"),
-		Flavor:    types.StringValue("db.small"),
+		FlavorID:  types.StringValue("db.small"),
 		StorageGB: types.Int64Value(50),
 		VPCID:     types.StringValue("vpc-1"),
 		SubnetID:  types.StringValue("sn-1"),
@@ -442,7 +442,7 @@ func TestRead(t *testing.T) {
 				Name:          "my-mysql",
 				Engine:        "mysql",
 				EngineVersion: "8.0",
-				Flavor:        "db.small",
+				FlavorID:      "db.small",
 				StorageGB:     50,
 				VPCID:         "vpc-1",
 				SubnetID:      "sn-1",
@@ -466,7 +466,7 @@ func TestRead(t *testing.T) {
 		ID:        types.StringValue("db-123"),
 		Name:      types.StringValue("my-mysql"),
 		Version:   types.StringValue("8.0"),
-		Flavor:    types.StringValue("db.small"),
+		FlavorID:  types.StringValue("db.small"),
 		StorageGB: types.Int64Value(50),
 		VPCID:     types.StringValue("vpc-1"),
 		SubnetID:  types.StringValue("sn-1"),
@@ -506,7 +506,7 @@ func TestReadNotFound(t *testing.T) {
 		ID:        types.StringValue("db-gone"),
 		Name:      types.StringValue("gone"),
 		Version:   types.StringValue("8.0"),
-		Flavor:    types.StringValue("db.small"),
+		FlavorID:  types.StringValue("db.small"),
 		StorageGB: types.Int64Value(50),
 		VPCID:     types.StringValue("vpc-1"),
 		SubnetID:  types.StringValue("sn-1"),
@@ -570,7 +570,7 @@ func TestDelete(t *testing.T) {
 		ID:        types.StringValue("db-123"),
 		Name:      types.StringValue("my-mysql"),
 		Version:   types.StringValue("8.0"),
-		Flavor:    types.StringValue("db.small"),
+		FlavorID:  types.StringValue("db.small"),
 		StorageGB: types.Int64Value(50),
 		VPCID:     types.StringValue("vpc-1"),
 		SubnetID:  types.StringValue("sn-1"),
@@ -600,7 +600,7 @@ func TestUpdate(t *testing.T) {
 				Name:          "updated-mysql",
 				Engine:        "mysql",
 				EngineVersion: "8.4",
-				Flavor:        "db.large",
+				FlavorID:      "db.large",
 				StorageGB:     200,
 				VPCID:         "vpc-1",
 				SubnetID:      "sn-1",
@@ -628,7 +628,7 @@ func TestUpdate(t *testing.T) {
 		ID:        types.StringValue("db-123"),
 		Name:      types.StringValue("old-mysql"),
 		Version:   types.StringValue("8.4"),
-		Flavor:    types.StringValue("db.small"),
+		FlavorID:  types.StringValue("db.small"),
 		StorageGB: types.Int64Value(100),
 		VPCID:     types.StringValue("vpc-1"),
 		SubnetID:  types.StringValue("sn-1"),
@@ -640,7 +640,7 @@ func TestUpdate(t *testing.T) {
 		ID:        types.StringValue("db-123"),
 		Name:      types.StringValue("updated-mysql"),
 		Version:   types.StringValue("8.4"),
-		Flavor:    types.StringValue("db.large"),
+		FlavorID:  types.StringValue("db.large"),
 		StorageGB: types.Int64Value(200),
 		VPCID:     types.StringValue("vpc-1"),
 		SubnetID:  types.StringValue("sn-1"),
@@ -658,7 +658,64 @@ func TestUpdate(t *testing.T) {
 	if updatedBody.Name == nil || *updatedBody.Name != "updated-mysql" {
 		t.Error("expected name in update request")
 	}
-	if updatedBody.Flavor == nil || *updatedBody.Flavor != "db.large" {
+	if updatedBody.FlavorID == nil || *updatedBody.FlavorID != "db.large" {
 		t.Error("expected flavor in update request")
+	}
+}
+
+// TestUpgradeState_V0ToV1 guards the v0→v1 migration: a v0 state row carries
+// the old `flavor` attribute; the upgrader must copy it into `flavor_id` and
+// carry the other attributes through, so the first post-upgrade plan is clean
+// (no spurious update, no destroy). Other attributes are null-filled here —
+// only the rename behaviour is under test.
+func TestUpgradeState_V0ToV1(t *testing.T) {
+	ctx := context.Background()
+	r := &mysqlInstanceResource{}
+
+	up, ok := r.UpgradeState(ctx)[0]
+	if !ok {
+		t.Fatal("expected a v0 state upgrader")
+	}
+	if up.PriorSchema == nil {
+		t.Fatal("expected PriorSchema for v0")
+	}
+	if _, ok := up.PriorSchema.Attributes["flavor"]; !ok {
+		t.Error("prior schema must carry the old `flavor` attribute")
+	}
+	if _, ok := up.PriorSchema.Attributes["flavor_id"]; ok {
+		t.Error("prior schema must not carry the new `flavor_id` attribute")
+	}
+
+	priorType := up.PriorSchema.Type().TerraformType(ctx)
+	raw := map[string]tftypes.Value{}
+	for name, at := range priorType.(tftypes.Object).AttributeTypes {
+		raw[name] = tftypes.NewValue(at, nil)
+	}
+	raw["id"] = tftypes.NewValue(tftypes.String, "db-123")
+	raw["name"] = tftypes.NewValue(tftypes.String, "my-db")
+	raw["flavor"] = tftypes.NewValue(tftypes.String, "db.gp1.small")
+	priorVal := tftypes.NewValue(priorType, raw)
+
+	var schemaResp resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
+
+	req := resource.UpgradeStateRequest{State: &tfsdk.State{Schema: *up.PriorSchema, Raw: priorVal}}
+	resp := &resource.UpgradeStateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+
+	up.StateUpgrader(ctx, req, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics.Errors())
+	}
+	var model MysqlInstanceModel
+	resp.State.Get(ctx, &model)
+	if model.FlavorID.ValueString() != "db.gp1.small" {
+		t.Errorf("expected flavor_id db.gp1.small, got %s", model.FlavorID.ValueString())
+	}
+	if model.ID.ValueString() != "db-123" {
+		t.Errorf("expected id carried through, got %s", model.ID.ValueString())
+	}
+	if model.Name.ValueString() != "my-db" {
+		t.Errorf("expected name carried through, got %s", model.Name.ValueString())
 	}
 }

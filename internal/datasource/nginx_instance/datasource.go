@@ -29,7 +29,7 @@ type nginxInstanceModel struct {
 	ID         types.String `tfsdk:"id"`
 	Name       types.String `tfsdk:"name"`
 	Version    types.String `tfsdk:"version"`
-	Flavor     types.String `tfsdk:"flavor"`
+	FlavorID   types.String `tfsdk:"flavor_id"`
 	StorageGB  types.Int64  `tfsdk:"storage_gb"`
 	VPCID      types.String `tfsdk:"vpc_id"`
 	SubnetID   types.String `tfsdk:"subnet_id"`
@@ -51,7 +51,7 @@ type apiWebserverInstance struct {
 	Name          string            `json:"name"`
 	Engine        string            `json:"engine"`
 	EngineVersion string            `json:"engineVersion"`
-	Flavor        string            `json:"flavorId"`
+	FlavorID      string            `json:"flavorId"`
 	StorageGB     int               `json:"storageGb"`
 	VPCID         string            `json:"vpcId"`
 	SubnetID      string            `json:"subnetId"`
@@ -85,8 +85,8 @@ func (d *nginxInstanceDataSource) Schema(_ context.Context, _ datasource.SchemaR
 				Description: "The Nginx version.",
 				Computed:    true,
 			},
-			"flavor": schema.StringAttribute{
-				Description: "The flavor/size of the Nginx instance.",
+			"flavor_id": schema.StringAttribute{
+				Description: "The flavor ID/size of the Nginx instance.",
 				Computed:    true,
 			},
 			"storage_gb": schema.Int64Attribute{
@@ -175,7 +175,7 @@ func (d *nginxInstanceDataSource) Read(ctx context.Context, req datasource.ReadR
 	state.ID = types.StringValue(inst.ID)
 	state.Name = types.StringValue(inst.Name)
 	state.Version = types.StringValue(inst.EngineVersion)
-	state.Flavor = types.StringValue(inst.Flavor)
+	state.FlavorID = types.StringValue(inst.FlavorID)
 	state.StorageGB = types.Int64Value(int64(inst.StorageGB))
 	state.VPCID = types.StringValue(inst.VPCID)
 	state.SubnetID = types.StringValue(inst.SubnetID)

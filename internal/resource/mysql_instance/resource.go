@@ -16,11 +16,13 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
 )
 
 var (
-	_ resource.Resource                = &mysqlInstanceResource{}
-	_ resource.ResourceWithImportState = &mysqlInstanceResource{}
+	_ resource.Resource                 = &mysqlInstanceResource{}
+	_ resource.ResourceWithImportState  = &mysqlInstanceResource{}
+	_ resource.ResourceWithUpgradeState = &mysqlInstanceResource{}
 )
 
 // NewResource returns a new mysql_instance resource factory.
@@ -54,6 +56,10 @@ func (r *mysqlInstanceResource) Metadata(_ context.Context, req resource.Metadat
 
 func (r *mysqlInstanceResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		// v1: the HCL attribute `flavor` was renamed to `flavor_id` to match the
+		// flagship frostmoln_instance and the cache/messaging offers (the wire tag
+		// was always flavorId). See UpgradeState for the v0→v1 migration.
+		Version:     1,
 		Description: "Manages a managed MySQL database instance in the Frostmoln platform.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -74,8 +80,8 @@ func (r *mysqlInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"flavor": schema.StringAttribute{
-				Description: "The flavor/size for the database instance (e.g. \"db.gp1.small\", \"db.gp1.medium\").",
+			"flavor_id": schema.StringAttribute{
+				Description: "The flavor ID/size for the database instance (e.g. \"db.gp1.small\", \"db.gp1.medium\").",
 				Required:    true,
 			},
 			"storage_gb": schema.Int64Attribute{
@@ -399,4 +405,19 @@ func (r *mysqlInstanceResource) Delete(ctx context.Context, req resource.DeleteR
 
 func (r *mysqlInstanceResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// UpgradeState migrates v0 state (HCL attribute `flavor`) to v1 (`flavor_id`).
+// The rename is HCL-surface only — the wire tag was always flavorId — so the
+// migration is purely local: it copies the prior `flavor` value into `flavor_id`
+// and carries every other attribute through unchanged. `flavor` is in-place
+// updatable (not RequiresReplace), so without this the first post-upgrade plan
+// would show a spurious update rather than a destroy; the upgrader keeps the
+// upgrade a clean no-op.
+func (r *mysqlInstanceResource) UpgradeState(ctx context.Context) map[int64]resource.StateUpgrader {
+	schemaResp := resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
+	return map[int64]resource.StateUpgrader{
+		0: stateupgrade.RenameStringAttr(ctx, schemaResp.Schema, "flavor", "flavor_id"),
+	}
 }

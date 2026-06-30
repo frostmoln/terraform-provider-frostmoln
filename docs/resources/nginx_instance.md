@@ -17,7 +17,7 @@ Manages a managed Nginx webserver instance in the Frostmoln platform.
 
 ### Required
 
-- `flavor` (String) The flavor/size for the webserver instance (e.g. "web.gp1.small", "web.gp1.medium").
+- `flavor_id` (String) The flavor ID/size for the webserver instance (e.g. "web.gp1.small", "web.gp1.medium").
 - `name` (String) The name of the Nginx instance.
 - `storage_gb` (Number) The storage size in gigabytes.
 - `subnet_id` (String) The subnet ID where the webserver instance will be deployed.

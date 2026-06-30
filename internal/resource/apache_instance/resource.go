@@ -16,11 +16,13 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
 )
 
 var (
-	_ resource.Resource                = &apacheInstanceResource{}
-	_ resource.ResourceWithImportState = &apacheInstanceResource{}
+	_ resource.Resource                 = &apacheInstanceResource{}
+	_ resource.ResourceWithImportState  = &apacheInstanceResource{}
+	_ resource.ResourceWithUpgradeState = &apacheInstanceResource{}
 )
 
 // NewResource returns a new apache_instance resource factory.
@@ -54,6 +56,10 @@ func (r *apacheInstanceResource) Metadata(_ context.Context, req resource.Metada
 
 func (r *apacheInstanceResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		// v1: the HCL attribute flavor was renamed to flavor_id to match the
+		// flagship frostmoln_instance and the cache/messaging offers (the wire
+		// tag was always flavorId). See UpgradeState for the v0->v1 migration.
+		Version:     1,
 		Description: "Manages a managed Apache webserver instance in the Frostmoln platform.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -74,8 +80,8 @@ func (r *apacheInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"flavor": schema.StringAttribute{
-				Description: "The flavor/size for the webserver instance (e.g. \"web.gp1.small\", \"web.gp1.medium\").",
+			"flavor_id": schema.StringAttribute{
+				Description: "The flavor ID/size for the webserver instance (e.g. \"web.gp1.small\", \"web.gp1.medium\").",
 				Required:    true,
 			},
 			"storage_gb": schema.Int64Attribute{
@@ -392,4 +398,19 @@ func (r *apacheInstanceResource) Delete(ctx context.Context, req resource.Delete
 
 func (r *apacheInstanceResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// UpgradeState migrates v0 state (HCL attribute `flavor`) to v1 (`flavor_id`).
+// The rename is HCL-surface only -- the wire tag was always flavorId -- so the
+// migration is purely local: it copies the prior `flavor` value into `flavor_id`
+// and carries every other attribute through unchanged. `flavor` is in-place
+// updatable (not RequiresReplace), so without this the first post-upgrade plan
+// would show a spurious update rather than a destroy; the upgrader keeps the
+// upgrade a clean no-op.
+func (r *apacheInstanceResource) UpgradeState(ctx context.Context) map[int64]resource.StateUpgrader {
+	schemaResp := resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
+	return map[int64]resource.StateUpgrader{
+		0: stateupgrade.RenameStringAttr(ctx, schemaResp.Schema, "flavor", "flavor_id"),
+	}
 }

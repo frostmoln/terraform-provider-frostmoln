@@ -13,7 +13,7 @@ type NginxInstanceModel struct {
 	ID         types.String `tfsdk:"id"`
 	Name       types.String `tfsdk:"name"`
 	Version    types.String `tfsdk:"version"`
-	Flavor     types.String `tfsdk:"flavor"`
+	FlavorID   types.String `tfsdk:"flavor_id"`
 	StorageGB  types.Int64  `tfsdk:"storage_gb"`
 	VPCID      types.String `tfsdk:"vpc_id"`
 	SubnetID   types.String `tfsdk:"subnet_id"`
@@ -37,7 +37,7 @@ type apiWebserverInstance struct {
 	Name          string            `json:"name"`
 	Engine        string            `json:"engine"`
 	EngineVersion string            `json:"engineVersion"`
-	Flavor        string            `json:"flavorId"`
+	FlavorID      string            `json:"flavorId"`
 	StorageGB     int               `json:"storageGb"`
 	VPCID         string            `json:"vpcId"`
 	SubnetID      string            `json:"subnetId"`
@@ -58,7 +58,7 @@ type apiCreateWebserverInstanceRequest struct {
 	Name          string            `json:"name"`
 	Engine        string            `json:"engine"`
 	EngineVersion string            `json:"engineVersion"`
-	Flavor        string            `json:"flavorId"`
+	FlavorID      string            `json:"flavorId"`
 	StorageGB     int               `json:"storageGb"`
 	VPCID         string            `json:"vpcId"`
 	SubnetID      string            `json:"subnetId"`
@@ -69,7 +69,7 @@ type apiCreateWebserverInstanceRequest struct {
 // apiUpdateWebserverInstanceRequest is the API request to update a managed webserver instance.
 type apiUpdateWebserverInstanceRequest struct {
 	Name         *string           `json:"name,omitempty"`
-	Flavor       *string           `json:"flavorId,omitempty"`
+	FlavorID     *string           `json:"flavorId,omitempty"`
 	StorageGB    *int              `json:"storageGb,omitempty"`
 	TLSEnabled   *bool             `json:"tlsEnabled,omitempty"`
 	EngineConfig map[string]string `json:"engineConfig,omitempty"`
@@ -81,7 +81,7 @@ func (m *NginxInstanceModel) toCreateRequest(ctx context.Context, diags *diag.Di
 		Name:          m.Name.ValueString(),
 		Engine:        "nginx",
 		EngineVersion: m.Version.ValueString(),
-		Flavor:        m.Flavor.ValueString(),
+		FlavorID:      m.FlavorID.ValueString(),
 		StorageGB:     int(m.StorageGB.ValueInt64()),
 		VPCID:         m.VPCID.ValueString(),
 		SubnetID:      m.SubnetID.ValueString(),
@@ -108,9 +108,9 @@ func (m *NginxInstanceModel) toUpdateRequest(ctx context.Context, state *NginxIn
 		v := m.Name.ValueString()
 		req.Name = &v
 	}
-	if !m.Flavor.Equal(state.Flavor) {
-		v := m.Flavor.ValueString()
-		req.Flavor = &v
+	if !m.FlavorID.Equal(state.FlavorID) {
+		v := m.FlavorID.ValueString()
+		req.FlavorID = &v
 	}
 	if !m.StorageGB.Equal(state.StorageGB) {
 		v := int(m.StorageGB.ValueInt64())
@@ -136,7 +136,7 @@ func (m *NginxInstanceModel) fromAPI(ctx context.Context, inst *apiWebserverInst
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
 	m.Version = types.StringValue(inst.EngineVersion)
-	m.Flavor = types.StringValue(inst.Flavor)
+	m.FlavorID = types.StringValue(inst.FlavorID)
 	m.StorageGB = types.Int64Value(int64(inst.StorageGB))
 	m.VPCID = types.StringValue(inst.VPCID)
 	m.SubnetID = types.StringValue(inst.SubnetID)

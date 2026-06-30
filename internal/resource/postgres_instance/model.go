@@ -13,7 +13,7 @@ type PostgresInstanceModel struct {
 	ID                  types.String `tfsdk:"id"`
 	Name                types.String `tfsdk:"name"`
 	Version             types.String `tfsdk:"version"`
-	Flavor              types.String `tfsdk:"flavor"`
+	FlavorID            types.String `tfsdk:"flavor_id"`
 	StorageGB           types.Int64  `tfsdk:"storage_gb"`
 	VPCID               types.String `tfsdk:"vpc_id"`
 	SubnetID            types.String `tfsdk:"subnet_id"`
@@ -37,7 +37,7 @@ type apiPostgresInstance struct {
 	ID                  string `json:"id"`
 	Name                string `json:"name"`
 	PostgresVersion     string `json:"engineVersion"`
-	Flavor              string `json:"flavorId"`
+	FlavorID            string `json:"flavorId"`
 	StorageGB           int    `json:"storageGb"`
 	VPCID               string `json:"vpcId"`
 	SubnetID            string `json:"subnetId"`
@@ -60,7 +60,7 @@ type apiPostgresInstance struct {
 type apiCreatePostgresInstanceRequest struct {
 	Name                string `json:"name"`
 	PostgresVersion     string `json:"engineVersion"`
-	Flavor              string `json:"flavorId"`
+	FlavorID            string `json:"flavorId"`
 	StorageGB           int    `json:"storageGb"`
 	VPCID               string `json:"vpcId"`
 	SubnetID            string `json:"subnetId"`
@@ -74,7 +74,7 @@ type apiCreatePostgresInstanceRequest struct {
 // apiUpdatePostgresInstanceRequest is the API request to update a managed PostgreSQL instance.
 type apiUpdatePostgresInstanceRequest struct {
 	Name                *string `json:"name,omitempty"`
-	Flavor              *string `json:"flavorId,omitempty"`
+	FlavorID            *string `json:"flavorId,omitempty"`
 	StorageGB           *int    `json:"storageGb,omitempty"`
 	BackupEnabled       *bool   `json:"backupEnabled,omitempty"`
 	BackupSchedule      *string `json:"backupSchedule,omitempty"`
@@ -87,7 +87,7 @@ func (m *PostgresInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagn
 	req := apiCreatePostgresInstanceRequest{
 		Name:            m.Name.ValueString(),
 		PostgresVersion: m.Version.ValueString(),
-		Flavor:          m.Flavor.ValueString(),
+		FlavorID:        m.FlavorID.ValueString(),
 		StorageGB:       int(m.StorageGB.ValueInt64()),
 		VPCID:           m.VPCID.ValueString(),
 		SubnetID:        m.SubnetID.ValueString(),
@@ -123,9 +123,9 @@ func (m *PostgresInstanceModel) toUpdateRequest(state *PostgresInstanceModel) ap
 		v := m.Name.ValueString()
 		req.Name = &v
 	}
-	if !m.Flavor.Equal(state.Flavor) {
-		v := m.Flavor.ValueString()
-		req.Flavor = &v
+	if !m.FlavorID.Equal(state.FlavorID) {
+		v := m.FlavorID.ValueString()
+		req.FlavorID = &v
 	}
 	if !m.StorageGB.Equal(state.StorageGB) {
 		v := int(m.StorageGB.ValueInt64())
@@ -156,7 +156,7 @@ func (m *PostgresInstanceModel) fromAPI(_ context.Context, inst *apiPostgresInst
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
 	m.Version = types.StringValue(inst.PostgresVersion)
-	m.Flavor = types.StringValue(inst.Flavor)
+	m.FlavorID = types.StringValue(inst.FlavorID)
 	m.StorageGB = types.Int64Value(int64(inst.StorageGB))
 	m.VPCID = types.StringValue(inst.VPCID)
 	m.SubnetID = types.StringValue(inst.SubnetID)
