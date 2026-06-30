@@ -18,19 +18,32 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
 
+// writeInstanceWithPort encodes the subset of the instance read response that
+// resolvePortID consumes: networks[0].portId. The backend resolves the Neutron
+// port from the instance, so association tests stub the instance GET.
+func writeInstanceWithPort(w http.ResponseWriter, instanceID, portID string) {
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"id":       instanceID,
+		"networks": []map[string]any{{"portId": portID}},
+	})
+}
+
 func TestFloatingIPModelFromAPI(t *testing.T) {
 	fip := &apiFloatingIP{
-		ID:         "fip-123",
-		Address:    "203.0.113.10",
-		Region:     "sweden",
-		Status:     "active",
-		InstanceID: "inst-456",
-		PrivateIP:  "10.0.1.5",
-		Tags:       map[string]string{"env": "test"},
-		CreatedAt:  "2025-01-01T00:00:00Z",
+		ID:        "fip-123",
+		Address:   "203.0.113.10",
+		Status:    "active",
+		PortID:    "port-9",
+		PrivateIP: "10.0.1.5",
+		Tags:      map[string]string{"env": "test"},
+		CreatedAt: "2025-01-01T00:00:00Z",
 	}
 
 	var model FloatingIPModel
+	// instance_id is preserved from config (never read from the wire); while the
+	// FIP is attached (portId present) the configured value is kept.
+	model.InstanceID = types.StringValue("inst-456")
+
 	var diags diag.Diagnostics
 	model.fromAPI(context.Background(), fip, &diags)
 
@@ -44,14 +57,11 @@ func TestFloatingIPModelFromAPI(t *testing.T) {
 	if model.Address.ValueString() != "203.0.113.10" {
 		t.Errorf("expected Address 203.0.113.10, got %s", model.Address.ValueString())
 	}
-	if model.Region.ValueString() != "sweden" {
-		t.Errorf("expected Region sweden, got %s", model.Region.ValueString())
-	}
 	if model.Status.ValueString() != "active" {
 		t.Errorf("expected Status active, got %s", model.Status.ValueString())
 	}
 	if model.InstanceID.ValueString() != "inst-456" {
-		t.Errorf("expected InstanceID inst-456, got %s", model.InstanceID.ValueString())
+		t.Errorf("expected InstanceID preserved as inst-456, got %s", model.InstanceID.ValueString())
 	}
 	if model.PrivateIP.ValueString() != "10.0.1.5" {
 		t.Errorf("expected PrivateIP 10.0.1.5, got %s", model.PrivateIP.ValueString())
@@ -65,12 +75,13 @@ func TestFloatingIPModelFromAPIMinimal(t *testing.T) {
 	fip := &apiFloatingIP{
 		ID:        "fip-789",
 		Address:   "203.0.113.20",
-		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}
 
 	var model FloatingIPModel
+	// A detached FIP (no portId) clears any previously-configured instance_id.
+	model.InstanceID = types.StringValue("inst-stale")
 	model.Tags = types.MapNull(types.StringType)
 
 	var diags diag.Diagnostics
@@ -81,7 +92,7 @@ func TestFloatingIPModelFromAPIMinimal(t *testing.T) {
 	}
 
 	if !model.InstanceID.IsNull() {
-		t.Errorf("expected InstanceID to be null, got %s", model.InstanceID.ValueString())
+		t.Errorf("expected InstanceID to be cleared (no portId), got %s", model.InstanceID.ValueString())
 	}
 	if !model.PrivateIP.IsNull() {
 		t.Errorf("expected PrivateIP to be null, got %s", model.PrivateIP.ValueString())
@@ -96,8 +107,7 @@ func TestFloatingIPModelToAllocateRequest(t *testing.T) {
 	tags, _ := types.MapValueFrom(ctx, types.StringType, map[string]string{"env": "prod"})
 
 	model := FloatingIPModel{
-		Region: types.StringValue("sweden"),
-		Tags:   tags,
+		Tags: tags,
 	}
 
 	var diags diag.Diagnostics
@@ -107,9 +117,6 @@ func TestFloatingIPModelToAllocateRequest(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
 
-	if req.Region != "sweden" {
-		t.Errorf("expected Region sweden, got %s", req.Region)
-	}
 	if req.Tags["env"] != "prod" {
 		t.Errorf("expected tag env=prod, got %v", req.Tags)
 	}
@@ -117,8 +124,7 @@ func TestFloatingIPModelToAllocateRequest(t *testing.T) {
 
 func TestFloatingIPModelToAllocateRequestMinimal(t *testing.T) {
 	model := FloatingIPModel{
-		Region: types.StringNull(),
-		Tags:   types.MapNull(types.StringType),
+		Tags: types.MapNull(types.StringType),
 	}
 
 	var diags diag.Diagnostics
@@ -128,11 +134,53 @@ func TestFloatingIPModelToAllocateRequestMinimal(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
 
-	if req.Region != "" {
-		t.Errorf("expected Region empty, got %s", req.Region)
-	}
 	if req.Tags != nil {
 		t.Errorf("expected Tags nil, got %v", req.Tags)
+	}
+}
+
+// TestFloatingIPAllocateRequestWireContract locks the allocate request to the
+// backend contract: region is not part of the wire body (ADR-0022), only tags.
+func TestFloatingIPAllocateRequestWireContract(t *testing.T) {
+	ctx := context.Background()
+	tags, _ := types.MapValueFrom(ctx, types.StringType, map[string]string{"env": "prod"})
+	model := FloatingIPModel{Tags: tags}
+
+	var diags diag.Diagnostics
+	req := model.toAllocateRequest(ctx, &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+
+	raw, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if _, ok := wire["region"]; ok {
+		t.Errorf("allocate request must not carry a region field, got %s", raw)
+	}
+}
+
+// TestFloatingIPAssociateRequestWireContract locks the associate request to the
+// backend contract: it carries portId, never instanceId.
+func TestFloatingIPAssociateRequestWireContract(t *testing.T) {
+	raw, err := json.Marshal(apiAssociateFloatingIPRequest{PortID: "port-abc"})
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if wire["portId"] != "port-abc" {
+		t.Errorf("expected portId=port-abc, got %s", raw)
+	}
+	if _, ok := wire["instanceId"]; ok {
+		t.Errorf("associate request must not carry an instanceId field, got %s", raw)
 	}
 }
 
@@ -140,25 +188,22 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 	fipData := apiFloatingIP{
 		ID:        "fip-test-1",
 		Address:   "203.0.113.50",
-		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}
 
 	fipAssociated := apiFloatingIP{
-		ID:         "fip-test-1",
-		Address:    "203.0.113.50",
-		Region:     "sweden",
-		Status:     "active",
-		InstanceID: "inst-123",
-		PrivateIP:  "10.0.1.5",
-		CreatedAt:  "2025-01-01T00:00:00Z",
+		ID:        "fip-test-1",
+		Address:   "203.0.113.50",
+		Status:    "active",
+		PortID:    "port-abc",
+		PrivateIP: "10.0.1.5",
+		CreatedAt: "2025-01-01T00:00:00Z",
 	}
 
 	fipDisassociated := apiFloatingIP{
 		ID:        "fip-test-1",
 		Address:   "203.0.113.50",
-		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}
@@ -214,8 +259,8 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Test Allocate
-	allocateReq := apiAllocateFloatingIPRequest{Region: "sweden"}
+	// Test Allocate (allocate request only carries tags; no region).
+	allocateReq := apiAllocateFloatingIPRequest{}
 	apiResp, err := c.Post(ctx, c.TenantPath("/floating-ips"), allocateReq)
 	if err != nil {
 		t.Fatalf("Allocate failed: %v", err)
@@ -235,8 +280,8 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 		t.Errorf("expected Address 203.0.113.50, got %s", allocated.Address)
 	}
 
-	// Test Associate
-	assocReq := apiAssociateFloatingIPRequest{InstanceID: "inst-123"}
+	// Test Associate (by resolved portId).
+	assocReq := apiAssociateFloatingIPRequest{PortID: "port-abc"}
 	assocResp, err := c.Post(ctx, c.TenantPath("/floating-ips/fip-test-1/associate"), assocReq)
 	if err != nil {
 		t.Fatalf("Associate failed: %v", err)
@@ -245,17 +290,17 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 	if err := json.Unmarshal(assocResp.Body, &assocFIP); err != nil {
 		t.Fatalf("failed to parse associate response: %v", err)
 	}
-	if assocFIP.InstanceID != "inst-123" {
-		t.Errorf("expected InstanceID inst-123, got %s", assocFIP.InstanceID)
+	if assocFIP.PortID != "port-abc" {
+		t.Errorf("expected PortID port-abc, got %s", assocFIP.PortID)
 	}
 
-	// Test Disassociate
+	// Test Disassociate.
 	_, err = c.Post(ctx, c.TenantPath("/floating-ips/fip-test-1/disassociate"), nil)
 	if err != nil {
 		t.Fatalf("Disassociate failed: %v", err)
 	}
 
-	// Verify disassociated
+	// Verify disassociated (no portId on the wire).
 	readResp, err := c.Get(ctx, c.TenantPath("/floating-ips/fip-test-1"), nil)
 	if err != nil {
 		t.Fatalf("Read failed: %v", err)
@@ -264,11 +309,11 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 	if err := json.Unmarshal(readResp.Body, &readFIP); err != nil {
 		t.Fatalf("failed to parse read response: %v", err)
 	}
-	if readFIP.InstanceID != "" {
-		t.Errorf("expected InstanceID empty after disassociate, got %s", readFIP.InstanceID)
+	if readFIP.PortID != "" {
+		t.Errorf("expected PortID empty after disassociate, got %s", readFIP.PortID)
 	}
 
-	// Test Delete
+	// Test Delete.
 	_, err = c.Delete(ctx, c.TenantPath("/floating-ips/fip-test-1"))
 	if err != nil {
 		t.Fatalf("Delete failed: %v", err)
@@ -311,7 +356,6 @@ func fipObjectType() tftypes.Object {
 		AttributeTypes: map[string]tftypes.Type{
 			"id":          tftypes.String,
 			"address":     tftypes.String,
-			"region":      tftypes.String,
 			"instance_id": tftypes.String,
 			"tags":        tftypes.Map{ElementType: tftypes.String},
 			"status":      tftypes.String,
@@ -344,10 +388,13 @@ func TestFIPSchema(t *testing.T) {
 	resp := &resource.SchemaResponse{}
 	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
 
-	for _, attr := range []string{"id", "address", "region", "instance_id", "tags", "status", "private_ip", "created_at"} {
+	for _, attr := range []string{"id", "address", "instance_id", "tags", "status", "private_ip", "created_at"} {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %s in schema", attr)
 		}
+	}
+	if _, ok := resp.Schema.Attributes["region"]; ok {
+		t.Error("did not expect a region attribute in schema")
 	}
 }
 
@@ -383,7 +430,6 @@ func TestFIPResourceCreate(t *testing.T) {
 	fipResp := apiFloatingIP{
 		ID:        "fip-new-1",
 		Address:   "203.0.113.100",
-		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
@@ -414,7 +460,6 @@ func TestFIPResourceCreate(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"address":     tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -448,30 +493,34 @@ func TestFIPResourceCreateWithAssociation(t *testing.T) {
 	fipAllocated := apiFloatingIP{
 		ID:        "fip-assoc-1",
 		Address:   "203.0.113.101",
-		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
 
 	fipAssociated := apiFloatingIP{
-		ID:         "fip-assoc-1",
-		Address:    "203.0.113.101",
-		Region:     "sweden",
-		Status:     "active",
-		InstanceID: "inst-123",
-		PrivateIP:  "10.0.1.5",
-		CreatedAt:  "2025-06-01T12:00:00Z",
+		ID:        "fip-assoc-1",
+		Address:   "203.0.113.101",
+		Status:    "active",
+		PortID:    "port-abc",
+		PrivateIP: "10.0.1.5",
+		CreatedAt: "2025-06-01T12:00:00Z",
 	}
+
+	var associateBody apiAssociateFloatingIPRequest
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(fipAllocated)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-123":
+			// resolvePortID reads the instance's first network port.
+			writeInstanceWithPort(w, "inst-123", "port-abc")
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-assoc-1/associate":
+			_ = json.NewDecoder(r.Body).Decode(&associateBody)
 			_ = json.NewEncoder(w).Encode(fipAssociated)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-assoc-1":
-			// Final read after the (sync, in this mock) associate → associated state.
+			// Final read after the (sync, in this mock) associate -> associated state.
 			_ = json.NewEncoder(w).Encode(fipAssociated)
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -492,7 +541,6 @@ func TestFIPResourceCreateWithAssociation(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"address":     tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-123"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -506,6 +554,11 @@ func TestFIPResourceCreateWithAssociation(t *testing.T) {
 
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	// The provider must resolve the instance to its port and associate by portId.
+	if associateBody.PortID != "port-abc" {
+		t.Errorf("expected associate request portId=port-abc, got %q", associateBody.PortID)
 	}
 
 	var state FloatingIPModel
@@ -523,7 +576,6 @@ func TestFIPResourceRead(t *testing.T) {
 	fipResp := apiFloatingIP{
 		ID:        "fip-read-1",
 		Address:   "203.0.113.50",
-		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
@@ -550,7 +602,6 @@ func TestFIPResourceRead(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-read-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -573,6 +624,64 @@ func TestFIPResourceRead(t *testing.T) {
 	}
 }
 
+// TestFIPResourceReadParsesWireContract proves the read parses the backend's
+// floatingIpAddress / fixedIpAddress / portId fields, and that a present portId
+// preserves the configured instance_id.
+func TestFIPResourceReadParsesWireContract(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-wire-1" {
+			_, _ = w.Write([]byte(`{
+				"id": "fip-wire-1",
+				"floatingIpAddress": "203.0.113.77",
+				"status": "active",
+				"portId": "port-zzz",
+				"fixedIpAddress": "10.0.5.9",
+				"createdAt": "2025-06-01T12:00:00Z"
+			}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := fipSchema(t)
+	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "fip-wire-1"),
+		"address":     tftypes.NewValue(tftypes.String, "203.0.113.77"),
+		"instance_id": tftypes.NewValue(tftypes.String, "inst-kept"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, "active"),
+		"private_ip":  tftypes.NewValue(tftypes.String, "10.0.5.9"),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+
+	state := tfsdk.State{Schema: s, Raw: stateVal}
+	resp := &resource.ReadResponse{State: state}
+	r.Read(context.Background(), resource.ReadRequest{State: state}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	var model FloatingIPModel
+	resp.State.Get(context.Background(), &model)
+	if model.Address.ValueString() != "203.0.113.77" {
+		t.Errorf("expected Address from floatingIpAddress, got %s", model.Address.ValueString())
+	}
+	if model.PrivateIP.ValueString() != "10.0.5.9" {
+		t.Errorf("expected PrivateIP from fixedIpAddress, got %s", model.PrivateIP.ValueString())
+	}
+	if model.InstanceID.ValueString() != "inst-kept" {
+		t.Errorf("expected instance_id preserved (portId present), got %s", model.InstanceID.ValueString())
+	}
+}
+
 func TestFIPResourceReadNotFoundRemovesState(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -592,7 +701,6 @@ func TestFIPResourceReadNotFoundRemovesState(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-gone"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.99"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -618,18 +726,16 @@ func TestFIPResourceUpdate(t *testing.T) {
 	fipResp := apiFloatingIP{
 		ID:        "fip-upd-1",
 		Address:   "203.0.113.50",
-		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
 	fipAssocResp := apiFloatingIP{
-		ID:         "fip-upd-1",
-		Address:    "203.0.113.50",
-		Region:     "sweden",
-		Status:     "active",
-		InstanceID: "inst-new",
-		PrivateIP:  "10.0.1.10",
-		CreatedAt:  "2025-06-01T12:00:00Z",
+		ID:        "fip-upd-1",
+		Address:   "203.0.113.50",
+		Status:    "active",
+		PortID:    "port-new",
+		PrivateIP: "10.0.1.10",
+		CreatedAt: "2025-06-01T12:00:00Z",
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -637,6 +743,8 @@ func TestFIPResourceUpdate(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-upd-1/disassociate":
 			associated = false
 			_ = json.NewEncoder(w).Encode(fipResp)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-new":
+			writeInstanceWithPort(w, "inst-new", "port-new")
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-upd-1/associate":
 			associated = true
 			_ = json.NewEncoder(w).Encode(fipAssocResp)
@@ -667,7 +775,6 @@ func TestFIPResourceUpdate(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-upd-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-old"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
@@ -679,7 +786,6 @@ func TestFIPResourceUpdate(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-upd-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-new"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -731,7 +837,6 @@ func TestFIPResourceDelete(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-del-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -770,7 +875,6 @@ func TestFIPResourceDeleteAlreadyGone(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-already-gone"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.99"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -812,7 +916,6 @@ func TestFIPResourceCreateAPIError(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"address":     tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -850,7 +953,6 @@ func TestFIPResourceCreateBadResponseBody(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"address":     tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -871,7 +973,6 @@ func TestFIPResourceCreateAssociationError(t *testing.T) {
 	fipResp := apiFloatingIP{
 		ID:        "fip-ae-1",
 		Address:   "203.0.113.55",
-		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
@@ -881,6 +982,8 @@ func TestFIPResourceCreateAssociationError(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(fipResp)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-fail":
+			writeInstanceWithPort(w, "inst-fail", "port-fail")
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-ae-1/associate":
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -905,7 +1008,6 @@ func TestFIPResourceCreateAssociationError(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"address":     tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-fail"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -922,23 +1024,74 @@ func TestFIPResourceCreateAssociationError(t *testing.T) {
 	}
 }
 
+// TestFIPResourceCreateResolvePortError covers the path where the target
+// instance has no resolvable network port for association.
+func TestFIPResourceCreateResolvePortError(t *testing.T) {
+	fipResp := apiFloatingIP{
+		ID:        "fip-rp-1",
+		Address:   "203.0.113.56",
+		Status:    "available",
+		CreatedAt: "2025-06-01T12:00:00Z",
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(fipResp)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-noport":
+			// Instance exists but exposes no network port.
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "inst-noport", "networks": []map[string]any{}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := fipSchema(t)
+	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"address":     tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"instance_id": tftypes.NewValue(tftypes.String, "inst-noport"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"private_ip":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+
+	plan := tfsdk.Plan{Schema: s, Raw: planVal}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Error("expected error when the instance has no network port")
+	}
+}
+
 func TestFIPResourceCreateAssociationBadResponseThenReread(t *testing.T) {
 	fipAllocated := apiFloatingIP{
 		ID:        "fip-reread-1",
 		Address:   "203.0.113.60",
-		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
 
 	fipAssociated := apiFloatingIP{
-		ID:         "fip-reread-1",
-		Address:    "203.0.113.60",
-		Region:     "sweden",
-		Status:     "active",
-		InstanceID: "inst-789",
-		PrivateIP:  "10.0.1.20",
-		CreatedAt:  "2025-06-01T12:00:00Z",
+		ID:        "fip-reread-1",
+		Address:   "203.0.113.60",
+		Status:    "active",
+		PortID:    "port-789",
+		PrivateIP: "10.0.1.20",
+		CreatedAt: "2025-06-01T12:00:00Z",
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -946,8 +1099,10 @@ func TestFIPResourceCreateAssociationBadResponseThenReread(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(fipAllocated)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-789":
+			writeInstanceWithPort(w, "inst-789", "port-789")
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-reread-1/associate":
-			// Return non-JSON body to trigger the unmarshal fallback path
+			// Return a non-JSON body; the provider does not parse a sync (200) associate body.
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-reread-1":
@@ -971,7 +1126,6 @@ func TestFIPResourceCreateAssociationBadResponseThenReread(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"address":     tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-789"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1002,7 +1156,6 @@ func TestFIPResourceCreateAssocRereadGetError(t *testing.T) {
 	fipAllocated := apiFloatingIP{
 		ID:        "fip-rre-1",
 		Address:   "203.0.113.70",
-		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
@@ -1012,8 +1165,9 @@ func TestFIPResourceCreateAssocRereadGetError(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(fipAllocated)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-fail":
+			writeInstanceWithPort(w, "inst-fail", "port-fail")
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-rre-1/associate":
-			// Return non-JSON body to trigger re-read path
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-rre-1":
@@ -1041,7 +1195,6 @@ func TestFIPResourceCreateAssocRereadGetError(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"address":     tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-fail"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1062,7 +1215,6 @@ func TestFIPResourceCreateAssocRereadBadJSON(t *testing.T) {
 	fipAllocated := apiFloatingIP{
 		ID:        "fip-rbj-1",
 		Address:   "203.0.113.71",
-		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
@@ -1072,6 +1224,8 @@ func TestFIPResourceCreateAssocRereadBadJSON(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(fipAllocated)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-fail":
+			writeInstanceWithPort(w, "inst-fail", "port-fail")
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-rbj-1/associate":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))
@@ -1098,7 +1252,6 @@ func TestFIPResourceCreateAssocRereadBadJSON(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"address":     tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-fail"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1134,7 +1287,6 @@ func TestFIPResourceReadAPIError(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-err-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -1168,7 +1320,6 @@ func TestFIPResourceReadBadJSON(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-bad-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -1189,7 +1340,6 @@ func TestFIPResourceUpdateDisassociateOnly(t *testing.T) {
 	fipResp := apiFloatingIP{
 		ID:        "fip-dis-1",
 		Address:   "203.0.113.50",
-		Region:    "sweden",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
@@ -1221,7 +1371,6 @@ func TestFIPResourceUpdateDisassociateOnly(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-dis-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-old"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
@@ -1233,7 +1382,6 @@ func TestFIPResourceUpdateDisassociateOnly(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-dis-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1264,7 +1412,6 @@ func TestFIPResourceUpdateTagsOnly(t *testing.T) {
 	fipResp := apiFloatingIP{
 		ID:        "fip-tags-1",
 		Address:   "203.0.113.50",
-		Region:    "sweden",
 		Status:    "available",
 		Tags:      map[string]string{"env": "prod"},
 		CreatedAt: "2025-06-01T12:00:00Z",
@@ -1299,7 +1446,6 @@ func TestFIPResourceUpdateTagsOnly(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-tags-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -1311,7 +1457,6 @@ func TestFIPResourceUpdateTagsOnly(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-tags-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{
 			"env": tftypes.NewValue(tftypes.String, "prod"),
@@ -1360,7 +1505,6 @@ func TestFIPResourceUpdateDisassociateError(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-de-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-old"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
@@ -1371,7 +1515,6 @@ func TestFIPResourceUpdateDisassociateError(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-de-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1394,6 +1537,8 @@ func TestFIPResourceUpdateAssociateError(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-ae2-1/disassociate":
 			_ = json.NewEncoder(w).Encode(apiFloatingIP{})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-new":
+			writeInstanceWithPort(w, "inst-new", "port-new")
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-ae2-1/associate":
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1416,7 +1561,6 @@ func TestFIPResourceUpdateAssociateError(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-ae2-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-old"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
@@ -1427,7 +1571,6 @@ func TestFIPResourceUpdateAssociateError(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-ae2-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-new"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1470,7 +1613,6 @@ func TestFIPResourceUpdatePatchError(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-pe-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -1481,7 +1623,6 @@ func TestFIPResourceUpdatePatchError(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-pe-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{
 			"env": tftypes.NewValue(tftypes.String, "prod"),
@@ -1527,7 +1668,6 @@ func TestFIPResourceUpdateReadError(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-re-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -1538,7 +1678,6 @@ func TestFIPResourceUpdateReadError(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-re-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1579,7 +1718,6 @@ func TestFIPResourceUpdateReadBadJSON(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-rbj-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -1590,7 +1728,6 @@ func TestFIPResourceUpdateReadBadJSON(t *testing.T) {
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-rbj-1"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1627,7 +1764,6 @@ func TestFIPResourceDeleteAPIError(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, "fip-del-err"),
 		"address":     tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
@@ -1653,7 +1789,6 @@ func TestFIPResourceImportState(t *testing.T) {
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
 		"id":          tftypes.NewValue(tftypes.String, nil),
 		"address":     tftypes.NewValue(tftypes.String, nil),
-		"region":      tftypes.NewValue(tftypes.String, nil),
 		"instance_id": tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, nil),

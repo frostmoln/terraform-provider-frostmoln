@@ -16,7 +16,6 @@ type InstanceModel struct {
 	Name            types.String `tfsdk:"name"`
 	FlavorID        types.String `tfsdk:"flavor_id"`
 	ImageID         types.String `tfsdk:"image_id"`
-	Region          types.String `tfsdk:"region"`
 	Zone            types.String `tfsdk:"zone"`
 	VPCID           types.String `tfsdk:"vpc_id"`
 	SubnetID        types.String `tfsdk:"subnet_id"`
@@ -34,54 +33,71 @@ type InstanceModel struct {
 	CreatedAt       types.String `tfsdk:"created_at"`
 }
 
-// apiInstance is the API representation of a compute instance.
+// apiNestedRef is a nested object that only carries a name (flavor{}/image{}).
+type apiNestedRef struct {
+	Name string `json:"name"`
+}
+
+// apiInstanceNetwork is one element of the instance's networks[] array. The
+// backend returns the VPC (network) and subnet a port is attached to here
+// rather than as top-level scalars.
+type apiInstanceNetwork struct {
+	NetworkID string `json:"networkId"`
+	SubnetID  string `json:"subnetId,omitempty"`
+}
+
+// apiInstance is the API representation of a compute instance. Field names match
+// what the compute service actually serializes (see compute/internal/domain/instance.go):
+// flavor/image are nested objects, IPs are arrays, user tags live under metadata,
+// VPC/subnet only appear inside networks[], and there is no top-level region.
 type apiInstance struct {
-	ID             string            `json:"id"`
-	Name           string            `json:"name"`
-	Status         string            `json:"status"`
-	FlavorID       string            `json:"flavorId"`
-	FlavorName     string            `json:"flavorName,omitempty"`
-	ImageID        string            `json:"imageId"`
-	ImageName      string            `json:"imageName,omitempty"`
-	Region         string            `json:"region"`
-	Zone           string            `json:"availabilityZone,omitempty"`
-	VPCID          string            `json:"vpcId,omitempty"`
-	SubnetID       string            `json:"subnetId,omitempty"`
-	PrivateIP      string            `json:"privateIp,omitempty"`
-	PublicIP       string            `json:"publicIp,omitempty"`
-	SecurityGroups []string          `json:"securityGroups,omitempty"`
-	SSHKeyNames    []string          `json:"sshKeyNames,omitempty"`
-	Tags           map[string]string `json:"tags,omitempty"`
-	CreatedAt      string            `json:"createdAt"`
+	ID             string               `json:"id"`
+	Name           string               `json:"name"`
+	Status         string               `json:"status"`
+	FlavorID       string               `json:"flavorId"`
+	Flavor         *apiNestedRef        `json:"flavor,omitempty"`
+	ImageID        string               `json:"imageId"`
+	Image          *apiNestedRef        `json:"image,omitempty"`
+	Zone           string               `json:"availabilityZone,omitempty"`
+	Networks       []apiInstanceNetwork `json:"networks,omitempty"`
+	PrivateIPs     []string             `json:"privateIps,omitempty"`
+	PublicIPs      []string             `json:"publicIps,omitempty"`
+	SecurityGroups []string             `json:"securityGroups,omitempty"`
+	Metadata       map[string]string    `json:"metadata,omitempty"`
+	CreatedAt      string               `json:"createdAt"`
 }
 
-// apiCreateInstanceRequest is the API request to create an instance.
+// apiCreateInstanceRequest is the API request to create an instance. The create
+// routes through provisioning, which expects sshKeyIds/securityGroupIds (see
+// provisioning/internal/handler/http/instance_handler.go). User tags are sent as
+// the `tags` map (provisioning maps them to instance metadata).
 type apiCreateInstanceRequest struct {
-	Name            string            `json:"name"`
-	FlavorID        string            `json:"flavorId"`
-	ImageID         string            `json:"imageId"`
-	Region          string            `json:"region,omitempty"`
-	Zone            string            `json:"availabilityZone,omitempty"`
-	VPCID           string            `json:"vpcId,omitempty"`
-	SubnetID        string            `json:"subnetId,omitempty"`
-	SecurityGroups  []string          `json:"securityGroups,omitempty"`
-	SSHKeyNames     []string          `json:"sshKeyNames,omitempty"`
-	UserData        string            `json:"userData,omitempty"`
-	ConsolePassword string            `json:"consolePassword,omitempty"`
-	Tags            map[string]string `json:"tags,omitempty"`
+	Name             string            `json:"name"`
+	FlavorID         string            `json:"flavorId"`
+	ImageID          string            `json:"imageId"`
+	Zone             string            `json:"availabilityZone,omitempty"`
+	VPCID            string            `json:"vpcId,omitempty"`
+	SubnetID         string            `json:"subnetId,omitempty"`
+	SecurityGroupIDs []string          `json:"securityGroupIds,omitempty"`
+	SSHKeyIDs        []string          `json:"sshKeyIds,omitempty"`
+	UserData         string            `json:"userData,omitempty"`
+	ConsolePassword  string            `json:"consolePassword,omitempty"`
+	Tags             map[string]string `json:"tags,omitempty"`
 }
 
-// apiUpdateInstanceRequest is the API request to update an instance.
+// apiUpdateInstanceRequest is the API request to update an instance. Update
+// routes to the compute service, which reads user tags under "metadata" (not the
+// OpenStack []string "tags"); sending the map as "metadata" makes tags persist.
+// The backend has no security-group update field — changing SGs post-create is
+// not supported by the API, so it is omitted here.
 type apiUpdateInstanceRequest struct {
-	Name           *string           `json:"name,omitempty"`
-	SecurityGroups []string          `json:"securityGroups,omitempty"`
-	Tags           map[string]string `json:"tags,omitempty"`
+	Name *string           `json:"name,omitempty"`
+	Tags map[string]string `json:"metadata,omitempty"`
 }
 
-// apiInstanceActionRequest is the API request to perform an action on an instance.
-type apiInstanceActionRequest struct {
-	Action   string `json:"action"`
-	FlavorID string `json:"flavorId,omitempty"`
+// apiResizeInstanceRequest is the body for POST /instances/{id}/resize.
+type apiResizeInstanceRequest struct {
+	FlavorID string `json:"flavorId"`
 }
 
 // computeUserDataHash returns the SHA256 hash of user data.
@@ -97,9 +113,6 @@ func (m *InstanceModel) toCreateRequest(ctx context.Context, diags *diag.Diagnos
 		ImageID:  m.ImageID.ValueString(),
 	}
 
-	if !m.Region.IsNull() && !m.Region.IsUnknown() {
-		req.Region = m.Region.ValueString()
-	}
 	if !m.Zone.IsNull() && !m.Zone.IsUnknown() {
 		req.Zone = m.Zone.ValueString()
 	}
@@ -113,13 +126,13 @@ func (m *InstanceModel) toCreateRequest(ctx context.Context, diags *diag.Diagnos
 	if !m.SecurityGroups.IsNull() && !m.SecurityGroups.IsUnknown() {
 		var sgs []string
 		diags.Append(m.SecurityGroups.ElementsAs(ctx, &sgs, false)...)
-		req.SecurityGroups = sgs
+		req.SecurityGroupIDs = sgs
 	}
 
 	if !m.SSHKeyNames.IsNull() && !m.SSHKeyNames.IsUnknown() {
 		var keys []string
 		diags.Append(m.SSHKeyNames.ElementsAs(ctx, &keys, false)...)
-		req.SSHKeyNames = keys
+		req.SSHKeyIDs = keys
 	}
 
 	if !m.UserData.IsNull() && !m.UserData.IsUnknown() {
@@ -148,12 +161,6 @@ func (m *InstanceModel) toUpdateRequest(ctx context.Context, diags *diag.Diagnos
 		req.Name = &name
 	}
 
-	if !m.SecurityGroups.IsNull() && !m.SecurityGroups.IsUnknown() {
-		var sgs []string
-		diags.Append(m.SecurityGroups.ElementsAs(ctx, &sgs, false)...)
-		req.SecurityGroups = sgs
-	}
-
 	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
 		tags := make(map[string]string)
 		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
@@ -172,58 +179,47 @@ func (m *InstanceModel) fromAPI(ctx context.Context, inst *apiInstance, diags *d
 	m.Status = types.StringValue(inst.Status)
 	m.FlavorID = types.StringValue(inst.FlavorID)
 	m.ImageID = types.StringValue(inst.ImageID)
-	m.Region = types.StringValue(inst.Region)
 	m.CreatedAt = types.StringValue(inst.CreatedAt)
 
-	if inst.FlavorName != "" {
-		m.FlavorName = types.StringValue(inst.FlavorName)
+	// flavor_name / image_name are derived from the nested flavor{}/image{}
+	// objects (the backend has no top-level flavorName/imageName).
+	if inst.Flavor != nil && inst.Flavor.Name != "" {
+		m.FlavorName = types.StringValue(inst.Flavor.Name)
 	} else {
 		m.FlavorName = types.StringNull()
 	}
-
-	if inst.ImageName != "" {
-		m.ImageName = types.StringValue(inst.ImageName)
+	if inst.Image != nil && inst.Image.Name != "" {
+		m.ImageName = types.StringValue(inst.Image.Name)
 	} else {
 		m.ImageName = types.StringNull()
 	}
 
 	if inst.Zone != "" {
 		m.Zone = types.StringValue(inst.Zone)
-	} else if m.Zone.IsNull() {
-		m.Zone = types.StringNull()
 	} else {
 		m.Zone = types.StringNull()
 	}
 
-	if inst.VPCID != "" {
-		m.VPCID = types.StringValue(inst.VPCID)
-	} else if m.VPCID.IsNull() {
-		m.VPCID = types.StringNull()
-	} else {
-		m.VPCID = types.StringNull()
-	}
-
-	if inst.SubnetID != "" {
-		m.SubnetID = types.StringValue(inst.SubnetID)
-	} else if m.SubnetID.IsNull() {
-		m.SubnetID = types.StringNull()
-	} else {
-		m.SubnetID = types.StringNull()
-	}
-
-	if inst.PrivateIP != "" {
-		m.PrivateIP = types.StringValue(inst.PrivateIP)
+	// private_ip / public_ip are derived from the first element of the
+	// privateIps[]/publicIps[] arrays (mirrors the portal normalizer).
+	if len(inst.PrivateIPs) > 0 && inst.PrivateIPs[0] != "" {
+		m.PrivateIP = types.StringValue(inst.PrivateIPs[0])
 	} else {
 		m.PrivateIP = types.StringNull()
 	}
-
-	if inst.PublicIP != "" {
-		m.PublicIP = types.StringValue(inst.PublicIP)
+	if len(inst.PublicIPs) > 0 && inst.PublicIPs[0] != "" {
+		m.PublicIP = types.StringValue(inst.PublicIPs[0])
 	} else {
 		m.PublicIP = types.StringNull()
 	}
 
-	// Security groups
+	// vpc_id / subnet_id are RequiresReplace create-time attributes that the
+	// backend does not echo as top-level scalars (they live inside networks[]).
+	// They are intentionally left untouched here so the value set by the user
+	// at create is preserved on every refresh; overwriting from the response
+	// would either null out the user's value or trigger a spurious replace.
+
+	// Security groups (the read returns the IDs).
 	if len(inst.SecurityGroups) > 0 {
 		sgSet, d := types.SetValueFrom(ctx, types.StringType, inst.SecurityGroups)
 		diags.Append(d...)
@@ -236,22 +232,13 @@ func (m *InstanceModel) fromAPI(ctx context.Context, inst *apiInstance, diags *d
 		m.SecurityGroups = types.SetNull(types.StringType)
 	}
 
-	// SSH key names
-	if len(inst.SSHKeyNames) > 0 {
-		keySet, d := types.SetValueFrom(ctx, types.StringType, inst.SSHKeyNames)
-		diags.Append(d...)
-		m.SSHKeyNames = keySet
-	} else if !m.SSHKeyNames.IsNull() {
-		keySet, d := types.SetValueFrom(ctx, types.StringType, []string{})
-		diags.Append(d...)
-		m.SSHKeyNames = keySet
-	} else {
-		m.SSHKeyNames = types.SetNull(types.StringType)
-	}
+	// ssh_key_names is RequiresReplace and write-only on the wire (the backend
+	// returns a single keyName, not the set the user supplied), so it is left
+	// untouched and preserved from plan/state.
 
-	// Tags
-	if len(inst.Tags) > 0 {
-		tagMap, d := types.MapValueFrom(ctx, types.StringType, inst.Tags)
+	// Tags come from the user metadata map (the backend has no top-level `tags`).
+	if len(inst.Metadata) > 0 {
+		tagMap, d := types.MapValueFrom(ctx, types.StringType, inst.Metadata)
 		diags.Append(d...)
 		m.Tags = tagMap
 	} else if !m.Tags.IsNull() {

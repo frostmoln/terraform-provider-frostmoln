@@ -18,7 +18,9 @@ type SecurityGroupRuleModel struct {
 	Description     types.String `tfsdk:"description"`
 }
 
-// apiSecurityGroupRule is the API representation of a security group rule.
+// apiSecurityGroupRule is the API representation of a security group rule. The
+// network service serializes the remote security group as `remoteSecurityGroupId`
+// and the remote CIDR as `remoteCidr` (network/internal/domain/security_group.go).
 type apiSecurityGroupRule struct {
 	ID            string `json:"id"`
 	Direction     string `json:"direction"`
@@ -26,7 +28,7 @@ type apiSecurityGroupRule struct {
 	PortRangeMin  *int   `json:"portRangeMin,omitempty"`
 	PortRangeMax  *int   `json:"portRangeMax,omitempty"`
 	RemoteCIDR    string `json:"remoteCidr,omitempty"`
-	RemoteGroupID string `json:"remoteGroupId,omitempty"`
+	RemoteGroupID string `json:"remoteSecurityGroupId,omitempty"`
 	Description   string `json:"description,omitempty"`
 }
 
@@ -36,13 +38,16 @@ type apiSecurityGroupWithRules struct {
 	Rules []apiSecurityGroupRule `json:"rules,omitempty"`
 }
 
-// apiCreateSecurityGroupRuleRequest is the API request to create a security group rule.
+// apiCreateSecurityGroupRuleRequest is the API request to create a security
+// group rule. The create routes through provisioning, which reads the remote
+// CIDR under `remoteIpPrefix` and the remote security group under `remoteGroupId`
+// (provisioning/internal/handler/http/network_handler.go).
 type apiCreateSecurityGroupRuleRequest struct {
 	Direction     string `json:"direction"`
 	Protocol      string `json:"protocol"`
 	PortRangeMin  *int   `json:"portRangeMin,omitempty"`
 	PortRangeMax  *int   `json:"portRangeMax,omitempty"`
-	RemoteCIDR    string `json:"remoteCidr,omitempty"`
+	RemoteCIDR    string `json:"remoteIpPrefix,omitempty"`
 	RemoteGroupID string `json:"remoteGroupId,omitempty"`
 	Description   string `json:"description,omitempty"`
 }

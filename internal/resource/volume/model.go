@@ -22,61 +22,70 @@ type VolumeModel struct {
 	Status      types.String `tfsdk:"status"`
 	IOPS        types.Int64  `tfsdk:"iops"`
 	Throughput  types.Int64  `tfsdk:"throughput"`
-	Region      types.String `tfsdk:"region"`
 	AttachedTo  types.String `tfsdk:"attached_to"`
 	DevicePath  types.String `tfsdk:"device_path"`
 	CreatedAt   types.String `tfsdk:"created_at"`
 }
 
-// apiVolume is the API representation of a volume.
+// apiVolumeAttachment is one element of the volume's attachments[] array.
+type apiVolumeAttachment struct {
+	ID         string `json:"id"`
+	VolumeID   string `json:"volumeId"`
+	InstanceID string `json:"instanceId"`
+	Device     string `json:"device"`
+}
+
+// apiVolume is the API representation of a volume. Field names match what the
+// storage service serializes (see storage/internal/domain/volume.go): the size
+// is `size` (int64 GB), user tags live under `metadata`, the snapshot source is
+// `sourceSnapshotId`, attachment state is the `attachments[]` array, and there
+// is no top-level region/attachedTo/devicePath.
 type apiVolume struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Description string            `json:"description,omitempty"`
-	SizeGB      int               `json:"sizeGb"`
-	VolumeType  string            `json:"volumeType"`
-	Zone        string            `json:"availabilityZone,omitempty"`
-	SnapshotID  string            `json:"snapshotId,omitempty"`
-	Encrypted   bool              `json:"encrypted"`
-	Status      string            `json:"status"`
-	IOPS        int               `json:"iops"`
-	Throughput  int               `json:"throughput"`
-	Region      string            `json:"region"`
-	AttachedTo  string            `json:"attachedTo,omitempty"`
-	DevicePath  string            `json:"devicePath,omitempty"`
-	Tags        map[string]string `json:"tags,omitempty"`
-	CreatedAt   string            `json:"createdAt"`
+	ID               string                `json:"id"`
+	Name             string                `json:"name"`
+	Description      string                `json:"description,omitempty"`
+	Size             int64                 `json:"size"`
+	VolumeType       string                `json:"volumeType"`
+	Zone             string                `json:"availabilityZone,omitempty"`
+	SourceSnapshotID string                `json:"sourceSnapshotId,omitempty"`
+	Encrypted        bool                  `json:"encrypted"`
+	Status           string                `json:"status"`
+	IOPS             int                   `json:"iops,omitempty"`
+	Throughput       int                   `json:"throughput,omitempty"`
+	Attachments      []apiVolumeAttachment `json:"attachments,omitempty"`
+	Metadata         map[string]string     `json:"metadata,omitempty"`
+	CreatedAt        string                `json:"createdAt"`
 }
 
 // apiCreateVolumeRequest is the API request to create a volume.
 type apiCreateVolumeRequest struct {
-	Name        string            `json:"name"`
-	Description string            `json:"description,omitempty"`
-	SizeGB      int               `json:"sizeGb"`
-	VolumeType  string            `json:"volumeType,omitempty"`
-	Zone        string            `json:"availabilityZone,omitempty"`
-	SnapshotID  string            `json:"snapshotId,omitempty"`
-	Encrypted   bool              `json:"encrypted"`
-	Tags        map[string]string `json:"tags,omitempty"`
+	Name             string            `json:"name"`
+	Description      string            `json:"description,omitempty"`
+	Size             int64             `json:"size"`
+	VolumeType       string            `json:"volumeType,omitempty"`
+	Zone             string            `json:"availabilityZone,omitempty"`
+	SourceSnapshotID string            `json:"sourceSnapshotId,omitempty"`
+	Encrypted        bool              `json:"encrypted"`
+	Metadata         map[string]string `json:"metadata,omitempty"`
 }
 
 // apiUpdateVolumeRequest is the API request to update a volume.
 type apiUpdateVolumeRequest struct {
 	Name        *string           `json:"name,omitempty"`
 	Description *string           `json:"description,omitempty"`
-	Tags        map[string]string `json:"tags,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
 // apiResizeVolumeRequest is the API request to resize a volume.
 type apiResizeVolumeRequest struct {
-	SizeGB int `json:"sizeGb"`
+	NewSizeGB int `json:"newSizeGb"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
 func (m *VolumeModel) toCreateRequest(ctx context.Context, diags *diag.Diagnostics) apiCreateVolumeRequest {
 	req := apiCreateVolumeRequest{
 		Name:      m.Name.ValueString(),
-		SizeGB:    int(m.SizeGB.ValueInt64()),
+		Size:      m.SizeGB.ValueInt64(),
 		Encrypted: m.Encrypted.ValueBool(),
 	}
 
@@ -90,12 +99,12 @@ func (m *VolumeModel) toCreateRequest(ctx context.Context, diags *diag.Diagnosti
 		req.Zone = m.Zone.ValueString()
 	}
 	if !m.SnapshotID.IsNull() && !m.SnapshotID.IsUnknown() {
-		req.SnapshotID = m.SnapshotID.ValueString()
+		req.SourceSnapshotID = m.SnapshotID.ValueString()
 	}
 	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
 		tags := make(map[string]string)
 		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		req.Tags = tags
+		req.Metadata = tags
 	}
 
 	return req
@@ -105,13 +114,12 @@ func (m *VolumeModel) toCreateRequest(ctx context.Context, diags *diag.Diagnosti
 func (m *VolumeModel) fromAPI(ctx context.Context, vol *apiVolume, diags *diag.Diagnostics) {
 	m.ID = types.StringValue(vol.ID)
 	m.Name = types.StringValue(vol.Name)
-	m.SizeGB = types.Int64Value(int64(vol.SizeGB))
+	m.SizeGB = types.Int64Value(vol.Size)
 	m.VolumeType = types.StringValue(vol.VolumeType)
 	m.Encrypted = types.BoolValue(vol.Encrypted)
 	m.Status = types.StringValue(vol.Status)
 	m.IOPS = types.Int64Value(int64(vol.IOPS))
 	m.Throughput = types.Int64Value(int64(vol.Throughput))
-	m.Region = types.StringValue(vol.Region)
 	m.CreatedAt = types.StringValue(vol.CreatedAt)
 
 	if vol.Description != "" {
@@ -128,26 +136,28 @@ func (m *VolumeModel) fromAPI(ctx context.Context, vol *apiVolume, diags *diag.D
 		m.Zone = types.StringNull()
 	}
 
-	if vol.SnapshotID != "" {
-		m.SnapshotID = types.StringValue(vol.SnapshotID)
+	if vol.SourceSnapshotID != "" {
+		m.SnapshotID = types.StringValue(vol.SourceSnapshotID)
 	} else {
 		m.SnapshotID = types.StringNull()
 	}
 
-	if vol.AttachedTo != "" {
-		m.AttachedTo = types.StringValue(vol.AttachedTo)
+	// attached_to / device_path are derived from the first attachment (the
+	// backend exposes attachment state only via the attachments[] array).
+	if len(vol.Attachments) > 0 {
+		m.AttachedTo = types.StringValue(vol.Attachments[0].InstanceID)
+		if vol.Attachments[0].Device != "" {
+			m.DevicePath = types.StringValue(vol.Attachments[0].Device)
+		} else {
+			m.DevicePath = types.StringNull()
+		}
 	} else {
 		m.AttachedTo = types.StringNull()
-	}
-
-	if vol.DevicePath != "" {
-		m.DevicePath = types.StringValue(vol.DevicePath)
-	} else {
 		m.DevicePath = types.StringNull()
 	}
 
-	if len(vol.Tags) > 0 {
-		tagMap, d := types.MapValueFrom(ctx, types.StringType, vol.Tags)
+	if len(vol.Metadata) > 0 {
+		tagMap, d := types.MapValueFrom(ctx, types.StringType, vol.Metadata)
 		diags.Append(d...)
 		m.Tags = tagMap
 	} else if !m.Tags.IsNull() {

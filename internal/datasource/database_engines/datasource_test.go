@@ -65,6 +65,8 @@ func TestConfigureWrongType(t *testing.T) {
 }
 
 func TestRead(t *testing.T) {
+	ctx := context.Background()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/databases/engines" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
@@ -74,14 +76,18 @@ func TestRead(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(apiDatabaseEngineList{
 			Engines: []apiDatabaseEngine{
 				{
-					Name:        "postgresql",
-					Description: "PostgreSQL relational database",
-					Versions:    []string{"14", "15", "16", "17"},
+					Engine: "postgresql",
+					Versions: []apiDatabaseVersion{
+						{Version: "15", Status: "supported", EndOfLife: "2027-11-11", IsDefault: false},
+						{Version: "16", Status: "current", IsDefault: true},
+					},
 				},
 				{
-					Name:        "mysql",
-					Description: "MySQL relational database",
-					Versions:    []string{"8.0", "8.4", "9.2"},
+					Engine: "mysql",
+					Versions: []apiDatabaseVersion{
+						{Version: "8.0", Status: "supported", IsDefault: false},
+						{Version: "8.4", Status: "current", IsDefault: true},
+					},
 				},
 			},
 		})
@@ -93,51 +99,67 @@ func TestRead(t *testing.T) {
 	ds := &databaseEnginesDataSource{client: c}
 
 	var schemaResp datasource.SchemaResponse
-	ds.Schema(context.Background(), datasource.SchemaRequest{}, &schemaResp)
+	ds.Schema(ctx, datasource.SchemaRequest{}, &schemaResp)
 
-	stateVal := tftypes.NewValue(schemaResp.Schema.Type().TerraformType(context.Background()), nil)
+	stateVal := tftypes.NewValue(schemaResp.Schema.Type().TerraformType(ctx), nil)
 	state := tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal}
 
-	// Build a config with null engines
-	configVal := tftypes.NewValue(schemaResp.Schema.Type().TerraformType(context.Background()), map[string]tftypes.Value{
-		"engines": tftypes.NewValue(
-			tftypes.List{ElementType: tftypes.Object{
-				AttributeTypes: map[string]tftypes.Type{
-					"name":        tftypes.String,
-					"description": tftypes.String,
-					"versions":    tftypes.List{ElementType: tftypes.String},
-				},
-			}},
-			nil, // null list
-		),
+	// Build a config with a null engines list, derived from the schema's own type
+	// (engines is a nested list of objects with a nested list of version objects).
+	enginesType := schemaResp.Schema.Attributes["engines"].GetType().TerraformType(ctx)
+	configVal := tftypes.NewValue(schemaResp.Schema.Type().TerraformType(ctx), map[string]tftypes.Value{
+		"engines": tftypes.NewValue(enginesType, nil),
 	})
 	config := tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal}
 
 	readResp := datasource.ReadResponse{State: state}
-	ds.Read(context.Background(), datasource.ReadRequest{Config: config}, &readResp)
+	ds.Read(ctx, datasource.ReadRequest{Config: config}, &readResp)
 
 	if readResp.Diagnostics.HasError() {
 		t.Fatalf("read failed: %v", readResp.Diagnostics.Errors())
 	}
 
 	var result databaseEnginesModel
-	readResp.State.Get(context.Background(), &result)
+	readResp.State.Get(ctx, &result)
 	if result.Engines.IsNull() || result.Engines.IsUnknown() {
 		t.Fatal("expected non-null engines list")
 	}
 
-	var items []databaseEngineItemModel
-	diags := result.Engines.ElementsAs(context.Background(), &items, false)
+	var items []engineItemModel
+	diags := result.Engines.ElementsAs(ctx, &items, false)
 	if diags.HasError() {
 		t.Fatalf("failed to extract engines: %v", diags.Errors())
 	}
 	if len(items) != 2 {
-		t.Errorf("expected 2 engines, got %d", len(items))
+		t.Fatalf("expected 2 engines, got %d", len(items))
 	}
-	if items[0].Name.ValueString() != "postgresql" {
-		t.Errorf("expected first engine postgresql, got %s", items[0].Name.ValueString())
+	if items[0].Engine.ValueString() != "postgresql" {
+		t.Errorf("expected first engine postgresql, got %s", items[0].Engine.ValueString())
 	}
-	if items[1].Name.ValueString() != "mysql" {
-		t.Errorf("expected second engine mysql, got %s", items[1].Name.ValueString())
+	if items[1].Engine.ValueString() != "mysql" {
+		t.Errorf("expected second engine mysql, got %s", items[1].Engine.ValueString())
+	}
+
+	var pgVersions []versionItemModel
+	if d := items[0].Versions.ElementsAs(ctx, &pgVersions, false); d.HasError() {
+		t.Fatalf("failed to extract postgresql versions: %v", d.Errors())
+	}
+	if len(pgVersions) != 2 {
+		t.Fatalf("expected 2 postgresql versions, got %d", len(pgVersions))
+	}
+	if pgVersions[0].Version.ValueString() != "15" || pgVersions[0].Status.ValueString() != "supported" {
+		t.Errorf("unexpected first version: %+v", pgVersions[0])
+	}
+	if pgVersions[0].EndOfLife.ValueString() != "2027-11-11" {
+		t.Errorf("expected end_of_life 2027-11-11, got %s", pgVersions[0].EndOfLife.ValueString())
+	}
+	if pgVersions[1].Version.ValueString() != "16" || pgVersions[1].Status.ValueString() != "current" {
+		t.Errorf("unexpected second version: %+v", pgVersions[1])
+	}
+	if !pgVersions[1].IsDefault.ValueBool() {
+		t.Error("expected version 16 to be the default")
+	}
+	if !pgVersions[1].EndOfLife.IsNull() {
+		t.Error("expected null end_of_life for version with no EOL")
 	}
 }

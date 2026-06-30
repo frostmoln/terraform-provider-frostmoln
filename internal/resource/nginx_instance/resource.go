@@ -10,8 +10,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
@@ -80,6 +82,20 @@ func (r *nginxInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				Description: "The storage size in gigabytes.",
 				Required:    true,
 			},
+			"vpc_id": schema.StringAttribute{
+				Description: "The VPC ID where the webserver instance will be deployed.",
+				Required:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"subnet_id": schema.StringAttribute{
+				Description: "The subnet ID where the webserver instance will be deployed.",
+				Required:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
 			"tls_enabled": schema.BoolAttribute{
 				Description: "Whether TLS is enabled for the webserver.",
 				Optional:    true,
@@ -88,29 +104,14 @@ func (r *nginxInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 					boolplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"worker_processes": schema.Int64Attribute{
-				Description: "The number of Nginx worker processes. Defaults to auto (based on CPU cores).",
-				Optional:    true,
-			},
-			"gzip_enabled": schema.BoolAttribute{
-				Description: "Whether gzip compression is enabled.",
+			"config": schema.MapAttribute{
+				Description: "Engine-specific configuration as key/value pairs (sent as the engineConfig object).",
 				Optional:    true,
 				Computed:    true,
-				PlanModifiers: []planmodifier.Bool{
-					boolplanmodifier.UseStateForUnknown(),
+				ElementType: types.StringType,
+				PlanModifiers: []planmodifier.Map{
+					mapplanmodifier.UseStateForUnknown(),
 				},
-			},
-			"try_files": schema.StringAttribute{
-				Description: "The try_files directive value (e.g. \"$uri $uri/ /index.html\").",
-				Optional:    true,
-			},
-			"proxy_pass": schema.StringAttribute{
-				Description: "The proxy_pass upstream URL (e.g. \"http://backend:8080\").",
-				Optional:    true,
-			},
-			"config": schema.StringAttribute{
-				Description: "Custom engine configuration as a JSON string.",
-				Optional:    true,
 			},
 			"status": schema.StringAttribute{
 				Description: "The current status of the Nginx instance.",
@@ -277,7 +278,10 @@ func (r *nginxInstanceResource) Update(ctx context.Context, req resource.UpdateR
 
 	id := state.ID.ValueString()
 
-	updateReq := plan.toUpdateRequest(&state)
+	updateReq := plan.toUpdateRequest(ctx, &state, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	_, err := r.client.Put(ctx, r.client.TenantPath("/webservers/"+id), updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to update Nginx instance", err.Error())

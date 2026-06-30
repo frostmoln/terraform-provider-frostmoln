@@ -291,8 +291,10 @@ func TestSchema(t *testing.T) {
 	var resp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &resp)
 
-	for _, attr := range []string{"id", "name", "secret_value", "content_type", "tags",
-		"max_versions", "recovery_window_days", "current_version", "status", "created_at", "updated_at"} {
+	for _, attr := range []string{
+		"id", "name", "secret_value", "content_type", "tags",
+		"max_versions", "recovery_window_days", "current_version", "status", "created_at", "updated_at",
+	} {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %s in schema", attr)
 		}

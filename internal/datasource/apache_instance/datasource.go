@@ -31,10 +31,12 @@ type apacheInstanceModel struct {
 	Version    types.String `tfsdk:"version"`
 	Flavor     types.String `tfsdk:"flavor"`
 	StorageGB  types.Int64  `tfsdk:"storage_gb"`
+	VPCID      types.String `tfsdk:"vpc_id"`
+	SubnetID   types.String `tfsdk:"subnet_id"`
 	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
 	PHPEnabled types.Bool   `tfsdk:"php_enabled"`
 	PHPVersion types.String `tfsdk:"php_version"`
-	Config     types.String `tfsdk:"config"`
+	Config     types.Map    `tfsdk:"config"`
 	Status     types.String `tfsdk:"status"`
 	PrivateIP  types.String `tfsdk:"private_ip"`
 	Port       types.Int64  `tfsdk:"port"`
@@ -44,23 +46,27 @@ type apacheInstanceModel struct {
 }
 
 // apiWebserverInstance is the API representation of a managed webserver instance.
+// The flavor is `flavorId`, vpcId/subnetId are returned, and `engineConfig` is a
+// JSON object (webserver/internal/domain/instance.go).
 type apiWebserverInstance struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Engine        string `json:"engine"`
-	EngineVersion string `json:"engineVersion"`
-	Flavor        string `json:"flavor"`
-	StorageGB     int    `json:"storageGb"`
-	TLSEnabled    bool   `json:"tlsEnabled"`
-	PHPEnabled    bool   `json:"phpEnabled"`
-	PHPVersion    string `json:"phpVersion,omitempty"`
-	EngineConfig  string `json:"engineConfig,omitempty"`
-	Status        string `json:"status"`
-	PrivateIP     string `json:"privateIp,omitempty"`
-	Port          int    `json:"port,omitempty"`
-	CreatedAt     string `json:"createdAt"`
-	UpdatedAt     string `json:"updatedAt,omitempty"`
-	TenantID      string `json:"tenantId,omitempty"`
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	Engine        string            `json:"engine"`
+	EngineVersion string            `json:"engineVersion"`
+	Flavor        string            `json:"flavorId"`
+	StorageGB     int               `json:"storageGb"`
+	VPCID         string            `json:"vpcId"`
+	SubnetID      string            `json:"subnetId"`
+	TLSEnabled    bool              `json:"tlsEnabled"`
+	PHPEnabled    bool              `json:"phpEnabled"`
+	PHPVersion    string            `json:"phpVersion,omitempty"`
+	EngineConfig  map[string]string `json:"engineConfig,omitempty"`
+	Status        string            `json:"status"`
+	PrivateIP     string            `json:"privateIp,omitempty"`
+	Port          int               `json:"port,omitempty"`
+	CreatedAt     string            `json:"createdAt"`
+	UpdatedAt     string            `json:"updatedAt,omitempty"`
+	TenantID      string            `json:"tenantId,omitempty"`
 }
 
 func (d *apacheInstanceDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -91,6 +97,14 @@ func (d *apacheInstanceDataSource) Schema(_ context.Context, _ datasource.Schema
 				Description: "The storage size in gigabytes.",
 				Computed:    true,
 			},
+			"vpc_id": schema.StringAttribute{
+				Description: "The VPC ID where the instance is deployed.",
+				Computed:    true,
+			},
+			"subnet_id": schema.StringAttribute{
+				Description: "The subnet ID where the instance is deployed.",
+				Computed:    true,
+			},
 			"tls_enabled": schema.BoolAttribute{
 				Description: "Whether TLS is enabled.",
 				Computed:    true,
@@ -103,9 +117,10 @@ func (d *apacheInstanceDataSource) Schema(_ context.Context, _ datasource.Schema
 				Description: "The PHP version.",
 				Computed:    true,
 			},
-			"config": schema.StringAttribute{
-				Description: "Custom engine configuration.",
+			"config": schema.MapAttribute{
+				Description: "Engine-specific configuration as key/value pairs.",
 				Computed:    true,
+				ElementType: types.StringType,
 			},
 			"status": schema.StringAttribute{
 				Description: "The current status of the Apache instance.",
@@ -174,6 +189,8 @@ func (d *apacheInstanceDataSource) Read(ctx context.Context, req datasource.Read
 	state.Version = types.StringValue(inst.EngineVersion)
 	state.Flavor = types.StringValue(inst.Flavor)
 	state.StorageGB = types.Int64Value(int64(inst.StorageGB))
+	state.VPCID = types.StringValue(inst.VPCID)
+	state.SubnetID = types.StringValue(inst.SubnetID)
 	state.TLSEnabled = types.BoolValue(inst.TLSEnabled)
 	state.PHPEnabled = types.BoolValue(inst.PHPEnabled)
 	state.Status = types.StringValue(inst.Status)
@@ -185,10 +202,12 @@ func (d *apacheInstanceDataSource) Read(ctx context.Context, req datasource.Read
 		state.PHPVersion = types.StringNull()
 	}
 
-	if inst.EngineConfig != "" {
-		state.Config = types.StringValue(inst.EngineConfig)
+	if len(inst.EngineConfig) > 0 {
+		cfgMap, d := types.MapValueFrom(ctx, types.StringType, inst.EngineConfig)
+		resp.Diagnostics.Append(d...)
+		state.Config = cfgMap
 	} else {
-		state.Config = types.StringNull()
+		state.Config = types.MapNull(types.StringType)
 	}
 
 	if inst.PrivateIP != "" {

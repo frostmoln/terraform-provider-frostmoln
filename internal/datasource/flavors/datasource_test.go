@@ -72,6 +72,23 @@ func TestConfigureWrongType(t *testing.T) {
 	}
 }
 
+// TestApiFlavorDecodesBackendKeys locks the wire contract against the backend's
+// actual JSON (memory/disk), independent of the apiFlavor struct used elsewhere in
+// the tests — a tag regression to ramMb/diskGb would silently zero RAM/disk.
+func TestApiFlavorDecodesBackendKeys(t *testing.T) {
+	const backendJSON = `{"id":"flv-1","name":"nl.small","vcpus":2,"memory":2048,"disk":40,"category":"general"}`
+	var f apiFlavor
+	if err := json.Unmarshal([]byte(backendJSON), &f); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if f.RAMMB != 2048 {
+		t.Errorf("expected RAMMB 2048 from backend \"memory\" key, got %d", f.RAMMB)
+	}
+	if f.DiskGB != 40 {
+		t.Errorf("expected DiskGB 40 from backend \"disk\" key, got %d", f.DiskGB)
+	}
+}
+
 func newTestServer(t *testing.T, flavors []apiFlavor) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()

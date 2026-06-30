@@ -40,7 +40,7 @@ func TestSchema(t *testing.T) {
 
 	expectedAttrs := []string{
 		"id", "name", "flavor_id", "flavor_name", "image_id", "image_name",
-		"region", "zone", "vpc_id", "subnet_id", "private_ip", "public_ip",
+		"zone", "vpc_id", "subnet_id", "private_ip", "public_ip",
 		"status", "tags", "created_at",
 	}
 	for _, attr := range expectedAttrs {
@@ -112,16 +112,14 @@ func TestReadByID(t *testing.T) {
 			Name:       "web-server-1",
 			Status:     "active",
 			FlavorID:   "flv-1",
-			FlavorName: "nl.small",
+			Flavor:     &apiNestedRef{Name: "nl.small"},
 			ImageID:    "img-1",
-			ImageName:  "Ubuntu 22.04",
-			Region:     "sweden",
+			Image:      &apiNestedRef{Name: "Ubuntu 22.04"},
 			Zone:       "sweden-a",
-			VPCID:      "vpc-1",
-			SubnetID:   "sub-1",
-			PrivateIP:  "10.0.1.10",
-			PublicIP:   "203.0.113.10",
-			Tags:       map[string]string{"env": "prod", "role": "web"},
+			Networks:   []apiInstanceNetwork{{NetworkID: "vpc-1", SubnetID: "sub-1"}},
+			PrivateIPs: []string{"10.0.1.10"},
+			PublicIPs:  []string{"203.0.113.10"},
+			Metadata:   map[string]string{"env": "prod", "role": "web"},
 			CreatedAt:  "2025-01-01T00:00:00Z",
 		},
 	}
@@ -152,20 +150,20 @@ func TestReadByID(t *testing.T) {
 	if inst.FlavorID != "flv-1" {
 		t.Errorf("expected flavor_id flv-1, got %s", inst.FlavorID)
 	}
-	if inst.FlavorName != "nl.small" {
-		t.Errorf("expected flavor_name nl.small, got %s", inst.FlavorName)
+	if inst.Flavor == nil || inst.Flavor.Name != "nl.small" {
+		t.Errorf("expected flavor name nl.small, got %+v", inst.Flavor)
 	}
 	if inst.ImageID != "img-1" {
 		t.Errorf("expected image_id img-1, got %s", inst.ImageID)
 	}
-	if inst.PrivateIP != "10.0.1.10" {
-		t.Errorf("expected private_ip 10.0.1.10, got %s", inst.PrivateIP)
+	if len(inst.PrivateIPs) == 0 || inst.PrivateIPs[0] != "10.0.1.10" {
+		t.Errorf("expected private ip 10.0.1.10, got %v", inst.PrivateIPs)
 	}
-	if inst.PublicIP != "203.0.113.10" {
-		t.Errorf("expected public_ip 203.0.113.10, got %s", inst.PublicIP)
+	if len(inst.PublicIPs) == 0 || inst.PublicIPs[0] != "203.0.113.10" {
+		t.Errorf("expected public ip 203.0.113.10, got %v", inst.PublicIPs)
 	}
-	if inst.Tags["env"] != "prod" {
-		t.Errorf("expected tag env=prod, got %s", inst.Tags["env"])
+	if inst.Metadata["env"] != "prod" {
+		t.Errorf("expected tag env=prod, got %s", inst.Metadata["env"])
 	}
 }
 
@@ -218,16 +216,14 @@ func TestTFSDK_ReadInstanceByID(t *testing.T) {
 			Name:       "web-server-1",
 			Status:     "active",
 			FlavorID:   "flv-1",
-			FlavorName: "nl.small",
+			Flavor:     &apiNestedRef{Name: "nl.small"},
 			ImageID:    "img-1",
-			ImageName:  "Ubuntu 22.04",
-			Region:     "sweden",
+			Image:      &apiNestedRef{Name: "Ubuntu 22.04"},
 			Zone:       "sweden-a",
-			VPCID:      "vpc-1",
-			SubnetID:   "sub-1",
-			PrivateIP:  "10.0.1.10",
-			PublicIP:   "203.0.113.10",
-			Tags:       map[string]string{"env": "prod"},
+			Networks:   []apiInstanceNetwork{{NetworkID: "vpc-1", SubnetID: "sub-1"}},
+			PrivateIPs: []string{"10.0.1.10"},
+			PublicIPs:  []string{"203.0.113.10"},
+			Metadata:   map[string]string{"env": "prod"},
 			CreatedAt:  "2025-01-01T00:00:00Z",
 		},
 	}
@@ -253,7 +249,6 @@ func TestTFSDK_ReadInstanceByID(t *testing.T) {
 		"flavor_name": tftypes.NewValue(tftypes.String, nil),
 		"image_id":    tftypes.NewValue(tftypes.String, nil),
 		"image_name":  tftypes.NewValue(tftypes.String, nil),
-		"region":      tftypes.NewValue(tftypes.String, nil),
 		"zone":        tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":      tftypes.NewValue(tftypes.String, nil),
 		"subnet_id":   tftypes.NewValue(tftypes.String, nil),
@@ -322,7 +317,6 @@ func TestTFSDK_ReadInstanceNotFound(t *testing.T) {
 		"flavor_name": tftypes.NewValue(tftypes.String, nil),
 		"image_id":    tftypes.NewValue(tftypes.String, nil),
 		"image_name":  tftypes.NewValue(tftypes.String, nil),
-		"region":      tftypes.NewValue(tftypes.String, nil),
 		"zone":        tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":      tftypes.NewValue(tftypes.String, nil),
 		"subnet_id":   tftypes.NewValue(tftypes.String, nil),
@@ -352,16 +346,14 @@ func TestAPIInstanceSerialization(t *testing.T) {
 		Name:       "test-server",
 		Status:     "active",
 		FlavorID:   "flv-1",
-		FlavorName: "nl.small",
+		Flavor:     &apiNestedRef{Name: "nl.small"},
 		ImageID:    "img-1",
-		ImageName:  "Ubuntu 22.04",
-		Region:     "sweden",
+		Image:      &apiNestedRef{Name: "Ubuntu 22.04"},
 		Zone:       "sweden-a",
-		VPCID:      "vpc-1",
-		SubnetID:   "sub-1",
-		PrivateIP:  "10.0.1.10",
-		PublicIP:   "203.0.113.10",
-		Tags:       map[string]string{"env": "test"},
+		Networks:   []apiInstanceNetwork{{NetworkID: "vpc-1", SubnetID: "sub-1"}},
+		PrivateIPs: []string{"10.0.1.10"},
+		PublicIPs:  []string{"203.0.113.10"},
+		Metadata:   map[string]string{"env": "test"},
 		CreatedAt:  "2025-01-01T00:00:00Z",
 	}
 
@@ -384,29 +376,29 @@ func TestAPIInstanceSerialization(t *testing.T) {
 	if decoded.FlavorID != inst.FlavorID {
 		t.Errorf("expected FlavorID %s, got %s", inst.FlavorID, decoded.FlavorID)
 	}
+	if decoded.Flavor == nil || decoded.Flavor.Name != inst.Flavor.Name {
+		t.Errorf("expected flavor name %s, got %+v", inst.Flavor.Name, decoded.Flavor)
+	}
 	if decoded.ImageID != inst.ImageID {
 		t.Errorf("expected ImageID %s, got %s", inst.ImageID, decoded.ImageID)
 	}
-	if decoded.Region != inst.Region {
-		t.Errorf("expected Region %s, got %s", inst.Region, decoded.Region)
+	if decoded.Image == nil || decoded.Image.Name != inst.Image.Name {
+		t.Errorf("expected image name %s, got %+v", inst.Image.Name, decoded.Image)
 	}
 	if decoded.Zone != inst.Zone {
 		t.Errorf("expected Zone %s, got %s", inst.Zone, decoded.Zone)
 	}
-	if decoded.VPCID != inst.VPCID {
-		t.Errorf("expected VPCID %s, got %s", inst.VPCID, decoded.VPCID)
+	if len(decoded.Networks) != 1 || decoded.Networks[0].NetworkID != "vpc-1" || decoded.Networks[0].SubnetID != "sub-1" {
+		t.Errorf("expected networks [{vpc-1 sub-1}], got %+v", decoded.Networks)
 	}
-	if decoded.SubnetID != inst.SubnetID {
-		t.Errorf("expected SubnetID %s, got %s", inst.SubnetID, decoded.SubnetID)
+	if len(decoded.PrivateIPs) != 1 || decoded.PrivateIPs[0] != "10.0.1.10" {
+		t.Errorf("expected private ips [10.0.1.10], got %v", decoded.PrivateIPs)
 	}
-	if decoded.PrivateIP != inst.PrivateIP {
-		t.Errorf("expected PrivateIP %s, got %s", inst.PrivateIP, decoded.PrivateIP)
+	if len(decoded.PublicIPs) != 1 || decoded.PublicIPs[0] != "203.0.113.10" {
+		t.Errorf("expected public ips [203.0.113.10], got %v", decoded.PublicIPs)
 	}
-	if decoded.PublicIP != inst.PublicIP {
-		t.Errorf("expected PublicIP %s, got %s", inst.PublicIP, decoded.PublicIP)
-	}
-	if decoded.Tags["env"] != "test" {
-		t.Errorf("expected tag env=test, got %s", decoded.Tags["env"])
+	if decoded.Metadata["env"] != "test" {
+		t.Errorf("expected tag env=test, got %s", decoded.Metadata["env"])
 	}
 }
 
@@ -418,7 +410,6 @@ func TestAPIInstanceWithEmptyOptionalFields(t *testing.T) {
 		Status:    "active",
 		FlavorID:  "flv-1",
 		ImageID:   "img-1",
-		Region:    "sweden",
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}
 
@@ -435,10 +426,10 @@ func TestAPIInstanceWithEmptyOptionalFields(t *testing.T) {
 	if decoded.Zone != "" {
 		t.Errorf("expected empty zone, got %s", decoded.Zone)
 	}
-	if decoded.PublicIP != "" {
-		t.Errorf("expected empty public_ip, got %s", decoded.PublicIP)
+	if len(decoded.PublicIPs) != 0 {
+		t.Errorf("expected empty public ips, got %v", decoded.PublicIPs)
 	}
-	if decoded.Tags != nil {
-		t.Errorf("expected nil tags, got %v", decoded.Tags)
+	if decoded.Metadata != nil {
+		t.Errorf("expected nil metadata, got %v", decoded.Metadata)
 	}
 }

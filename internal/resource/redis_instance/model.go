@@ -14,6 +14,7 @@ type RedisInstanceModel struct {
 	Name            types.String `tfsdk:"name"`
 	Version         types.String `tfsdk:"version"`
 	FlavorID        types.String `tfsdk:"flavor_id"`
+	StorageGB       types.Int64  `tfsdk:"storage_gb"`
 	VPCID           types.String `tfsdk:"vpc_id"`
 	SubnetID        types.String `tfsdk:"subnet_id"`
 	PersistenceMode types.String `tfsdk:"persistence_mode"`
@@ -32,6 +33,7 @@ type apiRedisInstance struct {
 	Name            string `json:"name"`
 	EngineVersion   string `json:"engineVersion"`
 	FlavorID        string `json:"flavorId"`
+	StorageGB       int    `json:"storageGb"`
 	VPCID           string `json:"vpcId"`
 	SubnetID        string `json:"subnetId"`
 	PersistenceMode string `json:"persistenceMode"`
@@ -50,6 +52,7 @@ type apiCreateRedisInstanceRequest struct {
 	Engine          string `json:"engine"`
 	EngineVersion   string `json:"engineVersion"`
 	FlavorID        string `json:"flavorId"`
+	StorageGB       int    `json:"storageGb,omitempty"`
 	VPCID           string `json:"vpcId"`
 	SubnetID        string `json:"subnetId"`
 	PersistenceMode string `json:"persistenceMode,omitempty"`
@@ -75,6 +78,9 @@ func (m *RedisInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnost
 		SubnetID:      m.SubnetID.ValueString(),
 	}
 
+	if !m.StorageGB.IsNull() && !m.StorageGB.IsUnknown() {
+		req.StorageGB = int(m.StorageGB.ValueInt64())
+	}
 	if !m.PersistenceMode.IsNull() && !m.PersistenceMode.IsUnknown() {
 		req.PersistenceMode = m.PersistenceMode.ValueString()
 	}
@@ -115,6 +121,7 @@ func (m *RedisInstanceModel) fromAPI(_ context.Context, inst *apiRedisInstance, 
 	m.Name = types.StringValue(inst.Name)
 	m.Version = types.StringValue(inst.EngineVersion)
 	m.FlavorID = types.StringValue(inst.FlavorID)
+	m.StorageGB = types.Int64Value(int64(inst.StorageGB))
 	m.VPCID = types.StringValue(inst.VPCID)
 	m.SubnetID = types.StringValue(inst.SubnetID)
 	m.PersistenceMode = types.StringValue(inst.PersistenceMode)

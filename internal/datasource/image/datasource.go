@@ -43,8 +43,8 @@ type apiImage struct {
 	Name      string `json:"name"`
 	OSDistro  string `json:"osDistro,omitempty"`
 	OSVersion string `json:"osVersion,omitempty"`
-	MinDiskGB int    `json:"minDiskGb"`
-	MinRAMMB  int    `json:"minRamMb"`
+	MinDiskGB int    `json:"minDisk"`
+	MinRAMMB  int    `json:"minRam"`
 	Status    string `json:"status"`
 	CreatedAt string `json:"createdAt"`
 }

@@ -10,112 +10,98 @@ import (
 
 // NginxInstanceModel is the Terraform state model for a managed Nginx webserver instance.
 type NginxInstanceModel struct {
-	ID              types.String `tfsdk:"id"`
-	Name            types.String `tfsdk:"name"`
-	Version         types.String `tfsdk:"version"`
-	Flavor          types.String `tfsdk:"flavor"`
-	StorageGB       types.Int64  `tfsdk:"storage_gb"`
-	TLSEnabled      types.Bool   `tfsdk:"tls_enabled"`
-	WorkerProcesses types.Int64  `tfsdk:"worker_processes"`
-	GzipEnabled     types.Bool   `tfsdk:"gzip_enabled"`
-	TryFiles        types.String `tfsdk:"try_files"`
-	ProxyPass       types.String `tfsdk:"proxy_pass"`
-	Config          types.String `tfsdk:"config"`
-	Status          types.String `tfsdk:"status"`
-	PrivateIP       types.String `tfsdk:"private_ip"`
-	Port            types.Int64  `tfsdk:"port"`
-	CreatedAt       types.String `tfsdk:"created_at"`
-	UpdatedAt       types.String `tfsdk:"updated_at"`
-	TenantID        types.String `tfsdk:"tenant_id"`
+	ID         types.String `tfsdk:"id"`
+	Name       types.String `tfsdk:"name"`
+	Version    types.String `tfsdk:"version"`
+	Flavor     types.String `tfsdk:"flavor"`
+	StorageGB  types.Int64  `tfsdk:"storage_gb"`
+	VPCID      types.String `tfsdk:"vpc_id"`
+	SubnetID   types.String `tfsdk:"subnet_id"`
+	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
+	Config     types.Map    `tfsdk:"config"`
+	Status     types.String `tfsdk:"status"`
+	PrivateIP  types.String `tfsdk:"private_ip"`
+	Port       types.Int64  `tfsdk:"port"`
+	CreatedAt  types.String `tfsdk:"created_at"`
+	UpdatedAt  types.String `tfsdk:"updated_at"`
+	TenantID   types.String `tfsdk:"tenant_id"`
 }
 
 // apiWebserverInstance is the API representation of a managed webserver instance.
+// Field names match the webserver service (webserver/internal/domain/instance.go):
+// the flavor is `flavorId`, vpcId/subnetId are returned, and `engineConfig` is a
+// JSON object (not a string). The workerProcesses/gzipEnabled/tryFiles/proxyPass
+// fields are NOT part of the contract (they only ever live inside engineConfig).
 type apiWebserverInstance struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Engine          string `json:"engine"`
-	EngineVersion   string `json:"engineVersion"`
-	Flavor          string `json:"flavor"`
-	StorageGB       int    `json:"storageGb"`
-	TLSEnabled      bool   `json:"tlsEnabled"`
-	WorkerProcesses int    `json:"workerProcesses,omitempty"`
-	GzipEnabled     bool   `json:"gzipEnabled"`
-	TryFiles        string `json:"tryFiles,omitempty"`
-	ProxyPass       string `json:"proxyPass,omitempty"`
-	EngineConfig    string `json:"engineConfig,omitempty"`
-	Status          string `json:"status"`
-	PrivateIP       string `json:"privateIp,omitempty"`
-	Port            int    `json:"port,omitempty"`
-	CreatedAt       string `json:"createdAt"`
-	UpdatedAt       string `json:"updatedAt,omitempty"`
-	TenantID        string `json:"tenantId,omitempty"`
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	Engine        string            `json:"engine"`
+	EngineVersion string            `json:"engineVersion"`
+	Flavor        string            `json:"flavorId"`
+	StorageGB     int               `json:"storageGb"`
+	VPCID         string            `json:"vpcId"`
+	SubnetID      string            `json:"subnetId"`
+	TLSEnabled    bool              `json:"tlsEnabled"`
+	EngineConfig  map[string]string `json:"engineConfig,omitempty"`
+	Status        string            `json:"status"`
+	PrivateIP     string            `json:"privateIp,omitempty"`
+	Port          int               `json:"port,omitempty"`
+	CreatedAt     string            `json:"createdAt"`
+	UpdatedAt     string            `json:"updatedAt,omitempty"`
+	TenantID      string            `json:"tenantId,omitempty"`
 }
 
-// apiCreateWebserverInstanceRequest is the API request to create a managed webserver instance.
+// apiCreateWebserverInstanceRequest is the API request to create a managed
+// webserver instance. The webserver service requires flavorId, vpcId and
+// subnetId; engineConfig is a JSON object.
 type apiCreateWebserverInstanceRequest struct {
-	Name            string `json:"name"`
-	Engine          string `json:"engine"`
-	EngineVersion   string `json:"engineVersion"`
-	Flavor          string `json:"flavor"`
-	StorageGB       int    `json:"storageGb"`
-	TLSEnabled      *bool  `json:"tlsEnabled,omitempty"`
-	WorkerProcesses *int   `json:"workerProcesses,omitempty"`
-	GzipEnabled     *bool  `json:"gzipEnabled,omitempty"`
-	TryFiles        string `json:"tryFiles,omitempty"`
-	ProxyPass       string `json:"proxyPass,omitempty"`
-	EngineConfig    string `json:"engineConfig,omitempty"`
+	Name          string            `json:"name"`
+	Engine        string            `json:"engine"`
+	EngineVersion string            `json:"engineVersion"`
+	Flavor        string            `json:"flavorId"`
+	StorageGB     int               `json:"storageGb"`
+	VPCID         string            `json:"vpcId"`
+	SubnetID      string            `json:"subnetId"`
+	TLSEnabled    *bool             `json:"tlsEnabled,omitempty"`
+	EngineConfig  map[string]string `json:"engineConfig,omitempty"`
 }
 
 // apiUpdateWebserverInstanceRequest is the API request to update a managed webserver instance.
 type apiUpdateWebserverInstanceRequest struct {
-	Name            *string `json:"name,omitempty"`
-	Flavor          *string `json:"flavor,omitempty"`
-	StorageGB       *int    `json:"storageGb,omitempty"`
-	TLSEnabled      *bool   `json:"tlsEnabled,omitempty"`
-	WorkerProcesses *int    `json:"workerProcesses,omitempty"`
-	GzipEnabled     *bool   `json:"gzipEnabled,omitempty"`
-	TryFiles        *string `json:"tryFiles,omitempty"`
-	ProxyPass       *string `json:"proxyPass,omitempty"`
-	EngineConfig    *string `json:"engineConfig,omitempty"`
+	Name         *string           `json:"name,omitempty"`
+	Flavor       *string           `json:"flavorId,omitempty"`
+	StorageGB    *int              `json:"storageGb,omitempty"`
+	TLSEnabled   *bool             `json:"tlsEnabled,omitempty"`
+	EngineConfig map[string]string `json:"engineConfig,omitempty"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
-func (m *NginxInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnostics) apiCreateWebserverInstanceRequest {
+func (m *NginxInstanceModel) toCreateRequest(ctx context.Context, diags *diag.Diagnostics) apiCreateWebserverInstanceRequest {
 	req := apiCreateWebserverInstanceRequest{
 		Name:          m.Name.ValueString(),
 		Engine:        "nginx",
 		EngineVersion: m.Version.ValueString(),
 		Flavor:        m.Flavor.ValueString(),
 		StorageGB:     int(m.StorageGB.ValueInt64()),
+		VPCID:         m.VPCID.ValueString(),
+		SubnetID:      m.SubnetID.ValueString(),
 	}
 
 	if !m.TLSEnabled.IsNull() && !m.TLSEnabled.IsUnknown() {
 		v := m.TLSEnabled.ValueBool()
 		req.TLSEnabled = &v
 	}
-	if !m.WorkerProcesses.IsNull() && !m.WorkerProcesses.IsUnknown() {
-		v := int(m.WorkerProcesses.ValueInt64())
-		req.WorkerProcesses = &v
-	}
-	if !m.GzipEnabled.IsNull() && !m.GzipEnabled.IsUnknown() {
-		v := m.GzipEnabled.ValueBool()
-		req.GzipEnabled = &v
-	}
-	if !m.TryFiles.IsNull() && !m.TryFiles.IsUnknown() {
-		req.TryFiles = m.TryFiles.ValueString()
-	}
-	if !m.ProxyPass.IsNull() && !m.ProxyPass.IsUnknown() {
-		req.ProxyPass = m.ProxyPass.ValueString()
-	}
 	if !m.Config.IsNull() && !m.Config.IsUnknown() {
-		req.EngineConfig = m.Config.ValueString()
+		cfg := make(map[string]string)
+		diags.Append(m.Config.ElementsAs(ctx, &cfg, false)...)
+		req.EngineConfig = cfg
 	}
 
 	return req
 }
 
 // toUpdateRequest converts the Terraform model to an API update request, comparing with current state.
-func (m *NginxInstanceModel) toUpdateRequest(state *NginxInstanceModel) apiUpdateWebserverInstanceRequest {
+func (m *NginxInstanceModel) toUpdateRequest(ctx context.Context, state *NginxInstanceModel, diags *diag.Diagnostics) apiUpdateWebserverInstanceRequest {
 	req := apiUpdateWebserverInstanceRequest{}
 
 	if !m.Name.Equal(state.Name) {
@@ -134,64 +120,36 @@ func (m *NginxInstanceModel) toUpdateRequest(state *NginxInstanceModel) apiUpdat
 		v := m.TLSEnabled.ValueBool()
 		req.TLSEnabled = &v
 	}
-	if !m.WorkerProcesses.Equal(state.WorkerProcesses) {
-		v := int(m.WorkerProcesses.ValueInt64())
-		req.WorkerProcesses = &v
-	}
-	if !m.GzipEnabled.Equal(state.GzipEnabled) {
-		v := m.GzipEnabled.ValueBool()
-		req.GzipEnabled = &v
-	}
-	if !m.TryFiles.Equal(state.TryFiles) {
-		v := m.TryFiles.ValueString()
-		req.TryFiles = &v
-	}
-	if !m.ProxyPass.Equal(state.ProxyPass) {
-		v := m.ProxyPass.ValueString()
-		req.ProxyPass = &v
-	}
 	if !m.Config.Equal(state.Config) {
-		v := m.Config.ValueString()
-		req.EngineConfig = &v
+		cfg := make(map[string]string)
+		if !m.Config.IsNull() && !m.Config.IsUnknown() {
+			diags.Append(m.Config.ElementsAs(ctx, &cfg, false)...)
+		}
+		req.EngineConfig = cfg
 	}
 
 	return req
 }
 
 // fromAPI populates the Terraform model from an API response.
-func (m *NginxInstanceModel) fromAPI(_ context.Context, inst *apiWebserverInstance, _ *diag.Diagnostics) {
+func (m *NginxInstanceModel) fromAPI(ctx context.Context, inst *apiWebserverInstance, diags *diag.Diagnostics) {
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
 	m.Version = types.StringValue(inst.EngineVersion)
 	m.Flavor = types.StringValue(inst.Flavor)
 	m.StorageGB = types.Int64Value(int64(inst.StorageGB))
+	m.VPCID = types.StringValue(inst.VPCID)
+	m.SubnetID = types.StringValue(inst.SubnetID)
 	m.TLSEnabled = types.BoolValue(inst.TLSEnabled)
-	m.GzipEnabled = types.BoolValue(inst.GzipEnabled)
 	m.Status = types.StringValue(inst.Status)
 	m.CreatedAt = types.StringValue(inst.CreatedAt)
 
-	if inst.WorkerProcesses > 0 {
-		m.WorkerProcesses = types.Int64Value(int64(inst.WorkerProcesses))
+	if len(inst.EngineConfig) > 0 {
+		cfgMap, d := types.MapValueFrom(ctx, types.StringType, inst.EngineConfig)
+		diags.Append(d...)
+		m.Config = cfgMap
 	} else {
-		m.WorkerProcesses = types.Int64Null()
-	}
-
-	if inst.TryFiles != "" {
-		m.TryFiles = types.StringValue(inst.TryFiles)
-	} else {
-		m.TryFiles = types.StringNull()
-	}
-
-	if inst.ProxyPass != "" {
-		m.ProxyPass = types.StringValue(inst.ProxyPass)
-	} else {
-		m.ProxyPass = types.StringNull()
-	}
-
-	if inst.EngineConfig != "" {
-		m.Config = types.StringValue(inst.EngineConfig)
-	} else {
-		m.Config = types.StringNull()
+		m.Config = types.MapNull(types.StringType)
 	}
 
 	if inst.PrivateIP != "" {

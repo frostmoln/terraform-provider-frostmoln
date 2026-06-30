@@ -46,8 +46,8 @@ type apiFlavor struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	VCPUs    int    `json:"vcpus"`
-	RAMMB    int    `json:"ramMb"`
-	DiskGB   int    `json:"diskGb"`
+	RAMMB    int    `json:"memory"`
+	DiskGB   int    `json:"disk"`
 	Category string `json:"category,omitempty"`
 }
 

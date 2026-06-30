@@ -25,7 +25,7 @@ func TestAccBucket_basic(t *testing.T) {
 				Config: testAccBucketConfig(name),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(resourceName, "name", name),
-					resource.TestCheckResourceAttrSet(resourceName, "endpoint"),
+					resource.TestCheckResourceAttrSet(resourceName, "storage_class"),
 				),
 			},
 			{
@@ -33,14 +33,12 @@ func TestAccBucket_basic(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(resourceName, "name", name),
 					resource.TestCheckResourceAttr(resourceName, "versioning", "enabled"),
-					resource.TestCheckResourceAttrSet(resourceName, "endpoint"),
 				),
 			},
 			{
-				ResourceName:            resourceName,
-				ImportState:             true,
-				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"access_key"},
+				ResourceName:      resourceName,
+				ImportState:       true,
+				ImportStateVerify: true,
 				ImportStateIdFunc: func(s *terraform.State) (string, error) {
 					rs, ok := s.RootModule().Resources[resourceName]
 					if !ok {

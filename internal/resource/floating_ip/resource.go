@@ -53,15 +53,6 @@ func (r *floatingIPResource) Schema(_ context.Context, _ resource.SchemaRequest,
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"region": schema.StringAttribute{
-				Description: "The region for the floating IP.",
-				Optional:    true,
-				Computed:    true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-					stringplanmodifier.UseStateForUnknown(),
-				},
-			},
 			"instance_id": schema.StringAttribute{
 				Description: "The ID of the instance to associate with. Set to associate, remove to disassociate.",
 				Optional:    true,
@@ -108,6 +99,27 @@ func (r *floatingIPResource) Configure(_ context.Context, req resource.Configure
 	}
 
 	r.client = c
+}
+
+// resolvePortID looks up the Neutron port to attach a floating IP to by reading
+// the instance and returning its first network port. The provisioning associate
+// endpoint requires a portId; instance_id is the user-friendly input the
+// provider resolves on their behalf (mirrors how the portal associates by port).
+func (r *floatingIPResource) resolvePortID(ctx context.Context, instanceID string) (string, error) {
+	readResp, err := r.client.Get(ctx, r.client.TenantPath("/instances/"+instanceID), nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to read instance %s: %w", instanceID, err)
+	}
+	var inst apiInstanceForPort
+	if err := json.Unmarshal(readResp.Body, &inst); err != nil {
+		return "", fmt.Errorf("failed to parse instance %s response: %w", instanceID, err)
+	}
+	for _, n := range inst.Networks {
+		if n.PortID != "" {
+			return n.PortID, nil
+		}
+	}
+	return "", fmt.Errorf("instance %s has no network port available to associate the floating IP with", instanceID)
 }
 
 func (r *floatingIPResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -160,9 +172,12 @@ func (r *floatingIPResource) Create(ctx context.Context, req resource.CreateRequ
 
 	// If instance_id is set, associate after allocation (also async via provisioning).
 	if !plan.InstanceID.IsNull() && !plan.InstanceID.IsUnknown() {
-		assocReq := apiAssociateFloatingIPRequest{
-			InstanceID: plan.InstanceID.ValueString(),
+		portID, portErr := r.resolvePortID(ctx, plan.InstanceID.ValueString())
+		if portErr != nil {
+			resp.Diagnostics.AddError("Failed to Resolve Instance Port", portErr.Error())
+			return
 		}
+		assocReq := apiAssociateFloatingIPRequest{PortID: portID}
 		assocResp, err := r.client.Post(ctx, r.client.TenantPath(fmt.Sprintf("/floating-ips/%s/associate", fipID)), assocReq)
 		if err != nil {
 			resp.Diagnostics.AddError("Failed to Associate Floating IP", err.Error())
@@ -257,22 +272,46 @@ func (r *floatingIPResource) Update(ctx context.Context, req resource.UpdateRequ
 	if oldInstanceID != newInstanceID {
 		// Disassociate if previously associated
 		if oldInstanceID != "" {
-			_, err := r.client.Post(ctx, r.client.TenantPath(fmt.Sprintf("/floating-ips/%s/disassociate", fipID)), nil)
+			disResp, err := r.client.Post(ctx, r.client.TenantPath(fmt.Sprintf("/floating-ips/%s/disassociate", fipID)), nil)
 			if err != nil {
 				resp.Diagnostics.AddError("Failed to Disassociate Floating IP", err.Error())
 				return
+			}
+			if disResp.IsAccepted() {
+				op, opErr := client.ParseResponse[client.Operation](disResp)
+				if opErr != nil {
+					resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
+					return
+				}
+				if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute); waitErr != nil {
+					resp.Diagnostics.AddError("Floating IP Disassociation Failed", waitErr.Error())
+					return
+				}
 			}
 		}
 
 		// Associate if new instance_id is set
 		if newInstanceID != "" {
-			assocReq := apiAssociateFloatingIPRequest{
-				InstanceID: newInstanceID,
+			portID, portErr := r.resolvePortID(ctx, newInstanceID)
+			if portErr != nil {
+				resp.Diagnostics.AddError("Failed to Resolve Instance Port", portErr.Error())
+				return
 			}
-			_, err := r.client.Post(ctx, r.client.TenantPath(fmt.Sprintf("/floating-ips/%s/associate", fipID)), assocReq)
+			assocResp, err := r.client.Post(ctx, r.client.TenantPath(fmt.Sprintf("/floating-ips/%s/associate", fipID)), apiAssociateFloatingIPRequest{PortID: portID})
 			if err != nil {
 				resp.Diagnostics.AddError("Failed to Associate Floating IP", err.Error())
 				return
+			}
+			if assocResp.IsAccepted() {
+				op, opErr := client.ParseResponse[client.Operation](assocResp)
+				if opErr != nil {
+					resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
+					return
+				}
+				if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute); waitErr != nil {
+					resp.Diagnostics.AddError("Floating IP Association Failed", waitErr.Error())
+					return
+				}
 			}
 		}
 	}

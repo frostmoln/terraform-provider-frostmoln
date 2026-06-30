@@ -36,8 +36,8 @@ type PostgresInstanceModel struct {
 type apiPostgresInstance struct {
 	ID                  string `json:"id"`
 	Name                string `json:"name"`
-	PostgresVersion     string `json:"postgresVersion"`
-	Flavor              string `json:"flavor"`
+	PostgresVersion     string `json:"engineVersion"`
+	Flavor              string `json:"flavorId"`
 	StorageGB           int    `json:"storageGb"`
 	VPCID               string `json:"vpcId"`
 	SubnetID            string `json:"subnetId"`
@@ -59,8 +59,8 @@ type apiPostgresInstance struct {
 // apiCreatePostgresInstanceRequest is the API request to create a managed PostgreSQL instance.
 type apiCreatePostgresInstanceRequest struct {
 	Name                string `json:"name"`
-	PostgresVersion     string `json:"postgresVersion"`
-	Flavor              string `json:"flavor"`
+	PostgresVersion     string `json:"engineVersion"`
+	Flavor              string `json:"flavorId"`
 	StorageGB           int    `json:"storageGb"`
 	VPCID               string `json:"vpcId"`
 	SubnetID            string `json:"subnetId"`
@@ -74,7 +74,7 @@ type apiCreatePostgresInstanceRequest struct {
 // apiUpdatePostgresInstanceRequest is the API request to update a managed PostgreSQL instance.
 type apiUpdatePostgresInstanceRequest struct {
 	Name                *string `json:"name,omitempty"`
-	Flavor              *string `json:"flavor,omitempty"`
+	Flavor              *string `json:"flavorId,omitempty"`
 	StorageGB           *int    `json:"storageGb,omitempty"`
 	BackupEnabled       *bool   `json:"backupEnabled,omitempty"`
 	BackupSchedule      *string `json:"backupSchedule,omitempty"`

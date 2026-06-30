@@ -15,10 +15,12 @@ type ApacheInstanceModel struct {
 	Version    types.String `tfsdk:"version"`
 	Flavor     types.String `tfsdk:"flavor"`
 	StorageGB  types.Int64  `tfsdk:"storage_gb"`
+	VPCID      types.String `tfsdk:"vpc_id"`
+	SubnetID   types.String `tfsdk:"subnet_id"`
 	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
 	PHPEnabled types.Bool   `tfsdk:"php_enabled"`
 	PHPVersion types.String `tfsdk:"php_version"`
-	Config     types.String `tfsdk:"config"`
+	Config     types.Map    `tfsdk:"config"`
 	Status     types.String `tfsdk:"status"`
 	PrivateIP  types.String `tfsdk:"private_ip"`
 	Port       types.Int64  `tfsdk:"port"`
@@ -28,57 +30,67 @@ type ApacheInstanceModel struct {
 }
 
 // apiWebserverInstance is the API representation of a managed webserver instance.
+// Field names match the webserver service (webserver/internal/domain/instance.go):
+// the flavor is `flavorId`, vpcId/subnetId are returned, and `engineConfig` is a
+// JSON object (not a string).
 type apiWebserverInstance struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Engine        string `json:"engine"`
-	EngineVersion string `json:"engineVersion"`
-	Flavor        string `json:"flavor"`
-	StorageGB     int    `json:"storageGb"`
-	TLSEnabled    bool   `json:"tlsEnabled"`
-	PHPEnabled    bool   `json:"phpEnabled"`
-	PHPVersion    string `json:"phpVersion,omitempty"`
-	EngineConfig  string `json:"engineConfig,omitempty"`
-	Status        string `json:"status"`
-	PrivateIP     string `json:"privateIp,omitempty"`
-	Port          int    `json:"port,omitempty"`
-	CreatedAt     string `json:"createdAt"`
-	UpdatedAt     string `json:"updatedAt,omitempty"`
-	TenantID      string `json:"tenantId,omitempty"`
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	Engine        string            `json:"engine"`
+	EngineVersion string            `json:"engineVersion"`
+	Flavor        string            `json:"flavorId"`
+	StorageGB     int               `json:"storageGb"`
+	VPCID         string            `json:"vpcId"`
+	SubnetID      string            `json:"subnetId"`
+	TLSEnabled    bool              `json:"tlsEnabled"`
+	PHPEnabled    bool              `json:"phpEnabled"`
+	PHPVersion    string            `json:"phpVersion,omitempty"`
+	EngineConfig  map[string]string `json:"engineConfig,omitempty"`
+	Status        string            `json:"status"`
+	PrivateIP     string            `json:"privateIp,omitempty"`
+	Port          int               `json:"port,omitempty"`
+	CreatedAt     string            `json:"createdAt"`
+	UpdatedAt     string            `json:"updatedAt,omitempty"`
+	TenantID      string            `json:"tenantId,omitempty"`
 }
 
-// apiCreateWebserverInstanceRequest is the API request to create a managed webserver instance.
+// apiCreateWebserverInstanceRequest is the API request to create a managed
+// webserver instance. The webserver service requires flavorId, vpcId and subnetId.
 type apiCreateWebserverInstanceRequest struct {
-	Name          string `json:"name"`
-	Engine        string `json:"engine"`
-	EngineVersion string `json:"engineVersion"`
-	Flavor        string `json:"flavor"`
-	StorageGB     int    `json:"storageGb"`
-	TLSEnabled    *bool  `json:"tlsEnabled,omitempty"`
-	PHPEnabled    *bool  `json:"phpEnabled,omitempty"`
-	PHPVersion    string `json:"phpVersion,omitempty"`
-	EngineConfig  string `json:"engineConfig,omitempty"`
+	Name          string            `json:"name"`
+	Engine        string            `json:"engine"`
+	EngineVersion string            `json:"engineVersion"`
+	Flavor        string            `json:"flavorId"`
+	StorageGB     int               `json:"storageGb"`
+	VPCID         string            `json:"vpcId"`
+	SubnetID      string            `json:"subnetId"`
+	TLSEnabled    *bool             `json:"tlsEnabled,omitempty"`
+	PHPEnabled    *bool             `json:"phpEnabled,omitempty"`
+	PHPVersion    string            `json:"phpVersion,omitempty"`
+	EngineConfig  map[string]string `json:"engineConfig,omitempty"`
 }
 
 // apiUpdateWebserverInstanceRequest is the API request to update a managed webserver instance.
 type apiUpdateWebserverInstanceRequest struct {
-	Name         *string `json:"name,omitempty"`
-	Flavor       *string `json:"flavor,omitempty"`
-	StorageGB    *int    `json:"storageGb,omitempty"`
-	TLSEnabled   *bool   `json:"tlsEnabled,omitempty"`
-	PHPEnabled   *bool   `json:"phpEnabled,omitempty"`
-	PHPVersion   *string `json:"phpVersion,omitempty"`
-	EngineConfig *string `json:"engineConfig,omitempty"`
+	Name         *string           `json:"name,omitempty"`
+	Flavor       *string           `json:"flavorId,omitempty"`
+	StorageGB    *int              `json:"storageGb,omitempty"`
+	TLSEnabled   *bool             `json:"tlsEnabled,omitempty"`
+	PHPEnabled   *bool             `json:"phpEnabled,omitempty"`
+	PHPVersion   *string           `json:"phpVersion,omitempty"`
+	EngineConfig map[string]string `json:"engineConfig,omitempty"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
-func (m *ApacheInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnostics) apiCreateWebserverInstanceRequest {
+func (m *ApacheInstanceModel) toCreateRequest(ctx context.Context, diags *diag.Diagnostics) apiCreateWebserverInstanceRequest {
 	req := apiCreateWebserverInstanceRequest{
 		Name:          m.Name.ValueString(),
 		Engine:        "apache",
 		EngineVersion: m.Version.ValueString(),
 		Flavor:        m.Flavor.ValueString(),
 		StorageGB:     int(m.StorageGB.ValueInt64()),
+		VPCID:         m.VPCID.ValueString(),
+		SubnetID:      m.SubnetID.ValueString(),
 	}
 
 	if !m.TLSEnabled.IsNull() && !m.TLSEnabled.IsUnknown() {
@@ -93,14 +105,16 @@ func (m *ApacheInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnos
 		req.PHPVersion = m.PHPVersion.ValueString()
 	}
 	if !m.Config.IsNull() && !m.Config.IsUnknown() {
-		req.EngineConfig = m.Config.ValueString()
+		cfg := make(map[string]string)
+		diags.Append(m.Config.ElementsAs(ctx, &cfg, false)...)
+		req.EngineConfig = cfg
 	}
 
 	return req
 }
 
 // toUpdateRequest converts the Terraform model to an API update request, comparing with current state.
-func (m *ApacheInstanceModel) toUpdateRequest(state *ApacheInstanceModel) apiUpdateWebserverInstanceRequest {
+func (m *ApacheInstanceModel) toUpdateRequest(ctx context.Context, state *ApacheInstanceModel, diags *diag.Diagnostics) apiUpdateWebserverInstanceRequest {
 	req := apiUpdateWebserverInstanceRequest{}
 
 	if !m.Name.Equal(state.Name) {
@@ -128,20 +142,25 @@ func (m *ApacheInstanceModel) toUpdateRequest(state *ApacheInstanceModel) apiUpd
 		req.PHPVersion = &v
 	}
 	if !m.Config.Equal(state.Config) {
-		v := m.Config.ValueString()
-		req.EngineConfig = &v
+		cfg := make(map[string]string)
+		if !m.Config.IsNull() && !m.Config.IsUnknown() {
+			diags.Append(m.Config.ElementsAs(ctx, &cfg, false)...)
+		}
+		req.EngineConfig = cfg
 	}
 
 	return req
 }
 
 // fromAPI populates the Terraform model from an API response.
-func (m *ApacheInstanceModel) fromAPI(_ context.Context, inst *apiWebserverInstance, _ *diag.Diagnostics) {
+func (m *ApacheInstanceModel) fromAPI(ctx context.Context, inst *apiWebserverInstance, diags *diag.Diagnostics) {
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
 	m.Version = types.StringValue(inst.EngineVersion)
 	m.Flavor = types.StringValue(inst.Flavor)
 	m.StorageGB = types.Int64Value(int64(inst.StorageGB))
+	m.VPCID = types.StringValue(inst.VPCID)
+	m.SubnetID = types.StringValue(inst.SubnetID)
 	m.TLSEnabled = types.BoolValue(inst.TLSEnabled)
 	m.PHPEnabled = types.BoolValue(inst.PHPEnabled)
 	m.Status = types.StringValue(inst.Status)
@@ -153,10 +172,12 @@ func (m *ApacheInstanceModel) fromAPI(_ context.Context, inst *apiWebserverInsta
 		m.PHPVersion = types.StringNull()
 	}
 
-	if inst.EngineConfig != "" {
-		m.Config = types.StringValue(inst.EngineConfig)
+	if len(inst.EngineConfig) > 0 {
+		cfgMap, d := types.MapValueFrom(ctx, types.StringType, inst.EngineConfig)
+		diags.Append(d...)
+		m.Config = cfgMap
 	} else {
-		m.Config = types.StringNull()
+		m.Config = types.MapNull(types.StringType)
 	}
 
 	if inst.PrivateIP != "" {

@@ -32,7 +32,6 @@ type instanceModel struct {
 	FlavorName types.String `tfsdk:"flavor_name"`
 	ImageID    types.String `tfsdk:"image_id"`
 	ImageName  types.String `tfsdk:"image_name"`
-	Region     types.String `tfsdk:"region"`
 	Zone       types.String `tfsdk:"zone"`
 	VPCID      types.String `tfsdk:"vpc_id"`
 	SubnetID   types.String `tfsdk:"subnet_id"`
@@ -43,23 +42,35 @@ type instanceModel struct {
 	CreatedAt  types.String `tfsdk:"created_at"`
 }
 
-// apiInstance is the API representation of an instance.
+// apiNestedRef is a nested object that only carries a name (flavor{}/image{}).
+type apiNestedRef struct {
+	Name string `json:"name"`
+}
+
+// apiInstanceNetwork is one element of the instance's networks[] array.
+type apiInstanceNetwork struct {
+	NetworkID string `json:"networkId"`
+	SubnetID  string `json:"subnetId,omitempty"`
+}
+
+// apiInstance is the API representation of an instance. Field names match what
+// the compute service serializes: nested flavor{}/image{}, IP arrays, networks[]
+// (VPC/subnet), and user tags under metadata. There is no top-level region.
 type apiInstance struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Status     string            `json:"status"`
-	FlavorID   string            `json:"flavorId"`
-	FlavorName string            `json:"flavorName,omitempty"`
-	ImageID    string            `json:"imageId"`
-	ImageName  string            `json:"imageName,omitempty"`
-	Region     string            `json:"region"`
-	Zone       string            `json:"availabilityZone,omitempty"`
-	VPCID      string            `json:"vpcId,omitempty"`
-	SubnetID   string            `json:"subnetId,omitempty"`
-	PrivateIP  string            `json:"privateIp,omitempty"`
-	PublicIP   string            `json:"publicIp,omitempty"`
-	Tags       map[string]string `json:"tags,omitempty"`
-	CreatedAt  string            `json:"createdAt"`
+	ID             string               `json:"id"`
+	Name           string               `json:"name"`
+	Status         string               `json:"status"`
+	FlavorID       string               `json:"flavorId"`
+	Flavor         *apiNestedRef        `json:"flavor,omitempty"`
+	ImageID        string               `json:"imageId"`
+	Image          *apiNestedRef        `json:"image,omitempty"`
+	Zone           string               `json:"availabilityZone,omitempty"`
+	Networks       []apiInstanceNetwork `json:"networks,omitempty"`
+	PrivateIPs     []string             `json:"privateIps,omitempty"`
+	PublicIPs      []string             `json:"publicIps,omitempty"`
+	SecurityGroups []string             `json:"securityGroups,omitempty"`
+	Metadata       map[string]string    `json:"metadata,omitempty"`
+	CreatedAt      string               `json:"createdAt"`
 }
 
 func (d *instanceDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -92,10 +103,6 @@ func (d *instanceDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 			},
 			"image_name": schema.StringAttribute{
 				Description: "The image name used to create the instance.",
-				Computed:    true,
-			},
-			"region": schema.StringAttribute{
-				Description: "The region of the instance.",
 				Computed:    true,
 			},
 			"zone": schema.StringAttribute{
@@ -172,20 +179,48 @@ func (d *instanceDataSource) Read(ctx context.Context, req datasource.ReadReques
 	state.ID = types.StringValue(inst.ID)
 	state.Name = types.StringValue(inst.Name)
 	state.FlavorID = types.StringValue(inst.FlavorID)
-	state.FlavorName = types.StringValue(inst.FlavorName)
 	state.ImageID = types.StringValue(inst.ImageID)
-	state.ImageName = types.StringValue(inst.ImageName)
-	state.Region = types.StringValue(inst.Region)
 	state.Zone = types.StringValue(inst.Zone)
-	state.VPCID = types.StringValue(inst.VPCID)
-	state.SubnetID = types.StringValue(inst.SubnetID)
-	state.PrivateIP = types.StringValue(inst.PrivateIP)
-	state.PublicIP = types.StringValue(inst.PublicIP)
 	state.Status = types.StringValue(inst.Status)
 	state.CreatedAt = types.StringValue(inst.CreatedAt)
 
-	if len(inst.Tags) > 0 {
-		tagsMap, diags := types.MapValueFrom(ctx, types.StringType, inst.Tags)
+	// flavor_name / image_name come from the nested flavor{}/image{} objects.
+	if inst.Flavor != nil {
+		state.FlavorName = types.StringValue(inst.Flavor.Name)
+	} else {
+		state.FlavorName = types.StringNull()
+	}
+	if inst.Image != nil {
+		state.ImageName = types.StringValue(inst.Image.Name)
+	} else {
+		state.ImageName = types.StringNull()
+	}
+
+	// private_ip / public_ip come from the first element of the IP arrays.
+	if len(inst.PrivateIPs) > 0 {
+		state.PrivateIP = types.StringValue(inst.PrivateIPs[0])
+	} else {
+		state.PrivateIP = types.StringNull()
+	}
+	if len(inst.PublicIPs) > 0 {
+		state.PublicIP = types.StringValue(inst.PublicIPs[0])
+	} else {
+		state.PublicIP = types.StringNull()
+	}
+
+	// subnet_id comes from the first network attachment (enriched to the real
+	// Neutron subnet id on GET). vpc_id is NOT derivable from the instance read:
+	// networks[].networkId is the network NAME, not the VPC UUID, and the backend
+	// exposes no instance→VPC id. Leave vpc_id null rather than report the name.
+	state.VPCID = types.StringNull()
+	if len(inst.Networks) > 0 {
+		state.SubnetID = types.StringValue(inst.Networks[0].SubnetID)
+	} else {
+		state.SubnetID = types.StringNull()
+	}
+
+	if len(inst.Metadata) > 0 {
+		tagsMap, diags := types.MapValueFrom(ctx, types.StringType, inst.Metadata)
 		resp.Diagnostics.Append(diags...)
 		state.Tags = tagsMap
 	} else {

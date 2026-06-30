@@ -159,6 +159,62 @@ func TestSubnetModelToCreateRequest(t *testing.T) {
 	}
 }
 
+// TestSubnetCreateRequestDNSWireContract locks the create request to the
+// backend contract: provisioning reads DNS servers under `dnsNameservers`,
+// while the read response (apiSubnet) still serializes them as `dnsServers`.
+func TestSubnetCreateRequestDNSWireContract(t *testing.T) {
+	ctx := context.Background()
+	dns, _ := types.ListValueFrom(ctx, types.StringType, []string{"1.1.1.1"})
+	model := SubnetModel{
+		Name:       types.StringValue("dns-subnet"),
+		CIDR:       types.StringValue("10.0.1.0/24"),
+		VPCID:      types.StringValue("vpc-1"),
+		DNSServers: dns,
+	}
+
+	var diags diag.Diagnostics
+	req := model.toCreateRequest(ctx, &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+
+	raw, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if _, ok := wire["dnsNameservers"]; !ok {
+		t.Errorf("create request must send DNS servers as dnsNameservers, got %s", raw)
+	}
+	if _, ok := wire["dnsServers"]; ok {
+		t.Errorf("create request must not send dnsServers, got %s", raw)
+	}
+}
+
+// TestSubnetReadParsesDNSServers proves the read response is still parsed from
+// the `dnsServers` field (apiSubnet json tag is unchanged).
+func TestSubnetReadParsesDNSServers(t *testing.T) {
+	var subnet apiSubnet
+	if err := json.Unmarshal([]byte(`{
+		"id": "subnet-w",
+		"name": "wire",
+		"cidrBlock": "10.0.9.0/24",
+		"vpcId": "vpc-9",
+		"status": "active",
+		"availableIpCount": 250,
+		"dnsServers": ["9.9.9.9"],
+		"createdAt": "2025-01-01T00:00:00Z"
+	}`), &subnet); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if len(subnet.DNSServers) != 1 || subnet.DNSServers[0] != "9.9.9.9" {
+		t.Errorf("expected dnsServers [9.9.9.9], got %v", subnet.DNSServers)
+	}
+}
+
 func TestSubnetResourceCRUD(t *testing.T) {
 	subnetData := apiSubnet{
 		ID:           "subnet-test-1",

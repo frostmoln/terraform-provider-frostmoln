@@ -51,19 +51,25 @@ type webserverDomainModel struct {
 	DomainName types.String `tfsdk:"domain_name"`
 	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
 	IsDefault  types.Bool   `tfsdk:"is_default"`
-	Status     types.String `tfsdk:"status"`
 	CreatedAt  types.String `tfsdk:"created_at"`
 }
 
 // apiWebserverDomain is the API representation of a webserver domain binding.
+// The webserver service (webserver/internal/domain/domain_binding.go) does NOT
+// return a status field, and there is no get-single endpoint — domains are read
+// from the list (GET /webservers/{id}/domains).
 type apiWebserverDomain struct {
 	ID         string `json:"id"`
 	InstanceID string `json:"instanceId"`
 	DomainName string `json:"domainName"`
 	TLSEnabled bool   `json:"tlsEnabled"`
 	IsDefault  bool   `json:"isDefault"`
-	Status     string `json:"status"`
 	CreatedAt  string `json:"createdAt"`
+}
+
+// apiWebserverDomainList is the list response for a webserver instance's domains.
+type apiWebserverDomainList struct {
+	Domains []apiWebserverDomain `json:"domains"`
 }
 
 // apiCreateWebserverDomainRequest is the API request to create a webserver domain binding.
@@ -119,10 +125,6 @@ func (r *webserverDomainResource) Schema(_ context.Context, _ resource.SchemaReq
 					boolplanmodifier.RequiresReplace(),
 					boolplanmodifier.UseStateForUnknown(),
 				},
-			},
-			"status": schema.StringAttribute{
-				Description: "The current status of the domain binding.",
-				Computed:    true,
 			},
 			"created_at": schema.StringAttribute{
 				Description: "The timestamp when the domain binding was created.",
@@ -189,60 +191,35 @@ func (r *webserverDomainResource) Create(ctx context.Context, req resource.Creat
 		return
 	}
 
+	// The Add endpoint is synchronous and returns the created binding directly
+	// (there is no status field to poll on, and no get-single endpoint).
 	plan.ID = types.StringValue(domain.ID)
 	plan.InstanceID = types.StringValue(domain.InstanceID)
 	plan.DomainName = types.StringValue(domain.DomainName)
 	plan.TLSEnabled = types.BoolValue(domain.TLSEnabled)
 	plan.IsDefault = types.BoolValue(domain.IsDefault)
-	plan.Status = types.StringValue(domain.Status)
 	plan.CreatedAt = types.StringValue(domain.CreatedAt)
 
-	// Save state immediately so the ID is tracked, even if polling fails.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
+}
 
-	instanceID := plan.InstanceID.ValueString()
-
-	// Poll until domain reaches "active" status.
-	_, err = client.WaitForState(ctx, client.PollConfig{
-		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
-		TargetStates: []string{"active"},
-		ErrorStates:  []string{"error", "failed"},
-		ResourceName: "webserver_domain",
-		PollFunc: func(pollCtx context.Context) (string, error) {
-			pollResp, pollErr := r.client.Get(pollCtx, r.domainPath(instanceID, domain.ID), nil)
-			if pollErr != nil {
-				return "", pollErr
-			}
-			var current apiWebserverDomain
-			if parseErr := json.Unmarshal(pollResp.Body, &current); parseErr != nil {
-				return "", parseErr
-			}
-			return current.Status, nil
-		},
-	})
+// findDomain fetches the instance's domain list and returns the binding with the
+// given id (there is no get-single endpoint).
+func (r *webserverDomainResource) findDomain(ctx context.Context, instanceID, domainID string) (*apiWebserverDomain, error) {
+	apiResp, err := r.client.Get(ctx, r.domainsPath(instanceID), nil)
 	if err != nil {
-		resp.Diagnostics.AddError("Webserver domain failed to reach active state", err.Error())
-		return
+		return nil, err
 	}
-
-	// Refresh state after polling.
-	readResp, err := r.client.Get(ctx, r.domainPath(instanceID, domain.ID), nil)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to read webserver domain after creation", err.Error())
-		return
+	var list apiWebserverDomainList
+	if err := json.Unmarshal(apiResp.Body, &list); err != nil {
+		return nil, err
 	}
-	var finalDomain apiWebserverDomain
-	if err := json.Unmarshal(readResp.Body, &finalDomain); err != nil {
-		resp.Diagnostics.AddError("Failed to parse webserver domain response", err.Error())
-		return
+	for i := range list.Domains {
+		if list.Domains[i].ID == domainID {
+			return &list.Domains[i], nil
+		}
 	}
-
-	plan.Status = types.StringValue(finalDomain.Status)
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	return nil, nil
 }
 
 func (r *webserverDomainResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -252,7 +229,7 @@ func (r *webserverDomainResource) Read(ctx context.Context, req resource.ReadReq
 		return
 	}
 
-	apiResp, err := r.client.Get(ctx, r.domainPath(state.InstanceID.ValueString(), state.ID.ValueString()), nil)
+	domain, err := r.findDomain(ctx, state.InstanceID.ValueString(), state.ID.ValueString())
 	if err != nil {
 		if client.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
@@ -261,10 +238,9 @@ func (r *webserverDomainResource) Read(ctx context.Context, req resource.ReadReq
 		resp.Diagnostics.AddError("Failed to read webserver domain", err.Error())
 		return
 	}
-
-	var domain apiWebserverDomain
-	if err := json.Unmarshal(apiResp.Body, &domain); err != nil {
-		resp.Diagnostics.AddError("Failed to parse webserver domain response", err.Error())
+	if domain == nil {
+		// The binding is no longer present in the instance's domain list.
+		resp.State.RemoveResource(ctx)
 		return
 	}
 
@@ -273,7 +249,6 @@ func (r *webserverDomainResource) Read(ctx context.Context, req resource.ReadReq
 	state.DomainName = types.StringValue(domain.DomainName)
 	state.TLSEnabled = types.BoolValue(domain.TLSEnabled)
 	state.IsDefault = types.BoolValue(domain.IsDefault)
-	state.Status = types.StringValue(domain.Status)
 	state.CreatedAt = types.StringValue(domain.CreatedAt)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -298,6 +273,7 @@ func (r *webserverDomainResource) Delete(ctx context.Context, req resource.Delet
 	instanceID := state.InstanceID.ValueString()
 	id := state.ID.ValueString()
 
+	// Remove is synchronous (HTTP 204), so no polling is required.
 	_, err := r.client.Delete(ctx, r.domainPath(instanceID, id))
 	if err != nil {
 		if client.IsNotFound(err) {
@@ -305,31 +281,5 @@ func (r *webserverDomainResource) Delete(ctx context.Context, req resource.Delet
 		}
 		resp.Diagnostics.AddError("Failed to delete webserver domain", err.Error())
 		return
-	}
-
-	// Wait for the domain to be fully deleted (404 on GET).
-	_, err = client.WaitForState(ctx, client.PollConfig{
-		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
-		TargetStates: []string{"deleted"},
-		ErrorStates:  []string{"error"},
-		ResourceName: "webserver_domain",
-		PollFunc: func(pollCtx context.Context) (string, error) {
-			pollResp, pollErr := r.client.Get(pollCtx, r.domainPath(instanceID, id), nil)
-			if pollErr != nil {
-				if client.IsNotFound(pollErr) {
-					return "deleted", nil
-				}
-				return "", pollErr
-			}
-			var current apiWebserverDomain
-			if parseErr := json.Unmarshal(pollResp.Body, &current); parseErr != nil {
-				return "", parseErr
-			}
-			return current.Status, nil
-		},
-	})
-	if err != nil {
-		resp.Diagnostics.AddError("Webserver domain failed to delete", err.Error())
 	}
 }

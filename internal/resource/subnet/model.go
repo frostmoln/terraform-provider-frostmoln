@@ -40,7 +40,10 @@ type apiSubnet struct {
 	CreatedAt    string            `json:"createdAt"`
 }
 
-// apiCreateSubnetRequest is the API request to create a subnet.
+// apiCreateSubnetRequest is the API request to create a subnet. The create
+// routes through provisioning, which reads the DNS servers under
+// `dnsNameservers` (provisioning/internal/handler/http/network_handler.go);
+// the read response uses `dnsServers` (apiSubnet).
 type apiCreateSubnetRequest struct {
 	Name        string            `json:"name"`
 	Description string            `json:"description,omitempty"`
@@ -48,7 +51,7 @@ type apiCreateSubnetRequest struct {
 	VPCID       string            `json:"vpcId"`
 	Zone        string            `json:"availabilityZone,omitempty"`
 	GatewayIP   string            `json:"gatewayIp,omitempty"`
-	DNSServers  []string          `json:"dnsServers,omitempty"`
+	DNSServers  []string          `json:"dnsNameservers,omitempty"`
 	Tags        map[string]string `json:"tags,omitempty"`
 }
 

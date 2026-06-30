@@ -17,29 +17,30 @@ type SnapshotModel struct {
 	Tags        types.Map    `tfsdk:"tags"`
 	Status      types.String `tfsdk:"status"`
 	SizeGB      types.Int64  `tfsdk:"size_gb"`
-	Region      types.String `tfsdk:"region"`
 	CreatedAt   types.String `tfsdk:"created_at"`
 }
 
-// apiSnapshot is the API representation of a snapshot.
+// apiSnapshot is the API representation of a snapshot. Field names match the
+// storage service (storage/internal/domain/snapshot.go): size is `size` (int64),
+// user tags live under `metadata`, and there is no region.
 type apiSnapshot struct {
 	ID          string            `json:"id"`
 	Name        string            `json:"name"`
 	Description string            `json:"description,omitempty"`
 	VolumeID    string            `json:"volumeId"`
 	Status      string            `json:"status"`
-	SizeGB      int               `json:"sizeGb"`
-	Region      string            `json:"region"`
-	Tags        map[string]string `json:"tags,omitempty"`
+	Size        int64             `json:"size"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 	CreatedAt   string            `json:"createdAt"`
 }
 
-// apiCreateSnapshotRequest is the API request to create a snapshot.
+// apiCreateSnapshotRequest is the API request to create a snapshot. User tags
+// are sent under `metadata` (the create handler reads CreateSnapshotRequest.Metadata).
 type apiCreateSnapshotRequest struct {
 	Name        string            `json:"name"`
 	Description string            `json:"description,omitempty"`
 	VolumeID    string            `json:"volumeId"`
-	Tags        map[string]string `json:"tags,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -55,7 +56,7 @@ func (m *SnapshotModel) toCreateRequest(ctx context.Context, diags *diag.Diagnos
 	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
 		tags := make(map[string]string)
 		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		req.Tags = tags
+		req.Metadata = tags
 	}
 
 	return req
@@ -67,8 +68,7 @@ func (m *SnapshotModel) fromAPI(ctx context.Context, snap *apiSnapshot, diags *d
 	m.Name = types.StringValue(snap.Name)
 	m.VolumeID = types.StringValue(snap.VolumeID)
 	m.Status = types.StringValue(snap.Status)
-	m.SizeGB = types.Int64Value(int64(snap.SizeGB))
-	m.Region = types.StringValue(snap.Region)
+	m.SizeGB = types.Int64Value(snap.Size)
 	m.CreatedAt = types.StringValue(snap.CreatedAt)
 
 	if snap.Description != "" {
@@ -79,8 +79,8 @@ func (m *SnapshotModel) fromAPI(ctx context.Context, snap *apiSnapshot, diags *d
 		m.Description = types.StringValue("")
 	}
 
-	if len(snap.Tags) > 0 {
-		tagMap, d := types.MapValueFrom(ctx, types.StringType, snap.Tags)
+	if len(snap.Metadata) > 0 {
+		tagMap, d := types.MapValueFrom(ctx, types.StringType, snap.Metadata)
 		diags.Append(d...)
 		m.Tags = tagMap
 	} else if !m.Tags.IsNull() {

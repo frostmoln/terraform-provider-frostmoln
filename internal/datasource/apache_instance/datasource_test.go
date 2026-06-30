@@ -38,8 +38,8 @@ func TestSchema(t *testing.T) {
 	ds.Schema(context.Background(), datasource.SchemaRequest{}, &resp)
 
 	expectedAttrs := []string{
-		"id", "name", "version", "flavor", "storage_gb", "tls_enabled",
-		"php_enabled", "php_version", "config", "status", "private_ip",
+		"id", "name", "version", "flavor", "storage_gb", "vpc_id", "subnet_id",
+		"tls_enabled", "php_enabled", "php_version", "config", "status", "private_ip",
 		"port", "created_at", "updated_at", "tenant_id",
 	}
 	for _, attr := range expectedAttrs {
@@ -115,10 +115,12 @@ func configVal(t *testing.T, id string) tftypes.Value {
 		"version":     tftypes.NewValue(tftypes.String, nil),
 		"flavor":      tftypes.NewValue(tftypes.String, nil),
 		"storage_gb":  tftypes.NewValue(tftypes.Number, nil),
+		"vpc_id":      tftypes.NewValue(tftypes.String, nil),
+		"subnet_id":   tftypes.NewValue(tftypes.String, nil),
 		"tls_enabled": tftypes.NewValue(tftypes.Bool, nil),
 		"php_enabled": tftypes.NewValue(tftypes.Bool, nil),
 		"php_version": tftypes.NewValue(tftypes.String, nil),
-		"config":      tftypes.NewValue(tftypes.String, nil),
+		"config":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, nil),
 		"private_ip":  tftypes.NewValue(tftypes.String, nil),
 		"port":        tftypes.NewValue(tftypes.Number, nil),
@@ -139,10 +141,12 @@ func TestReadByID(t *testing.T) {
 				EngineVersion: "2.4",
 				Flavor:        "web.small",
 				StorageGB:     20,
+				VPCID:         "vpc-1",
+				SubnetID:      "sn-1",
 				TLSEnabled:    true,
 				PHPEnabled:    true,
 				PHPVersion:    "8.3",
-				EngineConfig:  "ServerTokens Prod",
+				EngineConfig:  map[string]string{"ServerTokens": "Prod"},
 				Status:        "running",
 				PrivateIP:     "10.0.1.5",
 				Port:          443,
@@ -200,6 +204,17 @@ func TestReadByID(t *testing.T) {
 	}
 	if state.PHPVersion.ValueString() != "8.3" {
 		t.Errorf("expected PHPVersion 8.3, got %s", state.PHPVersion.ValueString())
+	}
+	if state.VPCID.ValueString() != "vpc-1" {
+		t.Errorf("expected VPCID vpc-1, got %s", state.VPCID.ValueString())
+	}
+	if state.SubnetID.ValueString() != "sn-1" {
+		t.Errorf("expected SubnetID sn-1, got %s", state.SubnetID.ValueString())
+	}
+	cfg := map[string]string{}
+	state.Config.ElementsAs(ctx, &cfg, false)
+	if cfg["ServerTokens"] != "Prod" {
+		t.Errorf("expected config ServerTokens=Prod, got %v", cfg)
 	}
 	if state.Port.ValueInt64() != 443 {
 		t.Errorf("expected Port 443, got %d", state.Port.ValueInt64())

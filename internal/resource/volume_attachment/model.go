@@ -13,18 +13,39 @@ type VolumeAttachmentModel struct {
 	DevicePath types.String `tfsdk:"device_path"`
 }
 
-// apiVolume is a subset of the volume API response used to verify attachment state.
-type apiVolume struct {
+// apiVolumeAttachment is one element of the volume's attachments[] array
+// (storage/internal/domain/volume.go VolumeAttachment).
+type apiVolumeAttachment struct {
 	ID         string `json:"id"`
-	AttachedTo string `json:"attachedTo,omitempty"`
-	DevicePath string `json:"devicePath,omitempty"`
-	Status     string `json:"status"`
+	VolumeID   string `json:"volumeId"`
+	InstanceID string `json:"instanceId"`
+	Device     string `json:"device"`
 }
 
-// apiAttachRequest is the API request to attach a volume.
+// apiVolume is a subset of the volume API response used to verify attachment
+// state. The backend exposes attachments only via the attachments[] array;
+// there are no top-level attachedTo/devicePath scalars.
+type apiVolume struct {
+	ID          string                `json:"id"`
+	Status      string                `json:"status"`
+	Attachments []apiVolumeAttachment `json:"attachments,omitempty"`
+}
+
+// findAttachment returns the attachment for the given instance, or nil.
+func (v *apiVolume) findAttachment(instanceID string) *apiVolumeAttachment {
+	for i := range v.Attachments {
+		if v.Attachments[i].InstanceID == instanceID {
+			return &v.Attachments[i]
+		}
+	}
+	return nil
+}
+
+// apiAttachRequest is the API request to attach a volume. The storage attach
+// handler expects `device` (not devicePath).
 type apiAttachRequest struct {
 	InstanceID string `json:"instanceId"`
-	DevicePath string `json:"devicePath,omitempty"`
+	Device     string `json:"device,omitempty"`
 }
 
 // apiDetachRequest is the API request to detach a volume.
@@ -43,18 +64,18 @@ func (m *VolumeAttachmentModel) toAttachRequest() apiAttachRequest {
 		InstanceID: m.InstanceID.ValueString(),
 	}
 	if !m.DevicePath.IsNull() && !m.DevicePath.IsUnknown() {
-		req.DevicePath = m.DevicePath.ValueString()
+		req.Device = m.DevicePath.ValueString()
 	}
 	return req
 }
 
-// fromAPI populates the Terraform model from the volume API response.
-func (m *VolumeAttachmentModel) fromAPI(vol *apiVolume) {
-	m.ID = types.StringValue(compositeID(vol.ID, vol.AttachedTo))
-	m.VolumeID = types.StringValue(vol.ID)
-	m.InstanceID = types.StringValue(vol.AttachedTo)
-	if vol.DevicePath != "" {
-		m.DevicePath = types.StringValue(vol.DevicePath)
+// fromAttachment populates the Terraform model from a matched attachment.
+func (m *VolumeAttachmentModel) fromAttachment(volumeID string, att *apiVolumeAttachment) {
+	m.ID = types.StringValue(compositeID(volumeID, att.InstanceID))
+	m.VolumeID = types.StringValue(volumeID)
+	m.InstanceID = types.StringValue(att.InstanceID)
+	if att.Device != "" {
+		m.DevicePath = types.StringValue(att.Device)
 	} else if m.DevicePath.IsNull() {
 		// Keep null
 	} else {

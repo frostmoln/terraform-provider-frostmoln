@@ -129,6 +129,57 @@ func TestSecurityGroupRuleModelToCreateRequest(t *testing.T) {
 	}
 }
 
+// TestSecurityGroupRuleCreateRequestWireContract locks the create request to
+// the backend contract: provisioning reads the remote CIDR under
+// `remoteIpPrefix` and the remote security group under `remoteGroupId`.
+func TestSecurityGroupRuleCreateRequestWireContract(t *testing.T) {
+	model := SecurityGroupRuleModel{
+		Direction:     types.StringValue("ingress"),
+		Protocol:      types.StringValue("tcp"),
+		RemoteCIDR:    types.StringValue("10.0.0.0/8"),
+		RemoteGroupID: types.StringValue("sg-remote"),
+	}
+
+	raw, err := json.Marshal(model.toCreateRequest())
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if wire["remoteIpPrefix"] != "10.0.0.0/8" {
+		t.Errorf("create request must send remote CIDR as remoteIpPrefix, got %s", raw)
+	}
+	if _, ok := wire["remoteCidr"]; ok {
+		t.Errorf("create request must not send remoteCidr, got %s", raw)
+	}
+	if wire["remoteGroupId"] != "sg-remote" {
+		t.Errorf("create request must send remote SG as remoteGroupId, got %s", raw)
+	}
+}
+
+// TestSecurityGroupRuleReadParsesRemoteSecurityGroupID proves the read response
+// is parsed from `remoteSecurityGroupId` (and `remoteCidr`).
+func TestSecurityGroupRuleReadParsesRemoteSecurityGroupID(t *testing.T) {
+	var rule apiSecurityGroupRule
+	if err := json.Unmarshal([]byte(`{
+		"id": "rule-w",
+		"direction": "ingress",
+		"protocol": "tcp",
+		"remoteCidr": "10.0.0.0/8",
+		"remoteSecurityGroupId": "sg-remote"
+	}`), &rule); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if rule.RemoteCIDR != "10.0.0.0/8" {
+		t.Errorf("expected RemoteCIDR from remoteCidr, got %s", rule.RemoteCIDR)
+	}
+	if rule.RemoteGroupID != "sg-remote" {
+		t.Errorf("expected RemoteGroupID from remoteSecurityGroupId, got %s", rule.RemoteGroupID)
+	}
+}
+
 func TestSecurityGroupRuleResourceCRUD(t *testing.T) {
 	portMin := 443
 	portMax := 443

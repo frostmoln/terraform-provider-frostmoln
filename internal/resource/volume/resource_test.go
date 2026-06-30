@@ -49,8 +49,8 @@ func TestVolumeModel_toCreateRequest(t *testing.T) {
 	if req.Description != "test volume" {
 		t.Errorf("expected description 'test volume', got %s", req.Description)
 	}
-	if req.SizeGB != 100 {
-		t.Errorf("expected sizeGb 100, got %d", req.SizeGB)
+	if req.Size != 100 {
+		t.Errorf("expected sizeGb 100, got %d", req.Size)
 	}
 	if req.VolumeType != "ssd" {
 		t.Errorf("expected volumeType ssd, got %s", req.VolumeType)
@@ -58,14 +58,14 @@ func TestVolumeModel_toCreateRequest(t *testing.T) {
 	if req.Zone != "sweden-a" {
 		t.Errorf("expected zone sweden-a, got %s", req.Zone)
 	}
-	if req.SnapshotID != "" {
-		t.Errorf("expected empty snapshotId, got %s", req.SnapshotID)
+	if req.SourceSnapshotID != "" {
+		t.Errorf("expected empty snapshotId, got %s", req.SourceSnapshotID)
 	}
 	if !req.Encrypted {
 		t.Error("expected encrypted true")
 	}
-	if req.Tags["env"] != "prod" {
-		t.Errorf("expected tag env=prod, got %v", req.Tags)
+	if req.Metadata["env"] != "prod" {
+		t.Errorf("expected tag env=prod, got %v", req.Metadata)
 	}
 }
 
@@ -92,14 +92,14 @@ func TestVolumeModel_toCreateRequest_minimal(t *testing.T) {
 	if req.Name != "basic" {
 		t.Errorf("expected name basic, got %s", req.Name)
 	}
-	if req.SizeGB != 50 {
-		t.Errorf("expected sizeGb 50, got %d", req.SizeGB)
+	if req.Size != 50 {
+		t.Errorf("expected sizeGb 50, got %d", req.Size)
 	}
 	if req.VolumeType != "" {
 		t.Errorf("expected empty volumeType, got %s", req.VolumeType)
 	}
-	if req.Tags != nil {
-		t.Errorf("expected nil tags, got %v", req.Tags)
+	if req.Metadata != nil {
+		t.Errorf("expected nil tags, got %v", req.Metadata)
 	}
 }
 
@@ -111,17 +111,15 @@ func TestVolumeModel_fromAPI(t *testing.T) {
 		ID:          "vol-123",
 		Name:        "my-volume",
 		Description: "test description",
-		SizeGB:      100,
+		Size:        100,
 		VolumeType:  "ssd",
 		Zone:        "sweden-a",
 		Encrypted:   true,
 		Status:      "available",
 		IOPS:        3000,
 		Throughput:  125,
-		Region:      "sweden",
-		AttachedTo:  "inst-456",
-		DevicePath:  "/dev/vdb",
-		Tags:        map[string]string{"env": "prod"},
+		Attachments: []apiVolumeAttachment{{InstanceID: "inst-456", Device: "/dev/vdb"}},
+		Metadata:    map[string]string{"env": "prod"},
 		CreatedAt:   "2025-01-01T00:00:00Z",
 	}
 
@@ -161,9 +159,6 @@ func TestVolumeModel_fromAPI(t *testing.T) {
 	if model.Throughput.ValueInt64() != 125 {
 		t.Errorf("expected throughput 125, got %d", model.Throughput.ValueInt64())
 	}
-	if model.Region.ValueString() != "sweden" {
-		t.Errorf("expected region sweden, got %s", model.Region.ValueString())
-	}
 	if model.AttachedTo.ValueString() != "inst-456" {
 		t.Errorf("expected attachedTo inst-456, got %s", model.AttachedTo.ValueString())
 	}
@@ -182,11 +177,10 @@ func TestVolumeModel_fromAPI_nullOptionalFields(t *testing.T) {
 	apiVol := &apiVolume{
 		ID:         "vol-123",
 		Name:       "minimal-vol",
-		SizeGB:     50,
+		Size:       50,
 		VolumeType: "hdd",
 		Encrypted:  false,
 		Status:     "available",
-		Region:     "sweden",
 		CreatedAt:  "2025-01-01T00:00:00Z",
 	}
 
@@ -219,13 +213,12 @@ func TestVolumeResource_CreateAndRead(t *testing.T) {
 	volume := apiVolume{
 		ID:         "vol-abc",
 		Name:       "test-vol",
-		SizeGB:     100,
+		Size:       100,
 		VolumeType: "ssd",
 		Encrypted:  true,
 		Status:     "available",
 		IOPS:       3000,
 		Throughput: 125,
-		Region:     "sweden",
 		CreatedAt:  "2025-01-01T00:00:00Z",
 	}
 
@@ -268,7 +261,7 @@ func TestVolumeResource_CreateAndRead(t *testing.T) {
 	ctx := context.Background()
 	createReq := apiCreateVolumeRequest{
 		Name:      "test-vol",
-		SizeGB:    100,
+		Size:      100,
 		Encrypted: true,
 	}
 
@@ -310,11 +303,10 @@ func TestVolumeResource_Update(t *testing.T) {
 	currentVolume := apiVolume{
 		ID:         "vol-abc",
 		Name:       "original-name",
-		SizeGB:     100,
+		Size:       100,
 		VolumeType: "ssd",
 		Encrypted:  true,
 		Status:     "available",
-		Region:     "sweden",
 		CreatedAt:  "2025-01-01T00:00:00Z",
 	}
 
@@ -344,7 +336,7 @@ func TestVolumeResource_Update(t *testing.T) {
 			resizeCalled.Add(1)
 			var resizeReq apiResizeVolumeRequest
 			_ = json.NewDecoder(r.Body).Decode(&resizeReq)
-			currentVolume.SizeGB = resizeReq.SizeGB
+			currentVolume.Size = int64(resizeReq.NewSizeGB)
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"operationId": "op-resize-1", "status": "accepted", "resourceType": "volume",
@@ -379,7 +371,7 @@ func TestVolumeResource_Update(t *testing.T) {
 	}
 
 	// Test resize
-	resizeReq := apiResizeVolumeRequest{SizeGB: 200}
+	resizeReq := apiResizeVolumeRequest{NewSizeGB: 200}
 	_, err = c.Post(ctx, c.TenantPath("/volumes/vol-abc/resize"), resizeReq)
 	if err != nil {
 		t.Fatalf("resize failed: %v", err)
@@ -400,8 +392,8 @@ func TestVolumeResource_Update(t *testing.T) {
 	if vol.Name != "updated-name" {
 		t.Errorf("expected name updated-name, got %s", vol.Name)
 	}
-	if vol.SizeGB != 200 {
-		t.Errorf("expected sizeGb 200, got %d", vol.SizeGB)
+	if vol.Size != 200 {
+		t.Errorf("expected sizeGb 200, got %d", vol.Size)
 	}
 }
 
@@ -524,13 +516,12 @@ func TestVolumeResource_TFSDKCreate(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiVolume{
 				ID:         "vol-new-1",
 				Name:       "new-volume",
-				SizeGB:     100,
+				Size:       100,
 				VolumeType: "ssd",
 				Encrypted:  true,
 				Status:     "available",
 				IOPS:       3000,
 				Throughput: 125,
-				Region:     "sweden",
 				CreatedAt:  "2025-01-01T00:00:00Z",
 			})
 
@@ -568,7 +559,6 @@ func TestVolumeResource_TFSDKCreate(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"iops":        tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"throughput":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"attached_to": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"device_path": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -604,9 +594,6 @@ func TestVolumeResource_TFSDKCreate(t *testing.T) {
 	if model.IOPS.ValueInt64() != 3000 {
 		t.Errorf("expected IOPS 3000, got %d", model.IOPS.ValueInt64())
 	}
-	if model.Region.ValueString() != "sweden" {
-		t.Errorf("expected Region sweden, got %s", model.Region.ValueString())
-	}
 }
 
 func TestVolumeResource_TFSDKRead(t *testing.T) {
@@ -619,15 +606,14 @@ func TestVolumeResource_TFSDKRead(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiVolume{
 				ID:         "vol-read-1",
 				Name:       "read-vol",
-				SizeGB:     200,
+				Size:       200,
 				VolumeType: "nvme",
 				Encrypted:  false,
 				Status:     "available",
 				IOPS:       5000,
 				Throughput: 250,
-				Region:     "sweden",
 				Zone:       "falkenberg",
-				Tags:       map[string]string{"team": "backend"},
+				Metadata:   map[string]string{"team": "backend"},
 				CreatedAt:  "2025-02-01T00:00:00Z",
 			})
 
@@ -665,7 +651,6 @@ func TestVolumeResource_TFSDKRead(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(5000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(250)),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-02-01T00:00:00Z"),
@@ -737,7 +722,6 @@ func TestVolumeResource_TFSDKReadNotFound(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -763,13 +747,12 @@ func TestVolumeResource_TFSDKUpdate_PatchAndResize(t *testing.T) {
 	currentVol := apiVolume{
 		ID:         "vol-upd-1",
 		Name:       "updated-vol",
-		SizeGB:     200,
+		Size:       200,
 		VolumeType: "ssd",
 		Encrypted:  true,
 		Status:     "available",
 		IOPS:       3000,
 		Throughput: 125,
-		Region:     "sweden",
 		CreatedAt:  "2025-01-01T00:00:00Z",
 	}
 
@@ -786,7 +769,7 @@ func TestVolumeResource_TFSDKUpdate_PatchAndResize(t *testing.T) {
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-upd-1/resize":
 			resizeCalled = true
-			currentVol.SizeGB = 200
+			currentVol.Size = 200
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"operationId": "op-resize-1", "status": "pending", "resourceType": "volume",
@@ -834,7 +817,6 @@ func TestVolumeResource_TFSDKUpdate_PatchAndResize(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -853,7 +835,6 @@ func TestVolumeResource_TFSDKUpdate_PatchAndResize(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -946,7 +927,6 @@ func TestVolumeResource_TFSDKDelete(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1041,7 +1021,6 @@ func TestVolumeResource_TFSDKCreateAPIError(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"iops":        tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"throughput":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"attached_to": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"device_path": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1099,7 +1078,6 @@ func TestVolumeResource_TFSDKCreateBadResponseBody(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"iops":        tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"throughput":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"attached_to": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"device_path": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1169,7 +1147,6 @@ func TestVolumeResource_TFSDKCreatePollingErrorState(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"iops":        tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"throughput":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"attached_to": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"device_path": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1242,7 +1219,6 @@ func TestVolumeResource_TFSDKCreateFinalReadError(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"iops":        tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"throughput":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
-		"region":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"attached_to": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"device_path": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1300,7 +1276,6 @@ func TestVolumeResource_TFSDKReadAPIError(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1361,7 +1336,6 @@ func TestVolumeResource_TFSDKReadBadJSON(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1421,7 +1395,6 @@ func TestVolumeResource_TFSDKUpdatePatchError(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1440,7 +1413,6 @@ func TestVolumeResource_TFSDKUpdatePatchError(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1501,7 +1473,6 @@ func TestVolumeResource_TFSDKUpdateResizeError(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1520,7 +1491,6 @@ func TestVolumeResource_TFSDKUpdateResizeError(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1582,7 +1552,6 @@ func TestVolumeResource_TFSDKUpdateReadError(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1641,7 +1610,6 @@ func TestVolumeResource_TFSDKDeleteNotFound(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1698,7 +1666,6 @@ func TestVolumeResource_TFSDKDeleteAPIError(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
-		"region":      tftypes.NewValue(tftypes.String, "sweden"),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1736,7 +1703,6 @@ func TestVolumeResource_TFSDKImportState(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, nil),
 		"iops":        tftypes.NewValue(tftypes.Number, nil),
 		"throughput":  tftypes.NewValue(tftypes.Number, nil),
-		"region":      tftypes.NewValue(tftypes.String, nil),
 		"attached_to": tftypes.NewValue(tftypes.String, nil),
 		"device_path": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, nil),

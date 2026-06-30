@@ -15,6 +15,19 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
 
+// TestApiFlavorDecodesBackendKeys locks the wire contract against the backend's
+// actual JSON (memory/disk); a tag regression to ramMb/diskGb would zero RAM/disk.
+func TestApiFlavorDecodesBackendKeys(t *testing.T) {
+	const backendJSON = `{"id":"flv-1","name":"nl.small","vcpus":2,"memory":2048,"disk":40}`
+	var f apiFlavor
+	if err := json.Unmarshal([]byte(backendJSON), &f); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if f.RAMMB != 2048 || f.DiskGB != 40 {
+		t.Errorf("expected RAMMB 2048 / DiskGB 40 from backend memory/disk keys, got %d / %d", f.RAMMB, f.DiskGB)
+	}
+}
+
 func TestNewDataSource(t *testing.T) {
 	ds := NewDataSource()
 	if ds == nil {

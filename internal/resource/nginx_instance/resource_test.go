@@ -19,6 +19,15 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
 
+// mustCfgMap builds a types.Map from a Go map for use in test models.
+func mustCfgMap(m map[string]string) types.Map {
+	v, diags := types.MapValueFrom(context.Background(), types.StringType, m)
+	if diags.HasError() {
+		panic(diags.Errors())
+	}
+	return v
+}
+
 // --- Model unit tests ---
 
 func TestNginxInstanceModelToCreateRequest(t *testing.T) {
@@ -26,16 +35,14 @@ func TestNginxInstanceModelToCreateRequest(t *testing.T) {
 	diags := diag.Diagnostics{}
 
 	model := NginxInstanceModel{
-		Name:            types.StringValue("my-nginx"),
-		Version:         types.StringValue("1.27"),
-		Flavor:          types.StringValue("web.gp1.small"),
-		StorageGB:       types.Int64Value(20),
-		TLSEnabled:      types.BoolNull(),
-		WorkerProcesses: types.Int64Null(),
-		GzipEnabled:     types.BoolNull(),
-		TryFiles:        types.StringNull(),
-		ProxyPass:       types.StringNull(),
-		Config:          types.StringNull(),
+		Name:       types.StringValue("my-nginx"),
+		Version:    types.StringValue("1.27"),
+		Flavor:     types.StringValue("web.gp1.small"),
+		StorageGB:  types.Int64Value(20),
+		VPCID:      types.StringValue("vpc-1"),
+		SubnetID:   types.StringValue("sn-1"),
+		TLSEnabled: types.BoolNull(),
+		Config:     types.MapNull(types.StringType),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
@@ -50,16 +57,22 @@ func TestNginxInstanceModelToCreateRequest(t *testing.T) {
 		t.Errorf("expected name my-nginx, got %s", req.Name)
 	}
 	if req.Flavor != "web.gp1.small" {
-		t.Errorf("expected flavor web.gp1.small, got %s", req.Flavor)
+		t.Errorf("expected flavorId web.gp1.small, got %s", req.Flavor)
 	}
 	if req.StorageGB != 20 {
 		t.Errorf("expected storageGb 20, got %d", req.StorageGB)
 	}
+	if req.VPCID != "vpc-1" {
+		t.Errorf("expected vpcId vpc-1, got %s", req.VPCID)
+	}
+	if req.SubnetID != "sn-1" {
+		t.Errorf("expected subnetId sn-1, got %s", req.SubnetID)
+	}
 	if req.TLSEnabled != nil {
 		t.Error("expected nil tlsEnabled for null value")
 	}
-	if req.WorkerProcesses != nil {
-		t.Error("expected nil workerProcesses for null value")
+	if req.EngineConfig != nil {
+		t.Error("expected nil engineConfig for null config")
 	}
 }
 
@@ -68,16 +81,14 @@ func TestNginxInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 	diags := diag.Diagnostics{}
 
 	model := NginxInstanceModel{
-		Name:            types.StringValue("my-nginx"),
-		Version:         types.StringValue("1.27"),
-		Flavor:          types.StringValue("web.gp1.medium"),
-		StorageGB:       types.Int64Value(40),
-		TLSEnabled:      types.BoolValue(true),
-		WorkerProcesses: types.Int64Value(4),
-		GzipEnabled:     types.BoolValue(true),
-		TryFiles:        types.StringValue("$uri $uri/ =404"),
-		ProxyPass:       types.StringValue("http://backend"),
-		Config:          types.StringValue(`{"k":"v"}`),
+		Name:       types.StringValue("my-nginx"),
+		Version:    types.StringValue("1.27"),
+		Flavor:     types.StringValue("web.gp1.medium"),
+		StorageGB:  types.Int64Value(40),
+		VPCID:      types.StringValue("vpc-1"),
+		SubnetID:   types.StringValue("sn-1"),
+		TLSEnabled: types.BoolValue(true),
+		Config:     mustCfgMap(map[string]string{"client_max_body_size": "10m"}),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
@@ -88,91 +99,69 @@ func TestNginxInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 	if req.TLSEnabled == nil || !*req.TLSEnabled {
 		t.Error("expected tlsEnabled true")
 	}
-	if req.WorkerProcesses == nil || *req.WorkerProcesses != 4 {
-		t.Error("expected workerProcesses 4")
-	}
-	if req.GzipEnabled == nil || !*req.GzipEnabled {
-		t.Error("expected gzipEnabled true")
-	}
-	if req.TryFiles != "$uri $uri/ =404" {
-		t.Errorf("expected tryFiles set, got %s", req.TryFiles)
-	}
-	if req.ProxyPass != "http://backend" {
-		t.Errorf("expected proxyPass set, got %s", req.ProxyPass)
-	}
-	if req.EngineConfig != `{"k":"v"}` {
-		t.Errorf("expected engineConfig set, got %s", req.EngineConfig)
+	if req.EngineConfig["client_max_body_size"] != "10m" {
+		t.Errorf("expected engineConfig client_max_body_size=10m, got %v", req.EngineConfig)
 	}
 }
 
 func TestNginxInstanceModelToUpdateRequest(t *testing.T) {
+	ctx := context.Background()
+	diags := diag.Diagnostics{}
+
 	plan := NginxInstanceModel{
-		Name:            types.StringValue("new-name"),
-		Flavor:          types.StringValue("web.gp1.large"),
-		StorageGB:       types.Int64Value(80),
-		TLSEnabled:      types.BoolValue(true),
-		WorkerProcesses: types.Int64Value(8),
-		GzipEnabled:     types.BoolValue(true),
-		TryFiles:        types.StringValue("a"),
-		ProxyPass:       types.StringValue("b"),
-		Config:          types.StringValue("c"),
+		Name:       types.StringValue("new-name"),
+		Flavor:     types.StringValue("web.gp1.large"),
+		StorageGB:  types.Int64Value(80),
+		TLSEnabled: types.BoolValue(true),
+		Config:     mustCfgMap(map[string]string{"gzip": "on"}),
 	}
 	state := NginxInstanceModel{
-		Name:            types.StringValue("old-name"),
-		Flavor:          types.StringValue("web.gp1.small"),
-		StorageGB:       types.Int64Value(20),
-		TLSEnabled:      types.BoolValue(false),
-		WorkerProcesses: types.Int64Value(2),
-		GzipEnabled:     types.BoolValue(false),
-		TryFiles:        types.StringNull(),
-		ProxyPass:       types.StringNull(),
-		Config:          types.StringNull(),
+		Name:       types.StringValue("old-name"),
+		Flavor:     types.StringValue("web.gp1.small"),
+		StorageGB:  types.Int64Value(20),
+		TLSEnabled: types.BoolValue(false),
+		Config:     types.MapNull(types.StringType),
 	}
 
-	req := plan.toUpdateRequest(&state)
+	req := plan.toUpdateRequest(ctx, &state, &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+	}
 	if req.Name == nil || *req.Name != "new-name" {
 		t.Error("expected name update")
 	}
 	if req.Flavor == nil || *req.Flavor != "web.gp1.large" {
-		t.Error("expected flavor update")
+		t.Error("expected flavorId update")
 	}
 	if req.StorageGB == nil || *req.StorageGB != 80 {
 		t.Error("expected storageGb update")
 	}
-	if req.WorkerProcesses == nil || *req.WorkerProcesses != 8 {
-		t.Error("expected workerProcesses update")
+	if req.TLSEnabled == nil || !*req.TLSEnabled {
+		t.Error("expected tlsEnabled update")
 	}
-	if req.GzipEnabled == nil || !*req.GzipEnabled {
-		t.Error("expected gzipEnabled update")
-	}
-	if req.TryFiles == nil || *req.TryFiles != "a" {
-		t.Error("expected tryFiles update")
-	}
-	if req.ProxyPass == nil || *req.ProxyPass != "b" {
-		t.Error("expected proxyPass update")
-	}
-	if req.EngineConfig == nil || *req.EngineConfig != "c" {
-		t.Error("expected engineConfig update")
+	if req.EngineConfig["gzip"] != "on" {
+		t.Errorf("expected engineConfig gzip=on, got %v", req.EngineConfig)
 	}
 }
 
 func TestNginxInstanceModelToUpdateRequestNoChanges(t *testing.T) {
+	ctx := context.Background()
+	diags := diag.Diagnostics{}
+
 	same := NginxInstanceModel{
-		Name:            types.StringValue("same"),
-		Flavor:          types.StringValue("web.gp1.small"),
-		StorageGB:       types.Int64Value(20),
-		TLSEnabled:      types.BoolValue(true),
-		WorkerProcesses: types.Int64Value(4),
-		GzipEnabled:     types.BoolValue(true),
-		TryFiles:        types.StringValue("a"),
-		ProxyPass:       types.StringValue("b"),
-		Config:          types.StringValue("c"),
+		Name:       types.StringValue("same"),
+		Flavor:     types.StringValue("web.gp1.small"),
+		StorageGB:  types.Int64Value(20),
+		TLSEnabled: types.BoolValue(true),
+		Config:     mustCfgMap(map[string]string{"gzip": "on"}),
 	}
 
-	req := same.toUpdateRequest(&same)
+	req := same.toUpdateRequest(ctx, &same, &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+	}
 	if req.Name != nil || req.Flavor != nil || req.StorageGB != nil || req.TLSEnabled != nil ||
-		req.WorkerProcesses != nil || req.GzipEnabled != nil || req.TryFiles != nil ||
-		req.ProxyPass != nil || req.EngineConfig != nil {
+		req.EngineConfig != nil {
 		t.Error("expected no changes in update request")
 	}
 }
@@ -182,24 +171,22 @@ func TestNginxInstanceModelFromAPI(t *testing.T) {
 	diags := diag.Diagnostics{}
 
 	api := &apiWebserverInstance{
-		ID:              "nginx-123",
-		Name:            "my-nginx",
-		Engine:          "nginx",
-		EngineVersion:   "1.27",
-		Flavor:          "web.gp1.small",
-		StorageGB:       20,
-		TLSEnabled:      true,
-		WorkerProcesses: 4,
-		GzipEnabled:     true,
-		TryFiles:        "$uri",
-		ProxyPass:       "http://backend",
-		EngineConfig:    "cfg",
-		Status:          "running",
-		PrivateIP:       "10.0.1.5",
-		Port:            443,
-		CreatedAt:       "2025-01-01T00:00:00Z",
-		UpdatedAt:       "2025-01-02T00:00:00Z",
-		TenantID:        "t-1",
+		ID:            "nginx-123",
+		Name:          "my-nginx",
+		Engine:        "nginx",
+		EngineVersion: "1.27",
+		Flavor:        "web.gp1.small",
+		StorageGB:     20,
+		VPCID:         "vpc-1",
+		SubnetID:      "sn-1",
+		TLSEnabled:    true,
+		EngineConfig:  map[string]string{"client_max_body_size": "10m"},
+		Status:        "running",
+		PrivateIP:     "10.0.1.5",
+		Port:          443,
+		CreatedAt:     "2025-01-01T00:00:00Z",
+		UpdatedAt:     "2025-01-02T00:00:00Z",
+		TenantID:      "t-1",
 	}
 
 	var model NginxInstanceModel
@@ -211,14 +198,19 @@ func TestNginxInstanceModelFromAPI(t *testing.T) {
 	if model.ID.ValueString() != "nginx-123" {
 		t.Errorf("expected ID nginx-123, got %s", model.ID.ValueString())
 	}
-	if !model.GzipEnabled.ValueBool() {
-		t.Error("expected gzip_enabled true")
+	if model.Flavor.ValueString() != "web.gp1.small" {
+		t.Errorf("expected flavor web.gp1.small, got %s", model.Flavor.ValueString())
 	}
-	if model.WorkerProcesses.ValueInt64() != 4 {
-		t.Errorf("expected worker_processes 4, got %d", model.WorkerProcesses.ValueInt64())
+	if model.VPCID.ValueString() != "vpc-1" {
+		t.Errorf("expected vpc_id vpc-1, got %s", model.VPCID.ValueString())
 	}
-	if model.ProxyPass.ValueString() != "http://backend" {
-		t.Errorf("expected proxy_pass set, got %s", model.ProxyPass.ValueString())
+	if model.SubnetID.ValueString() != "sn-1" {
+		t.Errorf("expected subnet_id sn-1, got %s", model.SubnetID.ValueString())
+	}
+	cfg := map[string]string{}
+	model.Config.ElementsAs(ctx, &cfg, false)
+	if cfg["client_max_body_size"] != "10m" {
+		t.Errorf("expected config client_max_body_size=10m, got %v", cfg)
 	}
 	if model.Port.ValueInt64() != 443 {
 		t.Errorf("expected port 443, got %d", model.Port.ValueInt64())
@@ -239,6 +231,8 @@ func TestNginxInstanceModelFromAPINulls(t *testing.T) {
 		EngineVersion: "1.27",
 		Flavor:        "web.gp1.small",
 		StorageGB:     20,
+		VPCID:         "vpc-1",
+		SubnetID:      "sn-1",
 		Status:        "provisioning",
 		CreatedAt:     "2025-01-01T00:00:00Z",
 	}
@@ -249,15 +243,6 @@ func TestNginxInstanceModelFromAPINulls(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
 
-	if !model.WorkerProcesses.IsNull() {
-		t.Error("expected null worker_processes")
-	}
-	if !model.TryFiles.IsNull() {
-		t.Error("expected null try_files")
-	}
-	if !model.ProxyPass.IsNull() {
-		t.Error("expected null proxy_pass")
-	}
 	if !model.Config.IsNull() {
 		t.Error("expected null config")
 	}
@@ -300,11 +285,15 @@ func TestSchema(t *testing.T) {
 	var resp resource.SchemaResponse
 	r.Schema(context.Background(), req, &resp)
 
-	requiredAttrs := []string{"name", "version", "flavor", "storage_gb"}
+	requiredAttrs := []string{"name", "version", "flavor", "storage_gb", "vpc_id", "subnet_id"}
 	for _, attr := range requiredAttrs {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %s in schema", attr)
 		}
+	}
+
+	if _, ok := resp.Schema.Attributes["config"]; !ok {
+		t.Error("expected config attribute in schema")
 	}
 
 	computedAttrs := []string{"id", "status", "private_ip", "port", "created_at", "updated_at", "tenant_id"}
@@ -399,16 +388,14 @@ func newTestNginxResource(c *client.Client) *nginxInstanceResource {
 
 func baseNginxModel() NginxInstanceModel {
 	return NginxInstanceModel{
-		Name:            types.StringValue("my-nginx"),
-		Version:         types.StringValue("1.27"),
-		Flavor:          types.StringValue("web.gp1.small"),
-		StorageGB:       types.Int64Value(20),
-		TLSEnabled:      types.BoolValue(true),
-		WorkerProcesses: types.Int64Null(),
-		GzipEnabled:     types.BoolValue(false),
-		TryFiles:        types.StringNull(),
-		ProxyPass:       types.StringNull(),
-		Config:          types.StringNull(),
+		Name:       types.StringValue("my-nginx"),
+		Version:    types.StringValue("1.27"),
+		Flavor:     types.StringValue("web.gp1.small"),
+		StorageGB:  types.Int64Value(20),
+		VPCID:      types.StringValue("vpc-1"),
+		SubnetID:   types.StringValue("sn-1"),
+		TLSEnabled: types.BoolValue(true),
+		Config:     mustCfgMap(map[string]string{"client_max_body_size": "10m"}),
 	}
 }
 
@@ -427,6 +414,18 @@ func TestCreate(t *testing.T) {
 			if body.Engine != "nginx" {
 				t.Errorf("expected engine nginx, got %s", body.Engine)
 			}
+			if body.Flavor != "web.gp1.small" {
+				t.Errorf("expected flavorId web.gp1.small, got %s", body.Flavor)
+			}
+			if body.VPCID != "vpc-1" {
+				t.Errorf("expected vpcId vpc-1, got %s", body.VPCID)
+			}
+			if body.SubnetID != "sn-1" {
+				t.Errorf("expected subnetId sn-1, got %s", body.SubnetID)
+			}
+			if body.EngineConfig["client_max_body_size"] != "10m" {
+				t.Errorf("expected engineConfig object client_max_body_size=10m, got %v", body.EngineConfig)
+			}
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
 				ID:            "nginx-new",
@@ -435,6 +434,9 @@ func TestCreate(t *testing.T) {
 				EngineVersion: body.EngineVersion,
 				Flavor:        body.Flavor,
 				StorageGB:     body.StorageGB,
+				VPCID:         body.VPCID,
+				SubnetID:      body.SubnetID,
+				EngineConfig:  body.EngineConfig,
 				Status:        "provisioning",
 				CreatedAt:     "2025-01-01T00:00:00Z",
 			})
@@ -451,7 +453,10 @@ func TestCreate(t *testing.T) {
 				EngineVersion: "1.27",
 				Flavor:        "web.gp1.small",
 				StorageGB:     20,
+				VPCID:         "vpc-1",
+				SubnetID:      "sn-1",
 				TLSEnabled:    true,
+				EngineConfig:  map[string]string{"client_max_body_size": "10m"},
 				Status:        status,
 				PrivateIP:     "10.0.1.5",
 				Port:          443,
@@ -524,12 +529,14 @@ func TestCreatePollErrorState(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
 				ID: "nginx-err", Name: "x", Engine: "nginx", EngineVersion: "1.27",
-				Flavor: "f", StorageGB: 20, Status: "provisioning", CreatedAt: "2025-01-01T00:00:00Z",
+				Flavor: "f", StorageGB: 20, VPCID: "vpc-1", SubnetID: "sn-1",
+				Status: "provisioning", CreatedAt: "2025-01-01T00:00:00Z",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-err":
 			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
 				ID: "nginx-err", Name: "x", Engine: "nginx", EngineVersion: "1.27",
-				Flavor: "f", StorageGB: 20, Status: "failed", CreatedAt: "2025-01-01T00:00:00Z",
+				Flavor: "f", StorageGB: 20, VPCID: "vpc-1", SubnetID: "sn-1",
+				Status: "failed", CreatedAt: "2025-01-01T00:00:00Z",
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -559,7 +566,10 @@ func TestRead(t *testing.T) {
 				EngineVersion: "1.27",
 				Flavor:        "web.gp1.small",
 				StorageGB:     20,
+				VPCID:         "vpc-1",
+				SubnetID:      "sn-1",
 				TLSEnabled:    true,
+				EngineConfig:  map[string]string{"client_max_body_size": "10m"},
 				Status:        "running",
 				Port:          443,
 				CreatedAt:     "2025-01-01T00:00:00Z",
@@ -593,6 +603,11 @@ func TestRead(t *testing.T) {
 	readResp.State.Get(context.Background(), &result)
 	if result.Status.ValueString() != "running" {
 		t.Errorf("expected status running, got %s", result.Status.ValueString())
+	}
+	cfg := map[string]string{}
+	result.Config.ElementsAs(context.Background(), &cfg, false)
+	if cfg["client_max_body_size"] != "10m" {
+		t.Errorf("expected config client_max_body_size=10m, got %v", cfg)
 	}
 }
 
@@ -671,6 +686,8 @@ func TestUpdate(t *testing.T) {
 				EngineVersion: "1.27",
 				Flavor:        "web.gp1.large",
 				StorageGB:     80,
+				VPCID:         "vpc-1",
+				SubnetID:      "sn-1",
 				TLSEnabled:    true,
 				Status:        "running",
 				Port:          443,
@@ -712,7 +729,7 @@ func TestUpdate(t *testing.T) {
 		t.Error("expected name in update request")
 	}
 	if updatedBody.Flavor == nil || *updatedBody.Flavor != "web.gp1.large" {
-		t.Error("expected flavor in update request")
+		t.Error("expected flavorId in update request")
 	}
 	if updatedBody.StorageGB == nil || *updatedBody.StorageGB != 80 {
 		t.Error("expected storageGb in update request")

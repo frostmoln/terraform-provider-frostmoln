@@ -34,8 +34,8 @@ func TestVolumeAttachmentModel_toAttachRequest_withDevicePath(t *testing.T) {
 	if req.InstanceID != "inst-456" {
 		t.Errorf("expected instanceId inst-456, got %s", req.InstanceID)
 	}
-	if req.DevicePath != "/dev/vdb" {
-		t.Errorf("expected devicePath /dev/vdb, got %s", req.DevicePath)
+	if req.Device != "/dev/vdb" {
+		t.Errorf("expected devicePath /dev/vdb, got %s", req.Device)
 	}
 }
 
@@ -49,21 +49,21 @@ func TestVolumeAttachmentModel_toAttachRequest_withoutDevicePath(t *testing.T) {
 	if req.InstanceID != "inst-789" {
 		t.Errorf("expected instanceId inst-789, got %s", req.InstanceID)
 	}
-	if req.DevicePath != "" {
-		t.Errorf("expected empty devicePath, got %s", req.DevicePath)
+	if req.Device != "" {
+		t.Errorf("expected empty devicePath, got %s", req.Device)
 	}
 }
 
-func TestVolumeAttachmentModel_fromAPI(t *testing.T) {
-	vol := &apiVolume{
-		ID:         "vol-123",
-		AttachedTo: "inst-456",
-		DevicePath: "/dev/vdb",
-		Status:     "in-use",
+func TestVolumeAttachmentModel_fromAttachment(t *testing.T) {
+	att := &apiVolumeAttachment{
+		ID:         "att-1",
+		VolumeID:   "vol-123",
+		InstanceID: "inst-456",
+		Device:     "/dev/vdb",
 	}
 
 	model := &VolumeAttachmentModel{}
-	model.fromAPI(vol)
+	model.fromAttachment("vol-123", att)
 
 	if model.ID.ValueString() != "vol-123/inst-456" {
 		t.Errorf("expected ID vol-123/inst-456, got %s", model.ID.ValueString())
@@ -79,15 +79,15 @@ func TestVolumeAttachmentModel_fromAPI(t *testing.T) {
 	}
 }
 
-func TestVolumeAttachmentModel_fromAPI_noDevicePath(t *testing.T) {
-	vol := &apiVolume{
-		ID:         "vol-123",
-		AttachedTo: "inst-456",
-		Status:     "in-use",
+func TestVolumeAttachmentModel_fromAttachment_noDevice(t *testing.T) {
+	att := &apiVolumeAttachment{
+		ID:         "att-1",
+		VolumeID:   "vol-123",
+		InstanceID: "inst-456",
 	}
 
 	model := &VolumeAttachmentModel{}
-	model.fromAPI(vol)
+	model.fromAttachment("vol-123", att)
 
 	if !model.DevicePath.IsNull() {
 		t.Errorf("expected device_path to be null, got %s", model.DevicePath.ValueString())
@@ -98,9 +98,8 @@ func TestVolumeAttachmentResource_Attach(t *testing.T) {
 	var attachCalled atomic.Int32
 
 	volume := apiVolume{
-		ID:         "vol-123",
-		Status:     "available",
-		AttachedTo: "",
+		ID:     "vol-123",
+		Status: "available",
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -114,8 +113,7 @@ func TestVolumeAttachmentResource_Attach(t *testing.T) {
 			attachCalled.Add(1)
 			var req apiAttachRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
-			volume.AttachedTo = req.InstanceID
-			volume.DevicePath = "/dev/vdb"
+			volume.Attachments = []apiVolumeAttachment{{VolumeID: volume.ID, InstanceID: req.InstanceID, Device: "/dev/vdb"}}
 			volume.Status = "in-use"
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(map[string]string{
@@ -143,7 +141,7 @@ func TestVolumeAttachmentResource_Attach(t *testing.T) {
 	ctx := context.Background()
 
 	// Attach
-	attachReq := apiAttachRequest{InstanceID: "inst-456", DevicePath: "/dev/vdb"}
+	attachReq := apiAttachRequest{InstanceID: "inst-456", Device: "/dev/vdb"}
 	_, err := c.Post(ctx, c.TenantPath("/volumes/vol-123/attach"), attachReq)
 	if err != nil {
 		t.Fatalf("attach failed: %v", err)
@@ -161,8 +159,8 @@ func TestVolumeAttachmentResource_Attach(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}
-	if vol.AttachedTo != "inst-456" {
-		t.Errorf("expected attachedTo inst-456, got %s", vol.AttachedTo)
+	if att := vol.findAttachment("inst-456"); att == nil {
+		t.Errorf("expected volume attached to inst-456, got attachments %+v", vol.Attachments)
 	}
 	if vol.Status != "in-use" {
 		t.Errorf("expected status in-use, got %s", vol.Status)
@@ -173,10 +171,9 @@ func TestVolumeAttachmentResource_Detach(t *testing.T) {
 	var detachCalled atomic.Int32
 
 	volume := apiVolume{
-		ID:         "vol-123",
-		Status:     "in-use",
-		AttachedTo: "inst-456",
-		DevicePath: "/dev/vdb",
+		ID:          "vol-123",
+		Status:      "in-use",
+		Attachments: []apiVolumeAttachment{{InstanceID: "inst-456", Device: "/dev/vdb"}},
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -188,8 +185,7 @@ func TestVolumeAttachmentResource_Detach(t *testing.T) {
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-123/detach":
 			detachCalled.Add(1)
-			volume.AttachedTo = ""
-			volume.DevicePath = ""
+			volume.Attachments = nil
 			volume.Status = "available"
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(map[string]string{
@@ -235,8 +231,8 @@ func TestVolumeAttachmentResource_Detach(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}
-	if vol.AttachedTo != "" {
-		t.Errorf("expected empty attachedTo, got %s", vol.AttachedTo)
+	if len(vol.Attachments) != 0 {
+		t.Errorf("expected no attachments, got %+v", vol.Attachments)
 	}
 	if vol.Status != "available" {
 		t.Errorf("expected status available, got %s", vol.Status)
@@ -281,8 +277,8 @@ func TestVolumeAttachmentResource_ReadNotAttached(t *testing.T) {
 		t.Fatalf("parse failed: %v", err)
 	}
 	// Volume exists but is not attached - the resource would be removed.
-	if vol.AttachedTo != "" {
-		t.Errorf("expected empty attachedTo, got %s", vol.AttachedTo)
+	if len(vol.Attachments) != 0 {
+		t.Errorf("expected no attachments, got %+v", vol.Attachments)
 	}
 }
 
@@ -378,8 +374,7 @@ func TestVolumeAttachment_TFSDKCreate(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-att-1/attach":
 			var req apiAttachRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
-			volume.AttachedTo = req.InstanceID
-			volume.DevicePath = "/dev/vdb"
+			volume.Attachments = []apiVolumeAttachment{{VolumeID: volume.ID, InstanceID: req.InstanceID, Device: "/dev/vdb"}}
 			volume.Status = "in-use"
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(map[string]string{
@@ -454,10 +449,9 @@ func TestVolumeAttachment_TFSDKRead(t *testing.T) {
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-r-1":
 			_ = json.NewEncoder(w).Encode(apiVolume{
-				ID:         "vol-r-1",
-				AttachedTo: "inst-r-1",
-				DevicePath: "/dev/vdc",
-				Status:     "in-use",
+				ID:          "vol-r-1",
+				Attachments: []apiVolumeAttachment{{InstanceID: "inst-r-1", Device: "/dev/vdc"}},
+				Status:      "in-use",
 			})
 
 		default:
@@ -520,9 +514,9 @@ func TestVolumeAttachment_TFSDKReadDetached(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-det-1":
 			// Volume exists but attached to a different instance
 			_ = json.NewEncoder(w).Encode(apiVolume{
-				ID:         "vol-det-1",
-				AttachedTo: "inst-other",
-				Status:     "in-use",
+				ID:          "vol-det-1",
+				Attachments: []apiVolumeAttachment{{InstanceID: "inst-other"}},
+				Status:      "in-use",
 			})
 
 		default:
@@ -571,10 +565,9 @@ func TestVolumeAttachment_TFSDKDelete(t *testing.T) {
 	var detachCalled bool
 
 	volume := apiVolume{
-		ID:         "vol-d-1",
-		AttachedTo: "inst-d-1",
-		DevicePath: "/dev/vdb",
-		Status:     "in-use",
+		ID:          "vol-d-1",
+		Attachments: []apiVolumeAttachment{{InstanceID: "inst-d-1", Device: "/dev/vdb"}},
+		Status:      "in-use",
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -584,8 +577,7 @@ func TestVolumeAttachment_TFSDKDelete(t *testing.T) {
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-d-1/detach":
 			detachCalled = true
-			volume.AttachedTo = ""
-			volume.DevicePath = ""
+			volume.Attachments = nil
 			volume.Status = "available"
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(map[string]string{
@@ -878,10 +870,9 @@ func TestVolumeAttachment_TFSDKCreateFinalReadError(t *testing.T) {
 			if n == 1 {
 				// Poll: return in-use to pass WaitForState
 				_ = json.NewEncoder(w).Encode(apiVolume{
-					ID:         "vol-fre-1",
-					Status:     "in-use",
-					AttachedTo: "inst-fre-1",
-					DevicePath: "/dev/vdb",
+					ID:          "vol-fre-1",
+					Status:      "in-use",
+					Attachments: []apiVolumeAttachment{{InstanceID: "inst-fre-1", Device: "/dev/vdb"}},
 				})
 			} else {
 				// Final read: return error
@@ -944,10 +935,9 @@ func TestVolumeAttachment_TFSDKCreateInstanceMismatch(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-mm-1":
 			// Return in-use but attached to a DIFFERENT instance
 			_ = json.NewEncoder(w).Encode(apiVolume{
-				ID:         "vol-mm-1",
-				Status:     "in-use",
-				AttachedTo: "inst-other",
-				DevicePath: "/dev/vdb",
+				ID:          "vol-mm-1",
+				Status:      "in-use",
+				Attachments: []apiVolumeAttachment{{InstanceID: "inst-other", Device: "/dev/vdb"}},
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)

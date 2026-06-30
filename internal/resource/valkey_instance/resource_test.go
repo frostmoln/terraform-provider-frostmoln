@@ -29,6 +29,7 @@ func TestValkeyInstanceModelToCreateRequest(t *testing.T) {
 		Name:            types.StringValue("my-valkey"),
 		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.gp1.small"),
+		StorageGB:       types.Int64Value(10),
 		VPCID:           types.StringValue("vpc-123"),
 		SubnetID:        types.StringValue("subnet-456"),
 		PersistenceMode: types.StringNull(),
@@ -42,6 +43,9 @@ func TestValkeyInstanceModelToCreateRequest(t *testing.T) {
 
 	if req.Engine != "valkey" {
 		t.Errorf("expected engine valkey, got %s", req.Engine)
+	}
+	if req.StorageGB != 10 {
+		t.Errorf("expected storageGb 10, got %d", req.StorageGB)
 	}
 	if req.Name != "my-valkey" {
 		t.Errorf("expected name my-valkey, got %s", req.Name)
@@ -140,6 +144,7 @@ func TestValkeyInstanceModelFromAPI(t *testing.T) {
 		Engine:          "valkey",
 		EngineVersion:   "7.2",
 		FlavorID:        "cache.gp1.small",
+		StorageGB:       25,
 		VPCID:           "vpc-123",
 		SubnetID:        "subnet-456",
 		PersistenceMode: "rdb",
@@ -160,6 +165,9 @@ func TestValkeyInstanceModelFromAPI(t *testing.T) {
 
 	if model.ID.ValueString() != "valkey-123" {
 		t.Errorf("expected ID valkey-123, got %s", model.ID.ValueString())
+	}
+	if model.StorageGB.ValueInt64() != 25 {
+		t.Errorf("expected storage_gb 25, got %d", model.StorageGB.ValueInt64())
 	}
 	if model.Port.ValueInt64() != 6379 {
 		t.Errorf("expected port 6379, got %d", model.Port.ValueInt64())
@@ -249,6 +257,12 @@ func TestSchema(t *testing.T) {
 	for _, attr := range computedAttrs {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected computed attribute %s in schema", attr)
+		}
+	}
+
+	for _, attr := range []string{"storage_gb", "persistence_mode", "eviction_policy"} {
+		if _, ok := resp.Schema.Attributes[attr]; !ok {
+			t.Errorf("expected optional attribute %s in schema", attr)
 		}
 	}
 }
@@ -514,6 +528,7 @@ func TestRead(t *testing.T) {
 				Engine:          "valkey",
 				EngineVersion:   "7.2",
 				FlavorID:        "cache.gp1.small",
+				StorageGB:       25,
 				VPCID:           "vpc-1",
 				SubnetID:        "sn-1",
 				PersistenceMode: "rdb",
@@ -539,6 +554,7 @@ func TestRead(t *testing.T) {
 		Name:            types.StringValue("my-valkey"),
 		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.gp1.small"),
+		StorageGB:       types.Int64Value(25),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
 		PersistenceMode: types.StringValue("rdb"),
@@ -558,6 +574,9 @@ func TestRead(t *testing.T) {
 	readResp.State.Get(context.Background(), &result)
 	if result.Status.ValueString() != "running" {
 		t.Errorf("expected status running, got %s", result.Status.ValueString())
+	}
+	if result.StorageGB.ValueInt64() != 25 {
+		t.Errorf("expected storage_gb 25, got %d", result.StorageGB.ValueInt64())
 	}
 }
 

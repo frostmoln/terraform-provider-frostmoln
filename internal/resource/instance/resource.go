@@ -77,15 +77,6 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"region": schema.StringAttribute{
-				Description: "The region for the instance.",
-				Optional:    true,
-				Computed:    true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-					stringplanmodifier.UseStateForUnknown(),
-				},
-			},
 			"zone": schema.StringAttribute{
 				Description: "The availability zone for the instance.",
 				Optional:    true,
@@ -108,9 +99,14 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				},
 			},
 			"security_groups": schema.SetAttribute{
-				Description: "The security group IDs attached to the instance.",
+				// The compute update API has no security-group field — SGs can only
+				// be set at create — so a change forces replacement (like ssh_key_names).
+				Description: "The security group IDs attached to the instance. Changing this forces a new instance (the API does not support changing security groups in place).",
 				Optional:    true,
 				ElementType: types.StringType,
+				PlanModifiers: []planmodifier.Set{
+					setplanmodifier.RequiresReplace(),
+				},
 			},
 			"ssh_key_names": schema.SetAttribute{
 				Description: "The SSH key names to inject into the instance.",
@@ -333,12 +329,12 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 		}
 	}
 
-	// Check if name, tags, or security_groups changed (PATCH update).
+	// Only name + tags are updatable in place (security_groups is RequiresReplace —
+	// the compute update API has no SG field).
 	nameChanged := !plan.Name.Equal(state.Name)
 	tagsChanged := !plan.Tags.Equal(state.Tags)
-	sgChanged := !plan.SecurityGroups.Equal(state.SecurityGroups)
 
-	if nameChanged || tagsChanged || sgChanged {
+	if nameChanged || tagsChanged {
 		updateReq := plan.toUpdateRequest(ctx, &resp.Diagnostics)
 		if resp.Diagnostics.HasError() {
 			return
@@ -374,10 +370,10 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 
 // resizeInstance performs the stop -> resize -> start workflow.
 func (r *instanceResource) resizeInstance(ctx context.Context, id, newFlavorID string) error {
-	actionPath := r.client.TenantPath(fmt.Sprintf("/instances/%s/action", id))
+	base := r.client.TenantPath(fmt.Sprintf("/instances/%s", id))
 
-	// 1. Stop the instance.
-	_, err := r.client.Post(ctx, actionPath, apiInstanceActionRequest{Action: "stop"})
+	// 1. Stop the instance (discrete route; the backend has no /action endpoint).
+	_, err := r.client.Post(ctx, base+"/stop", nil)
 	if err != nil {
 		return fmt.Errorf("failed to stop instance for resize: %w", err)
 	}
@@ -406,16 +402,13 @@ func (r *instanceResource) resizeInstance(ctx context.Context, id, newFlavorID s
 	}
 
 	// 3. Resize the instance.
-	_, err = r.client.Post(ctx, actionPath, apiInstanceActionRequest{
-		Action:   "resize",
-		FlavorID: newFlavorID,
-	})
+	_, err = r.client.Post(ctx, base+"/resize", apiResizeInstanceRequest{FlavorID: newFlavorID})
 	if err != nil {
 		return fmt.Errorf("failed to resize instance: %w", err)
 	}
 
 	// 4. Start the instance.
-	_, err = r.client.Post(ctx, actionPath, apiInstanceActionRequest{Action: "start"})
+	_, err = r.client.Post(ctx, base+"/start", nil)
 	if err != nil {
 		return fmt.Errorf("failed to start instance after resize: %w", err)
 	}

@@ -38,10 +38,14 @@ func TestSchema(t *testing.T) {
 	r := NewResource()
 	var resp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &resp)
-	for _, attr := range []string{"id", "instance_id", "domain_name", "tls_enabled", "is_default", "status", "created_at"} {
+	for _, attr := range []string{"id", "instance_id", "domain_name", "tls_enabled", "is_default", "created_at"} {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %s in schema", attr)
 		}
+	}
+	// The webserver service does not return a status field for domain bindings.
+	if _, ok := resp.Schema.Attributes["status"]; ok {
+		t.Error("did not expect a status attribute in schema")
 	}
 }
 
@@ -128,30 +132,30 @@ func fullDomainModel() webserverDomainModel {
 		DomainName: types.StringValue("example.com"),
 		TLSEnabled: types.BoolValue(true),
 		IsDefault:  types.BoolValue(false),
-		Status:     types.StringValue("active"),
 		CreatedAt:  types.StringValue("2025-01-01T00:00:00Z"),
 	}
 }
 
-func domainJSON(status string) apiWebserverDomain {
+// domainJSON returns the API binding shape (no status field per the contract).
+func domainJSON() apiWebserverDomain {
 	return apiWebserverDomain{
 		ID:         "dom-1",
 		InstanceID: "inst-1",
 		DomainName: "example.com",
 		TLSEnabled: true,
 		IsDefault:  false,
-		Status:     status,
 		CreatedAt:  "2025-01-01T00:00:00Z",
 	}
 }
 
-const domainsPath = "/v1/tenants/t-1/webservers/inst-1/domains"
-const domainPath = "/v1/tenants/t-1/webservers/inst-1/domains/dom-1"
+const (
+	domainsPath = "/v1/tenants/t-1/webservers/inst-1/domains"
+	domainPath  = "/v1/tenants/t-1/webservers/inst-1/domains/dom-1"
+)
 
 // --- CRUD tests ---
 
 func TestCreate(t *testing.T) {
-	var getCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == domainsPath:
@@ -163,14 +167,9 @@ func TestCreate(t *testing.T) {
 			if body.TLSEnabled == nil || !*body.TLSEnabled {
 				t.Error("expected tlsEnabled true in request")
 			}
+			// The Add endpoint is synchronous and returns the created binding directly.
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(domainJSON("provisioning"))
-		case r.Method == http.MethodGet && r.URL.Path == domainPath:
-			status := "provisioning"
-			if getCount.Add(1) >= 2 {
-				status = "active"
-			}
-			_ = json.NewEncoder(w).Encode(domainJSON(status))
+			_ = json.NewEncoder(w).Encode(domainJSON())
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -181,7 +180,7 @@ func TestCreate(t *testing.T) {
 	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
 	c.SetTenantIDForTest("t-1")
 
-	r := &webserverDomainResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+	r := &webserverDomainResource{client: c}
 
 	plan := buildDomainPlan(t, webserverDomainModel{
 		InstanceID: types.StringValue("inst-1"),
@@ -200,8 +199,11 @@ func TestCreate(t *testing.T) {
 	if result.ID.ValueString() != "dom-1" {
 		t.Errorf("expected ID dom-1, got %s", result.ID.ValueString())
 	}
-	if result.Status.ValueString() != "active" {
-		t.Errorf("expected status active, got %s", result.Status.ValueString())
+	if result.DomainName.ValueString() != "example.com" {
+		t.Errorf("expected domain example.com, got %s", result.DomainName.ValueString())
+	}
+	if !result.TLSEnabled.ValueBool() {
+		t.Error("expected tls_enabled true")
 	}
 }
 
@@ -215,9 +217,7 @@ func TestCreateMinimal(t *testing.T) {
 				t.Error("expected nil optional bool pointers for null values")
 			}
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(domainJSON("active"))
-		case r.Method == http.MethodGet && r.URL.Path == domainPath:
-			_ = json.NewEncoder(w).Encode(domainJSON("active"))
+			_ = json.NewEncoder(w).Encode(domainJSON())
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -228,7 +228,7 @@ func TestCreateMinimal(t *testing.T) {
 	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
 	c.SetTenantIDForTest("t-1")
 
-	r := &webserverDomainResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+	r := &webserverDomainResource{client: c}
 	plan := buildDomainPlan(t, webserverDomainModel{
 		InstanceID: types.StringValue("inst-1"),
 		DomainName: types.StringValue("example.com"),
@@ -253,7 +253,7 @@ func TestCreateAPIError(t *testing.T) {
 	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
 	c.SetTenantIDForTest("t-1")
 
-	r := &webserverDomainResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+	r := &webserverDomainResource{client: c}
 	plan := buildDomainPlan(t, webserverDomainModel{
 		InstanceID: types.StringValue("inst-1"),
 		DomainName: types.StringValue("example.com"),
@@ -268,42 +268,11 @@ func TestCreateAPIError(t *testing.T) {
 	}
 }
 
-func TestCreatePollError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == domainsPath:
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(domainJSON("provisioning"))
-		case r.Method == http.MethodGet && r.URL.Path == domainPath:
-			_ = json.NewEncoder(w).Encode(domainJSON("error"))
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-
-	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
-	c.SetTenantIDForTest("t-1")
-
-	r := &webserverDomainResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
-	plan := buildDomainPlan(t, webserverDomainModel{
-		InstanceID: types.StringValue("inst-1"),
-		DomainName: types.StringValue("example.com"),
-		TLSEnabled: types.BoolValue(true),
-		IsDefault:  types.BoolValue(false),
-	})
-
-	createResp := resource.CreateResponse{State: emptyDomainState(t)}
-	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
-	if !createResp.Diagnostics.HasError() {
-		t.Error("expected error when domain enters error state during polling")
-	}
-}
-
 func TestRead(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == domainPath {
-			_ = json.NewEncoder(w).Encode(domainJSON("active"))
+		// Read fetches the instance's domain list and finds the binding by id.
+		if r.Method == http.MethodGet && r.URL.Path == domainsPath {
+			_ = json.NewEncoder(w).Encode(apiWebserverDomainList{Domains: []apiWebserverDomain{domainJSON()}})
 			return
 		}
 		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -329,10 +298,15 @@ func TestRead(t *testing.T) {
 	}
 }
 
-func TestReadNotFound(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+func TestReadNotInList(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == domainsPath {
+			// The binding is no longer present in the instance's domain list.
+			_ = json.NewEncoder(w).Encode(apiWebserverDomainList{Domains: []apiWebserverDomain{}})
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "gone"})
 	}))
 	defer server.Close()
 
@@ -345,12 +319,12 @@ func TestReadNotFound(t *testing.T) {
 	readResp := resource.ReadResponse{State: state}
 	r.Read(context.Background(), resource.ReadRequest{State: state}, &readResp)
 	if readResp.Diagnostics.HasError() {
-		t.Fatalf("expected no error for 404, got %v", readResp.Diagnostics.Errors())
+		t.Fatalf("expected no error when binding absent, got %v", readResp.Diagnostics.Errors())
 	}
 	var result webserverDomainModel
 	if diags := readResp.State.Get(context.Background(), &result); !diags.HasError() {
 		if result.ID.ValueString() != "" {
-			t.Error("expected state removed after 404")
+			t.Error("expected state removed when binding not in list")
 		}
 	}
 }
@@ -360,15 +334,9 @@ func TestDelete(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodDelete && r.URL.Path == domainPath:
+			// Remove is synchronous (HTTP 204); no polling.
 			deleted.Store(true)
 			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodGet && r.URL.Path == domainPath:
-			if deleted.Load() {
-				w.WriteHeader(http.StatusNotFound)
-				_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "gone"})
-			} else {
-				_ = json.NewEncoder(w).Encode(domainJSON("deleting"))
-			}
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -379,7 +347,7 @@ func TestDelete(t *testing.T) {
 	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
 	c.SetTenantIDForTest("t-1")
 
-	r := &webserverDomainResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+	r := &webserverDomainResource{client: c}
 	state := buildDomainState(t, fullDomainModel())
 
 	deleteResp := resource.DeleteResponse{State: state}
@@ -406,7 +374,7 @@ func TestCreateBadResponseBody(t *testing.T) {
 	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
 	c.SetTenantIDForTest("t-1")
 
-	r := &webserverDomainResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+	r := &webserverDomainResource{client: c}
 	plan := buildDomainPlan(t, webserverDomainModel{
 		InstanceID: types.StringValue("inst-1"),
 		DomainName: types.StringValue("example.com"),
@@ -423,7 +391,7 @@ func TestCreateBadResponseBody(t *testing.T) {
 
 func TestReadBadResponseBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == domainPath {
+		if r.Method == http.MethodGet && r.URL.Path == domainsPath {
 			_, _ = w.Write([]byte("not json"))
 			return
 		}
@@ -478,7 +446,7 @@ func TestDeleteServerError(t *testing.T) {
 	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
 	c.SetTenantIDForTest("t-1")
 
-	r := &webserverDomainResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+	r := &webserverDomainResource{client: c}
 	state := buildDomainState(t, fullDomainModel())
 
 	deleteResp := resource.DeleteResponse{State: state}
@@ -498,7 +466,7 @@ func TestDeleteAlreadyGone(t *testing.T) {
 	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
 	c.SetTenantIDForTest("t-1")
 
-	r := &webserverDomainResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+	r := &webserverDomainResource{client: c}
 	state := buildDomainState(t, fullDomainModel())
 
 	deleteResp := resource.DeleteResponse{State: state}

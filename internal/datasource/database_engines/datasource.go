@@ -30,18 +30,35 @@ type databaseEnginesModel struct {
 	Engines types.List `tfsdk:"engines"`
 }
 
-// databaseEngineItemModel represents a single database engine in the list.
-type databaseEngineItemModel struct {
-	Name        types.String `tfsdk:"name"`
-	Description types.String `tfsdk:"description"`
-	Versions    types.List   `tfsdk:"versions"`
+// engineItemModel represents a single database engine in the list.
+type engineItemModel struct {
+	Engine   types.String `tfsdk:"engine"`
+	Versions types.List   `tfsdk:"versions"`
 }
 
-// apiDatabaseEngine is the API representation of a database engine.
+// versionItemModel represents a single version of a database engine.
+type versionItemModel struct {
+	Version   types.String `tfsdk:"version"`
+	Status    types.String `tfsdk:"status"`
+	EndOfLife types.String `tfsdk:"end_of_life"`
+	IsDefault types.Bool   `tfsdk:"is_default"`
+}
+
+// apiDatabaseVersion is the API representation of a database engine version
+// (database/internal/domain/version.go DatabaseVersion).
+type apiDatabaseVersion struct {
+	Version   string `json:"version"`
+	Status    string `json:"status"`
+	EndOfLife string `json:"endOfLife,omitempty"`
+	IsDefault bool   `json:"isDefault"`
+}
+
+// apiDatabaseEngine is the API representation of a database engine. The engines
+// endpoint serializes the engine name under `engine` and the versions as an
+// array of objects (database/internal/service/interfaces.go EngineInfo).
 type apiDatabaseEngine struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description,omitempty"`
-	Versions    []string `json:"versions,omitempty"`
+	Engine   string               `json:"engine"`
+	Versions []apiDatabaseVersion `json:"versions,omitempty"`
 }
 
 // apiDatabaseEngineList is the API response for listing database engines.
@@ -49,10 +66,16 @@ type apiDatabaseEngineList struct {
 	Engines []apiDatabaseEngine `json:"engines"`
 }
 
+var versionItemAttrTypes = map[string]attr.Type{
+	"version":     types.StringType,
+	"status":      types.StringType,
+	"end_of_life": types.StringType,
+	"is_default":  types.BoolType,
+}
+
 var engineItemAttrTypes = map[string]attr.Type{
-	"name":        types.StringType,
-	"description": types.StringType,
-	"versions":    types.ListType{ElemType: types.StringType},
+	"engine":   types.StringType,
+	"versions": types.ListType{ElemType: types.ObjectType{AttrTypes: versionItemAttrTypes}},
 }
 
 func (d *databaseEnginesDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -61,25 +84,40 @@ func (d *databaseEnginesDataSource) Metadata(_ context.Context, req datasource.M
 
 func (d *databaseEnginesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Lists all available database engines for managed database instances.",
+		Description: "Lists all available database engines and their versions for managed database instances.",
 		Attributes: map[string]schema.Attribute{
 			"engines": schema.ListNestedAttribute{
 				Description: "The list of available database engines.",
 				Computed:    true,
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
-						"name": schema.StringAttribute{
+						"engine": schema.StringAttribute{
 							Description: "The engine name (e.g. \"postgresql\", \"mysql\").",
 							Computed:    true,
 						},
-						"description": schema.StringAttribute{
-							Description: "A human-readable description of the engine.",
+						"versions": schema.ListNestedAttribute{
+							Description: "The supported versions for this engine.",
 							Computed:    true,
-						},
-						"versions": schema.ListAttribute{
-							Description: "The list of supported version strings for this engine.",
-							Computed:    true,
-							ElementType: types.StringType,
+							NestedObject: schema.NestedAttributeObject{
+								Attributes: map[string]schema.Attribute{
+									"version": schema.StringAttribute{
+										Description: "The version string (e.g. \"16\").",
+										Computed:    true,
+									},
+									"status": schema.StringAttribute{
+										Description: "The version lifecycle status (current/supported/deprecated/eol/innovation).",
+										Computed:    true,
+									},
+									"end_of_life": schema.StringAttribute{
+										Description: "The end-of-life date for this version.",
+										Computed:    true,
+									},
+									"is_default": schema.BoolAttribute{
+										Description: "Whether this is the recommended default version.",
+										Computed:    true,
+									},
+								},
+							},
 						},
 					},
 				},
@@ -122,30 +160,33 @@ func (d *databaseEnginesDataSource) Read(ctx context.Context, req datasource.Rea
 		return
 	}
 
-	var items []databaseEngineItemModel
+	items := make([]engineItemModel, 0, len(list.Engines))
 	for _, e := range list.Engines {
-		item := databaseEngineItemModel{
-			Name: types.StringValue(e.Name),
-		}
-
-		if e.Description != "" {
-			item.Description = types.StringValue(e.Description)
-		} else {
-			item.Description = types.StringNull()
-		}
-
-		if len(e.Versions) > 0 {
-			versionList, diags := types.ListValueFrom(ctx, types.StringType, e.Versions)
-			resp.Diagnostics.Append(diags...)
-			if resp.Diagnostics.HasError() {
-				return
+		versionItems := make([]versionItemModel, 0, len(e.Versions))
+		for _, v := range e.Versions {
+			item := versionItemModel{
+				Version:   types.StringValue(v.Version),
+				Status:    types.StringValue(v.Status),
+				IsDefault: types.BoolValue(v.IsDefault),
 			}
-			item.Versions = versionList
-		} else {
-			item.Versions = types.ListNull(types.StringType)
+			if v.EndOfLife != "" {
+				item.EndOfLife = types.StringValue(v.EndOfLife)
+			} else {
+				item.EndOfLife = types.StringNull()
+			}
+			versionItems = append(versionItems, item)
 		}
 
-		items = append(items, item)
+		versionsList, diags := types.ListValueFrom(ctx, types.ObjectType{AttrTypes: versionItemAttrTypes}, versionItems)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		items = append(items, engineItemModel{
+			Engine:   types.StringValue(e.Engine),
+			Versions: versionsList,
+		})
 	}
 
 	enginesList, diags := types.ListValueFrom(ctx, types.ObjectType{AttrTypes: engineItemAttrTypes}, items)

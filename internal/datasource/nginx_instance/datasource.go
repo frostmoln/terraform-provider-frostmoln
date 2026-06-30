@@ -26,45 +26,43 @@ type nginxInstanceDataSource struct {
 
 // nginxInstanceModel is the Terraform state model for a Nginx instance data source.
 type nginxInstanceModel struct {
-	ID              types.String `tfsdk:"id"`
-	Name            types.String `tfsdk:"name"`
-	Version         types.String `tfsdk:"version"`
-	Flavor          types.String `tfsdk:"flavor"`
-	StorageGB       types.Int64  `tfsdk:"storage_gb"`
-	TLSEnabled      types.Bool   `tfsdk:"tls_enabled"`
-	WorkerProcesses types.Int64  `tfsdk:"worker_processes"`
-	GzipEnabled     types.Bool   `tfsdk:"gzip_enabled"`
-	TryFiles        types.String `tfsdk:"try_files"`
-	ProxyPass       types.String `tfsdk:"proxy_pass"`
-	Config          types.String `tfsdk:"config"`
-	Status          types.String `tfsdk:"status"`
-	PrivateIP       types.String `tfsdk:"private_ip"`
-	Port            types.Int64  `tfsdk:"port"`
-	CreatedAt       types.String `tfsdk:"created_at"`
-	UpdatedAt       types.String `tfsdk:"updated_at"`
-	TenantID        types.String `tfsdk:"tenant_id"`
+	ID         types.String `tfsdk:"id"`
+	Name       types.String `tfsdk:"name"`
+	Version    types.String `tfsdk:"version"`
+	Flavor     types.String `tfsdk:"flavor"`
+	StorageGB  types.Int64  `tfsdk:"storage_gb"`
+	VPCID      types.String `tfsdk:"vpc_id"`
+	SubnetID   types.String `tfsdk:"subnet_id"`
+	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
+	Config     types.Map    `tfsdk:"config"`
+	Status     types.String `tfsdk:"status"`
+	PrivateIP  types.String `tfsdk:"private_ip"`
+	Port       types.Int64  `tfsdk:"port"`
+	CreatedAt  types.String `tfsdk:"created_at"`
+	UpdatedAt  types.String `tfsdk:"updated_at"`
+	TenantID   types.String `tfsdk:"tenant_id"`
 }
 
 // apiWebserverInstance is the API representation of a managed webserver instance.
+// The flavor is `flavorId`, vpcId/subnetId are returned, and `engineConfig` is a
+// JSON object (webserver/internal/domain/instance.go).
 type apiWebserverInstance struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Engine          string `json:"engine"`
-	EngineVersion   string `json:"engineVersion"`
-	Flavor          string `json:"flavor"`
-	StorageGB       int    `json:"storageGb"`
-	TLSEnabled      bool   `json:"tlsEnabled"`
-	WorkerProcesses int    `json:"workerProcesses,omitempty"`
-	GzipEnabled     bool   `json:"gzipEnabled"`
-	TryFiles        string `json:"tryFiles,omitempty"`
-	ProxyPass       string `json:"proxyPass,omitempty"`
-	EngineConfig    string `json:"engineConfig,omitempty"`
-	Status          string `json:"status"`
-	PrivateIP       string `json:"privateIp,omitempty"`
-	Port            int    `json:"port,omitempty"`
-	CreatedAt       string `json:"createdAt"`
-	UpdatedAt       string `json:"updatedAt,omitempty"`
-	TenantID        string `json:"tenantId,omitempty"`
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	Engine        string            `json:"engine"`
+	EngineVersion string            `json:"engineVersion"`
+	Flavor        string            `json:"flavorId"`
+	StorageGB     int               `json:"storageGb"`
+	VPCID         string            `json:"vpcId"`
+	SubnetID      string            `json:"subnetId"`
+	TLSEnabled    bool              `json:"tlsEnabled"`
+	EngineConfig  map[string]string `json:"engineConfig,omitempty"`
+	Status        string            `json:"status"`
+	PrivateIP     string            `json:"privateIp,omitempty"`
+	Port          int               `json:"port,omitempty"`
+	CreatedAt     string            `json:"createdAt"`
+	UpdatedAt     string            `json:"updatedAt,omitempty"`
+	TenantID      string            `json:"tenantId,omitempty"`
 }
 
 func (d *nginxInstanceDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -95,29 +93,22 @@ func (d *nginxInstanceDataSource) Schema(_ context.Context, _ datasource.SchemaR
 				Description: "The storage size in gigabytes.",
 				Computed:    true,
 			},
+			"vpc_id": schema.StringAttribute{
+				Description: "The VPC ID where the instance is deployed.",
+				Computed:    true,
+			},
+			"subnet_id": schema.StringAttribute{
+				Description: "The subnet ID where the instance is deployed.",
+				Computed:    true,
+			},
 			"tls_enabled": schema.BoolAttribute{
 				Description: "Whether TLS is enabled.",
 				Computed:    true,
 			},
-			"worker_processes": schema.Int64Attribute{
-				Description: "The number of Nginx worker processes.",
+			"config": schema.MapAttribute{
+				Description: "Engine-specific configuration as key/value pairs.",
 				Computed:    true,
-			},
-			"gzip_enabled": schema.BoolAttribute{
-				Description: "Whether gzip compression is enabled.",
-				Computed:    true,
-			},
-			"try_files": schema.StringAttribute{
-				Description: "The try_files directive value.",
-				Computed:    true,
-			},
-			"proxy_pass": schema.StringAttribute{
-				Description: "The proxy_pass upstream URL.",
-				Computed:    true,
-			},
-			"config": schema.StringAttribute{
-				Description: "Custom engine configuration.",
-				Computed:    true,
+				ElementType: types.StringType,
 			},
 			"status": schema.StringAttribute{
 				Description: "The current status of the Nginx instance.",
@@ -186,33 +177,18 @@ func (d *nginxInstanceDataSource) Read(ctx context.Context, req datasource.ReadR
 	state.Version = types.StringValue(inst.EngineVersion)
 	state.Flavor = types.StringValue(inst.Flavor)
 	state.StorageGB = types.Int64Value(int64(inst.StorageGB))
+	state.VPCID = types.StringValue(inst.VPCID)
+	state.SubnetID = types.StringValue(inst.SubnetID)
 	state.TLSEnabled = types.BoolValue(inst.TLSEnabled)
-	state.GzipEnabled = types.BoolValue(inst.GzipEnabled)
 	state.Status = types.StringValue(inst.Status)
 	state.CreatedAt = types.StringValue(inst.CreatedAt)
 
-	if inst.WorkerProcesses > 0 {
-		state.WorkerProcesses = types.Int64Value(int64(inst.WorkerProcesses))
+	if len(inst.EngineConfig) > 0 {
+		cfgMap, d := types.MapValueFrom(ctx, types.StringType, inst.EngineConfig)
+		resp.Diagnostics.Append(d...)
+		state.Config = cfgMap
 	} else {
-		state.WorkerProcesses = types.Int64Null()
-	}
-
-	if inst.TryFiles != "" {
-		state.TryFiles = types.StringValue(inst.TryFiles)
-	} else {
-		state.TryFiles = types.StringNull()
-	}
-
-	if inst.ProxyPass != "" {
-		state.ProxyPass = types.StringValue(inst.ProxyPass)
-	} else {
-		state.ProxyPass = types.StringNull()
-	}
-
-	if inst.EngineConfig != "" {
-		state.Config = types.StringValue(inst.EngineConfig)
-	} else {
-		state.Config = types.StringNull()
+		state.Config = types.MapNull(types.StringType)
 	}
 
 	if inst.PrivateIP != "" {

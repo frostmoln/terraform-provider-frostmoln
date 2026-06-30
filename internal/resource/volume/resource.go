@@ -118,13 +118,6 @@ func (r *volumeResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					int64planmodifier.UseStateForUnknown(),
 				},
 			},
-			"region": schema.StringAttribute{
-				Description: "The region where the volume is located.",
-				Computed:    true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
-			},
 			"attached_to": schema.StringAttribute{
 				Description: "The instance ID the volume is attached to, if any.",
 				Computed:    true,
@@ -293,7 +286,7 @@ func (r *volumeResource) Update(ctx context.Context, req resource.UpdateRequest,
 				return
 			}
 		}
-		updateReq.Tags = tags
+		updateReq.Metadata = tags
 		needsPatch = true
 	}
 
@@ -308,7 +301,7 @@ func (r *volumeResource) Update(ctx context.Context, req resource.UpdateRequest,
 	// Check if size_gb increased (resize).
 	if plan.SizeGB.ValueInt64() > state.SizeGB.ValueInt64() {
 		resizeReq := apiResizeVolumeRequest{
-			SizeGB: int(plan.SizeGB.ValueInt64()),
+			NewSizeGB: int(plan.SizeGB.ValueInt64()),
 		}
 		resizeResp, err := r.client.Post(ctx, r.client.TenantPath("/volumes/"+volumeID+"/resize"), resizeReq)
 		if err != nil {

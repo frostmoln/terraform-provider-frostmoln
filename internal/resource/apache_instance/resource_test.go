@@ -19,6 +19,15 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
 
+// mustCfgMap builds a types.Map from a Go map for use in test models.
+func mustCfgMap(m map[string]string) types.Map {
+	v, diags := types.MapValueFrom(context.Background(), types.StringType, m)
+	if diags.HasError() {
+		panic(diags.Errors())
+	}
+	return v
+}
+
 // --- Model unit tests ---
 
 func TestApacheInstanceModelToCreateRequest(t *testing.T) {
@@ -30,10 +39,12 @@ func TestApacheInstanceModelToCreateRequest(t *testing.T) {
 		Version:    types.StringValue("2.4"),
 		Flavor:     types.StringValue("web.gp1.small"),
 		StorageGB:  types.Int64Value(20),
+		VPCID:      types.StringValue("vpc-1"),
+		SubnetID:   types.StringValue("sn-1"),
 		TLSEnabled: types.BoolNull(),
 		PHPEnabled: types.BoolNull(),
 		PHPVersion: types.StringNull(),
-		Config:     types.StringNull(),
+		Config:     types.MapNull(types.StringType),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
@@ -51,16 +62,25 @@ func TestApacheInstanceModelToCreateRequest(t *testing.T) {
 		t.Errorf("expected engineVersion 2.4, got %s", req.EngineVersion)
 	}
 	if req.Flavor != "web.gp1.small" {
-		t.Errorf("expected flavor web.gp1.small, got %s", req.Flavor)
+		t.Errorf("expected flavorId web.gp1.small, got %s", req.Flavor)
 	}
 	if req.StorageGB != 20 {
 		t.Errorf("expected storageGb 20, got %d", req.StorageGB)
+	}
+	if req.VPCID != "vpc-1" {
+		t.Errorf("expected vpcId vpc-1, got %s", req.VPCID)
+	}
+	if req.SubnetID != "sn-1" {
+		t.Errorf("expected subnetId sn-1, got %s", req.SubnetID)
 	}
 	if req.TLSEnabled != nil {
 		t.Error("expected nil tlsEnabled for null value")
 	}
 	if req.PHPEnabled != nil {
 		t.Error("expected nil phpEnabled for null value")
+	}
+	if req.EngineConfig != nil {
+		t.Error("expected nil engineConfig for null config")
 	}
 }
 
@@ -73,10 +93,12 @@ func TestApacheInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 		Version:    types.StringValue("2.4"),
 		Flavor:     types.StringValue("web.gp1.medium"),
 		StorageGB:  types.Int64Value(40),
+		VPCID:      types.StringValue("vpc-1"),
+		SubnetID:   types.StringValue("sn-1"),
 		TLSEnabled: types.BoolValue(true),
 		PHPEnabled: types.BoolValue(true),
 		PHPVersion: types.StringValue("8.3"),
-		Config:     types.StringValue(`{"k":"v"}`),
+		Config:     mustCfgMap(map[string]string{"ServerTokens": "Prod"}),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
@@ -93,12 +115,15 @@ func TestApacheInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 	if req.PHPVersion != "8.3" {
 		t.Errorf("expected phpVersion 8.3, got %s", req.PHPVersion)
 	}
-	if req.EngineConfig != `{"k":"v"}` {
-		t.Errorf("expected engineConfig set, got %s", req.EngineConfig)
+	if req.EngineConfig["ServerTokens"] != "Prod" {
+		t.Errorf("expected engineConfig ServerTokens=Prod, got %v", req.EngineConfig)
 	}
 }
 
 func TestApacheInstanceModelToUpdateRequest(t *testing.T) {
+	ctx := context.Background()
+	diags := diag.Diagnostics{}
+
 	plan := ApacheInstanceModel{
 		Name:       types.StringValue("new-name"),
 		Flavor:     types.StringValue("web.gp1.large"),
@@ -106,7 +131,7 @@ func TestApacheInstanceModelToUpdateRequest(t *testing.T) {
 		TLSEnabled: types.BoolValue(true),
 		PHPEnabled: types.BoolValue(true),
 		PHPVersion: types.StringValue("8.3"),
-		Config:     types.StringValue("new"),
+		Config:     mustCfgMap(map[string]string{"ServerTokens": "Prod"}),
 	}
 	state := ApacheInstanceModel{
 		Name:       types.StringValue("old-name"),
@@ -115,15 +140,18 @@ func TestApacheInstanceModelToUpdateRequest(t *testing.T) {
 		TLSEnabled: types.BoolValue(false),
 		PHPEnabled: types.BoolValue(false),
 		PHPVersion: types.StringNull(),
-		Config:     types.StringNull(),
+		Config:     types.MapNull(types.StringType),
 	}
 
-	req := plan.toUpdateRequest(&state)
+	req := plan.toUpdateRequest(ctx, &state, &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+	}
 	if req.Name == nil || *req.Name != "new-name" {
 		t.Error("expected name update")
 	}
 	if req.Flavor == nil || *req.Flavor != "web.gp1.large" {
-		t.Error("expected flavor update")
+		t.Error("expected flavorId update")
 	}
 	if req.StorageGB == nil || *req.StorageGB != 80 {
 		t.Error("expected storageGb update")
@@ -137,12 +165,15 @@ func TestApacheInstanceModelToUpdateRequest(t *testing.T) {
 	if req.PHPVersion == nil || *req.PHPVersion != "8.3" {
 		t.Error("expected phpVersion update")
 	}
-	if req.EngineConfig == nil || *req.EngineConfig != "new" {
-		t.Error("expected engineConfig update")
+	if req.EngineConfig["ServerTokens"] != "Prod" {
+		t.Errorf("expected engineConfig ServerTokens=Prod, got %v", req.EngineConfig)
 	}
 }
 
 func TestApacheInstanceModelToUpdateRequestNoChanges(t *testing.T) {
+	ctx := context.Background()
+	diags := diag.Diagnostics{}
+
 	same := ApacheInstanceModel{
 		Name:       types.StringValue("same"),
 		Flavor:     types.StringValue("web.gp1.small"),
@@ -150,10 +181,13 @@ func TestApacheInstanceModelToUpdateRequestNoChanges(t *testing.T) {
 		TLSEnabled: types.BoolValue(true),
 		PHPEnabled: types.BoolValue(false),
 		PHPVersion: types.StringValue("8.2"),
-		Config:     types.StringValue("cfg"),
+		Config:     mustCfgMap(map[string]string{"ServerTokens": "Prod"}),
 	}
 
-	req := same.toUpdateRequest(&same)
+	req := same.toUpdateRequest(ctx, &same, &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+	}
 	if req.Name != nil || req.Flavor != nil || req.StorageGB != nil ||
 		req.TLSEnabled != nil || req.PHPEnabled != nil || req.PHPVersion != nil || req.EngineConfig != nil {
 		t.Error("expected no changes in update request")
@@ -171,10 +205,12 @@ func TestApacheInstanceModelFromAPI(t *testing.T) {
 		EngineVersion: "2.4",
 		Flavor:        "web.gp1.small",
 		StorageGB:     20,
+		VPCID:         "vpc-1",
+		SubnetID:      "sn-1",
 		TLSEnabled:    true,
 		PHPEnabled:    true,
 		PHPVersion:    "8.3",
-		EngineConfig:  "cfg",
+		EngineConfig:  map[string]string{"ServerTokens": "Prod"},
 		Status:        "running",
 		PrivateIP:     "10.0.1.5",
 		Port:          443,
@@ -192,11 +228,25 @@ func TestApacheInstanceModelFromAPI(t *testing.T) {
 	if model.ID.ValueString() != "apache-123" {
 		t.Errorf("expected ID apache-123, got %s", model.ID.ValueString())
 	}
+	if model.Flavor.ValueString() != "web.gp1.small" {
+		t.Errorf("expected flavor web.gp1.small, got %s", model.Flavor.ValueString())
+	}
+	if model.VPCID.ValueString() != "vpc-1" {
+		t.Errorf("expected vpc_id vpc-1, got %s", model.VPCID.ValueString())
+	}
+	if model.SubnetID.ValueString() != "sn-1" {
+		t.Errorf("expected subnet_id sn-1, got %s", model.SubnetID.ValueString())
+	}
 	if !model.TLSEnabled.ValueBool() {
 		t.Error("expected tls_enabled true")
 	}
 	if model.PHPVersion.ValueString() != "8.3" {
 		t.Errorf("expected php_version 8.3, got %s", model.PHPVersion.ValueString())
+	}
+	cfg := map[string]string{}
+	model.Config.ElementsAs(ctx, &cfg, false)
+	if cfg["ServerTokens"] != "Prod" {
+		t.Errorf("expected config ServerTokens=Prod, got %v", cfg)
 	}
 	if model.Port.ValueInt64() != 443 {
 		t.Errorf("expected port 443, got %d", model.Port.ValueInt64())
@@ -220,6 +270,8 @@ func TestApacheInstanceModelFromAPINulls(t *testing.T) {
 		EngineVersion: "2.4",
 		Flavor:        "web.gp1.small",
 		StorageGB:     20,
+		VPCID:         "vpc-1",
+		SubnetID:      "sn-1",
 		TLSEnabled:    false,
 		PHPEnabled:    false,
 		Status:        "provisioning",
@@ -277,8 +329,14 @@ func TestSchema(t *testing.T) {
 	var resp resource.SchemaResponse
 	r.Schema(context.Background(), req, &resp)
 
-	requiredAttrs := []string{"name", "version", "flavor", "storage_gb"}
+	requiredAttrs := []string{"name", "version", "flavor", "storage_gb", "vpc_id", "subnet_id"}
 	for _, attr := range requiredAttrs {
+		if _, ok := resp.Schema.Attributes[attr]; !ok {
+			t.Errorf("expected attribute %s in schema", attr)
+		}
+	}
+
+	for _, attr := range []string{"php_enabled", "php_version", "config"} {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %s in schema", attr)
 		}
@@ -380,10 +438,12 @@ func baseApacheModel() ApacheInstanceModel {
 		Version:    types.StringValue("2.4"),
 		Flavor:     types.StringValue("web.gp1.small"),
 		StorageGB:  types.Int64Value(20),
+		VPCID:      types.StringValue("vpc-1"),
+		SubnetID:   types.StringValue("sn-1"),
 		TLSEnabled: types.BoolValue(true),
 		PHPEnabled: types.BoolValue(false),
 		PHPVersion: types.StringNull(),
-		Config:     types.StringNull(),
+		Config:     mustCfgMap(map[string]string{"ServerTokens": "Prod"}),
 	}
 }
 
@@ -402,6 +462,18 @@ func TestCreate(t *testing.T) {
 			if body.Engine != "apache" {
 				t.Errorf("expected engine apache, got %s", body.Engine)
 			}
+			if body.Flavor != "web.gp1.small" {
+				t.Errorf("expected flavorId web.gp1.small, got %s", body.Flavor)
+			}
+			if body.VPCID != "vpc-1" {
+				t.Errorf("expected vpcId vpc-1, got %s", body.VPCID)
+			}
+			if body.SubnetID != "sn-1" {
+				t.Errorf("expected subnetId sn-1, got %s", body.SubnetID)
+			}
+			if body.EngineConfig["ServerTokens"] != "Prod" {
+				t.Errorf("expected engineConfig object ServerTokens=Prod, got %v", body.EngineConfig)
+			}
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
 				ID:            "apache-new",
@@ -410,6 +482,9 @@ func TestCreate(t *testing.T) {
 				EngineVersion: body.EngineVersion,
 				Flavor:        body.Flavor,
 				StorageGB:     body.StorageGB,
+				VPCID:         body.VPCID,
+				SubnetID:      body.SubnetID,
+				EngineConfig:  body.EngineConfig,
 				Status:        "provisioning",
 				CreatedAt:     "2025-01-01T00:00:00Z",
 			})
@@ -426,7 +501,10 @@ func TestCreate(t *testing.T) {
 				EngineVersion: "2.4",
 				Flavor:        "web.gp1.small",
 				StorageGB:     20,
+				VPCID:         "vpc-1",
+				SubnetID:      "sn-1",
 				TLSEnabled:    true,
+				EngineConfig:  map[string]string{"ServerTokens": "Prod"},
 				Status:        status,
 				PrivateIP:     "10.0.1.5",
 				Port:          443,
@@ -499,12 +577,14 @@ func TestCreatePollErrorState(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
 				ID: "apache-err", Name: "x", Engine: "apache", EngineVersion: "2.4",
-				Flavor: "f", StorageGB: 20, Status: "provisioning", CreatedAt: "2025-01-01T00:00:00Z",
+				Flavor: "f", StorageGB: 20, VPCID: "vpc-1", SubnetID: "sn-1",
+				Status: "provisioning", CreatedAt: "2025-01-01T00:00:00Z",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/apache-err":
 			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
 				ID: "apache-err", Name: "x", Engine: "apache", EngineVersion: "2.4",
-				Flavor: "f", StorageGB: 20, Status: "error", CreatedAt: "2025-01-01T00:00:00Z",
+				Flavor: "f", StorageGB: 20, VPCID: "vpc-1", SubnetID: "sn-1",
+				Status: "error", CreatedAt: "2025-01-01T00:00:00Z",
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -534,7 +614,10 @@ func TestRead(t *testing.T) {
 				EngineVersion: "2.4",
 				Flavor:        "web.gp1.small",
 				StorageGB:     20,
+				VPCID:         "vpc-1",
+				SubnetID:      "sn-1",
 				TLSEnabled:    true,
+				EngineConfig:  map[string]string{"ServerTokens": "Prod"},
 				Status:        "running",
 				Port:          443,
 				CreatedAt:     "2025-01-01T00:00:00Z",
@@ -568,6 +651,11 @@ func TestRead(t *testing.T) {
 	readResp.State.Get(context.Background(), &result)
 	if result.Status.ValueString() != "running" {
 		t.Errorf("expected status running, got %s", result.Status.ValueString())
+	}
+	cfg := map[string]string{}
+	result.Config.ElementsAs(context.Background(), &cfg, false)
+	if cfg["ServerTokens"] != "Prod" {
+		t.Errorf("expected config ServerTokens=Prod, got %v", cfg)
 	}
 }
 
@@ -646,6 +734,8 @@ func TestUpdate(t *testing.T) {
 				EngineVersion: "2.4",
 				Flavor:        "web.gp1.large",
 				StorageGB:     80,
+				VPCID:         "vpc-1",
+				SubnetID:      "sn-1",
 				TLSEnabled:    true,
 				Status:        "running",
 				Port:          443,
@@ -687,7 +777,7 @@ func TestUpdate(t *testing.T) {
 		t.Error("expected name in update request")
 	}
 	if updatedBody.Flavor == nil || *updatedBody.Flavor != "web.gp1.large" {
-		t.Error("expected flavor in update request")
+		t.Error("expected flavorId in update request")
 	}
 	if updatedBody.StorageGB == nil || *updatedBody.StorageGB != 80 {
 		t.Error("expected storageGb in update request")

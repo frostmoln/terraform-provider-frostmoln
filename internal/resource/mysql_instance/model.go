@@ -38,7 +38,7 @@ type apiMysqlInstance struct {
 	Name                string `json:"name"`
 	Engine              string `json:"engine"`
 	EngineVersion       string `json:"engineVersion"`
-	Flavor              string `json:"flavor"`
+	Flavor              string `json:"flavorId"`
 	StorageGB           int    `json:"storageGb"`
 	VPCID               string `json:"vpcId"`
 	SubnetID            string `json:"subnetId"`
@@ -62,7 +62,7 @@ type apiCreateMysqlInstanceRequest struct {
 	Name                string `json:"name"`
 	Engine              string `json:"engine"`
 	EngineVersion       string `json:"engineVersion"`
-	Flavor              string `json:"flavor"`
+	Flavor              string `json:"flavorId"`
 	StorageGB           int    `json:"storageGb"`
 	VPCID               string `json:"vpcId"`
 	SubnetID            string `json:"subnetId"`
@@ -76,7 +76,7 @@ type apiCreateMysqlInstanceRequest struct {
 // apiUpdateMysqlInstanceRequest is the API request to update a managed MySQL instance.
 type apiUpdateMysqlInstanceRequest struct {
 	Name                *string `json:"name,omitempty"`
-	Flavor              *string `json:"flavor,omitempty"`
+	Flavor              *string `json:"flavorId,omitempty"`
 	StorageGB           *int    `json:"storageGb,omitempty"`
 	BackupEnabled       *bool   `json:"backupEnabled,omitempty"`
 	BackupSchedule      *string `json:"backupSchedule,omitempty"`

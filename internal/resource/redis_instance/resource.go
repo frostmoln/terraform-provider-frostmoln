@@ -76,6 +76,14 @@ func (r *redisInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				Description: "The flavor/size for the Redis instance (e.g. \"cache.gp1.small\", \"cache.gp1.medium\").",
 				Required:    true,
 			},
+			"storage_gb": schema.Int64Attribute{
+				Description: "The storage size in gigabytes (defaults to 10 if unset).",
+				Optional:    true,
+				Computed:    true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
+			},
 			"vpc_id": schema.StringAttribute{
 				Description: "The VPC ID where the Redis instance will be deployed.",
 				Required:    true,

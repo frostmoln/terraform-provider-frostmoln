@@ -83,21 +83,6 @@ func (r *bucketResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Description: "The total size of all objects in the bucket, in bytes.",
 				Computed:    true,
 			},
-			"endpoint": schema.StringAttribute{
-				Description: "The S3-compatible endpoint URL for the bucket.",
-				Computed:    true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
-			},
-			"access_key": schema.StringAttribute{
-				Description: "The access key for the bucket.",
-				Computed:    true,
-				Sensitive:   true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
-			},
 			"created_at": schema.StringAttribute{
 				Description: "The timestamp when the bucket was created.",
 				Computed:    true,
@@ -180,17 +165,9 @@ func (r *bucketResource) Read(ctx context.Context, req resource.ReadRequest, res
 		return
 	}
 
-	// Preserve access_key from state since the API may not return it on read.
-	accessKey := state.AccessKey
-
 	resp.Diagnostics.Append(state.fromAPI(ctx, b)...)
 	if resp.Diagnostics.HasError() {
 		return
-	}
-
-	// Restore access_key if the API did not include it in the response.
-	if b.AccessKey == "" && !accessKey.IsNull() {
-		state.AccessKey = accessKey
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -221,21 +198,9 @@ func (r *bucketResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	// Preserve access_key from state.
-	var state BucketModel
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	accessKey := state.AccessKey
-
 	resp.Diagnostics.Append(plan.fromAPI(ctx, b)...)
 	if resp.Diagnostics.HasError() {
 		return
-	}
-
-	if b.AccessKey == "" && !accessKey.IsNull() {
-		plan.AccessKey = accessKey
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)

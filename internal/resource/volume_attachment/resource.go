@@ -140,15 +140,16 @@ func (r *volumeAttachmentResource) Create(ctx context.Context, req resource.Crea
 		return
 	}
 
-	if vol.AttachedTo != instanceID {
+	att := vol.findAttachment(instanceID)
+	if att == nil {
 		resp.Diagnostics.AddError(
 			"Volume attachment mismatch",
-			fmt.Sprintf("Expected volume to be attached to %s, but found %s", instanceID, vol.AttachedTo),
+			fmt.Sprintf("Expected volume %s to be attached to instance %s, but no matching attachment was found", volumeID, instanceID),
 		)
 		return
 	}
 
-	plan.fromAPI(vol)
+	plan.fromAttachment(volumeID, att)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -179,12 +180,13 @@ func (r *volumeAttachmentResource) Read(ctx context.Context, req resource.ReadRe
 	}
 
 	// If the volume is no longer attached to the expected instance, remove the resource.
-	if vol.AttachedTo != instanceID {
+	att := vol.findAttachment(instanceID)
+	if att == nil {
 		resp.State.RemoveResource(ctx)
 		return
 	}
 
-	state.fromAPI(vol)
+	state.fromAttachment(volumeID, att)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 

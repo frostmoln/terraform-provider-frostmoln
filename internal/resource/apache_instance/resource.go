@@ -10,8 +10,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
@@ -80,6 +82,20 @@ func (r *apacheInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 				Description: "The storage size in gigabytes.",
 				Required:    true,
 			},
+			"vpc_id": schema.StringAttribute{
+				Description: "The VPC ID where the webserver instance will be deployed.",
+				Required:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"subnet_id": schema.StringAttribute{
+				Description: "The subnet ID where the webserver instance will be deployed.",
+				Required:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
 			"tls_enabled": schema.BoolAttribute{
 				Description: "Whether TLS is enabled for the webserver.",
 				Optional:    true,
@@ -99,10 +115,19 @@ func (r *apacheInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 			"php_version": schema.StringAttribute{
 				Description: "The PHP version (e.g. \"8.2\", \"8.3\"). Only applicable when php_enabled is true.",
 				Optional:    true,
+				Computed:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
-			"config": schema.StringAttribute{
-				Description: "Custom engine configuration as a JSON string.",
+			"config": schema.MapAttribute{
+				Description: "Engine-specific configuration as key/value pairs (sent as the engineConfig object).",
 				Optional:    true,
+				Computed:    true,
+				ElementType: types.StringType,
+				PlanModifiers: []planmodifier.Map{
+					mapplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"status": schema.StringAttribute{
 				Description: "The current status of the Apache instance.",
@@ -269,7 +294,10 @@ func (r *apacheInstanceResource) Update(ctx context.Context, req resource.Update
 
 	id := state.ID.ValueString()
 
-	updateReq := plan.toUpdateRequest(&state)
+	updateReq := plan.toUpdateRequest(ctx, &state, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	_, err := r.client.Put(ctx, r.client.TenantPath("/webservers/"+id), updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to update Apache instance", err.Error())

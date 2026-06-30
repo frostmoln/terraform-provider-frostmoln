@@ -53,7 +53,6 @@ func TestInstanceModelToCreateRequest(t *testing.T) {
 		Name:            types.StringValue("web-1"),
 		FlavorID:        types.StringValue("flavor-small"),
 		ImageID:         types.StringValue("img-ubuntu"),
-		Region:          types.StringValue("sweden"),
 		Zone:            types.StringValue("sweden-a"),
 		VPCID:           types.StringValue("vpc-123"),
 		SubnetID:        types.StringValue("subnet-456"),
@@ -78,9 +77,6 @@ func TestInstanceModelToCreateRequest(t *testing.T) {
 	if req.ImageID != "img-ubuntu" {
 		t.Errorf("expected image_id img-ubuntu, got %s", req.ImageID)
 	}
-	if req.Region != "sweden" {
-		t.Errorf("expected region sweden, got %s", req.Region)
-	}
 	if req.Zone != "sweden-a" {
 		t.Errorf("expected zone sweden-a, got %s", req.Zone)
 	}
@@ -90,11 +86,11 @@ func TestInstanceModelToCreateRequest(t *testing.T) {
 	if req.SubnetID != "subnet-456" {
 		t.Errorf("expected subnet_id subnet-456, got %s", req.SubnetID)
 	}
-	if len(req.SecurityGroups) != 2 {
-		t.Errorf("expected 2 security groups, got %d", len(req.SecurityGroups))
+	if len(req.SecurityGroupIDs) != 2 {
+		t.Errorf("expected 2 security groups, got %d", len(req.SecurityGroupIDs))
 	}
-	if len(req.SSHKeyNames) != 1 || req.SSHKeyNames[0] != "my-key" {
-		t.Errorf("expected ssh key my-key, got %v", req.SSHKeyNames)
+	if len(req.SSHKeyIDs) != 1 || req.SSHKeyIDs[0] != "my-key" {
+		t.Errorf("expected ssh key my-key, got %v", req.SSHKeyIDs)
 	}
 	if req.UserData != "#!/bin/bash\necho hello" {
 		t.Errorf("expected user data, got %s", req.UserData)
@@ -115,7 +111,6 @@ func TestInstanceModelToCreateRequestMinimal(t *testing.T) {
 		Name:            types.StringValue("minimal-vm"),
 		FlavorID:        types.StringValue("flavor-small"),
 		ImageID:         types.StringValue("img-ubuntu"),
-		Region:          types.StringNull(),
 		Zone:            types.StringNull(),
 		VPCID:           types.StringNull(),
 		SubnetID:        types.StringNull(),
@@ -134,11 +129,11 @@ func TestInstanceModelToCreateRequestMinimal(t *testing.T) {
 	if req.Name != "minimal-vm" {
 		t.Errorf("expected name minimal-vm, got %s", req.Name)
 	}
-	if req.Region != "" {
-		t.Errorf("expected empty region, got %s", req.Region)
+	if req.Zone != "" {
+		t.Errorf("expected empty zone, got %s", req.Zone)
 	}
-	if req.SecurityGroups != nil {
-		t.Errorf("expected nil security groups, got %v", req.SecurityGroups)
+	if req.SecurityGroupIDs != nil {
+		t.Errorf("expected nil security groups, got %v", req.SecurityGroupIDs)
 	}
 	if req.UserData != "" {
 		t.Errorf("expected empty user data, got %s", req.UserData)
@@ -171,9 +166,8 @@ func TestInstanceModelToUpdateRequest(t *testing.T) {
 	if req.Name == nil || *req.Name != "renamed-vm" {
 		t.Errorf("expected name renamed-vm, got %v", req.Name)
 	}
-	if len(req.SecurityGroups) != 1 || req.SecurityGroups[0] != "sg-new" {
-		t.Errorf("expected security group sg-new, got %v", req.SecurityGroups)
-	}
+	// Security groups are not updatable via the API (no backend field) — the
+	// update request carries only name + tags (as metadata).
 	if req.Tags["env"] != "prod" {
 		t.Errorf("expected tag env=prod, got %v", req.Tags)
 	}
@@ -188,22 +182,23 @@ func TestInstanceModelFromAPI(t *testing.T) {
 		Name:           "web-1",
 		Status:         "running",
 		FlavorID:       "flavor-small",
-		FlavorName:     "Small",
+		Flavor:         &apiNestedRef{Name: "Small"},
 		ImageID:        "img-ubuntu",
-		ImageName:      "Ubuntu 24.04",
-		Region:         "sweden",
+		Image:          &apiNestedRef{Name: "Ubuntu 24.04"},
 		Zone:           "sweden-a",
-		VPCID:          "vpc-123",
-		SubnetID:       "subnet-456",
-		PrivateIP:      "10.0.1.5",
-		PublicIP:       "203.0.113.10",
+		Networks:       []apiInstanceNetwork{{NetworkID: "vpc-123", SubnetID: "subnet-456"}},
+		PrivateIPs:     []string{"10.0.1.5"},
+		PublicIPs:      []string{"203.0.113.10"},
 		SecurityGroups: []string{"sg-1"},
-		SSHKeyNames:    []string{"my-key"},
-		Tags:           map[string]string{"env": "test"},
+		Metadata:       map[string]string{"env": "test"},
 		CreatedAt:      "2025-06-01T12:00:00Z",
 	}
 
+	// vpc_id/subnet_id are preserved from prior state (the resource does not
+	// derive them from networks[]), so seed them as the user would have at create.
 	model := InstanceModel{
+		VPCID:          types.StringValue("vpc-123"),
+		SubnetID:       types.StringValue("subnet-456"),
 		SecurityGroups: types.SetNull(types.StringType),
 		SSHKeyNames:    types.SetNull(types.StringType),
 		Tags:           types.MapNull(types.StringType),
@@ -233,9 +228,6 @@ func TestInstanceModelFromAPI(t *testing.T) {
 	}
 	if model.ImageName.ValueString() != "Ubuntu 24.04" {
 		t.Errorf("expected image_name Ubuntu 24.04, got %s", model.ImageName.ValueString())
-	}
-	if model.Region.ValueString() != "sweden" {
-		t.Errorf("expected region sweden, got %s", model.Region.ValueString())
 	}
 	if model.Zone.ValueString() != "sweden-a" {
 		t.Errorf("expected zone sweden-a, got %s", model.Zone.ValueString())
@@ -267,7 +259,6 @@ func TestInstanceModelFromAPIMinimalFields(t *testing.T) {
 		Status:    "running",
 		FlavorID:  "flavor-small",
 		ImageID:   "img-ubuntu",
-		Region:    "sweden",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
 
@@ -363,7 +354,6 @@ func TestInstanceCreate(t *testing.T) {
 				Status:    "provisioning",
 				FlavorID:  req.FlavorID,
 				ImageID:   req.ImageID,
-				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
@@ -378,11 +368,10 @@ func TestInstanceCreate(t *testing.T) {
 				Name:       "web-1",
 				Status:     status,
 				FlavorID:   "flavor-small",
-				FlavorName: "Small",
+				Flavor:     &apiNestedRef{Name: "Small"},
 				ImageID:    "img-ubuntu",
-				ImageName:  "Ubuntu 24.04",
-				Region:     "sweden",
-				PrivateIP:  "10.0.1.5",
+				Image:      &apiNestedRef{Name: "Ubuntu 24.04"},
+				PrivateIPs: []string{"10.0.1.5"},
 				CreatedAt:  "2025-06-01T12:00:00Z",
 			})
 
@@ -459,18 +448,15 @@ func TestInstanceRead(t *testing.T) {
 				Name:           "web-1",
 				Status:         "running",
 				FlavorID:       "flavor-small",
-				FlavorName:     "Small",
+				Flavor:         &apiNestedRef{Name: "Small"},
 				ImageID:        "img-ubuntu",
-				ImageName:      "Ubuntu 24.04",
-				Region:         "sweden",
+				Image:          &apiNestedRef{Name: "Ubuntu 24.04"},
 				Zone:           "sweden-a",
-				VPCID:          "vpc-123",
-				SubnetID:       "subnet-456",
-				PrivateIP:      "10.0.1.5",
-				PublicIP:       "203.0.113.10",
+				Networks:       []apiInstanceNetwork{{NetworkID: "vpc-123", SubnetID: "subnet-456"}},
+				PrivateIPs:     []string{"10.0.1.5"},
+				PublicIPs:      []string{"203.0.113.10"},
 				SecurityGroups: []string{"sg-1"},
-				SSHKeyNames:    []string{"my-key"},
-				Tags:           map[string]string{"env": "test"},
+				Metadata:       map[string]string{"env": "test"},
 				CreatedAt:      "2025-06-01T12:00:00Z",
 			})
 
@@ -502,8 +488,8 @@ func TestInstanceRead(t *testing.T) {
 	if inst.Status != "running" {
 		t.Errorf("expected status running, got %s", inst.Status)
 	}
-	if inst.PrivateIP != "10.0.1.5" {
-		t.Errorf("expected private_ip 10.0.1.5, got %s", inst.PrivateIP)
+	if len(inst.PrivateIPs) != 1 || inst.PrivateIPs[0] != "10.0.1.5" {
+		t.Errorf("expected private ips [10.0.1.5], got %v", inst.PrivateIPs)
 	}
 	if len(inst.SecurityGroups) != 1 || inst.SecurityGroups[0] != "sg-1" {
 		t.Errorf("expected security groups [sg-1], got %v", inst.SecurityGroups)
@@ -565,7 +551,6 @@ func TestInstanceUpdate(t *testing.T) {
 				Status:    "running",
 				FlavorID:  "flavor-small",
 				ImageID:   "img-ubuntu",
-				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
@@ -576,7 +561,6 @@ func TestInstanceUpdate(t *testing.T) {
 				Status:    "running",
 				FlavorID:  "flavor-small",
 				ImageID:   "img-ubuntu",
-				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
@@ -621,15 +605,25 @@ func TestInstanceResize(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			meHandler(w, r)
 
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc/action":
-			var req apiInstanceActionRequest
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc/stop":
+			actions = append(actions, "stop")
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc/resize":
+			var req apiResizeInstanceRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("failed to decode action request: %v", err)
+				t.Fatalf("failed to decode resize request: %v", err)
 			}
-			actions = append(actions, req.Action)
-			if req.Action == "resize" && req.FlavorID != "flavor-large" {
+			actions = append(actions, "resize")
+			if req.FlavorID != "flavor-large" {
 				t.Errorf("expected flavor_id flavor-large, got %s", req.FlavorID)
 			}
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc/start":
+			actions = append(actions, "start")
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
 
@@ -645,7 +639,6 @@ func TestInstanceResize(t *testing.T) {
 				Status:    status,
 				FlavorID:  "flavor-large",
 				ImageID:   "img-ubuntu",
-				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
@@ -818,7 +811,6 @@ func instanceTFValue(t *testing.T, tfType tftypes.Type, vals map[string]tftypes.
 		"name":             tftypes.NewValue(tftypes.String, "test-vm"),
 		"flavor_id":        tftypes.NewValue(tftypes.String, "flavor-small"),
 		"image_id":         tftypes.NewValue(tftypes.String, "img-ubuntu"),
-		"region":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"zone":             tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":           tftypes.NewValue(tftypes.String, nil),
 		"subnet_id":        tftypes.NewValue(tftypes.String, nil),
@@ -895,7 +887,7 @@ func TestInstanceResource_Schema(t *testing.T) {
 		}
 	}
 
-	optionalAttrs := []string{"region", "zone", "vpc_id", "subnet_id", "security_groups", "ssh_key_names", "user_data", "console_password", "tags"}
+	optionalAttrs := []string{"zone", "vpc_id", "subnet_id", "security_groups", "ssh_key_names", "user_data", "console_password", "tags"}
 	for _, attr := range optionalAttrs {
 		a, ok := s.Attributes[attr]
 		if !ok {
@@ -936,7 +928,6 @@ func TestInstanceResource_Configure(t *testing.T) {
 }
 
 func TestInstanceResource_TFSDKCreate(t *testing.T) {
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
@@ -962,8 +953,8 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 			if req.ConsolePassword != "s3cret-console" { // pragma: allowlist secret
 				t.Errorf("expected console password, got %q", req.ConsolePassword)
 			}
-			if len(req.SecurityGroups) != 1 || req.SecurityGroups[0] != "sg-default" {
-				t.Errorf("expected security groups [sg-default], got %v", req.SecurityGroups)
+			if len(req.SecurityGroupIDs) != 1 || req.SecurityGroupIDs[0] != "sg-default" {
+				t.Errorf("expected security groups [sg-default], got %v", req.SecurityGroupIDs)
 			}
 			if req.Tags["env"] != "test" {
 				t.Errorf("expected tag env=test, got %v", req.Tags)
@@ -985,13 +976,12 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 				Name:           "web-1",
 				Status:         "running",
 				FlavorID:       "flavor-small",
-				FlavorName:     "Small",
+				Flavor:         &apiNestedRef{Name: "Small"},
 				ImageID:        "img-ubuntu",
-				ImageName:      "Ubuntu 24.04",
-				Region:         "sweden",
-				PrivateIP:      "10.0.1.5",
+				Image:          &apiNestedRef{Name: "Ubuntu 24.04"},
+				PrivateIPs:     []string{"10.0.1.5"},
 				SecurityGroups: []string{"sg-default"},
-				Tags:           map[string]string{"env": "test"},
+				Metadata:       map[string]string{"env": "test"},
 				CreatedAt:      "2025-06-01T12:00:00Z",
 			})
 
@@ -1061,9 +1051,6 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 	if model.ImageName.ValueString() != "Ubuntu 24.04" {
 		t.Errorf("expected ImageName Ubuntu 24.04, got %s", model.ImageName.ValueString())
 	}
-	if model.Region.ValueString() != "sweden" {
-		t.Errorf("expected Region sweden, got %s", model.Region.ValueString())
-	}
 	if model.PrivateIP.ValueString() != "10.0.1.5" {
 		t.Errorf("expected PrivateIP 10.0.1.5, got %s", model.PrivateIP.ValueString())
 	}
@@ -1101,7 +1088,6 @@ func TestInstanceResource_TFSDKCreateMinimal(t *testing.T) {
 				Status:    "running",
 				FlavorID:  "flavor-small",
 				ImageID:   "img-ubuntu",
-				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
@@ -1229,18 +1215,15 @@ func TestInstanceResource_TFSDKRead(t *testing.T) {
 				Name:           "read-vm",
 				Status:         "running",
 				FlavorID:       "flavor-medium",
-				FlavorName:     "Medium",
+				Flavor:         &apiNestedRef{Name: "Medium"},
 				ImageID:        "img-debian",
-				ImageName:      "Debian 12",
-				Region:         "sweden",
+				Image:          &apiNestedRef{Name: "Debian 12"},
 				Zone:           "falkenberg",
-				VPCID:          "vpc-abc",
-				SubnetID:       "subnet-xyz",
-				PrivateIP:      "10.0.2.10",
-				PublicIP:       "203.0.113.50",
+				Networks:       []apiInstanceNetwork{{NetworkID: "vpc-abc", SubnetID: "subnet-xyz"}},
+				PrivateIPs:     []string{"10.0.2.10"},
+				PublicIPs:      []string{"203.0.113.50"},
 				SecurityGroups: []string{"sg-1", "sg-2"},
-				SSHKeyNames:    []string{"my-key"},
-				Tags:           map[string]string{"env": "prod", "team": "platform"},
+				Metadata:       map[string]string{"env": "prod", "team": "platform"},
 				CreatedAt:      "2025-06-01T12:00:00Z",
 			})
 
@@ -1270,7 +1253,6 @@ func TestInstanceResource_TFSDKRead(t *testing.T) {
 		"name":           tftypes.NewValue(tftypes.String, "read-vm"),
 		"flavor_id":      tftypes.NewValue(tftypes.String, "flavor-medium"),
 		"image_id":       tftypes.NewValue(tftypes.String, "img-debian"),
-		"region":         tftypes.NewValue(tftypes.String, "sweden"),
 		"zone":           tftypes.NewValue(tftypes.String, "falkenberg"),
 		"vpc_id":         tftypes.NewValue(tftypes.String, "vpc-abc"),
 		"subnet_id":      tftypes.NewValue(tftypes.String, "subnet-xyz"),
@@ -1433,7 +1415,6 @@ func TestInstanceResource_TFSDKUpdateNameChange(t *testing.T) {
 				Status:    "running",
 				FlavorID:  "flavor-small",
 				ImageID:   "img-ubuntu",
-				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
@@ -1444,7 +1425,6 @@ func TestInstanceResource_TFSDKUpdateNameChange(t *testing.T) {
 				Status:    "running",
 				FlavorID:  "flavor-small",
 				ImageID:   "img-ubuntu",
-				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
@@ -1475,7 +1455,6 @@ func TestInstanceResource_TFSDKUpdateNameChange(t *testing.T) {
 		"name":           tftypes.NewValue(tftypes.String, "old-name"),
 		"flavor_id":      tftypes.NewValue(tftypes.String, "flavor-small"),
 		"image_id":       tftypes.NewValue(tftypes.String, "img-ubuntu"),
-		"region":         tftypes.NewValue(tftypes.String, "sweden"),
 		"status":         tftypes.NewValue(tftypes.String, "running"),
 		"flavor_name":    tftypes.NewValue(tftypes.String, nil),
 		"image_name":     tftypes.NewValue(tftypes.String, nil),
@@ -1491,7 +1470,6 @@ func TestInstanceResource_TFSDKUpdateNameChange(t *testing.T) {
 		"name":           tftypes.NewValue(tftypes.String, "renamed-vm"),
 		"flavor_id":      tftypes.NewValue(tftypes.String, "flavor-small"),
 		"image_id":       tftypes.NewValue(tftypes.String, "img-ubuntu"),
-		"region":         tftypes.NewValue(tftypes.String, "sweden"),
 		"status":         tftypes.NewValue(tftypes.String, "running"),
 		"flavor_name":    tftypes.NewValue(tftypes.String, nil),
 		"image_name":     tftypes.NewValue(tftypes.String, nil),
@@ -1554,13 +1532,23 @@ func TestInstanceResource_TFSDKUpdateResize(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-resize-1/action":
-			var req apiInstanceActionRequest
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-resize-1/stop":
+			actions = append(actions, "stop")
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-resize-1/resize":
+			var req apiResizeInstanceRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
-			actions = append(actions, req.Action)
-			if req.Action == "resize" && req.FlavorID != "flavor-large" {
+			actions = append(actions, "resize")
+			if req.FlavorID != "flavor-large" {
 				t.Errorf("expected resize to flavor-large, got %s", req.FlavorID)
 			}
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-resize-1/start":
+			actions = append(actions, "start")
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
 
@@ -1577,7 +1565,6 @@ func TestInstanceResource_TFSDKUpdateResize(t *testing.T) {
 				Status:    status,
 				FlavorID:  flavorID,
 				ImageID:   "img-ubuntu",
-				Region:    "sweden",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
@@ -1608,7 +1595,6 @@ func TestInstanceResource_TFSDKUpdateResize(t *testing.T) {
 		"name":           tftypes.NewValue(tftypes.String, "resize-vm"),
 		"flavor_id":      tftypes.NewValue(tftypes.String, "flavor-small"),
 		"image_id":       tftypes.NewValue(tftypes.String, "img-ubuntu"),
-		"region":         tftypes.NewValue(tftypes.String, "sweden"),
 		"status":         tftypes.NewValue(tftypes.String, "running"),
 		"flavor_name":    tftypes.NewValue(tftypes.String, nil),
 		"image_name":     tftypes.NewValue(tftypes.String, nil),
@@ -1624,7 +1610,6 @@ func TestInstanceResource_TFSDKUpdateResize(t *testing.T) {
 		"name":           tftypes.NewValue(tftypes.String, "resize-vm"),
 		"flavor_id":      tftypes.NewValue(tftypes.String, "flavor-large"),
 		"image_id":       tftypes.NewValue(tftypes.String, "img-ubuntu"),
-		"region":         tftypes.NewValue(tftypes.String, "sweden"),
 		"status":         tftypes.NewValue(tftypes.String, "running"),
 		"flavor_name":    tftypes.NewValue(tftypes.String, nil),
 		"image_name":     tftypes.NewValue(tftypes.String, nil),
@@ -1680,11 +1665,10 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 			patchCalled = true
 			var req apiUpdateInstanceRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
+			// Tags are sent under "metadata" (apiUpdateInstanceRequest.Tags maps
+			// to json "metadata", matching the compute update contract).
 			if req.Tags["env"] != "prod" {
-				t.Errorf("expected tag env=prod, got %v", req.Tags)
-			}
-			if len(req.SecurityGroups) != 2 {
-				t.Errorf("expected 2 security groups, got %d", len(req.SecurityGroups))
+				t.Errorf("expected tag env=prod (metadata), got %v", req.Tags)
 			}
 			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:             "inst-tags-1",
@@ -1692,9 +1676,8 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 				Status:         "running",
 				FlavorID:       "flavor-small",
 				ImageID:        "img-ubuntu",
-				Region:         "sweden",
 				SecurityGroups: []string{"sg-new-1", "sg-new-2"},
-				Tags:           map[string]string{"env": "prod"},
+				Metadata:       map[string]string{"env": "prod"},
 				CreatedAt:      "2025-06-01T12:00:00Z",
 			})
 
@@ -1705,9 +1688,8 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 				Status:         "running",
 				FlavorID:       "flavor-small",
 				ImageID:        "img-ubuntu",
-				Region:         "sweden",
 				SecurityGroups: []string{"sg-new-1", "sg-new-2"},
-				Tags:           map[string]string{"env": "prod"},
+				Metadata:       map[string]string{"env": "prod"},
 				CreatedAt:      "2025-06-01T12:00:00Z",
 			})
 
@@ -1738,7 +1720,6 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 		"name":      tftypes.NewValue(tftypes.String, "tags-vm"),
 		"flavor_id": tftypes.NewValue(tftypes.String, "flavor-small"),
 		"image_id":  tftypes.NewValue(tftypes.String, "img-ubuntu"),
-		"region":    tftypes.NewValue(tftypes.String, "sweden"),
 		"status":    tftypes.NewValue(tftypes.String, "running"),
 		"security_groups": tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, []tftypes.Value{
 			tftypes.NewValue(tftypes.String, "sg-old"),
@@ -1760,7 +1741,6 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 		"name":      tftypes.NewValue(tftypes.String, "tags-vm"),
 		"flavor_id": tftypes.NewValue(tftypes.String, "flavor-small"),
 		"image_id":  tftypes.NewValue(tftypes.String, "img-ubuntu"),
-		"region":    tftypes.NewValue(tftypes.String, "sweden"),
 		"status":    tftypes.NewValue(tftypes.String, "running"),
 		"security_groups": tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, []tftypes.Value{
 			tftypes.NewValue(tftypes.String, "sg-new-1"),
@@ -1965,7 +1945,6 @@ func TestInstanceResource_TFSDKImportState(t *testing.T) {
 		"name":           tftypes.NewValue(tftypes.String, nil),
 		"flavor_id":      tftypes.NewValue(tftypes.String, nil),
 		"image_id":       tftypes.NewValue(tftypes.String, nil),
-		"region":         tftypes.NewValue(tftypes.String, nil),
 		"status":         tftypes.NewValue(tftypes.String, nil),
 		"flavor_name":    tftypes.NewValue(tftypes.String, nil),
 		"image_name":     tftypes.NewValue(tftypes.String, nil),

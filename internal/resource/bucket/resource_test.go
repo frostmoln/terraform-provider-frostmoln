@@ -40,11 +40,11 @@ func TestBucketModelToCreateRequest(t *testing.T) {
 	if req.Region != "sweden" {
 		t.Errorf("expected region sweden, got %s", req.Region)
 	}
-	if req.StorageClass != "standard" {
-		t.Errorf("expected storage_class standard, got %s", req.StorageClass)
+	if req.DefaultStorageClass != "standard" {
+		t.Errorf("expected storage_class standard, got %s", req.DefaultStorageClass)
 	}
-	if req.Versioning != "enabled" {
-		t.Errorf("expected versioning enabled, got %s", req.Versioning)
+	if !req.Versioning {
+		t.Errorf("expected versioning true, got %v", req.Versioning)
 	}
 	if req.Tags["env"] != "prod" {
 		t.Errorf("expected tag env=prod, got %v", req.Tags)
@@ -73,8 +73,8 @@ func TestBucketModelToCreateRequestOptionalFieldsNull(t *testing.T) {
 	if req.Region != "" {
 		t.Errorf("expected empty region, got %s", req.Region)
 	}
-	if req.StorageClass != "" {
-		t.Errorf("expected empty storage class, got %s", req.StorageClass)
+	if req.DefaultStorageClass != "" {
+		t.Errorf("expected empty storage class, got %s", req.DefaultStorageClass)
 	}
 	if req.Tags != nil {
 		t.Errorf("expected nil tags, got %v", req.Tags)
@@ -106,16 +106,14 @@ func TestBucketModelToUpdateRequest(t *testing.T) {
 func TestBucketModelFromAPI(t *testing.T) {
 	ctx := context.Background()
 	b := &apiBucket{
-		Name:         "test-bucket",
-		Region:       "sweden",
-		StorageClass: "standard",
-		Versioning:   "enabled",
-		ObjectCount:  42,
-		SizeBytes:    1024000,
-		Endpoint:     "https://s3.sweden.frostmoln.cloud",
-		AccessKey:    "AKIAEXAMPLE",
-		Tags:         map[string]string{"env": "staging"},
-		CreatedAt:    "2025-03-01T10:00:00Z",
+		Name:                "test-bucket",
+		Region:              "sweden",
+		DefaultStorageClass: "standard",
+		Versioning:          "enabled",
+		ObjectCount:         42,
+		TotalSize:           1024000,
+		Tags:                map[string]string{"env": "staging"},
+		CreatedAt:           "2025-03-01T10:00:00Z",
 	}
 
 	var model BucketModel
@@ -142,40 +140,8 @@ func TestBucketModelFromAPI(t *testing.T) {
 	if model.SizeBytes.ValueInt64() != 1024000 {
 		t.Errorf("expected size_bytes 1024000, got %d", model.SizeBytes.ValueInt64())
 	}
-	if model.Endpoint.ValueString() != "https://s3.sweden.frostmoln.cloud" {
-		t.Errorf("expected endpoint, got %s", model.Endpoint.ValueString())
-	}
-	if model.AccessKey.ValueString() != "AKIAEXAMPLE" {
-		t.Errorf("expected access key AKIAEXAMPLE, got %s", model.AccessKey.ValueString())
-	}
 	if model.CreatedAt.ValueString() != "2025-03-01T10:00:00Z" {
 		t.Errorf("expected created_at, got %s", model.CreatedAt.ValueString())
-	}
-}
-
-func TestBucketModelFromAPINoAccessKey(t *testing.T) {
-	ctx := context.Background()
-	b := &apiBucket{
-		Name:         "test-bucket",
-		Region:       "sweden",
-		StorageClass: "standard",
-		Versioning:   "enabled",
-		CreatedAt:    "2025-03-01T10:00:00Z",
-	}
-
-	model := BucketModel{
-		AccessKey: types.StringValue("preserved-key"),
-	}
-	diags := model.fromAPI(ctx, b)
-	if diags != nil && diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
-
-	// When AccessKey is empty in the API response, fromAPI should NOT overwrite it.
-	// The resource.go Read method handles preserving the state value.
-	// fromAPI itself does not touch AccessKey when it's empty.
-	if model.AccessKey.ValueString() != "preserved-key" {
-		t.Errorf("expected access key to be preserved, got %s", model.AccessKey.ValueString())
 	}
 }
 
@@ -197,13 +163,11 @@ func TestBucketCreate(t *testing.T) {
 			}
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(apiBucket{
-				Name:         req.Name,
-				Region:       "sweden",
-				StorageClass: "standard",
-				Versioning:   "enabled",
-				Endpoint:     "https://s3.sweden.frostmoln.cloud",
-				AccessKey:    "AKIAEXAMPLE",
-				CreatedAt:    "2025-03-01T10:00:00Z",
+				Name:                req.Name,
+				Region:              "sweden",
+				DefaultStorageClass: "standard",
+				Versioning:          "enabled",
+				CreatedAt:           "2025-03-01T10:00:00Z",
 			})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -231,8 +195,8 @@ func TestBucketCreate(t *testing.T) {
 	if b.Name != "test-bucket" {
 		t.Errorf("expected name test-bucket, got %s", b.Name)
 	}
-	if b.AccessKey != "AKIAEXAMPLE" {
-		t.Errorf("expected access key, got %s", b.AccessKey)
+	if b.DefaultStorageClass != "standard" {
+		t.Errorf("expected storage class standard, got %s", b.DefaultStorageClass)
 	}
 }
 
@@ -246,14 +210,13 @@ func TestBucketRead(t *testing.T) {
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/buckets/test-bucket":
 			_ = json.NewEncoder(w).Encode(apiBucket{
-				Name:         "test-bucket",
-				Region:       "sweden",
-				StorageClass: "standard",
-				Versioning:   "enabled",
-				ObjectCount:  10,
-				SizeBytes:    5000,
-				Endpoint:     "https://s3.sweden.frostmoln.cloud",
-				CreatedAt:    "2025-03-01T10:00:00Z",
+				Name:                "test-bucket",
+				Region:              "sweden",
+				DefaultStorageClass: "standard",
+				Versioning:          "enabled",
+				ObjectCount:         10,
+				TotalSize:           5000,
+				CreatedAt:           "2025-03-01T10:00:00Z",
 			})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -302,12 +265,11 @@ func TestBucketUpdate(t *testing.T) {
 				t.Errorf("expected versioning suspended, got %v", req.Versioning)
 			}
 			_ = json.NewEncoder(w).Encode(apiBucket{
-				Name:         "test-bucket",
-				Region:       "sweden",
-				StorageClass: "standard",
-				Versioning:   "suspended",
-				Endpoint:     "https://s3.sweden.frostmoln.cloud",
-				CreatedAt:    "2025-03-01T10:00:00Z",
+				Name:                "test-bucket",
+				Region:              "sweden",
+				DefaultStorageClass: "standard",
+				Versioning:          "suspended",
+				CreatedAt:           "2025-03-01T10:00:00Z",
 			})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -429,8 +391,6 @@ func bucketObjectType() tftypes.Object {
 			"tags":          tftypes.Map{ElementType: tftypes.String},
 			"object_count":  tftypes.Number,
 			"size_bytes":    tftypes.Number,
-			"endpoint":      tftypes.String,
-			"access_key":    tftypes.String,
 			"created_at":    tftypes.String,
 		},
 	}
@@ -459,7 +419,7 @@ func TestBucketSchema(t *testing.T) {
 	resp := &resource.SchemaResponse{}
 	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
 
-	for _, attr := range []string{"name", "region", "storage_class", "versioning", "tags", "object_count", "size_bytes", "endpoint", "access_key", "created_at"} {
+	for _, attr := range []string{"name", "region", "storage_class", "versioning", "tags", "object_count", "size_bytes", "created_at"} {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %s in schema", attr)
 		}
@@ -496,15 +456,13 @@ func TestBucketConfigureValidClient(t *testing.T) {
 
 func TestBucketResourceCreate(t *testing.T) {
 	bucketResp := apiBucket{
-		Name:         "my-bucket",
-		Region:       "sweden",
-		StorageClass: "standard",
-		Versioning:   "enabled",
-		ObjectCount:  0,
-		SizeBytes:    0,
-		Endpoint:     "https://s3.sweden.frostmoln.cloud",
-		AccessKey:    "AKIAEXAMPLE",
-		CreatedAt:    "2025-06-01T12:00:00Z",
+		Name:                "my-bucket",
+		Region:              "sweden",
+		DefaultStorageClass: "standard",
+		Versioning:          "enabled",
+		ObjectCount:         0,
+		TotalSize:           0,
+		CreatedAt:           "2025-06-01T12:00:00Z",
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -535,8 +493,6 @@ func TestBucketResourceCreate(t *testing.T) {
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
-		"endpoint":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"access_key":    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 	})
 
@@ -554,24 +510,20 @@ func TestBucketResourceCreate(t *testing.T) {
 	if state.Name.ValueString() != "my-bucket" {
 		t.Errorf("expected Name my-bucket, got %s", state.Name.ValueString())
 	}
-	if state.AccessKey.ValueString() != "AKIAEXAMPLE" {
-		t.Errorf("expected AccessKey AKIAEXAMPLE, got %s", state.AccessKey.ValueString())
-	}
-	if state.Endpoint.ValueString() != "https://s3.sweden.frostmoln.cloud" {
-		t.Errorf("expected Endpoint, got %s", state.Endpoint.ValueString())
+	if state.StorageClass.ValueString() != "standard" {
+		t.Errorf("expected StorageClass standard, got %s", state.StorageClass.ValueString())
 	}
 }
 
 func TestBucketResourceRead(t *testing.T) {
 	bucketResp := apiBucket{
-		Name:         "read-bucket",
-		Region:       "sweden",
-		StorageClass: "standard",
-		Versioning:   "enabled",
-		ObjectCount:  42,
-		SizeBytes:    1024000,
-		Endpoint:     "https://s3.sweden.frostmoln.cloud",
-		CreatedAt:    "2025-06-01T12:00:00Z",
+		Name:                "read-bucket",
+		Region:              "sweden",
+		DefaultStorageClass: "standard",
+		Versioning:          "enabled",
+		ObjectCount:         42,
+		TotalSize:           1024000,
+		CreatedAt:           "2025-06-01T12:00:00Z",
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -601,8 +553,6 @@ func TestBucketResourceRead(t *testing.T) {
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 0),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, 0),
-		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.sweden.frostmoln.cloud"),
-		"access_key":    tftypes.NewValue(tftypes.String, "AKIAOLD"),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
@@ -619,9 +569,8 @@ func TestBucketResourceRead(t *testing.T) {
 	if model.ObjectCount.ValueInt64() != 42 {
 		t.Errorf("expected ObjectCount 42, got %d", model.ObjectCount.ValueInt64())
 	}
-	// AccessKey should be preserved from state when API returns empty
-	if model.AccessKey.ValueString() != "AKIAOLD" {
-		t.Errorf("expected AccessKey to be preserved as AKIAOLD, got %s", model.AccessKey.ValueString())
+	if model.StorageClass.ValueString() != "standard" {
+		t.Errorf("expected StorageClass standard, got %s", model.StorageClass.ValueString())
 	}
 }
 
@@ -649,8 +598,6 @@ func TestBucketResourceReadNotFoundRemovesState(t *testing.T) {
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 0),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, 0),
-		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.frostmoln.cloud"),
-		"access_key":    tftypes.NewValue(tftypes.String, nil),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 	})
 
@@ -669,14 +616,13 @@ func TestBucketResourceReadNotFoundRemovesState(t *testing.T) {
 
 func TestBucketResourceUpdate(t *testing.T) {
 	bucketResp := apiBucket{
-		Name:         "upd-bucket",
-		Region:       "sweden",
-		StorageClass: "standard",
-		Versioning:   "suspended",
-		ObjectCount:  10,
-		SizeBytes:    5000,
-		Endpoint:     "https://s3.sweden.frostmoln.cloud",
-		CreatedAt:    "2025-06-01T12:00:00Z",
+		Name:                "upd-bucket",
+		Region:              "sweden",
+		DefaultStorageClass: "standard",
+		Versioning:          "suspended",
+		ObjectCount:         10,
+		TotalSize:           5000,
+		CreatedAt:           "2025-06-01T12:00:00Z",
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -707,8 +653,6 @@ func TestBucketResourceUpdate(t *testing.T) {
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 10),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, 5000),
-		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.sweden.frostmoln.cloud"),
-		"access_key":    tftypes.NewValue(tftypes.String, "AKIAOLD"),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
@@ -720,8 +664,6 @@ func TestBucketResourceUpdate(t *testing.T) {
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
-		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.sweden.frostmoln.cloud"),
-		"access_key":    tftypes.NewValue(tftypes.String, "AKIAOLD"),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
@@ -738,10 +680,6 @@ func TestBucketResourceUpdate(t *testing.T) {
 	resp.State.Get(context.Background(), &model)
 	if model.Versioning.ValueString() != "suspended" {
 		t.Errorf("expected Versioning suspended, got %s", model.Versioning.ValueString())
-	}
-	// AccessKey should be preserved from state when API returns empty
-	if model.AccessKey.ValueString() != "AKIAOLD" {
-		t.Errorf("expected AccessKey AKIAOLD preserved, got %s", model.AccessKey.ValueString())
 	}
 }
 
@@ -775,8 +713,6 @@ func TestBucketResourceDelete(t *testing.T) {
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 0),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, 0),
-		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.frostmoln.cloud"),
-		"access_key":    tftypes.NewValue(tftypes.String, nil),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 	})
 
@@ -816,8 +752,6 @@ func TestBucketResourceDeleteAlreadyGone(t *testing.T) {
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 0),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, 0),
-		"endpoint":      tftypes.NewValue(tftypes.String, "https://s3.frostmoln.cloud"),
-		"access_key":    tftypes.NewValue(tftypes.String, nil),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 	})
 

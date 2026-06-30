@@ -2,7 +2,6 @@ resource "frostmoln_instance" "example" {
   name      = "web-server-01"
   flavor_id = data.frostmoln_flavor.medium.id
   image_id  = data.frostmoln_image.ubuntu.id
-  region    = "sweden"
   zone      = "sweden-a"
   vpc_id    = frostmoln_vpc.example.id
   subnet_id = frostmoln_subnet.example.id

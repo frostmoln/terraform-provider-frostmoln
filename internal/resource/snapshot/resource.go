@@ -89,13 +89,6 @@ func (r *snapshotResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					int64planmodifier.UseStateForUnknown(),
 				},
 			},
-			"region": schema.StringAttribute{
-				Description: "The region where the snapshot is stored.",
-				Computed:    true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
-			},
 			"created_at": schema.StringAttribute{
 				Description: "The timestamp when the snapshot was created.",
 				Computed:    true,

@@ -29,6 +29,7 @@ func TestRedisInstanceModelToCreateRequest(t *testing.T) {
 		Name:            types.StringValue("my-redis"),
 		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.small"),
+		StorageGB:       types.Int64Value(10),
 		VPCID:           types.StringValue("vpc-123"),
 		SubnetID:        types.StringValue("subnet-456"),
 		PersistenceMode: types.StringNull(),
@@ -42,6 +43,9 @@ func TestRedisInstanceModelToCreateRequest(t *testing.T) {
 
 	if req.Engine != "redis" {
 		t.Errorf("expected engine redis, got %s", req.Engine)
+	}
+	if req.StorageGB != 10 {
+		t.Errorf("expected storageGb 10, got %d", req.StorageGB)
 	}
 	if req.Name != "my-redis" {
 		t.Errorf("expected name my-redis, got %s", req.Name)
@@ -148,6 +152,7 @@ func TestRedisInstanceModelFromAPI(t *testing.T) {
 		Name:            "my-redis",
 		EngineVersion:   "7.2",
 		FlavorID:        "cache.small",
+		StorageGB:       25,
 		VPCID:           "vpc-123",
 		SubnetID:        "subnet-456",
 		PersistenceMode: "rdb",
@@ -171,6 +176,9 @@ func TestRedisInstanceModelFromAPI(t *testing.T) {
 	}
 	if model.Version.ValueString() != "7.2" {
 		t.Errorf("expected version 7.2, got %s", model.Version.ValueString())
+	}
+	if model.StorageGB.ValueInt64() != 25 {
+		t.Errorf("expected storage_gb 25, got %d", model.StorageGB.ValueInt64())
 	}
 	if model.Port.ValueInt64() != 6379 {
 		t.Errorf("expected port 6379, got %d", model.Port.ValueInt64())
@@ -266,7 +274,7 @@ func TestSchema(t *testing.T) {
 	}
 
 	// Verify defaults
-	optionalAttrs := []string{"persistence_mode", "eviction_policy"}
+	optionalAttrs := []string{"storage_gb", "persistence_mode", "eviction_policy"}
 	for _, attr := range optionalAttrs {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected optional attribute %s in schema", attr)
@@ -440,6 +448,7 @@ func TestRead(t *testing.T) {
 				Name:            "my-redis",
 				EngineVersion:   "7.2",
 				FlavorID:        "cache.small",
+				StorageGB:       25,
 				VPCID:           "vpc-1",
 				SubnetID:        "sn-1",
 				PersistenceMode: "rdb",
@@ -465,6 +474,7 @@ func TestRead(t *testing.T) {
 		Name:            types.StringValue("my-redis"),
 		Version:         types.StringValue("7.2"),
 		FlavorID:        types.StringValue("cache.small"),
+		StorageGB:       types.Int64Value(25),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
 		PersistenceMode: types.StringValue("rdb"),
@@ -484,6 +494,9 @@ func TestRead(t *testing.T) {
 	readResp.State.Get(context.Background(), &result)
 	if result.Status.ValueString() != "running" {
 		t.Errorf("expected status running, got %s", result.Status.ValueString())
+	}
+	if result.StorageGB.ValueInt64() != 25 {
+		t.Errorf("expected storage_gb 25, got %d", result.StorageGB.ValueInt64())
 	}
 }
 
