@@ -215,21 +215,72 @@ func (r *mysqlInstanceResource) Create(ctx context.Context, req resource.CreateR
 		return
 	}
 
-	inst, err := client.ParseResponse[apiMysqlInstance](apiResp)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to parse MySQL instance response", err.Error())
-		return
-	}
+	// The backend may answer either synchronously (201 with the instance body)
+	// or asynchronously (202 with an Operation). Tolerate both: resolve the
+	// instance ID from whichever shape we got, then run the existing
+	// poll-to-running + state refresh below against that ID.
+	var instID string
+	if apiResp.IsAccepted() {
+		op, err := client.ParseResponse[client.Operation](apiResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to parse MySQL instance operation response", err.Error())
+			return
+		}
+		done, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout())
+		if err != nil {
+			resp.Diagnostics.AddError("MySQL instance creation failed", err.Error())
+			return
+		}
+		instID = done.ResourceID
+		if instID == "" {
+			resp.Diagnostics.AddError(
+				"MySQL instance operation returned no resource ID",
+				"The create operation completed but returned no resource ID. The instance may "+
+					"exist in the backend without being tracked in Terraform state.",
+			)
+			return
+		}
 
-	plan.fromAPI(ctx, inst, &resp.Diagnostics)
-	if resp.Diagnostics.HasError() {
-		return
-	}
+		// Persist state immediately so the ID is tracked, even if the
+		// poll-to-running or final read below fails. The 202 path has no
+		// create body, so fill the computed attributes from a GET of the
+		// freshly-created instance.
+		readResp, err := r.client.Get(ctx, r.client.TenantPath("/databases/"+instID), nil)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to read MySQL instance after creation", err.Error())
+			return
+		}
+		inst, err := client.ParseResponse[apiMysqlInstance](readResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to parse MySQL instance response", err.Error())
+			return
+		}
+		plan.fromAPI(ctx, inst, &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	} else {
+		inst, err := client.ParseResponse[apiMysqlInstance](apiResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to parse MySQL instance response", err.Error())
+			return
+		}
+		instID = inst.ID
 
-	// Save state immediately so the ID is tracked, even if polling fails.
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
+		plan.fromAPI(ctx, inst, &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		// Save state immediately so the ID is tracked, even if polling fails.
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
 	}
 
 	// Poll until instance reaches "running" status.
@@ -240,7 +291,7 @@ func (r *mysqlInstanceResource) Create(ctx context.Context, req resource.CreateR
 		ErrorStates:  []string{"error", "failed"},
 		ResourceName: "mysql_instance",
 		PollFunc: func(pollCtx context.Context) (string, error) {
-			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/databases/"+inst.ID), nil)
+			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/databases/"+instID), nil)
 			if pollErr != nil {
 				return "", pollErr
 			}
@@ -257,7 +308,7 @@ func (r *mysqlInstanceResource) Create(ctx context.Context, req resource.CreateR
 	}
 
 	// Refresh state after polling completes to get final status, IPs, etc.
-	readResp, err := r.client.Get(ctx, r.client.TenantPath("/databases/"+inst.ID), nil)
+	readResp, err := r.client.Get(ctx, r.client.TenantPath("/databases/"+instID), nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to read MySQL instance after creation", err.Error())
 		return

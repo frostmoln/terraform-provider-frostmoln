@@ -139,21 +139,66 @@ func (r *mysqlReadReplicaResource) Create(ctx context.Context, req resource.Crea
 		return
 	}
 
-	replica, err := client.ParseResponse[apiMysqlReadReplica](apiResp)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to parse MySQL read replica response", err.Error())
-		return
-	}
+	// Tolerate both the async 202 {operationId} path and the legacy synchronous
+	// 201 {replica} path (the backend create is converting to async; rule #10).
+	var replicaID string
+	if apiResp.IsAccepted() {
+		op, err := client.ParseResponse[client.Operation](apiResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to parse operation response", err.Error())
+			return
+		}
+		done, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout())
+		if err != nil {
+			resp.Diagnostics.AddError("MySQL read replica creation failed", err.Error())
+			return
+		}
+		if done.ResourceID == "" {
+			resp.Diagnostics.AddError("MySQL read replica creation failed", fmt.Sprintf("operation %s completed without a resource id", done.OperationID))
+			return
+		}
+		replicaID = done.ResourceID
 
-	plan.fromAPI(ctx, replica, &resp.Diagnostics)
-	if resp.Diagnostics.HasError() {
-		return
-	}
+		// Persist state immediately so the ID is tracked, even if the
+		// poll-to-running or final read below fails. The 202 path has no
+		// create body, so fill the computed attributes from a GET of the
+		// freshly-created replica.
+		readResp, err := r.client.Get(ctx, r.replicaPath(instanceID, replicaID), nil)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to read MySQL read replica after creation", err.Error())
+			return
+		}
+		replica, err := client.ParseResponse[apiMysqlReadReplica](readResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to parse MySQL read replica response", err.Error())
+			return
+		}
+		plan.fromAPI(ctx, replica, &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	} else {
+		replica, err := client.ParseResponse[apiMysqlReadReplica](apiResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to parse MySQL read replica response", err.Error())
+			return
+		}
 
-	// Save state immediately so the ID is tracked.
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
+		plan.fromAPI(ctx, replica, &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		// Save state immediately so the ID is tracked.
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		replicaID = replica.ID
 	}
 
 	// Poll until the replica reaches "running" status.
@@ -164,7 +209,7 @@ func (r *mysqlReadReplicaResource) Create(ctx context.Context, req resource.Crea
 		ErrorStates:  []string{"error", "failed"},
 		ResourceName: "mysql_read_replica",
 		PollFunc: func(pollCtx context.Context) (string, error) {
-			pollResp, pollErr := r.client.Get(pollCtx, r.replicaPath(instanceID, replica.ID), nil)
+			pollResp, pollErr := r.client.Get(pollCtx, r.replicaPath(instanceID, replicaID), nil)
 			if pollErr != nil {
 				return "", pollErr
 			}
@@ -181,7 +226,7 @@ func (r *mysqlReadReplicaResource) Create(ctx context.Context, req resource.Crea
 	}
 
 	// Refresh state after polling.
-	readResp, err := r.client.Get(ctx, r.replicaPath(instanceID, replica.ID), nil)
+	readResp, err := r.client.Get(ctx, r.replicaPath(instanceID, replicaID), nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to read MySQL read replica after creation", err.Error())
 		return
