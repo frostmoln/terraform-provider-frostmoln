@@ -103,9 +103,9 @@ func TestCreatePollErrorState(t *testing.T) {
 		switch r.Method {
 		case http.MethodPost:
 			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":"rep-err","instanceId":"db-123","name":"replica-1","status":"provisioning"}`))
+			_, _ = w.Write([]byte(`{"id":"rep-err","primaryId":"db-123","name":"replica-1","status":"provisioning"}`))
 		case http.MethodGet:
-			_, _ = w.Write([]byte(`{"id":"rep-err","instanceId":"db-123","name":"replica-1","status":"error"}`))
+			_, _ = w.Write([]byte(`{"id":"rep-err","primaryId":"db-123","name":"replica-1","status":"error"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -159,12 +159,12 @@ func TestCreateRefreshError(t *testing.T) {
 		switch r.Method {
 		case http.MethodPost:
 			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":"rep-ref","instanceId":"db-123","name":"replica-1","status":"provisioning"}`))
+			_, _ = w.Write([]byte(`{"id":"rep-ref","primaryId":"db-123","name":"replica-1","status":"provisioning"}`))
 		case http.MethodGet:
 			getCount++
 			if getCount == 1 {
 				// First poll: running, so polling succeeds.
-				_, _ = w.Write([]byte(`{"id":"rep-ref","instanceId":"db-123","name":"replica-1","status":"running"}`))
+				_, _ = w.Write([]byte(`{"id":"rep-ref","primaryId":"db-123","name":"replica-1","status":"running"}`))
 				return
 			}
 			// Subsequent refresh read fails.

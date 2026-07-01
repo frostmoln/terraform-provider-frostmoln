@@ -20,6 +20,10 @@ Manages a read replica of a managed PostgreSQL instance. Read replicas are immut
 - `instance_id` (String) The ID of the primary PostgreSQL instance to replicate.
 - `name` (String) The name of the read replica.
 
+### Optional
+
+- `flavor_id` (String) Flavor ID sizing the replica (e.g. db.gp1.small). Optional; when omitted the replica inherits the primary's flavor, which is returned as the computed value. Immutable — changing it replaces the replica.
+
 ### Read-Only
 
 - `id` (String) The unique identifier of the read replica.

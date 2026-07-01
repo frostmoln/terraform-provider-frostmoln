@@ -74,6 +74,15 @@ func (r *postgresReadReplicaResource) Schema(_ context.Context, _ resource.Schem
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
+			"flavor_id": schema.StringAttribute{
+				Description: "Flavor ID sizing the replica (e.g. db.gp1.small). Optional; when omitted the replica inherits the primary's flavor, which is returned as the computed value. Immutable — changing it replaces the replica.",
+				Optional:    true,
+				Computed:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
 			"status": schema.StringAttribute{
 				Description: "The current status of the read replica.",
 				Computed:    true,
