@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -13,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
@@ -105,7 +107,7 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				// async apply to converge. State keeps the configured set (preserved
 				// from plan in fromAPI, since the instance read returns SG NAMES, not
 				// the UUIDs the user supplied — same identifier-space reason as before).
-				Description: "The security group IDs attached to the instance. Updated in place (replace semantics): changing the set replaces the instance's security groups across all its ports. Setting it to [] or removing the attribute clears ALL security groups (the instance falls back to default-drop — typically no inbound access).",
+				Description: "The security group IDs attached to the instance. Updated in place (replace semantics): changing the set replaces the instance's security groups across all its ports. Setting it to [] or removing the attribute clears ALL security groups (the instance falls back to default-drop — typically no inbound access). Out-of-band changes (made via the portal, CLI, or another client) are detected as drift on refresh when every port shares the same set; if ports hold differing sets, the configured value is preserved and a warning is emitted (edit per port instead).",
 				Optional:    true,
 				ElementType: types.StringType,
 			},
@@ -304,7 +306,71 @@ func (r *instanceResource) Read(ctx context.Context, req resource.ReadRequest, r
 	state.UserData = savedUserData
 	state.UserDataHash = savedUserDataHash
 
+	// Drift-detect security groups against the authoritative applied set. The
+	// plain instance read returns Nova-aggregated SG NAMES (a different identifier
+	// space than the UUIDs the user configures), so fromAPI only preserves the
+	// configured set. GET /instances/{id}/security-groups returns the real Neutron
+	// SG UUIDs: adopt them when every port shares one set (uniform) so out-of-band
+	// changes (portal/CLI/console/another client) surface as drift. When the
+	// per-port sets differ the union is lossy (a PUT would expand a subset port),
+	// so preserve + warn instead. A failed subresource read must not break the
+	// whole refresh — keep the preserved set.
+	r.reconcileSecurityGroups(ctx, &state, &resp.Diagnostics)
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+}
+
+// getSecurityGroups fetches the authoritative applied security-group set from
+// GET /instances/{id}/security-groups (Neutron SG UUIDs).
+func (r *instanceResource) getSecurityGroups(ctx context.Context, id string) (*apiInstanceSecurityGroups, error) {
+	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/instances/"+id+"/security-groups"), nil)
+	if err != nil {
+		return nil, err
+	}
+	return client.ParseResponse[apiInstanceSecurityGroups](apiResp)
+}
+
+// reconcileSecurityGroups updates state.SecurityGroups from the authoritative
+// subresource so out-of-band changes surface as drift. It fails soft: a read
+// error or a non-uniform (lossy-union) instance leaves the preserved set intact.
+func (r *instanceResource) reconcileSecurityGroups(ctx context.Context, state *InstanceModel, diags *diag.Diagnostics) {
+	// Only drift-detect an attribute the user actually manages. security_groups is
+	// Optional (not Computed): when config omits it, state is null while Neutron
+	// still puts a non-empty SG set (the tenant default) on every port. Adopting
+	// that set would make the next plan propose clearing it (Update -> clear) — a
+	// destructive, security-relevant diff the user never asked for, and on provider
+	// upgrade it would fire for every pre-existing instance with an unset
+	// security_groups. Leave null null. (Capturing the applied set on import would
+	// need Optional+Computed, a larger change — out of scope here.)
+	if state.SecurityGroups.IsNull() {
+		return
+	}
+
+	sg, err := r.getSecurityGroups(ctx, state.ID.ValueString())
+	if err != nil {
+		tflog.Warn(ctx, "could not read authoritative security groups; preserving configured set", map[string]any{
+			"instance_id": state.ID.ValueString(),
+			"error":       err.Error(),
+		})
+		return
+	}
+
+	if !sg.Uniform {
+		diags.AddWarning(
+			"Per-port security groups differ; drift not tracked",
+			"This instance's ports do not all share the same security-group set, so Terraform cannot represent them as a single security_groups value. The configured set is preserved and drift is not detected. Edit security groups per port (portal/CLI), or set them uniformly across all ports.",
+		)
+		return
+	}
+
+	// Uniform + a managed (non-null) attr: the authoritative UUID set is the truth.
+	// A non-null empty state vs an empty applied set stays stable ([] == []); an
+	// out-of-band clear (authoritative empty) is adopted as real drift.
+	sgSet, d := types.SetValueFrom(ctx, types.StringType, sg.SecurityGroupIDs)
+	diags.Append(d...)
+	if !d.HasError() {
+		state.SecurityGroups = sgSet
+	}
 }
 
 func (r *instanceResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {

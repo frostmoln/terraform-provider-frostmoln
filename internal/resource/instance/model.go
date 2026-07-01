@@ -117,6 +117,27 @@ type apiSetInstanceSecurityGroupsRequest struct {
 	ClearSecurityGroups bool     `json:"clearSecurityGroups,omitempty"`
 }
 
+// apiInstancePortSecurityGroups is one port's authoritative SG set, by Neutron
+// SG UUID (compute domain PortSecurityGroupsView).
+type apiInstancePortSecurityGroups struct {
+	PortID           string   `json:"portId"`
+	SecurityGroupIDs []string `json:"securityGroupIds"`
+}
+
+// apiInstanceSecurityGroups is the authoritative applied SG view returned by
+// GET /instances/{id}/security-groups (compute domain InstanceSecurityGroups).
+// Unlike the plain instance read — which returns Nova-aggregated SG NAMES — this
+// returns the Neutron SG UUIDs the user configures, so it can drive true drift
+// detection. SecurityGroupIDs is the per-port UNION; Uniform reports whether
+// every port shares that same set. When Uniform is false the union is lossy (a
+// single PUT would expand a port that held a subset), so the configured set is
+// preserved rather than adopted.
+type apiInstanceSecurityGroups struct {
+	SecurityGroupIDs []string                        `json:"securityGroupIds"`
+	Uniform          bool                            `json:"uniform"`
+	Ports            []apiInstancePortSecurityGroups `json:"ports"`
+}
+
 // computeUserDataHash returns the SHA256 hash of user data.
 func computeUserDataHash(userData string) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(userData)))
@@ -240,9 +261,9 @@ func (m *InstanceModel) fromAPI(ctx context.Context, inst *apiInstance, diags *d
 	// read returns the OpenStack-internal SG NAME (e.g. "sg-<tenant>-<vpc>-<name>",
 	// compute mapper.go), not the customer SG UUID the user configures. Mapping
 	// the name into a UUID-set attribute would trigger "inconsistent result after
-	// apply", so it is left untouched and preserved from plan/state. (Authoritative
-	// UUID drift-detection via GET /instances/{id}/security-groups is a tracked
-	// follow-up — see the plan doc.)
+	// apply", so fromAPI leaves it untouched and preserved from plan/state. True
+	// UUID drift-detection happens in Read via the authoritative GET
+	// /instances/{id}/security-groups (see reconcileSecurityGroups).
 
 	// ssh_key_names is RequiresReplace and write-only on the wire (the backend
 	// returns a single keyName, not the set the user supplied), so it is left

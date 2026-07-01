@@ -1355,6 +1355,17 @@ func TestInstanceResource_TFSDKRead(t *testing.T) {
 				CreatedAt:      "2025-06-01T12:00:00Z",
 			})
 
+		// Authoritative SG subresource: uniform, but a DIFFERENT UUID set than the
+		// state was seeded with → Read must adopt it (out-of-band drift).
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-read-1/security-groups":
+			_ = json.NewEncoder(w).Encode(apiInstanceSecurityGroups{
+				SecurityGroupIDs: []string{"sg-uuid-a", "sg-uuid-b"},
+				Uniform:          true,
+				Ports: []apiInstancePortSecurityGroups{
+					{PortID: "port-1", SecurityGroupIDs: []string{"sg-uuid-a", "sg-uuid-b"}},
+				},
+			})
+
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1458,6 +1469,154 @@ func TestInstanceResource_TFSDKRead(t *testing.T) {
 	expectedHash := computeUserDataHash("#!/bin/bash\necho hello")
 	if model.UserDataHash.ValueString() != expectedHash {
 		t.Errorf("expected UserDataHash preserved, got %s", model.UserDataHash.ValueString())
+	}
+	// security_groups must be ADOPTED from the authoritative UUID subresource
+	// (drift detection), not preserved from prior state and not the Nova NAMES
+	// the plain instance read returned.
+	var sgs []string
+	model.SecurityGroups.ElementsAs(ctx, &sgs, false)
+	wantSGs := map[string]bool{"sg-uuid-a": true, "sg-uuid-b": true}
+	if len(sgs) != len(wantSGs) {
+		t.Fatalf("expected authoritative SGs %v, got %v", wantSGs, sgs)
+	}
+	for _, sg := range sgs {
+		if !wantSGs[sg] {
+			t.Errorf("unexpected security group %q in adopted set %v", sg, sgs)
+		}
+	}
+}
+
+// readWithSGSubresource runs a Read against a server whose instance GET returns
+// a fixed instance and whose SG subresource is handled by sgHandler (nil →
+// always 500, to exercise the soft-fail path). State is seeded with statedSGs.
+// Returns the final model and the Read diagnostics.
+func readWithSGSubresource(t *testing.T, statedSGs []string, sgHandler http.HandlerFunc) (InstanceModel, diag.Diagnostics) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-sg-1":
+			_ = json.NewEncoder(w).Encode(apiInstance{
+				ID: "inst-sg-1", Name: "sg-vm", Status: "running",
+				FlavorID: "flavor-small", ImageID: "img-ubuntu",
+				SecurityGroups: []string{"sg-name-from-nova"},
+				CreatedAt:      "2025-06-01T12:00:00Z",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-sg-1/security-groups":
+			if sgHandler != nil {
+				sgHandler(w, r)
+			} else {
+				w.WriteHeader(http.StatusInternalServerError)
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key")
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+	r := &instanceResource{client: c}
+	schemaResp := getInstanceSchema(t)
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	sgVal := tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, nil)
+	if statedSGs != nil {
+		elems := make([]tftypes.Value, len(statedSGs))
+		for i, sg := range statedSGs {
+			elems[i] = tftypes.NewValue(tftypes.String, sg)
+		}
+		sgVal = tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, elems)
+	}
+	stateVal := instanceTFValue(t, tfType, map[string]tftypes.Value{
+		"id":              tftypes.NewValue(tftypes.String, "inst-sg-1"),
+		"name":            tftypes.NewValue(tftypes.String, "sg-vm"),
+		"status":          tftypes.NewValue(tftypes.String, "running"),
+		"security_groups": sgVal,
+		"created_at":      tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	})
+	readResp := &resource.ReadResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	r.Read(ctx, resource.ReadRequest{State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal}}, readResp)
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+	var model InstanceModel
+	readResp.State.Get(ctx, &model)
+	return model, readResp.Diagnostics
+}
+
+// When the authoritative subresource reports non-uniform per-port SG sets, the
+// union is lossy — Read must PRESERVE the configured set and emit a warning
+// rather than overwrite it with the union.
+func TestInstanceResource_TFSDKReadSecurityGroupsNonUniform(t *testing.T) {
+	model, diags := readWithSGSubresource(t, []string{"sg-keep"}, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(apiInstanceSecurityGroups{
+			SecurityGroupIDs: []string{"sg-a", "sg-b"},
+			Uniform:          false,
+			Ports: []apiInstancePortSecurityGroups{
+				{PortID: "port-1", SecurityGroupIDs: []string{"sg-a"}},
+				{PortID: "port-2", SecurityGroupIDs: []string{"sg-a", "sg-b"}},
+			},
+		})
+	})
+
+	var sgs []string
+	model.SecurityGroups.ElementsAs(context.Background(), &sgs, false)
+	if len(sgs) != 1 || sgs[0] != "sg-keep" {
+		t.Errorf("expected configured set [sg-keep] preserved on non-uniform, got %v", sgs)
+	}
+	if diags.WarningsCount() == 0 {
+		t.Error("expected a warning diagnostic for non-uniform per-port security groups")
+	}
+}
+
+// A null (unmanaged) security_groups must STAY null even though Neutron always
+// lands a non-empty default SG on every port — adopting it would make the next
+// plan propose clearing the VM's only SG (a destructive, security-relevant diff
+// the user never asked for, firing for every unset instance on provider upgrade).
+func TestInstanceResource_TFSDKReadSecurityGroupsNullStaysNull(t *testing.T) {
+	called := false
+	model, diags := readWithSGSubresource(t, nil, func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		_ = json.NewEncoder(w).Encode(apiInstanceSecurityGroups{
+			SecurityGroupIDs: []string{"default-sg-uuid"},
+			Uniform:          true,
+			Ports:            []apiInstancePortSecurityGroups{{PortID: "p-1", SecurityGroupIDs: []string{"default-sg-uuid"}}},
+		})
+	})
+
+	if !model.SecurityGroups.IsNull() {
+		var sgs []string
+		model.SecurityGroups.ElementsAs(context.Background(), &sgs, false)
+		t.Errorf("expected unmanaged security_groups to stay null, got %v", sgs)
+	}
+	if called {
+		t.Error("expected the SG subresource NOT to be fetched for an unmanaged (null) attribute")
+	}
+	if diags.WarningsCount() != 0 {
+		t.Errorf("expected no warning for an unmanaged attribute, got %d", diags.WarningsCount())
+	}
+}
+
+// A failed SG subresource read must not break the refresh — the configured set
+// is preserved and no error is raised.
+func TestInstanceResource_TFSDKReadSecurityGroupsSubresourceError(t *testing.T) {
+	model, diags := readWithSGSubresource(t, []string{"sg-keep"}, nil) // nil → 500
+
+	var sgs []string
+	model.SecurityGroups.ElementsAs(context.Background(), &sgs, false)
+	if len(sgs) != 1 || sgs[0] != "sg-keep" {
+		t.Errorf("expected configured set [sg-keep] preserved on subresource error, got %v", sgs)
+	}
+	if diags.HasError() {
+		t.Errorf("subresource error must fail soft, got error diagnostics: %v", diags.Errors())
 	}
 }
 
