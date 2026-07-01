@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0] - 2026-07-01
+
+### 🚀 Features
+
+- *(compute)* Add frostmoln_instance_port_security_groups resource (#139)
+- *(read-replica)* Add flavor_id to postgres/mysql read replica resources (#141)
+
 ## [0.8.1] - 2026-07-01
 
 ### 🐛 Bug Fixes
