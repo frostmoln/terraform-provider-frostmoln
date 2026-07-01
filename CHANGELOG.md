@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.1] - 2026-07-01
+
+### 🐛 Bug Fixes
+
+- *(provider)* Detect instance security-group drift via authoritative GET (#137)
+
 ## [0.8.0] - 2026-06-30
 
 ### 🚀 Features
