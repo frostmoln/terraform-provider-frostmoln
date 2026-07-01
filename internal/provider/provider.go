@@ -43,6 +43,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_zone"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/floating_ip"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/instance"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/instance_port_security_groups"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/launch_template"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/lb_health_monitor"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/lb_listener"
@@ -357,6 +358,7 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		volume_attachment.NewResource,
 		snapshot.NewResource,
 		instance.NewResource,
+		instance_port_security_groups.NewResource,
 		launch_template.NewResource,
 		postgres_instance.NewResource,
 		postgres_backup.NewResource,
