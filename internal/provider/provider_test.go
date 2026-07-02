@@ -72,7 +72,7 @@ func TestProviderMetadata(t *testing.T) {
 		"frostmoln_ssh_key", "frostmoln_bucket", "frostmoln_s3_credential",
 		"frostmoln_vpc", "frostmoln_subnet", "frostmoln_security_group", "frostmoln_security_group_rule",
 		"frostmoln_floating_ip", "frostmoln_volume", "frostmoln_volume_attachment", "frostmoln_snapshot",
-		"frostmoln_instance", "frostmoln_api_key",
+		"frostmoln_instance", "frostmoln_api_key", "frostmoln_kubernetes_cluster",
 	}
 	for _, name := range expectedResources {
 		if _, ok := resp.ResourceSchemas[name]; !ok {
@@ -84,6 +84,7 @@ func TestProviderMetadata(t *testing.T) {
 	expectedDataSources := []string{
 		"frostmoln_image", "frostmoln_images", "frostmoln_flavor", "frostmoln_flavors",
 		"frostmoln_vpc", "frostmoln_subnet", "frostmoln_instance",
+		"frostmoln_kubernetes_versions", "frostmoln_kubernetes_tiers", "frostmoln_kubernetes_flavors",
 	}
 	for _, name := range expectedDataSources {
 		if _, ok := resp.DataSourceSchemas[name]; !ok {

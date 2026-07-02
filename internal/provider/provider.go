@@ -25,6 +25,9 @@ import (
 	imageds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/image"
 	imagesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/images"
 	instanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/instance"
+	kubernetesflavorsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/kubernetes_flavors"
+	kubernetestiersds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/kubernetes_tiers"
+	kubernetesversionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/kubernetes_versions"
 	messaginginstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/messaging_instance"
 	mysqlversionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/mysql_versions"
 	nginxinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/nginx_instance"
@@ -44,6 +47,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/floating_ip"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/instance_port_security_groups"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/kubernetes_cluster"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/launch_template"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/lb_health_monitor"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/lb_listener"
@@ -359,6 +363,7 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		snapshot.NewResource,
 		instance.NewResource,
 		instance_port_security_groups.NewResource,
+		kubernetes_cluster.NewResource,
 		launch_template.NewResource,
 		postgres_instance.NewResource,
 		postgres_backup.NewResource,
@@ -399,5 +404,8 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		nginxinstanceds.NewDataSource,
 		regionsds.NewDataSource,
 		volumetiersds.NewDataSource,
+		kubernetesversionsds.NewDataSource,
+		kubernetestiersds.NewDataSource,
+		kubernetesflavorsds.NewDataSource,
 	}
 }
