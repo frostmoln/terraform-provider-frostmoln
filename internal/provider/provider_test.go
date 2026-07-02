@@ -73,6 +73,7 @@ func TestProviderMetadata(t *testing.T) {
 		"frostmoln_vpc", "frostmoln_subnet", "frostmoln_security_group", "frostmoln_security_group_rule",
 		"frostmoln_floating_ip", "frostmoln_volume", "frostmoln_volume_attachment", "frostmoln_snapshot",
 		"frostmoln_instance", "frostmoln_api_key", "frostmoln_kubernetes_cluster",
+		"frostmoln_kubernetes_node_pool",
 	}
 	for _, name := range expectedResources {
 		if _, ok := resp.ResourceSchemas[name]; !ok {

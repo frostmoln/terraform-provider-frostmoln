@@ -74,8 +74,7 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 	resp.Schema = schema.Schema{
 		Description: "Manages a managed Kubernetes cluster in the Frostmoln platform. " +
 			"The cluster owns its initial node pool (created embedded, scaled in-place). " +
-			"Additional node pools are not yet manageable via Terraform (use the portal); " +
-			"a frostmoln_kubernetes_node_pool resource is planned.",
+			"Additional node pools are managed with the frostmoln_kubernetes_node_pool resource.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the cluster.",

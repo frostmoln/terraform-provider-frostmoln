@@ -3,12 +3,12 @@
 page_title: "frostmoln_kubernetes_cluster Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a managed Kubernetes cluster in the Frostmoln platform. The cluster owns its initial node pool (created embedded, scaled in-place). Additional node pools are not yet manageable via Terraform (use the portal); a frostmoln_kubernetes_node_pool resource is planned.
+  Manages a managed Kubernetes cluster in the Frostmoln platform. The cluster owns its initial node pool (created embedded, scaled in-place). Additional node pools are managed with the frostmoln_kubernetes_node_pool resource.
 ---
 
 # frostmoln_kubernetes_cluster (Resource)
 
-Manages a managed Kubernetes cluster in the Frostmoln platform. The cluster owns its initial node pool (created embedded, scaled in-place). Additional node pools are not yet manageable via Terraform (use the portal); a frostmoln_kubernetes_node_pool resource is planned.
+Manages a managed Kubernetes cluster in the Frostmoln platform. The cluster owns its initial node pool (created embedded, scaled in-place). Additional node pools are managed with the frostmoln_kubernetes_node_pool resource.
 
 ## Example Usage
 

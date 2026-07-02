@@ -49,6 +49,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/instance_port_security_groups"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/kubernetes_cluster"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/kubernetes_node_pool"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/launch_template"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/lb_health_monitor"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/lb_listener"
@@ -365,6 +366,7 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		instance.NewResource,
 		instance_port_security_groups.NewResource,
 		kubernetes_cluster.NewResource,
+		kubernetes_node_pool.NewResource,
 		launch_template.NewResource,
 		postgres_instance.NewResource,
 		postgres_backup.NewResource,
