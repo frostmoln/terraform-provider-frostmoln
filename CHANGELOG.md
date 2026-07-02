@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.0] - 2026-07-02
+
+### 🚀 Features
+
+- *(cache)* Terraform storage resize for redis/valkey; flavor RequiresReplace (#143)
+- *(kubernetes)* Managed-K8s cluster resource + catalog data sources (Ph5c phases 1+2) (#145)
+- *(kubernetes)* Cluster addons attribute + frostmoln_kubernetes_addons data source (#147)
+- *(kubernetes)* Frostmoln_kubernetes_node_pool resource (Ph5c phase 3) (#149)
+
 ## [0.9.0] - 2026-07-01
 
 ### 🚀 Features
