@@ -60,12 +60,26 @@ type apiCreateValkeyInstanceRequest struct {
 	EvictionPolicy  string `json:"evictionPolicy,omitempty"`
 }
 
-// apiUpdateValkeyInstanceRequest is the API request to update a managed Valkey instance.
+// apiUpdateValkeyInstanceRequest is the API request to update a managed Valkey instance
+// (PUT /caches/{id}). The backend accepts only these in-place fields — NOT flavor or storage
+// (flavor is RequiresReplace; storage grows via POST /caches/{id}/resize).
 type apiUpdateValkeyInstanceRequest struct {
 	Name            *string `json:"name,omitempty"`
-	FlavorID        *string `json:"flavorId,omitempty"`
 	PersistenceMode *string `json:"persistenceMode,omitempty"`
 	EvictionPolicy  *string `json:"evictionPolicy,omitempty"`
+}
+
+// hasChanges reports whether any in-place-updatable field is set, so Update can skip an empty PUT
+// when only storage changed (which routes through /resize instead).
+func (r apiUpdateValkeyInstanceRequest) hasChanges() bool {
+	return r.Name != nil || r.PersistenceMode != nil || r.EvictionPolicy != nil
+}
+
+// apiResizeValkeyInstanceRequest is the API request to grow a managed Valkey instance's storage
+// (POST /caches/{id}/resize). Grow-only; the provider rejects a shrink client-side before sending
+// (Cinder volumes cannot shrink).
+type apiResizeValkeyInstanceRequest struct {
+	StorageGB int `json:"storageGb"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -99,10 +113,6 @@ func (m *ValkeyInstanceModel) toUpdateRequest(state *ValkeyInstanceModel) apiUpd
 	if !m.Name.Equal(state.Name) {
 		v := m.Name.ValueString()
 		req.Name = &v
-	}
-	if !m.FlavorID.Equal(state.FlavorID) {
-		v := m.FlavorID.ValueString()
-		req.FlavorID = &v
 	}
 	if !m.PersistenceMode.Equal(state.PersistenceMode) {
 		v := m.PersistenceMode.ValueString()

@@ -109,9 +109,8 @@ func TestValkeyInstanceModelToUpdateRequest(t *testing.T) {
 	if req.Name == nil || *req.Name != "new-name" {
 		t.Error("expected name update to new-name")
 	}
-	if req.FlavorID == nil || *req.FlavorID != "cache.gp1.large" {
-		t.Error("expected flavorId update to cache.gp1.large")
-	}
+	// flavor_id is RequiresReplace (in-place flavor resize unsupported), so it is NOT in the
+	// update request even when it differs.
 	if req.PersistenceMode == nil || *req.PersistenceMode != "aof" {
 		t.Error("expected persistenceMode update to aof")
 	}
@@ -129,7 +128,7 @@ func TestValkeyInstanceModelToUpdateRequestNoChanges(t *testing.T) {
 	}
 
 	req := same.toUpdateRequest(&same)
-	if req.Name != nil || req.FlavorID != nil || req.PersistenceMode != nil || req.EvictionPolicy != nil {
+	if req.Name != nil || req.PersistenceMode != nil || req.EvictionPolicy != nil {
 		t.Error("expected no changes in update request")
 	}
 }
@@ -724,8 +723,88 @@ func TestUpdate(t *testing.T) {
 	if updatedBody.Name == nil || *updatedBody.Name != "updated-valkey" {
 		t.Error("expected name in update request")
 	}
-	if updatedBody.FlavorID == nil || *updatedBody.FlavorID != "cache.gp1.large" {
-		t.Error("expected flavorId in update request")
+	// flavor is RequiresReplace (not sent via PUT) and is intentionally absent from the body.
+}
+
+// A storage_gb increase routes through POST /caches/{id}/resize (grow-only), NOT the PUT, and
+// skips the PUT when nothing else changed.
+func TestUpdateStorageResize(t *testing.T) {
+	var resizeBody apiResizeValkeyInstanceRequest
+	putCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/caches/valkey-123/resize":
+			_ = json.NewDecoder(r.Body).Decode(&resizeBody)
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, `{"status":"resizing"}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-1/caches/valkey-123":
+			putCalled = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, `{}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/caches/valkey-123":
+			_ = json.NewEncoder(w).Encode(apiValkeyInstance{
+				ID: "valkey-123", Name: "v", EngineVersion: "8.1", FlavorID: "cache.gp1.small",
+				VPCID: "vpc-1", SubnetID: "sn-1", PersistenceMode: "rdb", EvictionPolicy: "noeviction",
+				Status: "running", StorageGB: 20, Port: 6379, CreatedAt: "2025-01-01T00:00:00Z",
+			})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client()))
+	c.SetTenantIDForTest("t-1")
+	r := &valkeyInstanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+
+	base := ValkeyInstanceModel{
+		ID: types.StringValue("valkey-123"), Name: types.StringValue("v"), Version: types.StringValue("8.1"),
+		FlavorID: types.StringValue("cache.gp1.small"), VPCID: types.StringValue("vpc-1"), SubnetID: types.StringValue("sn-1"),
+		PersistenceMode: types.StringValue("rdb"), EvictionPolicy: types.StringValue("noeviction"),
+		Status: types.StringValue("running"), CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
+	}
+	stateM, planM := base, base
+	stateM.StorageGB = types.Int64Value(10)
+	planM.StorageGB = types.Int64Value(20)
+	state := buildValkeyInstanceState(t, stateM)
+	plan := buildValkeyInstancePlan(t, planM)
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("storage resize update failed: %v", updateResp.Diagnostics.Errors())
+	}
+	if resizeBody.StorageGB != 20 {
+		t.Errorf("expected resize to 20 GB, got %d", resizeBody.StorageGB)
+	}
+	if putCalled {
+		t.Error("PUT must be skipped when only storage changed")
+	}
+}
+
+// A storage_gb decrease is rejected before any API call (Cinder volumes cannot shrink).
+func TestUpdateStorageShrinkRejected(t *testing.T) {
+	c := client.NewClient("http://127.0.0.1:1", "test-key") // no request expected
+	c.SetTenantIDForTest("t-1")
+	r := &valkeyInstanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+
+	base := ValkeyInstanceModel{
+		ID: types.StringValue("valkey-123"), Name: types.StringValue("v"), Version: types.StringValue("8.1"),
+		FlavorID: types.StringValue("cache.gp1.small"), VPCID: types.StringValue("vpc-1"), SubnetID: types.StringValue("sn-1"),
+		PersistenceMode: types.StringValue("rdb"), EvictionPolicy: types.StringValue("noeviction"),
+		Status: types.StringValue("running"), CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
+	}
+	stateM, planM := base, base
+	stateM.StorageGB = types.Int64Value(20)
+	planM.StorageGB = types.Int64Value(10)
+	state := buildValkeyInstanceState(t, stateM)
+	plan := buildValkeyInstancePlan(t, planM)
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	if !updateResp.Diagnostics.HasError() {
+		t.Fatal("expected a storage-shrink rejection error")
 	}
 }
 

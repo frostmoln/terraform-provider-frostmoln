@@ -73,11 +73,14 @@ func (r *valkeyInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 				},
 			},
 			"flavor_id": schema.StringAttribute{
-				Description: "The flavor/size for the Valkey instance (e.g. \"cache.gp1.small\", \"cache.gp1.medium\").",
+				Description: "The flavor/size for the Valkey instance (e.g. \"cache.gp1.small\", \"cache.gp1.medium\"). In-place flavor resize is not supported, so changing this destroys and recreates the instance — all cached data (and any persisted data) is lost.",
 				Required:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"storage_gb": schema.Int64Attribute{
-				Description: "The storage size in gigabytes (defaults to 10 if unset).",
+				Description: "The storage size in gigabytes (defaults to 10 if unset). Can only be increased (grow-only); volumes cannot be shrunk.",
 				Optional:    true,
 				Computed:    true,
 				PlanModifiers: []planmodifier.Int64{
@@ -326,35 +329,61 @@ func (r *valkeyInstanceResource) Update(ctx context.Context, req resource.Update
 
 	id := state.ID.ValueString()
 
-	updateReq := plan.toUpdateRequest(&state)
-	_, err := r.client.Put(ctx, r.client.TenantPath("/caches/"+id), updateReq)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to update Valkey instance", err.Error())
-		return
+	waitRunning := func() error {
+		_, err := client.WaitForState(ctx, client.PollConfig{
+			Interval:     r.getPollInterval(),
+			Timeout:      r.getPollTimeout(),
+			TargetStates: []string{"running"},
+			ErrorStates:  []string{"error", "failed"},
+			ResourceName: "valkey_instance",
+			PollFunc: func(pollCtx context.Context) (string, error) {
+				pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/caches/"+id), nil)
+				if pollErr != nil {
+					return "", pollErr
+				}
+				current, parseErr := client.ParseResponse[apiValkeyInstance](pollResp)
+				if parseErr != nil {
+					return "", parseErr
+				}
+				return current.Status, nil
+			},
+		})
+		return err
 	}
 
-	// Poll until instance is back to "running" after the update.
-	_, err = client.WaitForState(ctx, client.PollConfig{
-		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
-		TargetStates: []string{"running"},
-		ErrorStates:  []string{"error", "failed"},
-		ResourceName: "valkey_instance",
-		PollFunc: func(pollCtx context.Context) (string, error) {
-			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/caches/"+id), nil)
-			if pollErr != nil {
-				return "", pollErr
-			}
-			current, parseErr := client.ParseResponse[apiValkeyInstance](pollResp)
-			if parseErr != nil {
-				return "", parseErr
-			}
-			return current.Status, nil
-		},
-	})
-	if err != nil {
-		resp.Diagnostics.AddError("Valkey instance failed to reach running state after update", err.Error())
-		return
+	// Storage grows via POST /caches/{id}/resize — the PUT below cannot change storage. Grow-only:
+	// Cinder volumes cannot shrink, so reject a decrease with a clear error rather than a silent
+	// no-op / perpetual diff.
+	if !plan.StorageGB.IsNull() && !plan.StorageGB.IsUnknown() && plan.StorageGB.ValueInt64() != state.StorageGB.ValueInt64() {
+		newSize := plan.StorageGB.ValueInt64()
+		cur := state.StorageGB.ValueInt64()
+		if newSize < cur {
+			resp.Diagnostics.AddError("Storage cannot be shrunk",
+				fmt.Sprintf("storage_gb can only be increased (current %d GB, requested %d GB); volumes cannot shrink.", cur, newSize))
+			return
+		}
+		if _, err := r.client.Post(ctx, r.client.TenantPath("/caches/"+id+"/resize"), apiResizeValkeyInstanceRequest{StorageGB: int(newSize)}); err != nil {
+			resp.Diagnostics.AddError("Failed to resize Valkey storage", err.Error())
+			return
+		}
+		if err := waitRunning(); err != nil {
+			resp.Diagnostics.AddError("Valkey instance failed to reach running state after storage resize", err.Error())
+			return
+		}
+	}
+
+	// In-place field updates (name/persistence/eviction) via PUT — skip an empty PUT when only
+	// storage changed.
+	updateReq := plan.toUpdateRequest(&state)
+	if updateReq.hasChanges() {
+		if _, err := r.client.Put(ctx, r.client.TenantPath("/caches/"+id), updateReq); err != nil {
+			resp.Diagnostics.AddError("Failed to update Valkey instance", err.Error())
+			return
+		}
+		if err := waitRunning(); err != nil {
+			resp.Diagnostics.AddError("Valkey instance failed to reach running state after update", err.Error())
+			return
+		}
 	}
 
 	// Refresh state from API.

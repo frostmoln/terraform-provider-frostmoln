@@ -17,7 +17,7 @@ Manages a managed Valkey instance in the Frostmoln platform.
 
 ### Required
 
-- `flavor_id` (String) The flavor/size for the Valkey instance (e.g. "cache.gp1.small", "cache.gp1.medium").
+- `flavor_id` (String) The flavor/size for the Valkey instance (e.g. "cache.gp1.small", "cache.gp1.medium"). In-place flavor resize is not supported, so changing this destroys and recreates the instance — all cached data (and any persisted data) is lost.
 - `name` (String) The name of the Valkey instance.
 - `subnet_id` (String) The subnet ID where the Valkey instance will be deployed.
 - `version` (String) The Valkey version (e.g. "8.0").
@@ -27,7 +27,7 @@ Manages a managed Valkey instance in the Frostmoln platform.
 
 - `eviction_policy` (String) The eviction policy for the Valkey instance (e.g. "noeviction", "allkeys-lru"). Defaults to "noeviction".
 - `persistence_mode` (String) The persistence mode for the Valkey instance ("rdb", "aof", or "none"). Defaults to "rdb".
-- `storage_gb` (Number) The storage size in gigabytes (defaults to 10 if unset).
+- `storage_gb` (Number) The storage size in gigabytes (defaults to 10 if unset). Can only be increased (grow-only); volumes cannot be shrunk.
 
 ### Read-Only
 
