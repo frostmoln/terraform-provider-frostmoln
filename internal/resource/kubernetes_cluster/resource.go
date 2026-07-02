@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -139,6 +140,20 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 				Optional: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"addons": schema.SetAttribute{
+				Description: "The set of cluster-addon catalog keys to install at cluster creation (see the " +
+					"frostmoln_kubernetes_addons data source for available keys). Addons are applied ONCE, at " +
+					"cluster creation, from first-boot manifests — they cannot be changed on an existing cluster, so " +
+					"changing this set REPLACES the cluster. Leave it unset to apply the platform default addons " +
+					"(currently external-secrets); set it to an explicit empty set ([]) to install no addons.",
+				Optional:    true,
+				Computed:    true,
+				ElementType: types.StringType,
+				PlanModifiers: []planmodifier.Set{
+					setplanmodifier.RequiresReplace(),
+					setplanmodifier.UseStateForUnknown(),
 				},
 			},
 			"initial_node_pool": schema.SingleNestedAttribute{

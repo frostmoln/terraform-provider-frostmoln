@@ -23,6 +23,12 @@ resource "frostmoln_kubernetes_cluster" "main" {
   vpc_id    = frostmoln_vpc.main.id
   subnet_id = frostmoln_subnet.nodes.id
 
+  # Cluster addons are installed once, at creation, and cannot be changed on an
+  # existing cluster (changing this set replaces the cluster). Omit the attribute
+  # to install the platform defaults; set an empty list ([]) to install none.
+  # See the frostmoln_kubernetes_addons data source for available keys.
+  addons = ["external-secrets"]
+
   initial_node_pool = {
     flavor_id  = data.frostmoln_kubernetes_flavors.available.flavors[0].id
     node_count = 3
@@ -51,6 +57,7 @@ output "kubeconfig" {
 
 ### Optional
 
+- `addons` (Set of String) The set of cluster-addon catalog keys to install at cluster creation (see the frostmoln_kubernetes_addons data source for available keys). Addons are applied ONCE, at cluster creation, from first-boot manifests — they cannot be changed on an existing cluster, so changing this set REPLACES the cluster. Leave it unset to apply the platform default addons (currently external-secrets); set it to an explicit empty set ([]) to install no addons.
 - `control_plane_tier` (String) The control-plane tier key (see the frostmoln_kubernetes_tiers data source for canonical keys). Defaults to the platform default tier.
 - `floating_ip_id` (String) The ID of an existing floating IP to use for the cluster API endpoint (bring-your-own FIP). Write-only on the API: reads expose only the resolved address (floating_ip), so imports cannot recover this value — after importing a cluster created with a BYO floating IP, omit this attribute or add `lifecycle { ignore_changes = [floating_ip_id] }`, otherwise the next plan will want to replace the cluster. A BYO floating IP survives cluster deletion.
 - `region` (String) The region to create the cluster in. Defaults server-side.

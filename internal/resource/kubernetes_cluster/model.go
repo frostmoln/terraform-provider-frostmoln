@@ -2,6 +2,7 @@
 package kubernetes_cluster
 
 import (
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -15,6 +16,7 @@ type KubernetesClusterModel struct {
 	VPCID            types.String          `tfsdk:"vpc_id"`
 	SubnetID         types.String          `tfsdk:"subnet_id"`
 	FloatingIPID     types.String          `tfsdk:"floating_ip_id"`
+	Addons           types.Set             `tfsdk:"addons"`
 	InitialNodePool  *InitialNodePoolModel `tfsdk:"initial_node_pool"`
 	Status           types.String          `tfsdk:"status"`
 	HAEnabled        types.Bool            `tfsdk:"ha_enabled"`
@@ -61,8 +63,13 @@ type apiKubernetesCluster struct {
 	LoadBalancerID    string `json:"loadBalancerId,omitempty"`
 	FloatingIP        string `json:"floatingIp,omitempty"`
 	CACertHash        string `json:"caCertHash,omitempty"`
-	CreatedAt         string `json:"createdAt"`
-	UpdatedAt         string `json:"updatedAt,omitempty"`
+	// Addons is the set of cluster-addon catalog keys applied at creation. The
+	// backend always includes it (may be empty) — it echoes exactly what was
+	// applied. Addons are create-time only; they cannot change on an existing
+	// cluster.
+	Addons    []string `json:"addons"`
+	CreatedAt string   `json:"createdAt"`
+	UpdatedAt string   `json:"updatedAt,omitempty"`
 }
 
 // apiNodePool is the API representation of a node pool (domain.NodePool).
@@ -92,6 +99,12 @@ type apiCreateNodePoolRequest struct {
 }
 
 // apiCreateClusterRequest is the API request to create a managed Kubernetes cluster.
+//
+// Addons is a pointer-to-slice on purpose, to preserve the null-vs-empty
+// distinction the server relies on: a nil pointer OMITS the field (server
+// applies the catalog defaults), while a non-nil pointer to an empty slice
+// serializes as `[]` (explicitly no addons). A plain []string with omitempty
+// could not express "send an empty array" — omitempty drops a len-0 slice.
 type apiCreateClusterRequest struct {
 	Name              string                   `json:"name"`
 	KubernetesVersion string                   `json:"kubernetesVersion,omitempty"`
@@ -100,6 +113,7 @@ type apiCreateClusterRequest struct {
 	VPCID             string                   `json:"vpcId"`
 	SubnetID          string                   `json:"subnetId"`
 	FloatingIPID      string                   `json:"floatingIpId,omitempty"`
+	Addons            *[]string                `json:"addons,omitempty"`
 	InitialNodePool   apiCreateNodePoolRequest `json:"initialNodePool"`
 }
 
@@ -139,6 +153,22 @@ func (m *KubernetesClusterModel) toCreateRequest() apiCreateClusterRequest {
 		req.FloatingIPID = m.FloatingIPID.ValueString()
 	}
 
+	// Addons: only send the field when the practitioner set it (known value).
+	// When unset (null/unknown, i.e. Computed-not-yet-resolved), leave req.Addons
+	// nil so it is OMITTED and the server applies the catalog defaults. When set
+	// — including an explicit empty set — send exactly the configured keys (a
+	// non-nil pointer to a possibly-empty slice serializes as `[]`).
+	if !m.Addons.IsNull() && !m.Addons.IsUnknown() {
+		elems := m.Addons.Elements()
+		addons := make([]string, 0, len(elems))
+		for _, e := range elems {
+			if s, ok := e.(types.String); ok {
+				addons = append(addons, s.ValueString())
+			}
+		}
+		req.Addons = &addons
+	}
+
 	pool := m.InitialNodePool
 	req.InitialNodePool = apiCreateNodePoolRequest{
 		FlavorID:  pool.FlavorID.ValueString(),
@@ -175,6 +205,11 @@ func (m *KubernetesClusterModel) fromAPI(c *apiKubernetesCluster) {
 	m.LoadBalancerID = stringOrNull(c.LoadBalancerID)
 	m.FloatingIP = stringOrNull(c.FloatingIP)
 	m.CACertHash = stringOrNull(c.CACertHash)
+	// The backend always echoes the applied addon set (possibly empty). Map it
+	// to a concrete (never null) set: an empty response array yields an empty
+	// set, which matches an explicit empty-set config and, via Computed +
+	// UseStateForUnknown, fills state cleanly when addons was left unset.
+	m.Addons = stringSliceToSet(c.Addons)
 	m.CreatedAt = types.StringValue(c.CreatedAt)
 	m.UpdatedAt = stringOrNull(c.UpdatedAt)
 	m.TenantID = stringOrNull(c.TenantID)
@@ -197,4 +232,16 @@ func stringOrNull(s string) types.String {
 		return types.StringNull()
 	}
 	return types.StringValue(s)
+}
+
+// stringSliceToSet builds a Terraform set of strings. A nil OR empty slice
+// yields an empty (non-null) set — the backend always returns the addons array,
+// so state should never carry a null addons set. Building a set from plain
+// string values cannot fail, so SetValueMust is safe here.
+func stringSliceToSet(items []string) types.Set {
+	elems := make([]attr.Value, 0, len(items))
+	for _, s := range items {
+		elems = append(elems, types.StringValue(s))
+	}
+	return types.SetValueMust(types.StringType, elems)
 }

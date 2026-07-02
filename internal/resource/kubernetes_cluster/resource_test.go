@@ -1,10 +1,13 @@
 package kubernetes_cluster
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -136,6 +139,156 @@ func TestFromAPINulls(t *testing.T) {
 	}
 }
 
+// setToStrings extracts a set of strings into a sorted []string for stable
+// order-insensitive assertions.
+func setToStrings(t *testing.T, s types.Set) []string {
+	t.Helper()
+	var out []string
+	if diags := s.ElementsAs(context.Background(), &out, false); diags.HasError() {
+		t.Fatalf("failed to extract set: %v", diags.Errors())
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestToCreateRequestAddonsUnsetOmitted(t *testing.T) {
+	// Both null and unknown mean "practitioner left addons unset": the field
+	// must be omitted (nil pointer, no "addons" key) so the server defaults.
+	for name, addons := range map[string]types.Set{
+		"null":    types.SetNull(types.StringType),
+		"unknown": types.SetUnknown(types.StringType),
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := KubernetesClusterModel{
+				Name:     types.StringValue("c"),
+				VPCID:    types.StringValue("vpc-1"),
+				SubnetID: types.StringValue("sn-1"),
+				Addons:   addons,
+				InitialNodePool: &InitialNodePoolModel{
+					FlavorID:  types.StringValue("k8s.gp1.small"),
+					NodeCount: types.Int64Value(1),
+				},
+			}
+			req := m.toCreateRequest()
+			if req.Addons != nil {
+				t.Errorf("expected nil Addons pointer, got %v", *req.Addons)
+			}
+			b, err := json.Marshal(req)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if bytes.Contains(b, []byte(`"addons"`)) {
+				t.Errorf("expected no addons key in JSON body, got %s", b)
+			}
+		})
+	}
+}
+
+func TestToCreateRequestAddonsExplicit(t *testing.T) {
+	addonsSet, diags := types.SetValueFrom(context.Background(), types.StringType, []string{"external-secrets"})
+	if diags.HasError() {
+		t.Fatalf("build set: %v", diags.Errors())
+	}
+	m := KubernetesClusterModel{
+		Name:     types.StringValue("c"),
+		VPCID:    types.StringValue("vpc-1"),
+		SubnetID: types.StringValue("sn-1"),
+		Addons:   addonsSet,
+		InitialNodePool: &InitialNodePoolModel{
+			FlavorID:  types.StringValue("k8s.gp1.small"),
+			NodeCount: types.Int64Value(1),
+		},
+	}
+	req := m.toCreateRequest()
+	if req.Addons == nil {
+		t.Fatal("expected non-nil Addons pointer when set")
+	}
+	if len(*req.Addons) != 1 || (*req.Addons)[0] != "external-secrets" {
+		t.Errorf("unexpected addons: %v", *req.Addons)
+	}
+	b, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !bytes.Contains(b, []byte(`"addons":["external-secrets"]`)) {
+		t.Errorf("expected addons array in JSON, got %s", b)
+	}
+}
+
+func TestToCreateRequestAddonsExplicitEmpty(t *testing.T) {
+	// An explicit empty set must be SENT as `[]` (no addons), NOT omitted —
+	// omitting would make the server apply defaults instead. This is why the
+	// wire field is *[]string rather than []string with omitempty.
+	emptySet, diags := types.SetValueFrom(context.Background(), types.StringType, []string{})
+	if diags.HasError() {
+		t.Fatalf("build set: %v", diags.Errors())
+	}
+	m := KubernetesClusterModel{
+		Name:     types.StringValue("c"),
+		VPCID:    types.StringValue("vpc-1"),
+		SubnetID: types.StringValue("sn-1"),
+		Addons:   emptySet,
+		InitialNodePool: &InitialNodePoolModel{
+			FlavorID:  types.StringValue("k8s.gp1.small"),
+			NodeCount: types.Int64Value(1),
+		},
+	}
+	req := m.toCreateRequest()
+	if req.Addons == nil {
+		t.Fatal("expected non-nil Addons pointer for an explicit empty set")
+	}
+	if len(*req.Addons) != 0 {
+		t.Errorf("expected empty addons slice, got %v", *req.Addons)
+	}
+	b, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !bytes.Contains(b, []byte(`"addons":[]`)) {
+		t.Errorf("expected explicit empty addons array in JSON, got %s", b)
+	}
+}
+
+func TestFromAPIAddonsMapped(t *testing.T) {
+	var m KubernetesClusterModel
+	m.fromAPI(&apiKubernetesCluster{
+		ID: "c-1", Name: "c", Status: "running", VPCID: "vpc-1", SubnetID: "sn-1",
+		CreatedAt: "2026-07-01T00:00:00Z",
+		Addons:    []string{"external-secrets", "cert-manager"},
+	})
+	if m.Addons.IsNull() || m.Addons.IsUnknown() {
+		t.Fatal("expected concrete addons set from response")
+	}
+	got := setToStrings(t, m.Addons)
+	if len(got) != 2 || got[0] != "cert-manager" || got[1] != "external-secrets" {
+		t.Errorf("unexpected addons: %v", got)
+	}
+}
+
+func TestFromAPIAddonsEmpty(t *testing.T) {
+	// An empty response array maps to an empty (non-null) set so it matches an
+	// explicit empty-set config and never produces a spurious diff.
+	for name, addons := range map[string][]string{
+		"empty-slice": {},
+		"nil-slice":   nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var m KubernetesClusterModel
+			m.fromAPI(&apiKubernetesCluster{
+				ID: "c-1", Name: "c", Status: "running", VPCID: "vpc-1", SubnetID: "sn-1",
+				CreatedAt: "2026-07-01T00:00:00Z",
+				Addons:    addons,
+			})
+			if m.Addons.IsNull() {
+				t.Error("expected empty (non-null) addons set")
+			}
+			if n := len(m.Addons.Elements()); n != 0 {
+				t.Errorf("expected 0 addon elements, got %d", n)
+			}
+		})
+	}
+}
+
 // --- Resource unit tests ---
 
 func TestNewResource(t *testing.T) {
@@ -161,7 +314,7 @@ func TestSchema(t *testing.T) {
 
 	for _, attr := range []string{
 		"id", "name", "version", "control_plane_tier", "region", "vpc_id", "subnet_id",
-		"floating_ip_id", "initial_node_pool", "status", "ha_enabled", "pod_cidr",
+		"floating_ip_id", "addons", "initial_node_pool", "status", "ha_enabled", "pod_cidr",
 		"service_cidr", "endpoint", "load_balancer_id", "floating_ip", "ca_cert_hash",
 		"kubeconfig", "created_at", "updated_at", "tenant_id",
 	} {
@@ -263,6 +416,7 @@ func runningCluster() apiKubernetesCluster {
 		LoadBalancerID:    "lb-1",
 		FloatingIP:        "203.0.113.10",
 		CACertHash:        "sha256:abc",
+		Addons:            []string{"external-secrets"},
 		CreatedAt:         "2026-07-01T00:00:00Z",
 		UpdatedAt:         "2026-07-01T00:10:00Z",
 	}
@@ -289,12 +443,25 @@ func TestCreate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/kubernetes-clusters":
+			rawBody, readErr := io.ReadAll(r.Body)
+			if readErr != nil {
+				t.Errorf("failed to read request body: %v", readErr)
+			}
 			var body apiCreateClusterRequest
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			if err := json.Unmarshal(rawBody, &body); err != nil {
 				t.Errorf("failed to decode request: %v", err)
 			}
 			if body.FloatingIPID != "11111111-2222-3333-4444-555555555555" {
 				t.Errorf("expected floatingIpId in create request, got %q", body.FloatingIPID)
+			}
+			// addons was left unset in the plan → the field must be OMITTED so
+			// the server applies its catalog defaults (nil pointer, no "addons"
+			// key in the wire body).
+			if body.Addons != nil {
+				t.Errorf("expected addons omitted when unset, got %v", *body.Addons)
+			}
+			if bytes.Contains(rawBody, []byte(`"addons"`)) {
+				t.Errorf("expected no addons key in create body, got %s", rawBody)
 			}
 			if body.InitialNodePool.FlavorID != "k8s.gp1.small" || body.InitialNodePool.NodeCount != 2 {
 				t.Errorf("unexpected initialNodePool: %+v", body.InitialNodePool)
@@ -350,6 +517,7 @@ func TestCreate(t *testing.T) {
 		VPCID:            types.StringValue("vpc-1"),
 		SubnetID:         types.StringValue("sn-1"),
 		FloatingIPID:     types.StringValue("11111111-2222-3333-4444-555555555555"),
+		Addons:           types.SetUnknown(types.StringType),
 		InitialNodePool: &InitialNodePoolModel{
 			ID:        types.StringUnknown(),
 			Name:      types.StringUnknown(),
@@ -381,6 +549,14 @@ func TestCreate(t *testing.T) {
 	}
 	if result.Kubeconfig.ValueString() != "kubeconfig-yaml" {
 		t.Errorf("expected kubeconfig from retry, got %q", result.Kubeconfig.ValueString())
+	}
+	// addons was unset in the plan; the state must reflect what the server
+	// echoed back (the applied default set), resolving the Computed value.
+	if result.Addons.IsNull() || result.Addons.IsUnknown() {
+		t.Fatalf("expected resolved addons set in state, got null/unknown")
+	}
+	if got := setToStrings(t, result.Addons); len(got) != 1 || got[0] != "external-secrets" {
+		t.Errorf("expected addons [external-secrets] from response, got %v", got)
 	}
 	if result.InitialNodePool == nil {
 		t.Fatal("expected initial_node_pool in state")
@@ -426,6 +602,7 @@ func TestCreateClusterErrorStatus(t *testing.T) {
 		Name:     types.StringValue("test-cluster"),
 		VPCID:    types.StringValue("vpc-1"),
 		SubnetID: types.StringValue("sn-1"),
+		Addons:   types.SetUnknown(types.StringType),
 		InitialNodePool: &InitialNodePoolModel{
 			FlavorID:  types.StringValue("k8s.gp1.small"),
 			NodeCount: types.Int64Value(1),
@@ -478,6 +655,7 @@ func TestCreateKubeconfigExhaustedIsWarning(t *testing.T) {
 		Name:     types.StringValue("test-cluster"),
 		VPCID:    types.StringValue("vpc-1"),
 		SubnetID: types.StringValue("sn-1"),
+		Addons:   types.SetUnknown(types.StringType),
 		InitialNodePool: &InitialNodePoolModel{
 			FlavorID:  types.StringValue("k8s.gp1.small"),
 			NodeCount: types.Int64Value(2),
@@ -537,6 +715,7 @@ func TestCreateInitialPoolErrorStatus(t *testing.T) {
 		Name:     types.StringValue("test-cluster"),
 		VPCID:    types.StringValue("vpc-1"),
 		SubnetID: types.StringValue("sn-1"),
+		Addons:   types.SetUnknown(types.StringType),
 		InitialNodePool: &InitialNodePoolModel{
 			FlavorID:  types.StringValue("k8s.gp1.small"),
 			NodeCount: types.Int64Value(2),
@@ -562,6 +741,7 @@ func stateModel() KubernetesClusterModel {
 		VPCID:            types.StringValue("vpc-1"),
 		SubnetID:         types.StringValue("sn-1"),
 		FloatingIPID:     types.StringValue("fip-uuid"),
+		Addons:           stringSliceToSet([]string{"external-secrets"}),
 		Status:           types.StringValue(statusRunning),
 		HAEnabled:        types.BoolValue(false),
 		Kubeconfig:       types.StringValue("prior-kubeconfig"),
@@ -919,6 +1099,7 @@ func TestCreateKubeconfig4xxNotRetried(t *testing.T) {
 		Name:     types.StringValue("test-cluster"),
 		VPCID:    types.StringValue("vpc-1"),
 		SubnetID: types.StringValue("sn-1"),
+		Addons:   types.SetUnknown(types.StringType),
 		InitialNodePool: &InitialNodePoolModel{
 			FlavorID:  types.StringValue("k8s.gp1.small"),
 			NodeCount: types.Int64Value(2),
