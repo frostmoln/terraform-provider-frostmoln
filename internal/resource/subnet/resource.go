@@ -89,11 +89,18 @@ func (r *subnetResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				},
 			},
 			"dns_servers": schema.ListAttribute{
-				Description: "The DNS server addresses for the subnet.",
+				// Computed: the backend stamps the platform default DNS
+				// servers when none are given, so an Optional-only attribute
+				// would fail every unset-dns_servers apply with "provider
+				// produced inconsistent result" (same server-defaulted shape
+				// as gateway_ip above).
+				Description: "The DNS server addresses for the subnet. Defaults to the platform DNS servers.",
 				Optional:    true,
+				Computed:    true,
 				ElementType: types.StringType,
 				PlanModifiers: []planmodifier.List{
 					listplanmodifier.RequiresReplace(),
+					listplanmodifier.UseStateForUnknown(),
 				},
 			},
 			"tags": schema.MapAttribute{

@@ -56,7 +56,7 @@ jobs:
             -H "Authorization: Bearer ${BEARER}" \
             -H "Content-Type: application/json" \
             -H "Origin: ${PORTAL_URL}" \
-            -d '{"name":"tf-acctest-key","scopes":["compute:read","compute:write","storage:read","storage:write","network:read","network:write","billing:read","secrets:read","secrets:write"]}')
+            -d '{"name":"tf-acctest-key","scopes":["compute:read","compute:write","storage:read","storage:write","network:read","network:write","billing:read","secrets:read","secrets:write","kubernetes:read","kubernetes:write"]}')
 
           API_KEY=$(echo "$KEY_RESP" | jq -r '.key')
           if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ]; then
@@ -69,6 +69,12 @@ jobs:
           echo "FROSTMOLN_API_ENDPOINT=${PORTAL_URL}/api" >> $GITHUB_ENV
           echo "TEST_BEARER_TOKEN=${BEARER}" >> $GITHUB_ENV
 
+      # The managed-K8s tests (frostmoln_kubernetes_*) always skip here: they
+      # need an explicit FROSTMOLN_TEST_KUBERNETES=1 opt-in (they create real,
+      # billed clusters) AND the `kubernetes` entitlement, which the fresh
+      # per-run tenant lacks (ADR-0038). The run recipe for an entitled tenant
+      # is in internal/resource/kubernetes_cluster/resource_acc_test.go —
+      # never opt in HERE without also raising this job's 30m go-test timeout.
       - name: Run acceptance tests
         run: TF_ACC=1 go test -v -timeout 30m -count=1 ./internal/...
         env:

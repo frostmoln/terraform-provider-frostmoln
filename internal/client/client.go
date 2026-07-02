@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"time"
 
 	"go.frostmoln.internal/oidc"
@@ -208,6 +209,9 @@ type APIError struct {
 	Message    string `json:"message"`
 	Details    string `json:"details,omitempty"`
 	StatusCode int    `json:"-"`
+	// RetryAfter is the server-suggested wait in seconds on a 429 (from the
+	// rate-limit body's retry_after or the Retry-After header); 0 when absent.
+	RetryAfter int `json:"retry_after,omitempty"`
 }
 
 func (e *APIError) Error() string {
@@ -319,6 +323,55 @@ func (r *Response) IsAccepted() bool {
 // 401 before replaying it — so an expired access token never surfaces as an
 // auth error mid-apply.
 func (c *Client) Do(ctx context.Context, method, reqPath string, query url.Values, body interface{}) (*Response, error) {
+	for attempt := 0; ; attempt++ {
+		resp, err := c.doWithAuth(ctx, method, reqPath, query, body)
+		apiErr, ok := err.(*APIError)
+		if !ok || apiErr.StatusCode != http.StatusTooManyRequests || attempt >= rateLimitRetries {
+			return resp, err
+		}
+		// The gateway rate-limits per key and says when to come back;
+		// Terraform runs resource operations concurrently (parallel destroys
+		// especially), so surfacing the 429 would fail an apply the server
+		// explicitly asked us to retry.
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(rateLimitBackoff(attempt, apiErr.RetryAfter)):
+		}
+	}
+}
+
+// rateLimitBackoff computes the wait before 429-retry number attempt. The
+// server's Retry-After hint alone is not enough: the limiter's minute window
+// can stay exhausted long past its optimistic "retry after 1 seconds" while
+// concurrent operations keep consuming the refill — so the wait escalates per
+// attempt (raised to the server hint when that is larger) to ride out a full
+// window rollover instead of burning all retries in the first seconds.
+func rateLimitBackoff(attempt, retryAfterSeconds int) time.Duration {
+	wait := time.Duration(retryAfterSeconds) * time.Second
+	if escalated := rateLimitBaseWait << attempt; wait < escalated {
+		wait = escalated
+	}
+	if wait > rateLimitMaxWait {
+		wait = rateLimitMaxWait
+	}
+	return wait
+}
+
+// rateLimitRetries bounds the automatic 429 retry per request. Waits escalate
+// rateLimitBaseWait<<attempt (2s, 4s, 8s, 16s, 30s — capped by
+// rateLimitMaxWait), each raised to the server's Retry-After when that is
+// larger: ~60s of total patience, enough to roll over the gateway's
+// per-minute window.
+const (
+	rateLimitRetries  = 5
+	rateLimitBaseWait = 2 * time.Second
+	rateLimitMaxWait  = 30 * time.Second
+)
+
+// doWithAuth sends one request on the configured auth path, refreshing a
+// stale bearer token once on a 401.
+func (c *Client) doWithAuth(ctx context.Context, method, reqPath string, query url.Values, body interface{}) (*Response, error) {
 	if c.bearer == nil {
 		return c.do(ctx, method, reqPath, query, body, "")
 	}
@@ -422,6 +475,29 @@ func (c *Client) do(ctx context.Context, method, reqPath string, query url.Value
 				Code:       "PROVIDER_UPGRADE_REQUIRED",
 				Message:    oidc.NewUpgradeRequiredError(gw.Error.Message, providerUpgradeFallback).Error(),
 				StatusCode: httpResp.StatusCode,
+			}
+		}
+		// The gateway's rate-limit body is its own shape ({"error":"rate
+		// limit exceeded","message":...,"retry_after":N} — "error" is a
+		// string, not an object) so parse it before the generic formats; Do
+		// retries these using the server-suggested wait.
+		if httpResp.StatusCode == http.StatusTooManyRequests {
+			var rl struct {
+				Message    string `json:"message"`
+				RetryAfter int    `json:"retry_after"`
+			}
+			_ = json.Unmarshal(respBody, &rl)
+			if rl.RetryAfter <= 0 {
+				rl.RetryAfter, _ = strconv.Atoi(httpResp.Header.Get("Retry-After"))
+			}
+			if rl.Message == "" {
+				rl.Message = string(respBody)
+			}
+			return nil, &APIError{
+				Code:       "RATE_LIMITED",
+				Message:    rl.Message,
+				StatusCode: httpResp.StatusCode,
+				RetryAfter: rl.RetryAfter,
 			}
 		}
 		// Try to parse nested error format first: {"error": {"code": ..., "message": ...}}

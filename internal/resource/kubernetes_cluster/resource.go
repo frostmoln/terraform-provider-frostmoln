@@ -565,18 +565,16 @@ func (r *kubernetesClusterResource) Read(ctx context.Context, req resource.ReadR
 
 	if cluster.Status == statusRunning {
 		// Refresh the kubeconfig only when the cluster can serve it (the
-		// endpoint answers 409 otherwise). The prior value is kept on any
-		// error; a 409 stays silent (expected transient), anything else gets
-		// a warning so a persistently stale kubeconfig doesn't go unnoticed.
-		kcResp, kcErr := r.client.Get(ctx, r.clusterPath(id)+"/kubeconfig", nil)
+		// endpoint answers 409 otherwise). fetchKubeconfig retries transient
+		// 5xx — an import Read has no prior value to keep, so a single
+		// transient failure would fail ImportStateVerify. The prior value is
+		// kept on any error; a 409 stays silent (expected transient),
+		// anything else gets a warning so a persistently stale kubeconfig
+		// doesn't go unnoticed.
+		kubeconfig, kcErr := r.fetchKubeconfig(ctx, id)
 		if kcErr == nil {
-			if kc, parseErr := client.ParseResponse[apiKubeconfig](kcResp); parseErr == nil {
-				state.Kubeconfig = types.StringValue(kc.Kubeconfig)
-			} else {
-				kcErr = parseErr
-			}
-		}
-		if kcErr != nil {
+			state.Kubeconfig = types.StringValue(kubeconfig)
+		} else {
 			if apiErr, ok := kcErr.(*client.APIError); !ok || apiErr.StatusCode != 409 {
 				resp.Diagnostics.AddWarning(
 					"Failed to refresh cluster kubeconfig",

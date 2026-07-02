@@ -592,3 +592,93 @@ func TestWaitForOperationFailed(t *testing.T) {
 		t.Fatal("expected error for failed operation")
 	}
 }
+
+func TestDoRetries429WithRetryAfter(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			// The gateway's rate-limit shape: "error" is a string, not an object.
+			_, _ = w.Write([]byte(`{"error":"rate limit exceeded","message":"Too many requests. Please retry after 1 seconds.","retry_after":1}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "test-key")
+	resp, err := c.Get(context.Background(), "/v1/things", nil)
+	if err != nil {
+		t.Fatalf("expected the 429 to be retried to success, got: %s", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 after retry, got %d", resp.StatusCode)
+	}
+	if calls != 2 {
+		t.Fatalf("expected exactly 2 requests (429 then 200), got %d", calls)
+	}
+}
+
+func TestDoStops429RetryOnContextCancel(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"rate limit exceeded","message":"still limited"}`))
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	c := NewClient(server.URL, "test-key")
+	_, err := c.Get(ctx, "/v1/things", nil)
+	if err == nil {
+		t.Fatal("expected an error when the context expires during the 429 backoff")
+	}
+	if calls != 1 {
+		t.Fatalf("expected exactly 1 request before the context expired, got %d", calls)
+	}
+}
+
+func TestDoParses429RetryAfterHeader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "7")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"rate limit exceeded","message":"still limited"}`))
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "test-key")
+	// Bypass Do's retry loop: a single attempt, so the parsed error surfaces.
+	_, err := c.do(context.Background(), http.MethodGet, "/v1/things", nil, nil, "")
+	apiErr, ok := err.(*APIError)
+	if !ok || apiErr.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("expected a 429 APIError, got: %v", err)
+	}
+	if apiErr.RetryAfter != 7 {
+		t.Fatalf("expected RetryAfter 7 from the Retry-After header, got %d", apiErr.RetryAfter)
+	}
+}
+
+func TestRateLimitBackoff(t *testing.T) {
+	cases := []struct {
+		attempt, serverSecs int
+		want                time.Duration
+	}{
+		{0, 0, 2 * time.Second},    // no hint: base
+		{0, 5, 5 * time.Second},    // server hint above base wins
+		{1, 1, 4 * time.Second},    // escalation above a small hint wins
+		{3, 0, 16 * time.Second},   // exponential growth
+		{4, 0, 30 * time.Second},   // capped
+		{2, 120, 30 * time.Second}, // hostile/huge server value capped
+	}
+	for _, tc := range cases {
+		if got := rateLimitBackoff(tc.attempt, tc.serverSecs); got != tc.want {
+			t.Errorf("rateLimitBackoff(%d, %d) = %s, want %s", tc.attempt, tc.serverSecs, got, tc.want)
+		}
+	}
+}
