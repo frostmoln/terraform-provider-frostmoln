@@ -81,10 +81,17 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				},
 			},
 			"zone": schema.StringAttribute{
-				Description: "The availability zone for the instance.",
+				// Optional+Computed: when config omits it the platform picks an AZ
+				// and echoes it, so an Optional-only attr would fail every zone-less
+				// apply with "provider produced inconsistent result" (null plan, non-null
+				// read-back). UseStateForUnknown pins the recorded AZ so a follow-up plan
+				// stays empty. Matches subnet's zone/gateway_ip.
+				Description: "The availability zone for the instance. If omitted, the platform selects one and records it in state.",
 				Optional:    true,
+				Computed:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
 			"vpc_id": schema.StringAttribute{

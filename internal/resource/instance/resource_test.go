@@ -1367,6 +1367,109 @@ func TestInstanceResource_TFSDKCreateMinimal(t *testing.T) {
 	}
 }
 
+// TestInstanceResource_TFSDKCreateZoneless reproduces the zone read-back bug: a
+// create with NO zone in config, where the backend picks an AZ and echoes it.
+// The zone attribute is Optional+Computed, so the null config value must not be
+// sent (backend picks), and the echoed AZ must be adopted into state without a
+// "provider produced inconsistent result after apply". UseStateForUnknown then
+// pins that AZ so a follow-up plan stays empty (see the schema assertions below).
+func TestInstanceResource_TFSDKCreateZoneless(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances":
+			var req apiCreateInstanceRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("failed to decode create request: %v", err)
+			}
+			// A null (unset) zone must not be sent — the backend picks the AZ.
+			if req.Zone != "" {
+				t.Errorf("expected empty zone in create request (backend picks), got %q", req.Zone)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-zoneless-1", "status": "pending", "resourceType": "instance",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-zoneless-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-zoneless-1", "status": "completed", "resourceType": "instance", "resourceId": "inst-zoneless-1",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-zoneless-1":
+			// Backend echoes the AZ it selected.
+			_ = json.NewEncoder(w).Encode(apiInstance{
+				ID:        "inst-zoneless-1",
+				Name:      "zoneless-vm",
+				Status:    "running",
+				FlavorID:  "flavor-small",
+				ImageID:   "img-ubuntu",
+				Zone:      "falkenberg",
+				CreatedAt: "2025-06-01T12:00:00Z",
+			})
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key")
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := &instanceResource{
+		client:       c,
+		pollInterval: 10 * time.Millisecond,
+		pollTimeout:  5 * time.Second,
+	}
+	schemaResp := getInstanceSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	// zone defaults to null in instanceTFValue — i.e. omitted from config.
+	planVal := instanceTFValue(t, tfType, map[string]tftypes.Value{
+		"name": tftypes.NewValue(tftypes.String, "zoneless-vm"),
+	})
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+	}
+	createResp := &resource.CreateResponse{
+		State: tfsdk.State{Schema: schemaResp.Schema},
+	}
+
+	r.Create(ctx, createReq, createResp)
+
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("Create failed: %v", createResp.Diagnostics.Errors())
+	}
+
+	var model InstanceModel
+	createResp.State.Get(ctx, &model)
+
+	// The backend-picked AZ must be recorded in state (not left null).
+	if model.Zone.ValueString() != "falkenberg" {
+		t.Errorf("expected Zone falkenberg adopted from read-back, got %q", model.Zone.ValueString())
+	}
+
+	// The fix depends on zone being Optional+Computed with UseStateForUnknown:
+	// Computed lets the null-config value read back non-null without an
+	// inconsistent-result error; UseStateForUnknown keeps the follow-up plan empty.
+	zoneAttr := schemaResp.Schema.Attributes["zone"]
+	if !zoneAttr.IsComputed() {
+		t.Error("expected zone attribute to be Computed (adopts backend-picked AZ)")
+	}
+	if !zoneAttr.IsOptional() {
+		t.Error("expected zone attribute to stay Optional (still explicit-capable)")
+	}
+}
+
 func TestInstanceResource_TFSDKCreateErrorState(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {

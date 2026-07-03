@@ -56,7 +56,7 @@ resource "frostmoln_instance" "example" {
 - `tags` (Map of String) Key-value tags for the instance.
 - `user_data` (String, Sensitive) User data to provide to the instance at launch. This is write-only; the API does not return it. A SHA256 hash is stored in state for change detection.
 - `vpc_id` (String) The VPC ID for the instance.
-- `zone` (String) The availability zone for the instance.
+- `zone` (String) The availability zone for the instance. If omitted, the platform selects one and records it in state.
 
 ### Read-Only
 
