@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.0] - 2026-07-03
+
+### 🚀 Features
+
+- *(instance)* Optional instance_access bool for in-guest agent enrollment (#153)
+- *(managed-db)* Resize storage_gb via online /resize; guard shrink and flavor changes (#155)
+- *(dns)* Add zone tags to frostmoln_dns_zone (#159)
+- *(webserver)* Route storage_gb changes to /resize + guard flavor_id (#163)
+
+### 🐛 Bug Fixes
+
+- *(instance)* Adopt backend-picked availability zone (Optional+Computed) (#157)
+- *(subnet)* Wait for delete operation to prevent stale-id on replace (#161)
+
+### 🧪 Testing
+
+- *(kubernetes)* TF_ACC acceptance tests for cluster + node pool (Ph5c phase 5) (#151)
+
 ## [0.10.0] - 2026-07-02
 
 ### 🚀 Features
