@@ -39,7 +39,7 @@ output "mysql_endpoint" {
 
 - `flavor_id` (String) The flavor ID/size for the database instance (e.g. "db.gp1.small", "db.gp1.medium").
 - `name` (String) The name of the MySQL instance.
-- `storage_gb` (Number) The storage size in gigabytes.
+- `storage_gb` (Number) The storage size in gigabytes. Can be increased in place (online resize); decreasing it is not supported.
 - `subnet_id` (String) The subnet ID where the database instance will be deployed.
 - `version` (String) The MySQL version (e.g. "8.0", "8.4", "9.2").
 - `vpc_id` (String) The VPC ID where the database instance will be deployed.

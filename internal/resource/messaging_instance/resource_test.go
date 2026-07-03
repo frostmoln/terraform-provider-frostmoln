@@ -105,12 +105,11 @@ func TestMessagingInstanceModelToUpdateRequest(t *testing.T) {
 	if req.Name == nil || *req.Name != "new-name" {
 		t.Error("expected name update to new-name")
 	}
-	if req.FlavorID == nil || *req.FlavorID != "mq.gp1.large" {
-		t.Error("expected flavorId update to mq.gp1.large")
-	}
 	if req.PersistenceMode == nil || *req.PersistenceMode != "none" {
 		t.Error("expected persistenceMode update to none")
 	}
+	// flavor_id is not part of the PUT update request: flavor changes are
+	// rejected at plan time (flavor resize not yet supported).
 }
 
 func TestMessagingInstanceModelToUpdateRequestNoChanges(t *testing.T) {
@@ -121,7 +120,7 @@ func TestMessagingInstanceModelToUpdateRequestNoChanges(t *testing.T) {
 	}
 
 	req := same.toUpdateRequest(&same)
-	if req.Name != nil || req.FlavorID != nil || req.PersistenceMode != nil {
+	if req.Name != nil || req.PersistenceMode != nil {
 		t.Error("expected no changes in update request")
 	}
 }
@@ -739,7 +738,7 @@ func TestUpdate(t *testing.T) {
 				Name:            "updated-broker",
 				Engine:          "lavinmq",
 				EngineVersion:   "2.3",
-				FlavorID:        "mq.gp1.large",
+				FlavorID:        "mq.gp1.small",
 				VPCID:           "vpc-1",
 				SubnetID:        "sn-1",
 				PersistenceMode: "none",
@@ -772,12 +771,14 @@ func TestUpdate(t *testing.T) {
 		CreatedAt:       types.StringValue("2025-01-01T00:00:00Z"),
 	})
 
+	// Rename + persistence-mode change. flavor_id is unchanged (a flavor change
+	// is rejected at plan time, so Update never receives one).
 	plan := buildMessagingInstancePlan(t, MessagingInstanceModel{
 		ID:              types.StringValue("mq-123"),
 		Name:            types.StringValue("updated-broker"),
 		Engine:          types.StringValue("lavinmq"),
 		Version:         types.StringValue("2.3"),
-		FlavorID:        types.StringValue("mq.gp1.large"),
+		FlavorID:        types.StringValue("mq.gp1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
 		PersistenceMode: types.StringValue("none"),
@@ -795,8 +796,8 @@ func TestUpdate(t *testing.T) {
 	if updatedBody.Name == nil || *updatedBody.Name != "updated-broker" {
 		t.Error("expected name in update request")
 	}
-	if updatedBody.FlavorID == nil || *updatedBody.FlavorID != "mq.gp1.large" {
-		t.Error("expected flavorId in update request")
+	if updatedBody.PersistenceMode == nil || *updatedBody.PersistenceMode != "none" {
+		t.Error("expected persistenceMode in update request")
 	}
 }
 

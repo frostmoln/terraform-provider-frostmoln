@@ -71,15 +71,29 @@ type apiCreatePostgresInstanceRequest struct {
 	ParameterGroupID    string `json:"parameterGroupId,omitempty"`
 }
 
-// apiUpdatePostgresInstanceRequest is the API request to update a managed PostgreSQL instance.
+// apiUpdatePostgresInstanceRequest is the API request to update a managed
+// PostgreSQL instance via PUT. It carries only in-place-updatable fields:
+// storage_gb goes through POST /resize (grow-only) and flavor_id changes are
+// rejected at plan time, so neither is sent here (the backend PUT handler has
+// no storage field and drops flavor changes silently).
 type apiUpdatePostgresInstanceRequest struct {
 	Name                *string `json:"name,omitempty"`
-	FlavorID            *string `json:"flavorId,omitempty"`
-	StorageGB           *int    `json:"storageGb,omitempty"`
 	BackupEnabled       *bool   `json:"backupEnabled,omitempty"`
 	BackupSchedule      *string `json:"backupSchedule,omitempty"`
 	BackupRetentionDays *int    `json:"backupRetentionDays,omitempty"`
 	ParameterGroupID    *string `json:"parameterGroupId,omitempty"`
+}
+
+// hasChanges reports whether the update request carries any field to PUT.
+func (r apiUpdatePostgresInstanceRequest) hasChanges() bool {
+	return r.Name != nil || r.BackupEnabled != nil || r.BackupSchedule != nil ||
+		r.BackupRetentionDays != nil || r.ParameterGroupID != nil
+}
+
+// apiResizePostgresInstanceRequest is the body for POST /databases/{id}/resize.
+// Storage grows online and cannot be shrunk (backend rejects a decrease).
+type apiResizePostgresInstanceRequest struct {
+	StorageGB int `json:"storageGb"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -122,14 +136,6 @@ func (m *PostgresInstanceModel) toUpdateRequest(state *PostgresInstanceModel) ap
 	if !m.Name.Equal(state.Name) {
 		v := m.Name.ValueString()
 		req.Name = &v
-	}
-	if !m.FlavorID.Equal(state.FlavorID) {
-		v := m.FlavorID.ValueString()
-		req.FlavorID = &v
-	}
-	if !m.StorageGB.Equal(state.StorageGB) {
-		v := int(m.StorageGB.ValueInt64())
-		req.StorageGB = &v
 	}
 	if !m.BackupEnabled.Equal(state.BackupEnabled) {
 		v := m.BackupEnabled.ValueBool()

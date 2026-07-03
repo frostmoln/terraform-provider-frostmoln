@@ -142,12 +142,6 @@ func TestPostgresInstanceModelToUpdateRequest(t *testing.T) {
 	if req.Name == nil || *req.Name != "new-name" {
 		t.Error("expected name update to new-name")
 	}
-	if req.FlavorID == nil || *req.FlavorID != "db.gp1.large" {
-		t.Error("expected flavor update")
-	}
-	if req.StorageGB == nil || *req.StorageGB != 200 {
-		t.Error("expected storageGb update")
-	}
 	if req.BackupEnabled == nil || !*req.BackupEnabled {
 		t.Error("expected backupEnabled update")
 	}
@@ -160,6 +154,11 @@ func TestPostgresInstanceModelToUpdateRequest(t *testing.T) {
 	if req.ParameterGroupID == nil || *req.ParameterGroupID != "pg-2" {
 		t.Error("expected parameterGroupId update")
 	}
+	if !req.hasChanges() {
+		t.Error("expected hasChanges to be true")
+	}
+	// flavor_id and storage_gb are not part of the PUT update request: storage
+	// grows via POST /resize and flavor changes are rejected at plan time.
 }
 
 func TestPostgresInstanceModelToUpdateRequestNoChanges(t *testing.T) {
@@ -174,10 +173,12 @@ func TestPostgresInstanceModelToUpdateRequestNoChanges(t *testing.T) {
 	}
 
 	req := same.toUpdateRequest(&same)
-	if req.Name != nil || req.FlavorID != nil || req.StorageGB != nil ||
-		req.BackupEnabled != nil || req.BackupSchedule != nil ||
+	if req.Name != nil || req.BackupEnabled != nil || req.BackupSchedule != nil ||
 		req.BackupRetentionDays != nil || req.ParameterGroupID != nil {
 		t.Error("expected no changes in update request")
+	}
+	if req.hasChanges() {
+		t.Error("expected hasChanges to be false when nothing changed")
 	}
 }
 
@@ -641,15 +642,22 @@ func TestReadServerError(t *testing.T) {
 
 func TestUpdate(t *testing.T) {
 	var updatedBody apiUpdatePostgresInstanceRequest
+	var resizeBody apiResizePostgresInstanceRequest
+	var resizeCalled atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/databases/pg-123/resize":
+			_ = json.NewDecoder(r.Body).Decode(&resizeBody)
+			resizeCalled.Store(true)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-1/databases/pg-123":
 			_ = json.NewDecoder(r.Body).Decode(&updatedBody)
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/databases/pg-123":
 			_ = json.NewEncoder(w).Encode(apiPostgresInstance{
-				ID: "pg-123", Name: "updated-pg", PostgresVersion: "16", FlavorID: "db.gp1.large",
+				ID: "pg-123", Name: "updated-pg", PostgresVersion: "16", FlavorID: "db.gp1.small",
 				StorageGB: 100, VPCID: "vpc-1", SubnetID: "sn-1", Status: "running",
 				Port: 5432, CreatedAt: "2025-01-01T00:00:00Z",
 			})
@@ -668,9 +676,11 @@ func TestUpdate(t *testing.T) {
 		SubnetID: types.StringValue("sn-1"), Status: types.StringValue("running"),
 		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
 	})
+	// Rename + storage grow. flavor_id is unchanged (a flavor change is rejected
+	// at plan time, so Update never receives one).
 	plan := buildPlan(t, PostgresInstanceModel{
 		ID: types.StringValue("pg-123"), Name: types.StringValue("updated-pg"),
-		Version: types.StringValue("16"), FlavorID: types.StringValue("db.gp1.large"),
+		Version: types.StringValue("16"), FlavorID: types.StringValue("db.gp1.small"),
 		StorageGB: types.Int64Value(100), VPCID: types.StringValue("vpc-1"),
 		SubnetID: types.StringValue("sn-1"), Status: types.StringValue("running"),
 		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
@@ -681,14 +691,104 @@ func TestUpdate(t *testing.T) {
 	if updateResp.Diagnostics.HasError() {
 		t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
 	}
+	if !resizeCalled.Load() {
+		t.Error("expected POST /resize to be called for storage grow")
+	}
+	if resizeBody.StorageGB != 100 {
+		t.Errorf("expected resize to 100 GB, got %d", resizeBody.StorageGB)
+	}
 	if updatedBody.Name == nil || *updatedBody.Name != "updated-pg" {
 		t.Error("expected name in update request")
 	}
-	if updatedBody.FlavorID == nil || *updatedBody.FlavorID != "db.gp1.large" {
-		t.Error("expected flavor in update request")
+}
+
+// TestUpdateStorageOnlySkipsPut verifies a storage-only change resizes without
+// issuing an empty PUT.
+func TestUpdateStorageOnlySkipsPut(t *testing.T) {
+	var putCalled, resizeCalled atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/databases/pg-123/resize":
+			resizeCalled.Store(true)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-1/databases/pg-123":
+			putCalled.Store(true)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/databases/pg-123":
+			_ = json.NewEncoder(w).Encode(apiPostgresInstance{
+				ID: "pg-123", Name: "my-pg", PostgresVersion: "16", FlavorID: "db.gp1.small",
+				StorageGB: 100, VPCID: "vpc-1", SubnetID: "sn-1", Status: "running",
+				Port: 5432, CreatedAt: "2025-01-01T00:00:00Z",
+			})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	r := newResource(newClient(t, server))
+	base := PostgresInstanceModel{
+		ID: types.StringValue("pg-123"), Name: types.StringValue("my-pg"),
+		Version: types.StringValue("16"), FlavorID: types.StringValue("db.gp1.small"),
+		StorageGB: types.Int64Value(50), VPCID: types.StringValue("vpc-1"),
+		SubnetID: types.StringValue("sn-1"), Status: types.StringValue("running"),
+		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
 	}
-	if updatedBody.StorageGB == nil || *updatedBody.StorageGB != 100 {
-		t.Error("expected storageGb in update request")
+	state := buildState(t, base)
+	grown := base
+	grown.StorageGB = types.Int64Value(100)
+	plan := buildPlan(t, grown)
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
+	}
+	if !resizeCalled.Load() {
+		t.Error("expected POST /resize for storage-only grow")
+	}
+	if putCalled.Load() {
+		t.Error("expected no PUT for a storage-only change")
+	}
+}
+
+// TestUpdateShrinkRejected covers the apply-time defensive guard: a shrink that
+// bypassed the plan-time modifier (e.g. an unknown/interpolated value) must fail
+// with a clear error and issue no resize.
+func TestUpdateShrinkRejected(t *testing.T) {
+	var resizeCalled atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			resizeCalled.Store(true)
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	r := newResource(newClient(t, server))
+	base := PostgresInstanceModel{
+		ID: types.StringValue("pg-123"), Name: types.StringValue("my-pg"),
+		Version: types.StringValue("16"), FlavorID: types.StringValue("db.gp1.small"),
+		StorageGB: types.Int64Value(50), VPCID: types.StringValue("vpc-1"),
+		SubnetID: types.StringValue("sn-1"), Status: types.StringValue("running"),
+		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
+	}
+	state := buildState(t, base)
+	shrunk := base
+	shrunk.StorageGB = types.Int64Value(20)
+	plan := buildPlan(t, shrunk)
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	if !updateResp.Diagnostics.HasError() {
+		t.Error("expected error rejecting a storage shrink")
+	}
+	if resizeCalled.Load() {
+		t.Error("expected no resize call on a shrink")
 	}
 }
 

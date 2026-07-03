@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
 )
 
@@ -48,6 +49,39 @@ func (r *postgresInstanceResource) getPollTimeout() time.Duration {
 		return r.pollTimeout
 	}
 	return 15 * time.Minute
+}
+
+// pollRunning waits until the instance returns to "running" state.
+func (r *postgresInstanceResource) pollRunning(ctx context.Context, id string) (string, error) {
+	return client.WaitForState(ctx, client.PollConfig{
+		Interval:     r.getPollInterval(),
+		Timeout:      r.getPollTimeout(),
+		TargetStates: []string{"running"},
+		ErrorStates:  []string{"error", "failed"},
+		ResourceName: "postgres_instance",
+		PollFunc: func(pollCtx context.Context) (string, error) {
+			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/databases/"+id), nil)
+			if pollErr != nil {
+				return "", pollErr
+			}
+			current, parseErr := client.ParseResponse[apiPostgresInstance](pollResp)
+			if parseErr != nil {
+				return "", parseErr
+			}
+			return current.Status, nil
+		},
+	})
+}
+
+// resizeStorage grows the instance's storage online via POST /resize, then waits
+// for it to return to "running". Grow-only: a shrink is rejected at plan time.
+func (r *postgresInstanceResource) resizeStorage(ctx context.Context, id string, storageGB int) error {
+	_, err := r.client.Post(ctx, r.client.TenantPath("/databases/"+id+"/resize"), apiResizePostgresInstanceRequest{StorageGB: storageGB})
+	if err != nil {
+		return err
+	}
+	_, err = r.pollRunning(ctx, id)
+	return err
 }
 
 func (r *postgresInstanceResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -83,10 +117,16 @@ func (r *postgresInstanceResource) Schema(_ context.Context, _ resource.SchemaRe
 			"flavor_id": schema.StringAttribute{
 				Description: "The flavor ID/size for the database instance (e.g. \"db.gp1.small\", \"db.gp1.medium\").",
 				Required:    true,
+				PlanModifiers: []planmodifier.String{
+					planmod.StringErrorOnChange("Changing flavor_id (flavor resize) is not yet supported for managed database instances. Keep the original flavor_id, or destroy and recreate the instance to change it."),
+				},
 			},
 			"storage_gb": schema.Int64Attribute{
-				Description: "The storage size in gigabytes.",
+				Description: "The storage size in gigabytes. Can be increased in place (online resize); decreasing it is not supported.",
 				Required:    true,
+				PlanModifiers: []planmodifier.Int64{
+					planmod.Int64GrowOnly("GB"),
+				},
 			},
 			"vpc_id": schema.StringAttribute{
 				Description: "The VPC ID where the database instance will be deployed.",
@@ -361,35 +401,40 @@ func (r *postgresInstanceResource) Update(ctx context.Context, req resource.Upda
 
 	id := state.ID.ValueString()
 
-	updateReq := plan.toUpdateRequest(&state)
-	_, err := r.client.Put(ctx, r.client.TenantPath("/databases/"+id), updateReq)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to update PostgreSQL instance", err.Error())
+	// Storage grow goes through POST /resize (online, grow-only). A shrink is
+	// rejected at plan time (storage_gb GrowOnly modifier), so in the normal case
+	// only an increase reaches here. Re-check at apply as a defensive backstop:
+	// the plan-time modifier is skipped when storage_gb is an unknown
+	// (interpolated) value, so a shrink can slip through to apply with known
+	// values here — fail with a clear message rather than a silent no-op.
+	switch {
+	case plan.StorageGB.ValueInt64() < state.StorageGB.ValueInt64():
+		resp.Diagnostics.AddError(
+			"Storage cannot be shrunk",
+			fmt.Sprintf("storage_gb can only be increased (currently %d GB, requested %d GB); storage is grown online and cannot be shrunk.",
+				state.StorageGB.ValueInt64(), plan.StorageGB.ValueInt64()),
+		)
 		return
+	case plan.StorageGB.ValueInt64() > state.StorageGB.ValueInt64():
+		if err := r.resizeStorage(ctx, id, int(plan.StorageGB.ValueInt64())); err != nil {
+			resp.Diagnostics.AddError("Failed to resize PostgreSQL instance storage", err.Error())
+			return
+		}
 	}
 
-	// Poll until instance is back to "running" after the update.
-	_, err = client.WaitForState(ctx, client.PollConfig{
-		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
-		TargetStates: []string{"running"},
-		ErrorStates:  []string{"error", "failed"},
-		ResourceName: "postgres_instance",
-		PollFunc: func(pollCtx context.Context) (string, error) {
-			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/databases/"+id), nil)
-			if pollErr != nil {
-				return "", pollErr
-			}
-			current, parseErr := client.ParseResponse[apiPostgresInstance](pollResp)
-			if parseErr != nil {
-				return "", parseErr
-			}
-			return current.Status, nil
-		},
-	})
-	if err != nil {
-		resp.Diagnostics.AddError("PostgreSQL instance failed to reach running state after update", err.Error())
-		return
+	// In-place field updates (name, backups, parameter group) via PUT. Skip the
+	// call entirely when nothing PUT-able changed (e.g. a storage-only resize).
+	if updateReq := plan.toUpdateRequest(&state); updateReq.hasChanges() {
+		if _, err := r.client.Put(ctx, r.client.TenantPath("/databases/"+id), updateReq); err != nil {
+			resp.Diagnostics.AddError("Failed to update PostgreSQL instance", err.Error())
+			return
+		}
+
+		// Poll until instance is back to "running" after the update.
+		if _, err := r.pollRunning(ctx, id); err != nil {
+			resp.Diagnostics.AddError("PostgreSQL instance failed to reach running state after update", err.Error())
+			return
+		}
 	}
 
 	// Refresh state from API.

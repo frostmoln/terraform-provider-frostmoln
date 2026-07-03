@@ -125,12 +125,11 @@ func TestMysqlInstanceModelToUpdateRequest(t *testing.T) {
 	if req.Name == nil || *req.Name != "new-name" {
 		t.Error("expected name update to new-name")
 	}
-	if req.FlavorID == nil || *req.FlavorID != "db.large" {
-		t.Error("expected flavor update to db.large")
+	if !req.hasChanges() {
+		t.Error("expected hasChanges to be true")
 	}
-	if req.StorageGB == nil || *req.StorageGB != 200 {
-		t.Error("expected storageGb update to 200")
-	}
+	// flavor_id and storage_gb are not part of the PUT update request: storage
+	// grows via POST /resize and flavor changes are rejected at plan time.
 }
 
 func TestMysqlInstanceModelToUpdateRequestNoChanges(t *testing.T) {
@@ -141,8 +140,11 @@ func TestMysqlInstanceModelToUpdateRequestNoChanges(t *testing.T) {
 	}
 
 	req := same.toUpdateRequest(&same)
-	if req.Name != nil || req.FlavorID != nil || req.StorageGB != nil {
+	if req.Name != nil {
 		t.Error("expected no changes in update request")
+	}
+	if req.hasChanges() {
+		t.Error("expected hasChanges to be false when nothing changed")
 	}
 }
 
@@ -588,8 +590,15 @@ func TestDelete(t *testing.T) {
 
 func TestUpdate(t *testing.T) {
 	var updatedBody apiUpdateMysqlInstanceRequest
+	var resizeBody apiResizeMysqlInstanceRequest
+	var resizeCalled atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/databases/db-123/resize":
+			_ = json.NewDecoder(r.Body).Decode(&resizeBody)
+			resizeCalled.Store(true)
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, `{}`)
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-1/databases/db-123":
 			_ = json.NewDecoder(r.Body).Decode(&updatedBody)
 			w.WriteHeader(http.StatusOK)
@@ -600,7 +609,7 @@ func TestUpdate(t *testing.T) {
 				Name:          "updated-mysql",
 				Engine:        "mysql",
 				EngineVersion: "8.4",
-				FlavorID:      "db.large",
+				FlavorID:      "db.small",
 				StorageGB:     200,
 				VPCID:         "vpc-1",
 				SubnetID:      "sn-1",
@@ -636,11 +645,13 @@ func TestUpdate(t *testing.T) {
 		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
 	})
 
+	// Rename + storage grow. flavor_id is unchanged (a flavor change is rejected
+	// at plan time, so Update never receives one).
 	plan := buildMysqlInstancePlan(t, MysqlInstanceModel{
 		ID:        types.StringValue("db-123"),
 		Name:      types.StringValue("updated-mysql"),
 		Version:   types.StringValue("8.4"),
-		FlavorID:  types.StringValue("db.large"),
+		FlavorID:  types.StringValue("db.small"),
 		StorageGB: types.Int64Value(200),
 		VPCID:     types.StringValue("vpc-1"),
 		SubnetID:  types.StringValue("sn-1"),
@@ -655,11 +666,14 @@ func TestUpdate(t *testing.T) {
 		t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
 	}
 
+	if !resizeCalled.Load() {
+		t.Error("expected POST /resize to be called for storage grow")
+	}
+	if resizeBody.StorageGB != 200 {
+		t.Errorf("expected resize to 200 GB, got %d", resizeBody.StorageGB)
+	}
 	if updatedBody.Name == nil || *updatedBody.Name != "updated-mysql" {
 		t.Error("expected name in update request")
-	}
-	if updatedBody.FlavorID == nil || *updatedBody.FlavorID != "db.large" {
-		t.Error("expected flavor in update request")
 	}
 }
 

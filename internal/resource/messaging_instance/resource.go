@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 )
 
 var (
@@ -86,6 +87,9 @@ func (r *messagingInstanceResource) Schema(_ context.Context, _ resource.SchemaR
 			"flavor_id": schema.StringAttribute{
 				Description: "The flavor/size for the messaging instance (e.g. \"mq.gp1.small\", \"mq.gp1.medium\").",
 				Required:    true,
+				PlanModifiers: []planmodifier.String{
+					planmod.StringErrorOnChange("Changing flavor_id (flavor resize) is not yet supported for managed messaging instances. Keep the original flavor_id, or destroy and recreate the instance to change it."),
+				},
 			},
 			"vpc_id": schema.StringAttribute{
 				Description: "The VPC ID where the messaging instance will be deployed.",
@@ -299,35 +303,38 @@ func (r *messagingInstanceResource) Update(ctx context.Context, req resource.Upd
 
 	id := state.ID.ValueString()
 
-	updateReq := plan.toUpdateRequest(&state)
-	_, err := r.client.Put(ctx, r.client.TenantPath("/messaging/"+id), updateReq)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to update messaging instance", err.Error())
-		return
-	}
+	// In-place field updates (name, persistence mode) via PUT. flavor_id changes
+	// are rejected at plan time, so nothing here can change size. Skip the call
+	// when nothing PUT-able changed.
+	if updateReq := plan.toUpdateRequest(&state); updateReq.hasChanges() {
+		if _, err := r.client.Put(ctx, r.client.TenantPath("/messaging/"+id), updateReq); err != nil {
+			resp.Diagnostics.AddError("Failed to update messaging instance", err.Error())
+			return
+		}
 
-	// Poll until instance is back to "running" after the update.
-	_, err = client.WaitForState(ctx, client.PollConfig{
-		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
-		TargetStates: []string{"running"},
-		ErrorStates:  []string{"error", "failed"},
-		ResourceName: "messaging_instance",
-		PollFunc: func(pollCtx context.Context) (string, error) {
-			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/messaging/"+id), nil)
-			if pollErr != nil {
-				return "", pollErr
-			}
-			current, parseErr := client.ParseResponse[apiMessagingInstance](pollResp)
-			if parseErr != nil {
-				return "", parseErr
-			}
-			return current.Status, nil
-		},
-	})
-	if err != nil {
-		resp.Diagnostics.AddError("Messaging instance failed to reach running state after update", err.Error())
-		return
+		// Poll until instance is back to "running" after the update.
+		_, err := client.WaitForState(ctx, client.PollConfig{
+			Interval:     r.getPollInterval(),
+			Timeout:      r.getPollTimeout(),
+			TargetStates: []string{"running"},
+			ErrorStates:  []string{"error", "failed"},
+			ResourceName: "messaging_instance",
+			PollFunc: func(pollCtx context.Context) (string, error) {
+				pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/messaging/"+id), nil)
+				if pollErr != nil {
+					return "", pollErr
+				}
+				current, parseErr := client.ParseResponse[apiMessagingInstance](pollResp)
+				if parseErr != nil {
+					return "", parseErr
+				}
+				return current.Status, nil
+			},
+		})
+		if err != nil {
+			resp.Diagnostics.AddError("Messaging instance failed to reach running state after update", err.Error())
+			return
+		}
 	}
 
 	// Refresh state from API.

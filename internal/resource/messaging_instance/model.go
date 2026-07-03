@@ -57,11 +57,19 @@ type apiCreateMessagingInstanceRequest struct {
 	PersistenceMode string `json:"persistenceMode,omitempty"`
 }
 
-// apiUpdateMessagingInstanceRequest is the API request to update a managed messaging instance.
+// apiUpdateMessagingInstanceRequest is the API request to update a managed
+// messaging instance via PUT. flavor_id is not sent: flavor resize is not yet
+// supported (the change is rejected at plan time), and the backend PUT handler
+// drops it silently. Messaging storage is flavor-derived, so there is no
+// storage_gb attribute to resize.
 type apiUpdateMessagingInstanceRequest struct {
 	Name            *string `json:"name,omitempty"`
-	FlavorID        *string `json:"flavorId,omitempty"`
 	PersistenceMode *string `json:"persistenceMode,omitempty"`
+}
+
+// hasChanges reports whether the update request carries any field to PUT.
+func (r apiUpdateMessagingInstanceRequest) hasChanges() bool {
+	return r.Name != nil || r.PersistenceMode != nil
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -89,10 +97,6 @@ func (m *MessagingInstanceModel) toUpdateRequest(state *MessagingInstanceModel) 
 	if !m.Name.Equal(state.Name) {
 		v := m.Name.ValueString()
 		req.Name = &v
-	}
-	if !m.FlavorID.Equal(state.FlavorID) {
-		v := m.FlavorID.ValueString()
-		req.FlavorID = &v
 	}
 	if !m.PersistenceMode.Equal(state.PersistenceMode) {
 		v := m.PersistenceMode.ValueString()
