@@ -57,19 +57,155 @@ func TestDNSZoneToCreateRequestOmitsType(t *testing.T) {
 		Email:       types.StringValue("admin@example.com"),
 		Description: types.StringNull(),
 		TTL:         types.Int64Null(),
+		Tags:        types.MapNull(types.StringType),
 	}
-	req := model.toCreateRequest()
+	var diags diag.Diagnostics
+	req := model.toCreateRequest(context.Background(), &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diags: %v", diags)
+	}
 
 	// The backend defaults the type, so the request struct has no type field.
+	// An unset tags attribute must also be omitted (never sent as {} on create).
 	body, _ := json.Marshal(req)
 	var m map[string]any
 	_ = json.Unmarshal(body, &m)
 	if _, ok := m["type"]; ok {
 		t.Errorf("create request must not carry a type, got %v", m["type"])
 	}
+	if _, ok := m["tags"]; ok {
+		t.Errorf("create request must omit tags when unset, got %v", m["tags"])
+	}
 	if req.Name != "example.com." {
 		t.Errorf("expected name example.com., got %s", req.Name)
 	}
+}
+
+// TestDNSZoneTagsRoundTrip exercises the null-vs-empty-map drift edges: an unset
+// tags attribute must round-trip to null and a configured set must round-trip
+// verbatim, since the backend omits tags entirely when a zone has none.
+func TestDNSZoneTagsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("configured tags round-trip verbatim", func(t *testing.T) {
+		tags, _ := types.MapValueFrom(ctx, types.StringType, map[string]string{"env": "prod", "team": "platform"})
+		model := DNSZoneModel{Tags: tags}
+
+		var diags diag.Diagnostics
+		req := model.toCreateRequest(ctx, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diags: %v", diags)
+		}
+		if req.Tags["env"] != "prod" || req.Tags["team"] != "platform" {
+			t.Errorf("expected create tags env=prod,team=platform, got %v", req.Tags)
+		}
+
+		// Backend echoes the persisted set back.
+		var out DNSZoneModel
+		out.Tags = tags
+		out.fromAPI(ctx, &apiDNSZone{ID: "z1", Tags: map[string]string{"env": "prod", "team": "platform"}}, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diags: %v", diags)
+		}
+		var got map[string]string
+		out.Tags.ElementsAs(ctx, &got, false)
+		if got["env"] != "prod" || got["team"] != "platform" || len(got) != 2 {
+			t.Errorf("expected round-tripped tags, got %v", got)
+		}
+	})
+
+	t.Run("unset tags stay null (backend omits empty)", func(t *testing.T) {
+		model := DNSZoneModel{Tags: types.MapNull(types.StringType)}
+
+		var diags diag.Diagnostics
+		// Backend returns a zone with no tags field at all.
+		model.fromAPI(ctx, &apiDNSZone{ID: "z1"}, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diags: %v", diags)
+		}
+		if !model.Tags.IsNull() {
+			t.Errorf("expected tags to stay null, got %v", model.Tags)
+		}
+	})
+
+	t.Run("explicit empty map stays empty (not null)", func(t *testing.T) {
+		empty, _ := types.MapValueFrom(ctx, types.StringType, map[string]string{})
+		model := DNSZoneModel{Tags: empty}
+
+		var diags diag.Diagnostics
+		model.fromAPI(ctx, &apiDNSZone{ID: "z1"}, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diags: %v", diags)
+		}
+		if model.Tags.IsNull() {
+			t.Errorf("explicit empty map must not flip to null (spurious diff)")
+		}
+		if len(model.Tags.Elements()) != 0 {
+			t.Errorf("expected empty tag map, got %v", model.Tags)
+		}
+	})
+}
+
+// TestDNSZoneToUpdateRequestTags confirms update always sends the full desired
+// set: a configured map replaces, and null/empty serialize to `"tags":{}` to
+// clear (never omitted, which the backend would read as "unchanged").
+func TestDNSZoneToUpdateRequestTags(t *testing.T) {
+	ctx := context.Background()
+
+	assertTagsWireIsEmptyObject := func(t *testing.T, req apiUpdateDNSZoneRequest) {
+		t.Helper()
+		body, _ := json.Marshal(req)
+		var m map[string]any
+		_ = json.Unmarshal(body, &m)
+		raw, ok := m["tags"]
+		if !ok {
+			t.Fatalf("update must always carry a tags field (to clear), got %s", body)
+		}
+		obj, ok := raw.(map[string]any)
+		if !ok || len(obj) != 0 {
+			t.Errorf("expected tags to be an empty object {} to clear, got %v", raw)
+		}
+	}
+
+	t.Run("configured tags replace", func(t *testing.T) {
+		tags, _ := types.MapValueFrom(ctx, types.StringType, map[string]string{"env": "staging"})
+		model := DNSZoneModel{Email: types.StringValue("a@a.com"), Tags: tags}
+
+		var diags diag.Diagnostics
+		req := model.toUpdateRequest(ctx, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diags: %v", diags)
+		}
+		if req.Tags["env"] != "staging" || len(req.Tags) != 1 {
+			t.Errorf("expected replace tags env=staging, got %v", req.Tags)
+		}
+	})
+
+	t.Run("null tags clear via explicit empty object", func(t *testing.T) {
+		model := DNSZoneModel{Email: types.StringValue("a@a.com"), Tags: types.MapNull(types.StringType)}
+
+		var diags diag.Diagnostics
+		req := model.toUpdateRequest(ctx, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diags: %v", diags)
+		}
+		if req.Tags == nil {
+			t.Errorf("expected non-nil empty tag map to clear, got nil")
+		}
+		assertTagsWireIsEmptyObject(t, req)
+	})
+
+	t.Run("empty tags clear via explicit empty object", func(t *testing.T) {
+		empty, _ := types.MapValueFrom(ctx, types.StringType, map[string]string{})
+		model := DNSZoneModel{Email: types.StringValue("a@a.com"), Tags: empty}
+
+		var diags diag.Diagnostics
+		req := model.toUpdateRequest(ctx, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diags: %v", diags)
+		}
+		assertTagsWireIsEmptyObject(t, req)
+	})
 }
 
 func TestDNSZoneResourceCRUD(t *testing.T) {

@@ -50,22 +50,25 @@ type dnsZoneModel struct {
 	Serial      types.Int64  `tfsdk:"serial"`
 	RecordCount types.Int64  `tfsdk:"record_count"`
 	NameServers types.List   `tfsdk:"name_servers"`
+	Tags        types.Map    `tfsdk:"tags"`
 	CreatedAt   types.String `tfsdk:"created_at"`
 }
 
-// apiDNSZone is the API representation of a DNS zone.
+// apiDNSZone is the API representation of a DNS zone. Tags are omitted from the
+// response when the zone has none (ADR-0093).
 type apiDNSZone struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Email       string   `json:"email"`
-	Description string   `json:"description,omitempty"`
-	Type        string   `json:"type"`
-	Status      string   `json:"status"`
-	Serial      uint32   `json:"serial"`
-	TTL         int      `json:"ttl"`
-	RecordCount int      `json:"recordCount"`
-	NameServers []string `json:"nameServers,omitempty"`
-	CreatedAt   string   `json:"createdAt"`
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Email       string            `json:"email"`
+	Description string            `json:"description,omitempty"`
+	Type        string            `json:"type"`
+	Status      string            `json:"status"`
+	Serial      uint32            `json:"serial"`
+	TTL         int               `json:"ttl"`
+	RecordCount int               `json:"recordCount"`
+	NameServers []string          `json:"nameServers,omitempty"`
+	Tags        map[string]string `json:"tags,omitempty"`
+	CreatedAt   string            `json:"createdAt"`
 }
 
 // apiDNSZoneList is the API response for listing DNS zones.
@@ -121,6 +124,11 @@ func (d *dnsZoneDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 			},
 			"name_servers": schema.ListAttribute{
 				Description: "The zone's delegation name servers. Delegate your domain at your registrar to exactly these.",
+				Computed:    true,
+				ElementType: types.StringType,
+			},
+			"tags": schema.MapAttribute{
+				Description: "Key-value tags on the zone.",
 				Computed:    true,
 				ElementType: types.StringType,
 			},
@@ -239,6 +247,15 @@ func (d *dnsZoneDataSource) setZoneState(ctx context.Context, state *dnsZoneMode
 	nsList, diags := types.ListValueFrom(ctx, types.StringType, zone.NameServers)
 	resp.Diagnostics.Append(diags...)
 	state.NameServers = nsList
+
+	// Tags are omitted when empty (ADR-0093); surface an unset map as null.
+	if len(zone.Tags) > 0 {
+		tagsMap, d := types.MapValueFrom(ctx, types.StringType, zone.Tags)
+		resp.Diagnostics.Append(d...)
+		state.Tags = tagsMap
+	} else {
+		state.Tags = types.MapNull(types.StringType)
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
 }

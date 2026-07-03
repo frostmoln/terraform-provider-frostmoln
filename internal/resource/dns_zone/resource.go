@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -117,6 +118,14 @@ func (r *dnsZoneResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 					listplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"tags": schema.MapAttribute{
+				Description: "Key-value tags for the zone.",
+				Optional:    true,
+				ElementType: types.StringType,
+				PlanModifiers: []planmodifier.Map{
+					mapplanmodifier.UseStateForUnknown(),
+				},
+			},
 			"created_at": schema.StringAttribute{
 				Description: "The creation timestamp.",
 				Computed:    true,
@@ -158,7 +167,12 @@ func (r *dnsZoneResource) Create(ctx context.Context, req resource.CreateRequest
 
 	// DNS is served synchronously by the network service (Designate-backed,
 	// ADR-0073) — create returns the zone directly, no async operation.
-	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/dns/zones"), plan.toCreateRequest())
+	createReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/dns/zones"), createReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Create DNS Zone", err.Error())
 		return
@@ -222,7 +236,12 @@ func (r *dnsZoneResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	apiResp, err := r.client.Put(ctx, r.client.TenantPath(fmt.Sprintf("/dns/zones/%s", state.ID.ValueString())), plan.toUpdateRequest())
+	updateReq := plan.toUpdateRequest(ctx, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	apiResp, err := r.client.Put(ctx, r.client.TenantPath(fmt.Sprintf("/dns/zones/%s", state.ID.ValueString())), updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Update DNS Zone", err.Error())
 		return

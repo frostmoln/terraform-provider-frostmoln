@@ -19,6 +19,7 @@ func TestDNSZoneDataSourceByNameLookup(t *testing.T) {
 		{
 			ID: "zone-2", Name: "example.com.", Type: "primary", Status: "active",
 			NameServers: []string{"ns1.set-b.dns.frostmoln.cloud.", "ns2.set-b.dns.frostmoln.cloud."},
+			Tags:        map[string]string{"env": "prod"},
 		},
 	}}
 
@@ -55,5 +56,8 @@ func TestDNSZoneDataSourceByNameLookup(t *testing.T) {
 	}
 	if len(found.NameServers) != 2 || found.NameServers[0] != "ns1.set-b.dns.frostmoln.cloud." {
 		t.Errorf("expected delegation name servers, got %v", found.NameServers)
+	}
+	if found.Tags["env"] != "prod" {
+		t.Errorf("expected zone tags env=prod, got %v", found.Tags)
 	}
 }

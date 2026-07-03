@@ -40,5 +40,6 @@ output "delegation_name_servers" {
 - `record_count` (Number) The number of editable records in the zone.
 - `serial` (Number) The SOA serial of the zone.
 - `status` (String) The status of the zone.
+- `tags` (Map of String) Key-value tags on the zone.
 - `ttl` (Number) The default record TTL in seconds.
 - `type` (String) The zone type.

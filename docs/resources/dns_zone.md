@@ -17,6 +17,11 @@ resource "frostmoln_dns_zone" "example" {
   name  = "example.com."
   email = "admin@example.com"
   ttl   = 3600
+
+  tags = {
+    env  = "prod"
+    team = "platform"
+  }
 }
 
 # The zone is assigned a delegation nameserver set. Delegate your domain at your
@@ -37,6 +42,7 @@ output "delegation_name_servers" {
 ### Optional
 
 - `description` (String) A description of the zone.
+- `tags` (Map of String) Key-value tags for the zone.
 - `ttl` (Number) The default record TTL in seconds.
 
 ### Read-Only
