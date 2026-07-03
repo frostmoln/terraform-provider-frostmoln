@@ -289,13 +289,32 @@ func (r *subnetResource) Delete(ctx context.Context, req resource.DeleteRequest,
 		return
 	}
 
-	_, err := r.client.Delete(ctx, r.client.TenantPath(fmt.Sprintf("/subnets/%s", state.ID.ValueString())))
+	apiResp, err := r.client.Delete(ctx, r.client.TenantPath(fmt.Sprintf("/subnets/%s", state.ID.ValueString())))
 	if err != nil {
 		if client.IsNotFound(err) {
 			return
 		}
 		resp.Diagnostics.AddError("Failed to Delete Subnet", err.Error())
 		return
+	}
+
+	// Subnet delete routes through provisioning → 202 + an async workflow. Wait
+	// for the operation to complete before returning: the DELETE alone returns
+	// while the old subnet is still being torn down, so a REPLACE
+	// (destroy-then-create) races — the network create is idempotent-by-
+	// (name+cidr+vpc) and resolves to the still-deleting old subnet's id, so the
+	// post-create GET 404s on that stale id (Ambix 019f2176 Bug 2). Waiting on
+	// the operation also surfaces the real workflow error (e.g. subnet in use)
+	// instead of a generic timeout. Mirrors subnet Create and volume Delete.
+	if apiResp.IsAccepted() {
+		op, err := client.ParseResponse[client.Operation](apiResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to Parse Operation Response", err.Error())
+			return
+		}
+		if _, err := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute); err != nil {
+			resp.Diagnostics.AddError("Subnet Deletion Failed", err.Error())
+		}
 	}
 }
 

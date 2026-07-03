@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -775,6 +776,98 @@ func TestSubnetResourceDeleteAlreadyGone(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Errorf("expected no errors when deleting already-gone subnet, got %v", resp.Diagnostics)
 	}
+}
+
+// TestSubnetResourceDeleteWaitsForOperation asserts Delete waits for the async
+// delete operation to complete before returning. This is the fix for the
+// replace race (Ambix 019f2176 Bug 2): without the wait, a destroy-then-create
+// replace races and the create resolves to the still-deleting old subnet's id.
+func TestSubnetResourceDeleteWaitsForOperation(t *testing.T) {
+	var opPolled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/subnets/subnet-del-1":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-del-1", Status: "pending", ResourceType: "subnet"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-del-1":
+			opPolled = true
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-del-1", Status: "completed", ResourceType: "subnet", ResourceID: "subnet-del-1"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	resp := &resource.DeleteResponse{}
+	r.Delete(context.Background(), resource.DeleteRequest{State: subnetDeleteState(t)}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	if !opPolled {
+		t.Error("expected Delete to wait on the delete operation, but the operation was never polled")
+	}
+}
+
+// TestSubnetResourceDeleteOperationFailed asserts Delete surfaces the real
+// workflow error (e.g. subnet in use) when the delete operation fails, instead
+// of silently succeeding.
+func TestSubnetResourceDeleteOperationFailed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete:
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-del-1", Status: "pending", ResourceType: "subnet"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-del-1":
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-del-1", Status: "failed", ResourceType: "subnet", Error: "subnet has active resources and cannot be deleted"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	resp := &resource.DeleteResponse{}
+	r.Delete(context.Background(), resource.DeleteRequest{State: subnetDeleteState(t)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error when the delete operation fails")
+	}
+	if !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "active resources") {
+		t.Errorf("expected the real workflow error to be surfaced, got: %s", resp.Diagnostics.Errors()[0].Detail())
+	}
+}
+
+// subnetDeleteState builds a minimal tfsdk.State for id subnet-del-1.
+func subnetDeleteState(t *testing.T) tfsdk.State {
+	t.Helper()
+	s := subnetSchemaHelper(t)
+	stateVal := tftypes.NewValue(subnetObjectType(), map[string]tftypes.Value{
+		"id":            tftypes.NewValue(tftypes.String, "subnet-del-1"),
+		"name":          tftypes.NewValue(tftypes.String, "delete-me"),
+		"description":   tftypes.NewValue(tftypes.String, nil),
+		"cidr":          tftypes.NewValue(tftypes.String, "10.0.0.0/24"),
+		"vpc_id":        tftypes.NewValue(tftypes.String, "vpc-123"),
+		"zone":          tftypes.NewValue(tftypes.String, nil),
+		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
+		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":        tftypes.NewValue(tftypes.String, "active"),
+		"available_ips": tftypes.NewValue(tftypes.Number, 250),
+		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+	})
+	return tfsdk.State{Schema: s, Raw: stateVal}
 }
 
 // Ensure fmt is used.
