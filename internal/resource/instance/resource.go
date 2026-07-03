@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
@@ -136,6 +137,17 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
+			"instance_access": schema.BoolAttribute{
+				Description: "Install the Frostmoln in-guest agent at first boot to enable `fm ssh` terminal and `fm forward` access to the instance (ADR-0092; using a session also requires the tenant's `instance-access` entitlement). Create-time only; the API does not return it, and `terraform import` leaves it unset — a `true` config on an imported instance plans a replacement. Enabling or disabling the agent forces replacement; unset and `false` both mean no agent, and switching between them does not.",
+				Optional:    true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.RequiresReplaceIf(
+						instanceAccessRequiresReplace,
+						instanceAccessReplaceDescription,
+						instanceAccessReplaceDescription,
+					),
+				},
+			},
 			"user_data_hash": schema.StringAttribute{
 				Description: "SHA256 hash of the user data, used for change detection.",
 				Computed:    true,
@@ -180,6 +192,23 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			},
 		},
 	}
+}
+
+// instanceAccessReplaceDescription documents when instance_access forces replacement.
+const instanceAccessReplaceDescription = "Replacement is required when the agent is being enabled or disabled. Unset and `false` are equivalent (no agent), so switching between them does not force replacement."
+
+// instanceAccessRequiresReplace requires replacement only on a real
+// enable/disable transition. Agent enrollment happens via config-drive at first
+// boot (ADR-0092), so changing the effective value needs a rebuild — but null
+// and false both mean "no agent" and serialize identically on the wire
+// (omitempty), so flipping between those spellings must not destroy the VM. An
+// unknown plan value may resolve to true, so it conservatively replaces.
+func instanceAccessRequiresReplace(_ context.Context, req planmodifier.BoolRequest, resp *boolplanmodifier.RequiresReplaceIfFuncResponse) {
+	if req.PlanValue.IsUnknown() {
+		resp.RequiresReplace = true
+		return
+	}
+	resp.RequiresReplace = req.PlanValue.ValueBool() != req.StateValue.ValueBool()
 }
 
 func (r *instanceResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -283,6 +312,7 @@ func (r *instanceResource) Read(ctx context.Context, req resource.ReadRequest, r
 	// Preserve write-only fields before refreshing from API.
 	savedUserData := state.UserData
 	savedUserDataHash := state.UserDataHash
+	savedInstanceAccess := state.InstanceAccess
 
 	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/instances/"+state.ID.ValueString()), nil)
 	if err != nil {
@@ -305,6 +335,7 @@ func (r *instanceResource) Read(ctx context.Context, req resource.ReadRequest, r
 	// Restore write-only fields that the API doesn't return.
 	state.UserData = savedUserData
 	state.UserDataHash = savedUserDataHash
+	state.InstanceAccess = savedInstanceAccess
 
 	// Drift-detect security groups against the authoritative applied set. The
 	// plain instance read returns Nova-aggregated SG NAMES (a different identifier
@@ -384,7 +415,11 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 
 	id := state.ID.ValueString()
 
-	// Preserve write-only fields.
+	// Preserve write-only fields. instance_access is deliberately NOT
+	// overwritten from state: its plan modifier allows an in-place null<->false
+	// respelling (both mean "no agent"), and the final state must match the plan
+	// exactly. Any real change forces replacement and fromAPI never touches it,
+	// so the plan value is already correct.
 	plan.UserData = state.UserData
 	plan.UserDataHash = state.UserDataHash
 
@@ -444,7 +479,7 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 
 	plan.fromAPI(ctx, inst, &resp.Diagnostics)
 
-	// Restore write-only fields.
+	// Restore write-only fields (instance_access keeps the plan value — see above).
 	plan.UserData = state.UserData
 	plan.UserDataHash = state.UserDataHash
 

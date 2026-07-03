@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -60,6 +63,7 @@ func TestInstanceModelToCreateRequest(t *testing.T) {
 		SSHKeyNames:     keys,
 		UserData:        types.StringValue("#!/bin/bash\necho hello"),
 		ConsolePassword: types.StringValue("s3cret-console"),
+		InstanceAccess:  types.BoolValue(true),
 		Tags:            tags,
 	}
 
@@ -98,6 +102,9 @@ func TestInstanceModelToCreateRequest(t *testing.T) {
 	if req.ConsolePassword != "s3cret-console" { // pragma: allowlist secret
 		t.Errorf("expected console password s3cret-console, got %s", req.ConsolePassword)
 	}
+	if !req.InstanceAccess {
+		t.Error("expected instance access true")
+	}
 	if req.Tags["env"] != "test" {
 		t.Errorf("expected tag env=test, got %v", req.Tags)
 	}
@@ -118,6 +125,7 @@ func TestInstanceModelToCreateRequestMinimal(t *testing.T) {
 		SSHKeyNames:     types.SetNull(types.StringType),
 		UserData:        types.StringNull(),
 		ConsolePassword: types.StringNull(),
+		InstanceAccess:  types.BoolNull(),
 		Tags:            types.MapNull(types.StringType),
 	}
 
@@ -140,6 +148,82 @@ func TestInstanceModelToCreateRequestMinimal(t *testing.T) {
 	}
 	if req.ConsolePassword != "" {
 		t.Errorf("expected empty console password, got %s", req.ConsolePassword)
+	}
+	if req.InstanceAccess {
+		t.Error("expected instance access false when unset")
+	}
+}
+
+// TestInstanceCreateRequestInstanceAccessMarshalling verifies the wire shape:
+// instanceAccess is camelCase and omitted entirely when false/unset (omitempty),
+// so old gateways/backends never see an unknown field for the common case.
+func TestInstanceCreateRequestInstanceAccessMarshalling(t *testing.T) {
+	ctx := context.Background()
+
+	set := InstanceModel{
+		Name:           types.StringValue("vm"),
+		FlavorID:       types.StringValue("f"),
+		ImageID:        types.StringValue("i"),
+		InstanceAccess: types.BoolValue(true),
+	}
+	diags := diag.Diagnostics{}
+	body, err := json.Marshal(set.toCreateRequest(ctx, &diags))
+	if err != nil || diags.HasError() {
+		t.Fatalf("marshal failed: %v %v", err, diags.Errors())
+	}
+	if !strings.Contains(string(body), `"instanceAccess":true`) {
+		t.Errorf("expected instanceAccess:true in body, got %s", body)
+	}
+
+	// Explicit false and unset must serialize identically (both omitted):
+	// the backend treats absent as false, and the relaxed plan modifier relies
+	// on the two spellings being wire-equivalent.
+	for name, val := range map[string]types.Bool{
+		"unset": types.BoolNull(),
+		"false": types.BoolValue(false),
+	} {
+		m := InstanceModel{
+			Name:           types.StringValue("vm"),
+			FlavorID:       types.StringValue("f"),
+			ImageID:        types.StringValue("i"),
+			InstanceAccess: val,
+		}
+		diags = diag.Diagnostics{}
+		body, err = json.Marshal(m.toCreateRequest(ctx, &diags))
+		if err != nil || diags.HasError() {
+			t.Fatalf("marshal failed: %v %v", err, diags.Errors())
+		}
+		if strings.Contains(string(body), "instanceAccess") {
+			t.Errorf("expected instanceAccess omitted when %s, got %s", name, body)
+		}
+	}
+}
+
+// TestInstanceAccessRequiresReplace pins the replacement rule: only a real
+// enable/disable transition rebuilds the VM; null<->false respellings do not.
+func TestInstanceAccessRequiresReplace(t *testing.T) {
+	cases := []struct {
+		name        string
+		state, plan types.Bool
+		want        bool
+	}{
+		{"null to false", types.BoolNull(), types.BoolValue(false), false},
+		{"false to null", types.BoolValue(false), types.BoolNull(), false},
+		{"null to true", types.BoolNull(), types.BoolValue(true), true},
+		{"true to null", types.BoolValue(true), types.BoolNull(), true},
+		{"false to true", types.BoolValue(false), types.BoolValue(true), true},
+		{"true to false", types.BoolValue(true), types.BoolValue(false), true},
+		{"unknown plan replaces conservatively", types.BoolValue(false), types.BoolUnknown(), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := planmodifier.BoolRequest{StateValue: tc.state, PlanValue: tc.plan}
+			resp := boolplanmodifier.RequiresReplaceIfFuncResponse{}
+			instanceAccessRequiresReplace(context.Background(), req, &resp)
+			if resp.RequiresReplace != tc.want {
+				t.Errorf("state=%v plan=%v: got RequiresReplace=%v, want %v", tc.state, tc.plan, resp.RequiresReplace, tc.want)
+			}
+		})
 	}
 }
 
@@ -946,6 +1030,7 @@ func instanceTFValue(t *testing.T, tfType tftypes.Type, vals map[string]tftypes.
 		"ssh_key_names":    tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, nil),
 		"user_data":        tftypes.NewValue(tftypes.String, nil),
 		"console_password": tftypes.NewValue(tftypes.String, nil),
+		"instance_access":  tftypes.NewValue(tftypes.Bool, nil),
 		"user_data_hash":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"tags":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1015,7 +1100,7 @@ func TestInstanceResource_Schema(t *testing.T) {
 		}
 	}
 
-	optionalAttrs := []string{"zone", "vpc_id", "subnet_id", "security_groups", "ssh_key_names", "user_data", "console_password", "tags"}
+	optionalAttrs := []string{"zone", "vpc_id", "subnet_id", "security_groups", "ssh_key_names", "user_data", "console_password", "instance_access", "tags"}
 	for _, attr := range optionalAttrs {
 		a, ok := s.Attributes[attr]
 		if !ok {
@@ -1081,6 +1166,9 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 			if req.ConsolePassword != "s3cret-console" { // pragma: allowlist secret
 				t.Errorf("expected console password, got %q", req.ConsolePassword)
 			}
+			if !req.InstanceAccess {
+				t.Error("expected instanceAccess true in create request")
+			}
 			if len(req.SecurityGroupIDs) != 1 || req.SecurityGroupIDs[0] != "sg-default" {
 				t.Errorf("expected security groups [sg-default], got %v", req.SecurityGroupIDs)
 			}
@@ -1140,6 +1228,7 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 		"image_id":         tftypes.NewValue(tftypes.String, "img-ubuntu"),
 		"user_data":        tftypes.NewValue(tftypes.String, "#!/bin/bash\necho hello"),
 		"console_password": tftypes.NewValue(tftypes.String, "s3cret-console"),
+		"instance_access":  tftypes.NewValue(tftypes.Bool, true),
 		"security_groups": tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, []tftypes.Value{
 			tftypes.NewValue(tftypes.String, "sg-default"),
 		}),
@@ -1189,6 +1278,11 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 	expectedHash := computeUserDataHash("#!/bin/bash\necho hello")
 	if model.UserDataHash.ValueString() != expectedHash {
 		t.Errorf("expected UserDataHash %s, got %s", expectedHash, model.UserDataHash.ValueString())
+	}
+	// instance_access is not returned by the API — the plan value must survive
+	// the post-create read (fromAPI must not touch it).
+	if !model.InstanceAccess.ValueBool() {
+		t.Error("expected InstanceAccess true preserved from plan after create")
 	}
 }
 
@@ -1388,20 +1482,21 @@ func TestInstanceResource_TFSDKRead(t *testing.T) {
 
 	// Simulate existing state with user_data preserved from a previous Create.
 	stateVal := instanceTFValue(t, tfType, map[string]tftypes.Value{
-		"id":             tftypes.NewValue(tftypes.String, "inst-read-1"),
-		"name":           tftypes.NewValue(tftypes.String, "read-vm"),
-		"flavor_id":      tftypes.NewValue(tftypes.String, "flavor-medium"),
-		"image_id":       tftypes.NewValue(tftypes.String, "img-debian"),
-		"zone":           tftypes.NewValue(tftypes.String, "falkenberg"),
-		"vpc_id":         tftypes.NewValue(tftypes.String, "vpc-abc"),
-		"subnet_id":      tftypes.NewValue(tftypes.String, "subnet-xyz"),
-		"status":         tftypes.NewValue(tftypes.String, "running"),
-		"flavor_name":    tftypes.NewValue(tftypes.String, "Medium"),
-		"image_name":     tftypes.NewValue(tftypes.String, "Debian 12"),
-		"private_ip":     tftypes.NewValue(tftypes.String, "10.0.2.10"),
-		"public_ip":      tftypes.NewValue(tftypes.String, "203.0.113.50"),
-		"user_data":      tftypes.NewValue(tftypes.String, "#!/bin/bash\necho hello"),
-		"user_data_hash": tftypes.NewValue(tftypes.String, computeUserDataHash("#!/bin/bash\necho hello")),
+		"id":              tftypes.NewValue(tftypes.String, "inst-read-1"),
+		"name":            tftypes.NewValue(tftypes.String, "read-vm"),
+		"flavor_id":       tftypes.NewValue(tftypes.String, "flavor-medium"),
+		"image_id":        tftypes.NewValue(tftypes.String, "img-debian"),
+		"zone":            tftypes.NewValue(tftypes.String, "falkenberg"),
+		"vpc_id":          tftypes.NewValue(tftypes.String, "vpc-abc"),
+		"subnet_id":       tftypes.NewValue(tftypes.String, "subnet-xyz"),
+		"status":          tftypes.NewValue(tftypes.String, "running"),
+		"flavor_name":     tftypes.NewValue(tftypes.String, "Medium"),
+		"image_name":      tftypes.NewValue(tftypes.String, "Debian 12"),
+		"private_ip":      tftypes.NewValue(tftypes.String, "10.0.2.10"),
+		"public_ip":       tftypes.NewValue(tftypes.String, "203.0.113.50"),
+		"user_data":       tftypes.NewValue(tftypes.String, "#!/bin/bash\necho hello"),
+		"user_data_hash":  tftypes.NewValue(tftypes.String, computeUserDataHash("#!/bin/bash\necho hello")),
+		"instance_access": tftypes.NewValue(tftypes.Bool, true),
 		"security_groups": tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, []tftypes.Value{
 			tftypes.NewValue(tftypes.String, "sg-1"),
 			tftypes.NewValue(tftypes.String, "sg-2"),
@@ -1469,6 +1564,11 @@ func TestInstanceResource_TFSDKRead(t *testing.T) {
 	expectedHash := computeUserDataHash("#!/bin/bash\necho hello")
 	if model.UserDataHash.ValueString() != expectedHash {
 		t.Errorf("expected UserDataHash preserved, got %s", model.UserDataHash.ValueString())
+	}
+	// instance_access is not returned by the API — it must be preserved from
+	// prior state, not nulled by the refresh.
+	if !model.InstanceAccess.ValueBool() {
+		t.Error("expected InstanceAccess true preserved from prior state")
 	}
 	// security_groups must be ADOPTED from the authoritative UUID subresource
 	// (drift detection), not preserved from prior state and not the Nova NAMES
@@ -1738,33 +1838,35 @@ func TestInstanceResource_TFSDKUpdateNameChange(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := instanceTFValue(t, tfType, map[string]tftypes.Value{
-		"id":             tftypes.NewValue(tftypes.String, "inst-upd-1"),
-		"name":           tftypes.NewValue(tftypes.String, "old-name"),
-		"flavor_id":      tftypes.NewValue(tftypes.String, "flavor-small"),
-		"image_id":       tftypes.NewValue(tftypes.String, "img-ubuntu"),
-		"status":         tftypes.NewValue(tftypes.String, "running"),
-		"flavor_name":    tftypes.NewValue(tftypes.String, nil),
-		"image_name":     tftypes.NewValue(tftypes.String, nil),
-		"private_ip":     tftypes.NewValue(tftypes.String, nil),
-		"public_ip":      tftypes.NewValue(tftypes.String, nil),
-		"user_data":      tftypes.NewValue(tftypes.String, "#!/bin/bash"),
-		"user_data_hash": tftypes.NewValue(tftypes.String, computeUserDataHash("#!/bin/bash")),
-		"created_at":     tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"id":              tftypes.NewValue(tftypes.String, "inst-upd-1"),
+		"name":            tftypes.NewValue(tftypes.String, "old-name"),
+		"flavor_id":       tftypes.NewValue(tftypes.String, "flavor-small"),
+		"image_id":        tftypes.NewValue(tftypes.String, "img-ubuntu"),
+		"status":          tftypes.NewValue(tftypes.String, "running"),
+		"flavor_name":     tftypes.NewValue(tftypes.String, nil),
+		"image_name":      tftypes.NewValue(tftypes.String, nil),
+		"private_ip":      tftypes.NewValue(tftypes.String, nil),
+		"public_ip":       tftypes.NewValue(tftypes.String, nil),
+		"user_data":       tftypes.NewValue(tftypes.String, "#!/bin/bash"),
+		"user_data_hash":  tftypes.NewValue(tftypes.String, computeUserDataHash("#!/bin/bash")),
+		"instance_access": tftypes.NewValue(tftypes.Bool, true),
+		"created_at":      tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
 	planVal := instanceTFValue(t, tfType, map[string]tftypes.Value{
-		"id":             tftypes.NewValue(tftypes.String, "inst-upd-1"),
-		"name":           tftypes.NewValue(tftypes.String, "renamed-vm"),
-		"flavor_id":      tftypes.NewValue(tftypes.String, "flavor-small"),
-		"image_id":       tftypes.NewValue(tftypes.String, "img-ubuntu"),
-		"status":         tftypes.NewValue(tftypes.String, "running"),
-		"flavor_name":    tftypes.NewValue(tftypes.String, nil),
-		"image_name":     tftypes.NewValue(tftypes.String, nil),
-		"private_ip":     tftypes.NewValue(tftypes.String, nil),
-		"public_ip":      tftypes.NewValue(tftypes.String, nil),
-		"user_data":      tftypes.NewValue(tftypes.String, "#!/bin/bash"),
-		"user_data_hash": tftypes.NewValue(tftypes.String, computeUserDataHash("#!/bin/bash")),
-		"created_at":     tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"id":              tftypes.NewValue(tftypes.String, "inst-upd-1"),
+		"instance_access": tftypes.NewValue(tftypes.Bool, true),
+		"name":            tftypes.NewValue(tftypes.String, "renamed-vm"),
+		"flavor_id":       tftypes.NewValue(tftypes.String, "flavor-small"),
+		"image_id":        tftypes.NewValue(tftypes.String, "img-ubuntu"),
+		"status":          tftypes.NewValue(tftypes.String, "running"),
+		"flavor_name":     tftypes.NewValue(tftypes.String, nil),
+		"image_name":      tftypes.NewValue(tftypes.String, nil),
+		"private_ip":      tftypes.NewValue(tftypes.String, nil),
+		"public_ip":       tftypes.NewValue(tftypes.String, nil),
+		"user_data":       tftypes.NewValue(tftypes.String, "#!/bin/bash"),
+		"user_data_hash":  tftypes.NewValue(tftypes.String, computeUserDataHash("#!/bin/bash")),
+		"created_at":      tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
 	updateReq := resource.UpdateRequest{
@@ -1797,6 +1899,92 @@ func TestInstanceResource_TFSDKUpdateNameChange(t *testing.T) {
 	}
 	if model.UserDataHash.ValueString() != computeUserDataHash("#!/bin/bash") {
 		t.Errorf("expected UserDataHash preserved, got %s", model.UserDataHash.ValueString())
+	}
+	// instance_access carries through an in-place update untouched.
+	if !model.InstanceAccess.ValueBool() {
+		t.Error("expected InstanceAccess true to survive in-place update")
+	}
+}
+
+// TestInstanceResource_TFSDKUpdateInstanceAccessRespell verifies the in-place
+// null<->false respelling the relaxed plan modifier allows: state has an
+// explicit false, config drops the attribute (plan null). Update must honor the
+// PLAN value (null) — overwriting from state would produce "inconsistent result
+// after apply".
+func TestInstanceResource_TFSDKUpdateInstanceAccessRespell(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-respell-1":
+			_ = json.NewEncoder(w).Encode(apiInstance{
+				ID:        "inst-respell-1",
+				Name:      "respell-vm",
+				Status:    "running",
+				FlavorID:  "flavor-small",
+				ImageID:   "img-ubuntu",
+				CreatedAt: "2025-06-01T12:00:00Z",
+			})
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key")
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := &instanceResource{
+		client:       c,
+		pollInterval: 10 * time.Millisecond,
+		pollTimeout:  5 * time.Second,
+	}
+	schemaResp := getInstanceSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	common := map[string]tftypes.Value{
+		"id":         tftypes.NewValue(tftypes.String, "inst-respell-1"),
+		"name":       tftypes.NewValue(tftypes.String, "respell-vm"),
+		"status":     tftypes.NewValue(tftypes.String, "running"),
+		"created_at": tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+	}
+	stateOverrides := map[string]tftypes.Value{
+		"instance_access": tftypes.NewValue(tftypes.Bool, false),
+	}
+	planOverrides := map[string]tftypes.Value{
+		"instance_access": tftypes.NewValue(tftypes.Bool, nil),
+	}
+	for k, v := range common {
+		stateOverrides[k] = v
+		planOverrides[k] = v
+	}
+
+	updateReq := resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: schemaResp.Schema, Raw: instanceTFValue(t, tfType, planOverrides)},
+		State: tfsdk.State{Schema: schemaResp.Schema, Raw: instanceTFValue(t, tfType, stateOverrides)},
+	}
+	updateResp := &resource.UpdateResponse{
+		State: tfsdk.State{Schema: schemaResp.Schema},
+	}
+
+	r.Update(ctx, updateReq, updateResp)
+
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("Update failed: %v", updateResp.Diagnostics.Errors())
+	}
+
+	var model InstanceModel
+	updateResp.State.Get(ctx, &model)
+
+	if !model.InstanceAccess.IsNull() {
+		t.Errorf("expected InstanceAccess null (plan value honored), got %v", model.InstanceAccess)
 	}
 }
 

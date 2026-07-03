@@ -12,6 +12,9 @@ resource "frostmoln_instance" "example" {
   # Password for the default OS user, usable only at the VNC console (SSH stays key-only).
   console_password = "change-me-at-the-console" # pragma: allowlist secret
 
+  # Install the Frostmoln in-guest agent at first boot for `fm ssh` terminal access.
+  instance_access = true
+
   tags = {
     role        = "web"
     environment = "production"

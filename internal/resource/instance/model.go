@@ -25,6 +25,7 @@ type InstanceModel struct {
 	SSHKeyNames     types.Set    `tfsdk:"ssh_key_names"`
 	UserData        types.String `tfsdk:"user_data"`
 	ConsolePassword types.String `tfsdk:"console_password"`
+	InstanceAccess  types.Bool   `tfsdk:"instance_access"`
 	UserDataHash    types.String `tfsdk:"user_data_hash"`
 	Tags            types.Map    `tfsdk:"tags"`
 	Status          types.String `tfsdk:"status"`
@@ -90,6 +91,7 @@ type apiCreateInstanceRequest struct {
 	SSHKeyIDs        []string          `json:"sshKeyIds,omitempty"`
 	UserData         string            `json:"userData,omitempty"`
 	ConsolePassword  string            `json:"consolePassword,omitempty"`
+	InstanceAccess   bool              `json:"instanceAccess,omitempty"`
 	Tags             map[string]string `json:"tags,omitempty"`
 }
 
@@ -179,6 +181,10 @@ func (m *InstanceModel) toCreateRequest(ctx context.Context, diags *diag.Diagnos
 
 	if !m.ConsolePassword.IsNull() && !m.ConsolePassword.IsUnknown() {
 		req.ConsolePassword = m.ConsolePassword.ValueString()
+	}
+
+	if !m.InstanceAccess.IsNull() && !m.InstanceAccess.IsUnknown() {
+		req.InstanceAccess = m.InstanceAccess.ValueBool()
 	}
 
 	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
@@ -286,6 +292,7 @@ func (m *InstanceModel) fromAPI(ctx context.Context, inst *apiInstance, diags *d
 		m.Tags = types.MapNull(types.StringType)
 	}
 
-	// user_data, user_data_hash and console_password are NOT set here because the API
-	// doesn't return them. They are preserved from the existing state in the Read method.
+	// user_data, user_data_hash, console_password and instance_access are NOT set
+	// here because the API doesn't return them. They are preserved from the
+	// existing state in the Read method.
 }
