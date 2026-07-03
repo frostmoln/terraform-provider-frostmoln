@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
 )
 
@@ -48,6 +49,39 @@ func (r *nginxInstanceResource) getPollTimeout() time.Duration {
 		return r.pollTimeout
 	}
 	return 15 * time.Minute
+}
+
+// pollRunning waits until the instance returns to "running" state.
+func (r *nginxInstanceResource) pollRunning(ctx context.Context, id string) (string, error) {
+	return client.WaitForState(ctx, client.PollConfig{
+		Interval:     r.getPollInterval(),
+		Timeout:      r.getPollTimeout(),
+		TargetStates: []string{"running"},
+		ErrorStates:  []string{"error", "failed"},
+		ResourceName: "nginx_instance",
+		PollFunc: func(pollCtx context.Context) (string, error) {
+			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/webservers/"+id), nil)
+			if pollErr != nil {
+				return "", pollErr
+			}
+			current, parseErr := client.ParseResponse[apiWebserverInstance](pollResp)
+			if parseErr != nil {
+				return "", parseErr
+			}
+			return current.Status, nil
+		},
+	})
+}
+
+// resizeStorage grows the instance's storage online via POST /resize, then waits
+// for it to return to "running". Grow-only: a shrink is rejected at plan time.
+func (r *nginxInstanceResource) resizeStorage(ctx context.Context, id string, storageGB int) error {
+	_, err := r.client.Post(ctx, r.client.TenantPath("/webservers/"+id+"/resize"), apiResizeWebserverInstanceRequest{StorageGB: storageGB})
+	if err != nil {
+		return err
+	}
+	_, err = r.pollRunning(ctx, id)
+	return err
 }
 
 func (r *nginxInstanceResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -83,10 +117,16 @@ func (r *nginxInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 			"flavor_id": schema.StringAttribute{
 				Description: "The flavor ID/size for the webserver instance (e.g. \"web.gp1.small\", \"web.gp1.medium\").",
 				Required:    true,
+				PlanModifiers: []planmodifier.String{
+					planmod.StringErrorOnChange("Changing flavor_id (flavor resize) is not yet supported for managed webserver instances. Keep the original flavor_id, or destroy and recreate the instance to change it."),
+				},
 			},
 			"storage_gb": schema.Int64Attribute{
-				Description: "The storage size in gigabytes.",
+				Description: "The storage size in gigabytes. Can be increased in place (online resize); decreasing it is not supported.",
 				Required:    true,
+				PlanModifiers: []planmodifier.Int64{
+					planmod.Int64GrowOnly("GB"),
+				},
 			},
 			"vpc_id": schema.StringAttribute{
 				Description: "The VPC ID where the webserver instance will be deployed.",
@@ -335,38 +375,44 @@ func (r *nginxInstanceResource) Update(ctx context.Context, req resource.UpdateR
 
 	id := state.ID.ValueString()
 
+	// Storage grow goes through POST /resize (online, grow-only). A shrink is
+	// rejected at plan time (storage_gb GrowOnly modifier), so in the normal case
+	// only an increase reaches here. Re-check at apply as a defensive backstop:
+	// the plan-time modifier is skipped when storage_gb is an unknown
+	// (interpolated) value, so a shrink can slip through to apply with known
+	// values here — fail with a clear message rather than a silent no-op.
+	switch {
+	case plan.StorageGB.ValueInt64() < state.StorageGB.ValueInt64():
+		resp.Diagnostics.AddError(
+			"Storage cannot be shrunk",
+			fmt.Sprintf("storage_gb can only be increased (currently %d GB, requested %d GB); storage is grown online and cannot be shrunk.",
+				state.StorageGB.ValueInt64(), plan.StorageGB.ValueInt64()),
+		)
+		return
+	case plan.StorageGB.ValueInt64() > state.StorageGB.ValueInt64():
+		if err := r.resizeStorage(ctx, id, int(plan.StorageGB.ValueInt64())); err != nil {
+			resp.Diagnostics.AddError("Failed to resize Nginx instance storage", err.Error())
+			return
+		}
+	}
+
+	// In-place field updates (name, TLS, config) via PUT. Skip the call entirely
+	// when nothing PUT-able changed (e.g. a storage-only resize).
 	updateReq := plan.toUpdateRequest(ctx, &state, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	_, err := r.client.Put(ctx, r.client.TenantPath("/webservers/"+id), updateReq)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to update Nginx instance", err.Error())
-		return
-	}
+	if updateReq.hasChanges() {
+		if _, err := r.client.Put(ctx, r.client.TenantPath("/webservers/"+id), updateReq); err != nil {
+			resp.Diagnostics.AddError("Failed to update Nginx instance", err.Error())
+			return
+		}
 
-	// Poll until instance is back to "running" after the update.
-	_, err = client.WaitForState(ctx, client.PollConfig{
-		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
-		TargetStates: []string{"running"},
-		ErrorStates:  []string{"error", "failed"},
-		ResourceName: "nginx_instance",
-		PollFunc: func(pollCtx context.Context) (string, error) {
-			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/webservers/"+id), nil)
-			if pollErr != nil {
-				return "", pollErr
-			}
-			current, parseErr := client.ParseResponse[apiWebserverInstance](pollResp)
-			if parseErr != nil {
-				return "", parseErr
-			}
-			return current.Status, nil
-		},
-	})
-	if err != nil {
-		resp.Diagnostics.AddError("Nginx instance failed to reach running state after update", err.Error())
-		return
+		// Poll until instance is back to "running" after the update.
+		if _, err := r.pollRunning(ctx, id); err != nil {
+			resp.Diagnostics.AddError("Nginx instance failed to reach running state after update", err.Error())
+			return
+		}
 	}
 
 	// Refresh state from API.
@@ -438,10 +484,10 @@ func (r *nginxInstanceResource) ImportState(ctx context.Context, req resource.Im
 // UpgradeState migrates v0 state (HCL attribute `flavor`) to v1 (`flavor_id`).
 // The rename is HCL-surface only -- the wire tag was always flavorId -- so the
 // migration is purely local: it copies the prior `flavor` value into `flavor_id`
-// and carries every other attribute through unchanged. `flavor` is in-place
-// updatable (not RequiresReplace), so without this the first post-upgrade plan
-// would show a spurious update rather than a destroy; the upgrader keeps the
-// upgrade a clean no-op.
+// and carries every other attribute through unchanged. `flavor_id` is not
+// RequiresReplace (flavor changes are now rejected at plan time), so without
+// this the first post-upgrade plan would show a spurious diff rather than a
+// destroy; copying the same value keeps the upgrade a clean no-op.
 func (r *nginxInstanceResource) UpgradeState(ctx context.Context) map[int64]resource.StateUpgrader {
 	schemaResp := resource.SchemaResponse{}
 	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)

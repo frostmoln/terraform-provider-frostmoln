@@ -66,13 +66,26 @@ type apiCreateWebserverInstanceRequest struct {
 	EngineConfig  map[string]string `json:"engineConfig,omitempty"`
 }
 
-// apiUpdateWebserverInstanceRequest is the API request to update a managed webserver instance.
+// apiUpdateWebserverInstanceRequest is the API request to update a managed
+// webserver instance via PUT. It carries only in-place-updatable fields:
+// storage_gb goes through POST /resize (grow-only) and flavor_id changes are
+// rejected at plan time, so neither is sent here (the backend PUT handler
+// deserializes only name/tlsEnabled/engineConfig and drops the rest silently).
 type apiUpdateWebserverInstanceRequest struct {
 	Name         *string           `json:"name,omitempty"`
-	FlavorID     *string           `json:"flavorId,omitempty"`
-	StorageGB    *int              `json:"storageGb,omitempty"`
 	TLSEnabled   *bool             `json:"tlsEnabled,omitempty"`
 	EngineConfig map[string]string `json:"engineConfig,omitempty"`
+}
+
+// hasChanges reports whether the update request carries any field to PUT.
+func (r apiUpdateWebserverInstanceRequest) hasChanges() bool {
+	return r.Name != nil || r.TLSEnabled != nil || r.EngineConfig != nil
+}
+
+// apiResizeWebserverInstanceRequest is the body for POST /webservers/{id}/resize.
+// Storage grows online and cannot be shrunk (backend rejects a decrease).
+type apiResizeWebserverInstanceRequest struct {
+	StorageGB int `json:"storageGb"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -107,14 +120,6 @@ func (m *NginxInstanceModel) toUpdateRequest(ctx context.Context, state *NginxIn
 	if !m.Name.Equal(state.Name) {
 		v := m.Name.ValueString()
 		req.Name = &v
-	}
-	if !m.FlavorID.Equal(state.FlavorID) {
-		v := m.FlavorID.ValueString()
-		req.FlavorID = &v
-	}
-	if !m.StorageGB.Equal(state.StorageGB) {
-		v := int(m.StorageGB.ValueInt64())
-		req.StorageGB = &v
 	}
 	if !m.TLSEnabled.Equal(state.TLSEnabled) {
 		v := m.TLSEnabled.ValueBool()

@@ -150,12 +150,6 @@ func TestApacheInstanceModelToUpdateRequest(t *testing.T) {
 	if req.Name == nil || *req.Name != "new-name" {
 		t.Error("expected name update")
 	}
-	if req.FlavorID == nil || *req.FlavorID != "web.gp1.large" {
-		t.Error("expected flavorId update")
-	}
-	if req.StorageGB == nil || *req.StorageGB != 80 {
-		t.Error("expected storageGb update")
-	}
 	if req.TLSEnabled == nil || !*req.TLSEnabled {
 		t.Error("expected tlsEnabled update")
 	}
@@ -188,7 +182,7 @@ func TestApacheInstanceModelToUpdateRequestNoChanges(t *testing.T) {
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
-	if req.Name != nil || req.FlavorID != nil || req.StorageGB != nil ||
+	if req.Name != nil ||
 		req.TLSEnabled != nil || req.PHPEnabled != nil || req.PHPVersion != nil || req.EngineConfig != nil {
 		t.Error("expected no changes in update request")
 	}
@@ -732,8 +726,8 @@ func TestUpdate(t *testing.T) {
 				Name:          "updated-apache",
 				Engine:        "apache",
 				EngineVersion: "2.4",
-				FlavorID:      "web.gp1.large",
-				StorageGB:     80,
+				FlavorID:      "web.gp1.small",
+				StorageGB:     20,
 				VPCID:         "vpc-1",
 				SubnetID:      "sn-1",
 				TLSEnabled:    true,
@@ -760,10 +754,11 @@ func TestUpdate(t *testing.T) {
 	stateModel.CreatedAt = types.StringValue("2025-01-01T00:00:00Z")
 	state := buildApacheInstanceState(t, stateModel)
 
+	// An in-place field change (name) goes through PUT; flavor_id and storage_gb
+	// are held constant (flavor changes are plan-rejected, storage goes via
+	// /resize) and must NOT appear in the PUT body.
 	planModel := stateModel
 	planModel.Name = types.StringValue("updated-apache")
-	planModel.FlavorID = types.StringValue("web.gp1.large")
-	planModel.StorageGB = types.Int64Value(80)
 	plan := buildApacheInstancePlan(t, planModel)
 
 	updateResp := resource.UpdateResponse{State: state}
@@ -776,11 +771,110 @@ func TestUpdate(t *testing.T) {
 	if updatedBody.Name == nil || *updatedBody.Name != "updated-apache" {
 		t.Error("expected name in update request")
 	}
-	if updatedBody.FlavorID == nil || *updatedBody.FlavorID != "web.gp1.large" {
-		t.Error("expected flavorId in update request")
+	if updatedBody.EngineConfig != nil {
+		t.Errorf("expected no engineConfig change, got %v", updatedBody.EngineConfig)
 	}
-	if updatedBody.StorageGB == nil || *updatedBody.StorageGB != 80 {
-		t.Error("expected storageGb in update request")
+}
+
+// TestUpdateStorageResize verifies a storage_gb grow is routed to POST /resize
+// (not the PUT that the backend silently drops storageGb from) and that no PUT
+// is issued for a storage-only change.
+func TestUpdateStorageResize(t *testing.T) {
+	var resizeBody apiResizeWebserverInstanceRequest
+	var resizeCalled, putCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/webservers/apache-123/resize":
+			resizeCalled = true
+			_ = json.NewDecoder(r.Body).Decode(&resizeBody)
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = fmt.Fprint(w, `{"status":"resizing"}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-1/webservers/apache-123":
+			putCalled = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, `{}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/apache-123":
+			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
+				ID:            "apache-123",
+				Name:          "my-apache",
+				Engine:        "apache",
+				EngineVersion: "2.4",
+				FlavorID:      "web.gp1.small",
+				StorageGB:     80,
+				VPCID:         "vpc-1",
+				SubnetID:      "sn-1",
+				TLSEnabled:    true,
+				Status:        "running",
+				Port:          443,
+				CreatedAt:     "2025-01-01T00:00:00Z",
+			})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+
+	r := newTestApacheResource(c)
+
+	stateModel := baseApacheModel()
+	stateModel.ID = types.StringValue("apache-123")
+	stateModel.Status = types.StringValue("running")
+	stateModel.CreatedAt = types.StringValue("2025-01-01T00:00:00Z")
+	state := buildApacheInstanceState(t, stateModel)
+
+	planModel := stateModel
+	planModel.StorageGB = types.Int64Value(80)
+	plan := buildApacheInstancePlan(t, planModel)
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("resize update failed: %v", updateResp.Diagnostics.Errors())
+	}
+	if !resizeCalled {
+		t.Error("expected POST /resize to be called")
+	}
+	if resizeBody.StorageGB != 80 {
+		t.Errorf("expected resize storageGb=80, got %d", resizeBody.StorageGB)
+	}
+	if putCalled {
+		t.Error("expected no PUT for a storage-only resize")
+	}
+}
+
+// TestUpdateStorageShrinkRejected verifies the apply-time grow-only backstop:
+// a shrink that slips past the plan-time modifier is rejected in Update.
+func TestUpdateStorageShrinkRejected(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request on shrink: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+
+	r := newTestApacheResource(c)
+
+	stateModel := baseApacheModel()
+	stateModel.ID = types.StringValue("apache-123")
+	stateModel.Status = types.StringValue("running")
+	stateModel.CreatedAt = types.StringValue("2025-01-01T00:00:00Z")
+	state := buildApacheInstanceState(t, stateModel)
+
+	planModel := stateModel
+	planModel.StorageGB = types.Int64Value(10) // shrink from 20
+	plan := buildApacheInstancePlan(t, planModel)
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	if !updateResp.Diagnostics.HasError() {
+		t.Error("expected error when shrinking storage_gb")
 	}
 }
 
