@@ -21,7 +21,7 @@ Look up a managed Apache webserver instance by ID.
 
 ### Read-Only
 
-- `config` (Map of String) Engine-specific configuration as key/value pairs.
+- `config` (Map of String) Engine-specific configuration as key/value pairs (the applied engineConfig object).
 - `created_at` (String) The timestamp when the instance was created.
 - `flavor_id` (String) The flavor ID/size of the Apache instance.
 - `name` (String) The name of the Apache instance.
@@ -29,6 +29,8 @@ Look up a managed Apache webserver instance by ID.
 - `php_version` (String) The PHP version.
 - `port` (Number) The port number the Apache instance is listening on.
 - `private_ip` (String) The private IP address of the Apache instance.
+- `public` (Boolean) Whether the instance is publicly exposed (a Floating IP is associated so the site is reachable on the public internet).
+- `public_ip` (String) The public Floating IP address associated with the instance while it is exposed (empty when not public).
 - `status` (String) The current status of the Apache instance.
 - `storage_gb` (Number) The storage size in gigabytes.
 - `subnet_id` (String) The subnet ID where the instance is deployed.

@@ -21,6 +21,8 @@ type ApacheInstanceModel struct {
 	PHPEnabled types.Bool   `tfsdk:"php_enabled"`
 	PHPVersion types.String `tfsdk:"php_version"`
 	Config     types.Map    `tfsdk:"config"`
+	Public     types.Bool   `tfsdk:"public"`
+	PublicIP   types.String `tfsdk:"public_ip"`
 	Status     types.String `tfsdk:"status"`
 	PrivateIP  types.String `tfsdk:"private_ip"`
 	Port       types.Int64  `tfsdk:"port"`
@@ -46,12 +48,18 @@ type apiWebserverInstance struct {
 	PHPEnabled    bool              `json:"phpEnabled"`
 	PHPVersion    string            `json:"phpVersion,omitempty"`
 	EngineConfig  map[string]string `json:"engineConfig,omitempty"`
-	Status        string            `json:"status"`
-	PrivateIP     string            `json:"privateIp,omitempty"`
-	Port          int               `json:"port,omitempty"`
-	CreatedAt     string            `json:"createdAt"`
-	UpdatedAt     string            `json:"updatedAt,omitempty"`
-	TenantID      string            `json:"tenantId,omitempty"`
+	// Public is OBSERVED (ADR-0097): true when a Floating IP is currently
+	// associated to the instance's engine port. PublicIP is that FIP. Both are
+	// set by the create saga (create with public=true) or the expose/unexpose
+	// action, never written directly on the instance PUT.
+	Public    bool   `json:"public"`
+	PublicIP  string `json:"publicIp,omitempty"`
+	Status    string `json:"status"`
+	PrivateIP string `json:"privateIp,omitempty"`
+	Port      int    `json:"port,omitempty"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
+	TenantID  string `json:"tenantId,omitempty"`
 }
 
 // apiCreateWebserverInstanceRequest is the API request to create a managed
@@ -68,6 +76,10 @@ type apiCreateWebserverInstanceRequest struct {
 	PHPEnabled    *bool             `json:"phpEnabled,omitempty"`
 	PHPVersion    string            `json:"phpVersion,omitempty"`
 	EngineConfig  map[string]string `json:"engineConfig,omitempty"`
+	// Public opts the instance into public exposure at create time (ADR-0097):
+	// the create saga associates a Floating IP and surfaces publicIp. Post-create,
+	// exposure toggles via the POST /expose and /unexpose actions, never here.
+	Public *bool `json:"public,omitempty"`
 }
 
 // apiUpdateWebserverInstanceRequest is the API request to update a managed
@@ -124,6 +136,10 @@ func (m *ApacheInstanceModel) toCreateRequest(ctx context.Context, diags *diag.D
 		diags.Append(m.Config.ElementsAs(ctx, &cfg, false)...)
 		req.EngineConfig = cfg
 	}
+	if !m.Public.IsNull() && !m.Public.IsUnknown() {
+		v := m.Public.ValueBool()
+		req.Public = &v
+	}
 
 	return req
 }
@@ -170,8 +186,15 @@ func (m *ApacheInstanceModel) fromAPI(ctx context.Context, inst *apiWebserverIns
 	m.SubnetID = types.StringValue(inst.SubnetID)
 	m.TLSEnabled = types.BoolValue(inst.TLSEnabled)
 	m.PHPEnabled = types.BoolValue(inst.PHPEnabled)
+	m.Public = types.BoolValue(inst.Public)
 	m.Status = types.StringValue(inst.Status)
 	m.CreatedAt = types.StringValue(inst.CreatedAt)
+
+	if inst.PublicIP != "" {
+		m.PublicIP = types.StringValue(inst.PublicIP)
+	} else {
+		m.PublicIP = types.StringNull()
+	}
 
 	if inst.PHPVersion != "" {
 		m.PHPVersion = types.StringValue(inst.PHPVersion)

@@ -77,6 +77,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/volume"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/volume_attachment"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/vpc"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/webserver_deployment"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/webserver_domain"
 )
 
@@ -383,6 +384,7 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		apache_instance.NewResource,
 		nginx_instance.NewResource,
 		webserver_domain.NewResource,
+		webserver_deployment.NewResource,
 	}
 }
 

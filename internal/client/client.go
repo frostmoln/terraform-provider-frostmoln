@@ -229,6 +229,21 @@ func IsNotFound(err error) bool {
 	return false
 }
 
+// IsAlreadyInDesiredState reports whether err is a 409 Conflict whose error code
+// is the servicekit "conflict" code. The webserver expose/unexpose actions return
+// this for "instance is already exposed" / "not exposed" / "an expose operation is
+// already in progress" — all cases where the requested end state is already reached
+// (or being reached), so an idempotent caller treats it as success. It deliberately
+// does NOT match the other 409 those actions can return, "invalid_state" ("cannot
+// expose an instance in <state> state"), which is a real precondition failure the
+// caller must surface rather than swallow.
+func IsAlreadyInDesiredState(err error) bool {
+	if apiErr, ok := err.(*APIError); ok {
+		return apiErr.StatusCode == http.StatusConflict && apiErr.Code == "conflict"
+	}
+	return false
+}
+
 // OperationResponse represents an async operation accepted by the API (HTTP 202).
 // Actions like volume detach, resize, and attach return this instead of the full resource.
 type OperationResponse struct {

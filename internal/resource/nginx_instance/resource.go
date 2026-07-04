@@ -24,6 +24,7 @@ var (
 	_ resource.Resource                 = &nginxInstanceResource{}
 	_ resource.ResourceWithImportState  = &nginxInstanceResource{}
 	_ resource.ResourceWithUpgradeState = &nginxInstanceResource{}
+	_ resource.ResourceWithModifyPlan   = &nginxInstanceResource{}
 )
 
 // NewResource returns a new nginx_instance resource factory.
@@ -82,6 +83,95 @@ func (r *nginxInstanceResource) resizeStorage(ctx context.Context, id string, st
 	}
 	_, err = r.pollRunning(ctx, id)
 	return err
+}
+
+// setExposure toggles the instance's public exposure via the action endpoints
+// (POST /expose | /unexpose), then waits for the returned async operation to
+// finish. The expose/unexpose actions are idempotent from the caller's side:
+// the backend returns 409 when the instance is already in the desired state, so
+// a 409 is treated as success rather than an error. The instance status stays
+// "running" throughout (ADR-0097), so completion is tracked via the operation,
+// not an instance state transition.
+func (r *nginxInstanceResource) setExposure(ctx context.Context, id string, desired bool) error {
+	action := "unexpose"
+	if desired {
+		action = "expose"
+	}
+	resp, err := r.client.Post(ctx, r.client.TenantPath("/webservers/"+id+"/"+action), nil)
+	if err != nil {
+		if client.IsAlreadyInDesiredState(err) {
+			// Already exposed / already not exposed / an operation already in
+			// progress — the requested end state is (being) reached. A 409
+			// invalid_state ("cannot expose an instance in <state> state") is NOT
+			// swallowed by this helper and surfaces as a real error.
+			return nil
+		}
+		return err
+	}
+	op, err := client.ParseResponse[client.OperationResponse](resp)
+	if err != nil {
+		return err
+	}
+	if op.OperationID == "" {
+		// Synchronous acknowledgement with no operation to poll.
+		return nil
+	}
+	_, err = r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout())
+	return err
+}
+
+// pollPublicExposed waits until the instance read-back reports public==true. The
+// create-with-public=true saga stamps exposure in a second write AFTER
+// status=running (webserver syncer), so a create must wait for that write to land
+// before its final read, otherwise the read could see public=false while the plan
+// had public=true. It keeps polling while the instance is still "running" (not yet
+// exposed) and errors out if the instance drops into an error state.
+func (r *nginxInstanceResource) pollPublicExposed(ctx context.Context, id string) error {
+	_, err := client.WaitForState(ctx, client.PollConfig{
+		Interval:     r.getPollInterval(),
+		Timeout:      r.getPollTimeout(),
+		TargetStates: []string{"exposed"},
+		ErrorStates:  []string{"error", "failed"},
+		ResourceName: "nginx_instance exposure",
+		PollFunc: func(pollCtx context.Context) (string, error) {
+			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/webservers/"+id), nil)
+			if pollErr != nil {
+				return "", pollErr
+			}
+			current, parseErr := client.ParseResponse[apiWebserverInstance](pollResp)
+			if parseErr != nil {
+				return "", parseErr
+			}
+			if current.Public {
+				return "exposed", nil
+			}
+			// Not yet exposed: surface a genuine error status, else keep polling.
+			return current.Status, nil
+		},
+	})
+	return err
+}
+
+// ModifyPlan marks public_ip as unknown when the desired public value is
+// changing on an existing instance. Exposure is action-based (expose/unexpose),
+// so the Floating IP is (re)assigned or released during Update; without this the
+// public_ip attribute's UseStateForUnknown would pin the plan to the stale value
+// and Terraform would reject the post-apply value as an inconsistent result.
+func (r *nginxInstanceResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// Only the in-place update case matters (create marks computed attrs unknown
+	// already; destroy has no plan).
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
+		return
+	}
+	var plan, state NginxInstanceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !plan.Public.Equal(state.Public) {
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("public_ip"), types.StringUnknown())...)
+	}
 }
 
 func (r *nginxInstanceResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -151,12 +241,33 @@ func (r *nginxInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				},
 			},
 			"config": schema.MapAttribute{
-				Description: "Engine-specific configuration as key/value pairs (sent as the engineConfig object).",
+				Description: "Engine-specific configuration applied to the webserver, as key/value pairs " +
+					"(sent as the engineConfig object). Keys must be from the platform's curated allowlist " +
+					"(e.g. gzip, securityHeaders, clientMaxBodySize, spaFallback); unknown keys are rejected. " +
+					"Changing this reconfigures the running instance in place.",
 				Optional:    true,
 				Computed:    true,
 				ElementType: types.StringType,
 				PlanModifiers: []planmodifier.Map{
 					mapplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"public": schema.BoolAttribute{
+				Description: "Whether the instance is publicly exposed (ADR-0097): when true a Floating IP is " +
+					"associated to the instance's engine port so the deployed site is reachable on the public " +
+					"internet, and public_ip is populated. Set at create to expose immediately; toggling it " +
+					"afterwards runs the platform's expose (true) or unexpose (false) action.",
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"public_ip": schema.StringAttribute{
+				Description: "The public Floating IP address associated with the instance while it is exposed (empty when not public).",
+				Computed:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
 			"status": schema.StringAttribute{
@@ -217,6 +328,10 @@ func (r *nginxInstanceResource) Create(ctx context.Context, req resource.CreateR
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// Capture whether the plan requested public exposure at create BEFORE fromAPI
+	// (called below) overwrites plan.Public with the read-back value.
+	requestedPublic := !plan.Public.IsNull() && !plan.Public.IsUnknown() && plan.Public.ValueBool()
 
 	apiReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
@@ -321,6 +436,19 @@ func (r *nginxInstanceResource) Create(ctx context.Context, req resource.CreateR
 		return
 	}
 
+	// When the plan requested public=true, exposure is stamped by the create
+	// saga in a SEPARATE write AFTER status=running (webserver syncer), so the
+	// final read below can land before public is set and read public=false while
+	// the plan says true — an inconsistent-result failure. Wait for the read-back
+	// public to become true first. Gated on requestedPublic so the common
+	// public-unset / public=false path is not delayed.
+	if requestedPublic {
+		if err := r.pollPublicExposed(ctx, instID); err != nil {
+			resp.Diagnostics.AddError("Nginx instance failed to become publicly exposed", err.Error())
+			return
+		}
+	}
+
 	// Refresh state after polling completes to get final status, IPs, etc.
 	readResp, err := r.client.Get(ctx, r.client.TenantPath("/webservers/"+instID), nil)
 	if err != nil {
@@ -411,6 +539,15 @@ func (r *nginxInstanceResource) Update(ctx context.Context, req resource.UpdateR
 		// Poll until instance is back to "running" after the update.
 		if _, err := r.pollRunning(ctx, id); err != nil {
 			resp.Diagnostics.AddError("Nginx instance failed to reach running state after update", err.Error())
+			return
+		}
+	}
+
+	// Public exposure is action-based, not a PUT field: when the desired `public`
+	// value changes, expose (true) or unexpose (false) and wait for the operation.
+	if !plan.Public.Equal(state.Public) {
+		if err := r.setExposure(ctx, id, plan.Public.ValueBool()); err != nil {
+			resp.Diagnostics.AddError("Failed to change Nginx instance public exposure", err.Error())
 			return
 		}
 	}

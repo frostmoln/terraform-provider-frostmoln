@@ -39,7 +39,7 @@ func TestSchema(t *testing.T) {
 
 	expectedAttrs := []string{
 		"id", "name", "version", "flavor_id", "storage_gb", "vpc_id", "subnet_id",
-		"tls_enabled", "php_enabled", "php_version", "config", "status", "private_ip",
+		"tls_enabled", "php_enabled", "php_version", "config", "public", "public_ip", "status", "private_ip",
 		"port", "created_at", "updated_at", "tenant_id",
 	}
 	for _, attr := range expectedAttrs {
@@ -121,6 +121,8 @@ func configVal(t *testing.T, id string) tftypes.Value {
 		"php_enabled": tftypes.NewValue(tftypes.Bool, nil),
 		"php_version": tftypes.NewValue(tftypes.String, nil),
 		"config":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"public":      tftypes.NewValue(tftypes.Bool, nil),
+		"public_ip":   tftypes.NewValue(tftypes.String, nil),
 		"status":      tftypes.NewValue(tftypes.String, nil),
 		"private_ip":  tftypes.NewValue(tftypes.String, nil),
 		"port":        tftypes.NewValue(tftypes.Number, nil),

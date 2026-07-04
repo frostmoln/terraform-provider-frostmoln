@@ -37,6 +37,8 @@ type apacheInstanceModel struct {
 	PHPEnabled types.Bool   `tfsdk:"php_enabled"`
 	PHPVersion types.String `tfsdk:"php_version"`
 	Config     types.Map    `tfsdk:"config"`
+	Public     types.Bool   `tfsdk:"public"`
+	PublicIP   types.String `tfsdk:"public_ip"`
 	Status     types.String `tfsdk:"status"`
 	PrivateIP  types.String `tfsdk:"private_ip"`
 	Port       types.Int64  `tfsdk:"port"`
@@ -61,6 +63,8 @@ type apiWebserverInstance struct {
 	PHPEnabled    bool              `json:"phpEnabled"`
 	PHPVersion    string            `json:"phpVersion,omitempty"`
 	EngineConfig  map[string]string `json:"engineConfig,omitempty"`
+	Public        bool              `json:"public"`
+	PublicIP      string            `json:"publicIp,omitempty"`
 	Status        string            `json:"status"`
 	PrivateIP     string            `json:"privateIp,omitempty"`
 	Port          int               `json:"port,omitempty"`
@@ -118,9 +122,17 @@ func (d *apacheInstanceDataSource) Schema(_ context.Context, _ datasource.Schema
 				Computed:    true,
 			},
 			"config": schema.MapAttribute{
-				Description: "Engine-specific configuration as key/value pairs.",
+				Description: "Engine-specific configuration as key/value pairs (the applied engineConfig object).",
 				Computed:    true,
 				ElementType: types.StringType,
+			},
+			"public": schema.BoolAttribute{
+				Description: "Whether the instance is publicly exposed (a Floating IP is associated so the site is reachable on the public internet).",
+				Computed:    true,
+			},
+			"public_ip": schema.StringAttribute{
+				Description: "The public Floating IP address associated with the instance while it is exposed (empty when not public).",
+				Computed:    true,
 			},
 			"status": schema.StringAttribute{
 				Description: "The current status of the Apache instance.",
@@ -193,8 +205,15 @@ func (d *apacheInstanceDataSource) Read(ctx context.Context, req datasource.Read
 	state.SubnetID = types.StringValue(inst.SubnetID)
 	state.TLSEnabled = types.BoolValue(inst.TLSEnabled)
 	state.PHPEnabled = types.BoolValue(inst.PHPEnabled)
+	state.Public = types.BoolValue(inst.Public)
 	state.Status = types.StringValue(inst.Status)
 	state.CreatedAt = types.StringValue(inst.CreatedAt)
+
+	if inst.PublicIP != "" {
+		state.PublicIP = types.StringValue(inst.PublicIP)
+	} else {
+		state.PublicIP = types.StringNull()
+	}
 
 	if inst.PHPVersion != "" {
 		state.PHPVersion = types.StringValue(inst.PHPVersion)

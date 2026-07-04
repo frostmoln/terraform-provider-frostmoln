@@ -26,9 +26,10 @@ Manages a managed Apache webserver instance in the Frostmoln platform.
 
 ### Optional
 
-- `config` (Map of String) Engine-specific configuration as key/value pairs (sent as the engineConfig object).
-- `php_enabled` (Boolean) Whether PHP support is enabled.
-- `php_version` (String) The PHP version (e.g. "8.2", "8.3"). Only applicable when php_enabled is true.
+- `config` (Map of String) Engine-specific configuration applied to the webserver, as key/value pairs (sent as the engineConfig object). Keys must be from the platform's curated allowlist (e.g. gzip, securityHeaders, clientMaxBodySize, spaFallback); unknown keys are rejected. Changing this reconfigures the running instance in place.
+- `php_enabled` (Boolean) Whether PHP-FPM support is enabled for the webserver. Can be toggled in place; the instance is reconfigured (and briefly reloads) on change.
+- `php_version` (String) The PHP version to run (e.g. "8.1", "8.2", "8.3"). Only applicable when php_enabled is true; the platform selects a supported default when omitted.
+- `public` (Boolean) Whether the instance is publicly exposed (ADR-0097): when true a Floating IP is associated to the instance's engine port so the deployed site is reachable on the public internet, and public_ip is populated. Set at create to expose immediately; toggling it afterwards runs the platform's expose (true) or unexpose (false) action.
 - `tls_enabled` (Boolean) Whether TLS is enabled for the webserver.
 
 ### Read-Only
@@ -37,6 +38,7 @@ Manages a managed Apache webserver instance in the Frostmoln platform.
 - `id` (String) The unique identifier of the Apache instance.
 - `port` (Number) The port number the Apache instance is listening on.
 - `private_ip` (String) The private IP address of the Apache instance.
+- `public_ip` (String) The public Floating IP address associated with the instance while it is exposed (empty when not public).
 - `status` (String) The current status of the Apache instance.
 - `tenant_id` (String) The tenant ID that owns this instance.
 - `updated_at` (String) The timestamp when the instance was last updated.

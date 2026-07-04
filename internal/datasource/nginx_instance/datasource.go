@@ -35,6 +35,8 @@ type nginxInstanceModel struct {
 	SubnetID   types.String `tfsdk:"subnet_id"`
 	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
 	Config     types.Map    `tfsdk:"config"`
+	Public     types.Bool   `tfsdk:"public"`
+	PublicIP   types.String `tfsdk:"public_ip"`
 	Status     types.String `tfsdk:"status"`
 	PrivateIP  types.String `tfsdk:"private_ip"`
 	Port       types.Int64  `tfsdk:"port"`
@@ -57,6 +59,8 @@ type apiWebserverInstance struct {
 	SubnetID      string            `json:"subnetId"`
 	TLSEnabled    bool              `json:"tlsEnabled"`
 	EngineConfig  map[string]string `json:"engineConfig,omitempty"`
+	Public        bool              `json:"public"`
+	PublicIP      string            `json:"publicIp,omitempty"`
 	Status        string            `json:"status"`
 	PrivateIP     string            `json:"privateIp,omitempty"`
 	Port          int               `json:"port,omitempty"`
@@ -106,9 +110,17 @@ func (d *nginxInstanceDataSource) Schema(_ context.Context, _ datasource.SchemaR
 				Computed:    true,
 			},
 			"config": schema.MapAttribute{
-				Description: "Engine-specific configuration as key/value pairs.",
+				Description: "Engine-specific configuration as key/value pairs (the applied engineConfig object).",
 				Computed:    true,
 				ElementType: types.StringType,
+			},
+			"public": schema.BoolAttribute{
+				Description: "Whether the instance is publicly exposed (a Floating IP is associated so the site is reachable on the public internet).",
+				Computed:    true,
+			},
+			"public_ip": schema.StringAttribute{
+				Description: "The public Floating IP address associated with the instance while it is exposed (empty when not public).",
+				Computed:    true,
 			},
 			"status": schema.StringAttribute{
 				Description: "The current status of the Nginx instance.",
@@ -180,8 +192,15 @@ func (d *nginxInstanceDataSource) Read(ctx context.Context, req datasource.ReadR
 	state.VPCID = types.StringValue(inst.VPCID)
 	state.SubnetID = types.StringValue(inst.SubnetID)
 	state.TLSEnabled = types.BoolValue(inst.TLSEnabled)
+	state.Public = types.BoolValue(inst.Public)
 	state.Status = types.StringValue(inst.Status)
 	state.CreatedAt = types.StringValue(inst.CreatedAt)
+
+	if inst.PublicIP != "" {
+		state.PublicIP = types.StringValue(inst.PublicIP)
+	} else {
+		state.PublicIP = types.StringNull()
+	}
 
 	if len(inst.EngineConfig) > 0 {
 		cfgMap, d := types.MapValueFrom(ctx, types.StringType, inst.EngineConfig)

@@ -39,7 +39,7 @@ func TestSchema(t *testing.T) {
 
 	expectedAttrs := []string{
 		"id", "name", "version", "flavor_id", "storage_gb", "vpc_id", "subnet_id",
-		"tls_enabled", "config", "status", "private_ip", "port", "created_at",
+		"tls_enabled", "config", "public", "public_ip", "status", "private_ip", "port", "created_at",
 		"updated_at", "tenant_id",
 	}
 	for _, attr := range expectedAttrs {
@@ -119,6 +119,8 @@ func configVal(t *testing.T, id string) tftypes.Value {
 		"subnet_id":   tftypes.NewValue(tftypes.String, nil),
 		"tls_enabled": tftypes.NewValue(tftypes.Bool, nil),
 		"config":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"public":      tftypes.NewValue(tftypes.Bool, nil),
+		"public_ip":   tftypes.NewValue(tftypes.String, nil),
 		"status":      tftypes.NewValue(tftypes.String, nil),
 		"private_ip":  tftypes.NewValue(tftypes.String, nil),
 		"port":        tftypes.NewValue(tftypes.Number, nil),

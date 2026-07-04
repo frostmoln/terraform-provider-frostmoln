@@ -360,6 +360,26 @@ func TestIsNotFound(t *testing.T) {
 	}
 }
 
+func TestIsAlreadyInDesiredState(t *testing.T) {
+	if IsAlreadyInDesiredState(nil) {
+		t.Error("expected false for nil error")
+	}
+	// A 409 with the servicekit "conflict" code (already exposed / not exposed /
+	// operation in progress) is the idempotent-success case.
+	if !IsAlreadyInDesiredState(&APIError{StatusCode: 409, Code: "conflict"}) {
+		t.Error("expected true for a 409 conflict-coded error")
+	}
+	// A 409 with the "invalid_state" code ("cannot expose an instance in <state>
+	// state") is a REAL precondition failure and must NOT be swallowed.
+	if IsAlreadyInDesiredState(&APIError{StatusCode: 409, Code: "invalid_state"}) {
+		t.Error("expected false for a 409 invalid_state error (must surface)")
+	}
+	// A non-409 conflict code must not match either.
+	if IsAlreadyInDesiredState(&APIError{StatusCode: 500, Code: "conflict"}) {
+		t.Error("expected false for a non-409 status")
+	}
+}
+
 func TestParseResponse(t *testing.T) {
 	type testType struct {
 		Name string `json:"name"`
