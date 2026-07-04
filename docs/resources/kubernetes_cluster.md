@@ -23,6 +23,12 @@ resource "frostmoln_kubernetes_cluster" "main" {
   vpc_id    = frostmoln_vpc.main.id
   subnet_id = frostmoln_subnet.nodes.id
 
+  # Endpoint exposure. Omit for the default "public" (LB VIP reachable via a
+  # floating IP). Set "internal" for a private VIP-only endpoint reachable only
+  # from inside the VPC, with no floating IP allocated. Create-only: changing it
+  # replaces the cluster. scheme = "internal" conflicts with floating_ip_id.
+  # scheme = "internal"
+
   # Cluster addons are installed once, at creation, and cannot be changed on an
   # existing cluster (changing this set replaces the cluster). Omit the attribute
   # to install the platform defaults; set an empty list ([]) to install none.
@@ -61,6 +67,7 @@ output "kubeconfig" {
 - `control_plane_tier` (String) The control-plane tier key (see the frostmoln_kubernetes_tiers data source for canonical keys). Defaults to the platform default tier.
 - `floating_ip_id` (String) The ID of an existing floating IP to use for the cluster API endpoint (bring-your-own FIP). Write-only on the API: reads expose only the resolved address (floating_ip), so imports cannot recover this value — after importing a cluster created with a BYO floating IP, omit this attribute or add `lifecycle { ignore_changes = [floating_ip_id] }`, otherwise the next plan will want to replace the cluster. A BYO floating IP survives cluster deletion.
 - `region` (String) The region to create the cluster in. Defaults server-side.
+- `scheme` (String) The endpoint exposure scheme: "public" (the default) fronts the Kubernetes API with a load-balancer VIP reachable via a floating IP; "internal" makes the endpoint the private LB VIP only — reachable exclusively from inside the VPC, with NO floating IP allocated. Defaults server-side to public. Create-only: changing it REPLACES the cluster. scheme = "internal" conflicts with floating_ip_id (an internal cluster has no floating IP).
 - `version` (String) The Kubernetes version (e.g. "1.35"). Defaults to the platform default version. Changing it currently REPLACES the cluster — in-place upgrade is not available yet.
 
 ### Read-Only

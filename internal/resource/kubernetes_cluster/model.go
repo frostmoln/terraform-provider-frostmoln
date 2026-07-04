@@ -15,6 +15,7 @@ type KubernetesClusterModel struct {
 	Region           types.String          `tfsdk:"region"`
 	VPCID            types.String          `tfsdk:"vpc_id"`
 	SubnetID         types.String          `tfsdk:"subnet_id"`
+	Scheme           types.String          `tfsdk:"scheme"`
 	FloatingIPID     types.String          `tfsdk:"floating_ip_id"`
 	Addons           types.Set             `tfsdk:"addons"`
 	InitialNodePool  *InitialNodePoolModel `tfsdk:"initial_node_pool"`
@@ -57,12 +58,17 @@ type apiKubernetesCluster struct {
 	Region            string `json:"region"`
 	VPCID             string `json:"vpcId"`
 	SubnetID          string `json:"subnetId"`
-	PodCIDR           string `json:"podCidr,omitempty"`
-	ServiceCIDR       string `json:"serviceCidr,omitempty"`
-	Endpoint          string `json:"endpoint,omitempty"`
-	LoadBalancerID    string `json:"loadBalancerId,omitempty"`
-	FloatingIP        string `json:"floatingIp,omitempty"`
-	CACertHash        string `json:"caCertHash,omitempty"`
+	// Scheme is the endpoint exposure mode: "public" (LB VIP + floating IP) or
+	// "internal" (private VIP-only, VPC-reachable, no floating IP). The backend
+	// always echoes it on reads; an empty value from an older service is mapped
+	// to "public" in fromAPI so state never holds an unknown scheme.
+	Scheme         string `json:"scheme"`
+	PodCIDR        string `json:"podCidr,omitempty"`
+	ServiceCIDR    string `json:"serviceCidr,omitempty"`
+	Endpoint       string `json:"endpoint,omitempty"`
+	LoadBalancerID string `json:"loadBalancerId,omitempty"`
+	FloatingIP     string `json:"floatingIp,omitempty"`
+	CACertHash     string `json:"caCertHash,omitempty"`
 	// Addons is the set of cluster-addon catalog keys applied at creation. The
 	// backend always includes it (may be empty) — it echoes exactly what was
 	// applied. Addons are create-time only; they cannot change on an existing
@@ -112,6 +118,7 @@ type apiCreateClusterRequest struct {
 	Region            string                   `json:"region,omitempty"`
 	VPCID             string                   `json:"vpcId"`
 	SubnetID          string                   `json:"subnetId"`
+	Scheme            string                   `json:"scheme,omitempty"`
 	FloatingIPID      string                   `json:"floatingIpId,omitempty"`
 	Addons            *[]string                `json:"addons,omitempty"`
 	InitialNodePool   apiCreateNodePoolRequest `json:"initialNodePool"`
@@ -148,6 +155,12 @@ func (m *KubernetesClusterModel) toCreateRequest() apiCreateClusterRequest {
 	}
 	if !m.Region.IsNull() && !m.Region.IsUnknown() {
 		req.Region = m.Region.ValueString()
+	}
+	// Scheme: send only when the practitioner set it (known value); when unset
+	// (null/unknown, Computed-not-yet-resolved) leave it empty so omitempty
+	// OMITS it and the server applies the default (public).
+	if !m.Scheme.IsNull() && !m.Scheme.IsUnknown() {
+		req.Scheme = m.Scheme.ValueString()
 	}
 	if !m.FloatingIPID.IsNull() && !m.FloatingIPID.IsUnknown() {
 		req.FloatingIPID = m.FloatingIPID.ValueString()
@@ -197,6 +210,14 @@ func (m *KubernetesClusterModel) fromAPI(c *apiKubernetesCluster) {
 	m.Region = stringOrNull(c.Region)
 	m.VPCID = types.StringValue(c.VPCID)
 	m.SubnetID = types.StringValue(c.SubnetID)
+	// Scheme IS readable (unlike floating_ip_id): the backend always echoes it.
+	// Guard against an older service that omits it — an empty value falls back
+	// to "public" (the server default) so state never holds an unknown scheme.
+	if c.Scheme == "" {
+		m.Scheme = types.StringValue("public")
+	} else {
+		m.Scheme = types.StringValue(c.Scheme)
+	}
 	m.Status = types.StringValue(c.Status)
 	m.HAEnabled = types.BoolValue(c.HAEnabled)
 	m.PodCIDR = stringOrNull(c.PodCIDR)

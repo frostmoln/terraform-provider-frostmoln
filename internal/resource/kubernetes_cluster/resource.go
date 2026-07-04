@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -37,8 +38,9 @@ const (
 const kubeconfigFetchAttempts = 3
 
 var (
-	_ resource.Resource                = &kubernetesClusterResource{}
-	_ resource.ResourceWithImportState = &kubernetesClusterResource{}
+	_ resource.Resource                   = &kubernetesClusterResource{}
+	_ resource.ResourceWithImportState    = &kubernetesClusterResource{}
+	_ resource.ResourceWithValidateConfig = &kubernetesClusterResource{}
 )
 
 // NewResource returns a new kubernetes_cluster resource factory.
@@ -128,6 +130,22 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 				Required:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"scheme": schema.StringAttribute{
+				Description: "The endpoint exposure scheme: \"public\" (the default) fronts the Kubernetes API with " +
+					"a load-balancer VIP reachable via a floating IP; \"internal\" makes the endpoint the private " +
+					"LB VIP only — reachable exclusively from inside the VPC, with NO floating IP allocated. " +
+					"Defaults server-side to public. Create-only: changing it REPLACES the cluster. " +
+					"scheme = \"internal\" conflicts with floating_ip_id (an internal cluster has no floating IP).",
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
+				},
+				Validators: []validator.String{
+					stringvalidator.OneOf("public", "internal"),
 				},
 			},
 			"floating_ip_id": schema.StringAttribute{
@@ -279,6 +297,42 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 				},
 			},
 		},
+	}
+}
+
+// ValidateConfig rejects the one invalid scheme/floating_ip_id combination at
+// plan time: an "internal" cluster has a private VIP-only endpoint and no
+// floating IP, so pairing scheme = "internal" with floating_ip_id is a config
+// error the API would 400. A ConflictsWith validator is NOT usable here because
+// the valid case (scheme "public" WITH floating_ip_id, i.e. bring-your-own FIP)
+// also sets both attributes. Unknown (interpolated) values are skipped — the
+// backend stays authoritative. A null scheme defaults to public server-side,
+// which never conflicts with a floating IP.
+func (r *kubernetesClusterResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	// Read ONLY the two attributes involved — decoding the whole model here would
+	// hard-error on a wholly-unknown initial_node_pool (a *struct target cannot
+	// carry unknown), breaking `terraform validate` for the common
+	// `initial_node_pool = var.pool` module pattern (expert-review Medium).
+	var scheme, floatingIPID types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("scheme"), &scheme)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("floating_ip_id"), &floatingIPID)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if scheme.IsUnknown() || floatingIPID.IsUnknown() {
+		return
+	}
+	if scheme.IsNull() || scheme.ValueString() != "internal" {
+		return
+	}
+	if !floatingIPID.IsNull() && floatingIPID.ValueString() != "" {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("floating_ip_id"),
+			"Unexpected floating_ip_id",
+			`floating_ip_id must not be set when scheme is "internal": an internal cluster exposes only its `+
+				`private load-balancer VIP inside the VPC and has no floating IP. Use scheme = "public" (the `+
+				`default) to attach a bring-your-own floating IP.`,
+		)
 	}
 }
 
