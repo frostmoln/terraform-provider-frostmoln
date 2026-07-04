@@ -202,7 +202,7 @@ func IsRefreshTokenDead(err error) bool {
 
 // IsRetryable reports whether a failed bearer-refresh grant should be retried
 // with the SAME refresh token (MED-4). The retry re-POSTs that token, so the
-// sole hard constraint is Zitadel reuse-detection safety. We retry:
+// sole hard constraint is the IdP's reuse-detection safety. We retry:
 //
 //   - *oidc.OAuthError{Code: "temporarily_unavailable"} — the IdP's explicit
 //     "I did not process this" signal (RFC 6749 §5.2): the token was not consumed.
@@ -256,7 +256,7 @@ func IsRetryable(err error) bool {
 // FileSource refreshes an fm-CLI OIDC bearer credential bound to a config file
 // and context. Refresh performs the whole refresh as one locked
 // read-modify-write so that aliased provider instances and a concurrent `fm`
-// don't POST a stale (rotated, single-use) refresh token and trip Zitadel's
+// don't POST a stale (rotated, single-use) refresh token and trip the IdP's
 // reuse-detection.
 type FileSource struct {
 	path        string
@@ -275,7 +275,7 @@ type FileSource struct {
 // grant succeeds but the write-back fails, the caller's in-memory token (R',
 // newer expiry) outlives the stale on-disk one (R, older expiry). Keying adopt
 // on the expiry means we do NOT adopt that stale R, and we POST the live R'
-// below — re-POSTing the consumed R would trip Zitadel reuse-detection and kill
+// below — re-POSTing the consumed R would trip the IdP's reuse-detection and kill
 // the whole token family.
 //
 // On a successful grant whose write-back fails, it returns the valid new token
@@ -301,7 +301,7 @@ func (s *FileSource) Refresh(ctx context.Context, httpClient *http.Client, apiEn
 	//
 	// Correctness rests on the expiry-monotonicity invariant: every successive
 	// rotation writes a strictly-greater absolute expiry. That holds for the
-	// supported model (one host, monotonic clock, constant Zitadel access-token
+	// supported model (one host, monotonic clock, constant IdP access-token
 	// TTL) and for the caller's monotonic in-memory expiry (auth.go carries the
 	// prior value forward across an expires_in-less grant). It can break under a
 	// backward NTP step or a cross-host clock skew on a shared (e.g. NFS) config;

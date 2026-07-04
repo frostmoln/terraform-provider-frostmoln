@@ -120,7 +120,7 @@ func (b *bearerSource) refreshLocked(ctx context.Context) error {
 	// tok.ExpiresAt == 0); zeroing here would, after a write-back failure, let the
 	// next refresh's expiry gate adopt the stale on-disk token (which still has a
 	// real, larger expiry) and the one after re-POST the consumed token — tripping
-	// Zitadel reuse-detection. Carry the prior expiry forward instead.
+	// the IdP's reuse-detection. Carry the prior expiry forward instead.
 	if tok.ExpiresAt != 0 {
 		b.expiresAt = tok.ExpiresAt
 	}

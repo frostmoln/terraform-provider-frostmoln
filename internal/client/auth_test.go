@@ -253,7 +253,7 @@ func TestBearerAdoptsPeerRotation(t *testing.T) {
 	// The on-disk token has a strictly later expiry than what the client holds in
 	// memory (a peer — another provider instance or `fm` — rotated it forward).
 	// The client must adopt the on-disk token and NOT POST its stale one (which
-	// would trip Zitadel reuse-detection).
+	// would trip the IdP's reuse-detection).
 	s := newAuthServer(t)
 	s.validToken = "peer-access" // the API only accepts the peer's fresh token
 	peerExpiry := time.Now().Add(time.Hour).Unix()
@@ -308,12 +308,12 @@ func TestBearerPersistFailureWarnsButSucceeds(t *testing.T) {
 	}
 }
 
-// TestBearerZeroExpiryGrantStaysMonotonic is the HIGH (OAuth/Zitadel review)
+// TestBearerZeroExpiryGrantStaysMonotonic is the HIGH (OAuth/IdP review)
 // regression: a successful grant that omits expires_in must not zero the
 // in-memory expiry. If it did, after a write-back failure the next refresh's
 // expiry gate would adopt the stale on-disk token (which still carries a real,
 // larger expiry) and the refresh after that would re-POST the consumed token →
-// Zitadel reuse-detection revokes the whole family. The fix carries the prior
+// the IdP's reuse-detection revokes the whole family. The fix carries the prior
 // expiry forward so the gate stays monotone and the live token is POSTed.
 func TestBearerZeroExpiryGrantStaysMonotonic(t *testing.T) {
 	s := newAuthServer(t)

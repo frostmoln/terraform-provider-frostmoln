@@ -354,7 +354,7 @@ contexts:
 // TestRefreshAfterPersistFailurePOSTsLiveToken is the HIGH-1 regression: after a
 // grant R->R' succeeds but the write-back fails, the in-memory token advances to
 // R' while disk still holds the consumed R. The NEXT refresh must POST the live
-// R' — never adopt+re-POST the stale on-disk R, which Zitadel reuse-detection
+// R' — never adopt+re-POST the stale on-disk R, which the IdP's reuse-detection
 // would reject, revoking the whole token family and forcing `fm auth login`.
 func TestRefreshAfterPersistFailurePOSTsLiveToken(t *testing.T) {
 	s := newOIDCServer(t)
@@ -512,7 +512,7 @@ func TestRefreshRetriesTemporarilyUnavailable(t *testing.T) {
 
 // TestRefreshDoesNotRetryServerError pins the consumed-token guard: server_error
 // is ambiguous (the grant may have partially consumed the refresh token), so it
-// must NOT be retried — a re-POST could trip Zitadel reuse-detection. One hit.
+// must NOT be retried — a re-POST could trip the IdP's reuse-detection. One hit.
 func TestRefreshDoesNotRetryServerError(t *testing.T) {
 	old := refreshBackoff
 	refreshBackoff = time.Millisecond
