@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.1] - 2026-07-04
+
+### ⚙️ Miscellaneous Tasks
+
+- Drop internal IdP product name from provider comments + changelog (#169)
+
 ## [0.13.0] - 2026-07-04
 
 ### 🚀 Features
@@ -149,7 +155,7 @@ All notable changes to this project will be documented in this file.
 
 - *(network)* Align VPC/subnet wire tags to contract, drop vestigial region (#101)
 - *(network)* Remove unbacked subnet is_public attribute (#103)
-- Harden provider OIDC refresh against IdP refresh-token reuse-detection (#105)
+- Harden provider OIDC refresh against Zitadel reuse-detection (#105)
 
 ## [0.2.0] - 2026-06-28
 
