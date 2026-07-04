@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.0] - 2026-07-04
+
+### 🚀 Features
+
+- *(kubernetes_cluster)* Scheme attribute — public|internal endpoint exposure (create-only) (#165)
+
 ## [0.11.0] - 2026-07-03
 
 ### 🚀 Features
