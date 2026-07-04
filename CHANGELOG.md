@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.0] - 2026-07-04
+
+### 🚀 Features
+
+- *(webserver)* Webserver_deployment resource + public/public_ip (ADR-0097) (#167)
+
 ## [0.12.0] - 2026-07-04
 
 ### 🚀 Features
