@@ -58,7 +58,7 @@ func (r *apiKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				ElementType: types.StringType,
 			},
 			"expires_at": schema.StringAttribute{
-				Description: "The expiration for the API key. Accepts a bare date (`YYYY-MM-DD`, interpreted as the end of that day in UTC — e.g. `2027-01-01` becomes `2027-01-01T23:59:59Z`) or a full RFC3339 timestamp. Note: the fm CLI's `--expires` uses the operator's local timezone for the end-of-day, so the same bare date may resolve to an instant up to a day apart between the two tools; this provider uses UTC so plans are reproducible across machines. Omit to use the server default (~1 year), which is then reflected in state. Once set, this cannot be changed (changing it replaces the key).",
+				Description: "The expiration for the API key. Accepts a bare date (`YYYY-MM-DD`, interpreted as the end of that day in UTC — e.g. `2027-01-01` becomes `2027-01-01T23:59:59Z`) or a full RFC3339 timestamp. The expiry must be at most 2 years in the future — the server rejects a later value with `API_KEY_LIFETIME_EXCEEDS_MAX`. Note: the fm CLI's `--expires` uses the operator's local timezone for the end-of-day, so the same bare date may resolve to an instant up to a day apart between the two tools; this provider uses UTC so plans are reproducible across machines. Omit to use the server default (~1 year), which is then reflected in state. Once set, this cannot be changed (changing it replaces the key).",
 				Optional:    true,
 				// Computed so the server's default (~1y) can populate state when
 				// omitted without a "provider produced inconsistent result" error.
