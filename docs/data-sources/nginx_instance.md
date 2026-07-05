@@ -25,6 +25,8 @@ Look up a managed Nginx webserver instance by ID.
 - `created_at` (String) The timestamp when the instance was created.
 - `flavor_id` (String) The flavor ID/size of the Nginx instance.
 - `name` (String) The name of the Nginx instance.
+- `php_enabled` (Boolean) Whether PHP support is enabled.
+- `php_version` (String) The PHP version.
 - `port` (Number) The port number the Nginx instance is listening on.
 - `private_ip` (String) The private IP address of the Nginx instance.
 - `public` (Boolean) Whether the instance is publicly exposed (a Floating IP is associated so the site is reachable on the public internet).

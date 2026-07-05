@@ -39,8 +39,8 @@ func TestSchema(t *testing.T) {
 
 	expectedAttrs := []string{
 		"id", "name", "version", "flavor_id", "storage_gb", "vpc_id", "subnet_id",
-		"tls_enabled", "config", "public", "public_ip", "status", "private_ip", "port", "created_at",
-		"updated_at", "tenant_id",
+		"tls_enabled", "php_enabled", "php_version", "config", "public", "public_ip", "status", "private_ip",
+		"port", "created_at", "updated_at", "tenant_id",
 	}
 	for _, attr := range expectedAttrs {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
@@ -118,6 +118,8 @@ func configVal(t *testing.T, id string) tftypes.Value {
 		"vpc_id":      tftypes.NewValue(tftypes.String, nil),
 		"subnet_id":   tftypes.NewValue(tftypes.String, nil),
 		"tls_enabled": tftypes.NewValue(tftypes.Bool, nil),
+		"php_enabled": tftypes.NewValue(tftypes.Bool, nil),
+		"php_version": tftypes.NewValue(tftypes.String, nil),
 		"config":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"public":      tftypes.NewValue(tftypes.Bool, nil),
 		"public_ip":   tftypes.NewValue(tftypes.String, nil),
@@ -144,6 +146,8 @@ func TestReadByID(t *testing.T) {
 				VPCID:         "vpc-1",
 				SubnetID:      "sn-1",
 				TLSEnabled:    true,
+				PHPEnabled:    true,
+				PHPVersion:    "8.3",
 				EngineConfig:  map[string]string{"client_max_body_size": "10m"},
 				Status:        "running",
 				PrivateIP:     "10.0.1.6",
@@ -200,6 +204,12 @@ func TestReadByID(t *testing.T) {
 	if !state.TLSEnabled.ValueBool() {
 		t.Error("expected TLSEnabled true")
 	}
+	if !state.PHPEnabled.ValueBool() {
+		t.Error("expected PHPEnabled true")
+	}
+	if state.PHPVersion.ValueString() != "8.3" {
+		t.Errorf("expected PHPVersion 8.3, got %s", state.PHPVersion.ValueString())
+	}
 	cfg := map[string]string{}
 	state.Config.ElementsAs(ctx, &cfg, false)
 	if cfg["client_max_body_size"] != "10m" {
@@ -254,6 +264,9 @@ func TestReadByIDNullableFieldsEmpty(t *testing.T) {
 	var state nginxInstanceModel
 	readResp.State.Get(ctx, &state)
 
+	if !state.PHPVersion.IsNull() {
+		t.Error("expected null php_version")
+	}
 	if !state.Config.IsNull() {
 		t.Error("expected null config")
 	}

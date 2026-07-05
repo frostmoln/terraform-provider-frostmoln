@@ -42,6 +42,8 @@ func TestNginxInstanceModelToCreateRequest(t *testing.T) {
 		VPCID:      types.StringValue("vpc-1"),
 		SubnetID:   types.StringValue("sn-1"),
 		TLSEnabled: types.BoolNull(),
+		PHPEnabled: types.BoolNull(),
+		PHPVersion: types.StringNull(),
 		Config:     types.MapNull(types.StringType),
 	}
 
@@ -71,6 +73,9 @@ func TestNginxInstanceModelToCreateRequest(t *testing.T) {
 	if req.TLSEnabled != nil {
 		t.Error("expected nil tlsEnabled for null value")
 	}
+	if req.PHPEnabled != nil {
+		t.Error("expected nil phpEnabled for null value")
+	}
 	if req.EngineConfig != nil {
 		t.Error("expected nil engineConfig for null config")
 	}
@@ -88,6 +93,8 @@ func TestNginxInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 		VPCID:      types.StringValue("vpc-1"),
 		SubnetID:   types.StringValue("sn-1"),
 		TLSEnabled: types.BoolValue(true),
+		PHPEnabled: types.BoolValue(true),
+		PHPVersion: types.StringValue("8.3"),
 		Config:     mustCfgMap(map[string]string{"client_max_body_size": "10m"}),
 	}
 
@@ -98,6 +105,12 @@ func TestNginxInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 
 	if req.TLSEnabled == nil || !*req.TLSEnabled {
 		t.Error("expected tlsEnabled true")
+	}
+	if req.PHPEnabled == nil || !*req.PHPEnabled {
+		t.Error("expected phpEnabled true")
+	}
+	if req.PHPVersion != "8.3" {
+		t.Errorf("expected phpVersion 8.3, got %s", req.PHPVersion)
 	}
 	if req.EngineConfig["client_max_body_size"] != "10m" {
 		t.Errorf("expected engineConfig client_max_body_size=10m, got %v", req.EngineConfig)
@@ -113,6 +126,8 @@ func TestNginxInstanceModelToUpdateRequest(t *testing.T) {
 		FlavorID:   types.StringValue("web.gp1.large"),
 		StorageGB:  types.Int64Value(80),
 		TLSEnabled: types.BoolValue(true),
+		PHPEnabled: types.BoolValue(true),
+		PHPVersion: types.StringValue("8.3"),
 		Config:     mustCfgMap(map[string]string{"gzip": "on"}),
 	}
 	state := NginxInstanceModel{
@@ -120,6 +135,8 @@ func TestNginxInstanceModelToUpdateRequest(t *testing.T) {
 		FlavorID:   types.StringValue("web.gp1.small"),
 		StorageGB:  types.Int64Value(20),
 		TLSEnabled: types.BoolValue(false),
+		PHPEnabled: types.BoolValue(false),
+		PHPVersion: types.StringNull(),
 		Config:     types.MapNull(types.StringType),
 	}
 
@@ -132,6 +149,12 @@ func TestNginxInstanceModelToUpdateRequest(t *testing.T) {
 	}
 	if req.TLSEnabled == nil || !*req.TLSEnabled {
 		t.Error("expected tlsEnabled update")
+	}
+	if req.PHPEnabled == nil || !*req.PHPEnabled {
+		t.Error("expected phpEnabled update")
+	}
+	if req.PHPVersion == nil || *req.PHPVersion != "8.3" {
+		t.Error("expected phpVersion update")
 	}
 	if req.EngineConfig["gzip"] != "on" {
 		t.Errorf("expected engineConfig gzip=on, got %v", req.EngineConfig)
@@ -147,6 +170,8 @@ func TestNginxInstanceModelToUpdateRequestNoChanges(t *testing.T) {
 		FlavorID:   types.StringValue("web.gp1.small"),
 		StorageGB:  types.Int64Value(20),
 		TLSEnabled: types.BoolValue(true),
+		PHPEnabled: types.BoolValue(false),
+		PHPVersion: types.StringValue("8.2"),
 		Config:     mustCfgMap(map[string]string{"gzip": "on"}),
 	}
 
@@ -154,7 +179,8 @@ func TestNginxInstanceModelToUpdateRequestNoChanges(t *testing.T) {
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
-	if req.Name != nil || req.TLSEnabled != nil || req.EngineConfig != nil {
+	if req.Name != nil ||
+		req.TLSEnabled != nil || req.PHPEnabled != nil || req.PHPVersion != nil || req.EngineConfig != nil {
 		t.Error("expected no changes in update request")
 	}
 }
@@ -173,6 +199,8 @@ func TestNginxInstanceModelFromAPI(t *testing.T) {
 		VPCID:         "vpc-1",
 		SubnetID:      "sn-1",
 		TLSEnabled:    true,
+		PHPEnabled:    true,
+		PHPVersion:    "8.3",
 		EngineConfig:  map[string]string{"client_max_body_size": "10m"},
 		Status:        "running",
 		PrivateIP:     "10.0.1.5",
@@ -200,6 +228,9 @@ func TestNginxInstanceModelFromAPI(t *testing.T) {
 	if model.SubnetID.ValueString() != "sn-1" {
 		t.Errorf("expected subnet_id sn-1, got %s", model.SubnetID.ValueString())
 	}
+	if model.PHPVersion.ValueString() != "8.3" {
+		t.Errorf("expected php_version 8.3, got %s", model.PHPVersion.ValueString())
+	}
 	cfg := map[string]string{}
 	model.Config.ElementsAs(ctx, &cfg, false)
 	if cfg["client_max_body_size"] != "10m" {
@@ -226,6 +257,8 @@ func TestNginxInstanceModelFromAPINulls(t *testing.T) {
 		StorageGB:     20,
 		VPCID:         "vpc-1",
 		SubnetID:      "sn-1",
+		TLSEnabled:    false,
+		PHPEnabled:    false,
 		Status:        "provisioning",
 		CreatedAt:     "2025-01-01T00:00:00Z",
 	}
@@ -236,6 +269,9 @@ func TestNginxInstanceModelFromAPINulls(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
 
+	if !model.PHPVersion.IsNull() {
+		t.Error("expected null php_version")
+	}
 	if !model.Config.IsNull() {
 		t.Error("expected null config")
 	}
@@ -285,8 +321,10 @@ func TestSchema(t *testing.T) {
 		}
 	}
 
-	if _, ok := resp.Schema.Attributes["config"]; !ok {
-		t.Error("expected config attribute in schema")
+	for _, attr := range []string{"php_enabled", "php_version", "config"} {
+		if _, ok := resp.Schema.Attributes[attr]; !ok {
+			t.Errorf("expected attribute %s in schema", attr)
+		}
 	}
 
 	computedAttrs := []string{"id", "status", "private_ip", "port", "created_at", "updated_at", "tenant_id"}
@@ -388,6 +426,8 @@ func baseNginxModel() NginxInstanceModel {
 		VPCID:      types.StringValue("vpc-1"),
 		SubnetID:   types.StringValue("sn-1"),
 		TLSEnabled: types.BoolValue(true),
+		PHPEnabled: types.BoolValue(false),
+		PHPVersion: types.StringNull(),
 		Config:     mustCfgMap(map[string]string{"client_max_body_size": "10m"}),
 	}
 }

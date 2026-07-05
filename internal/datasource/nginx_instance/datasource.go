@@ -34,6 +34,8 @@ type nginxInstanceModel struct {
 	VPCID      types.String `tfsdk:"vpc_id"`
 	SubnetID   types.String `tfsdk:"subnet_id"`
 	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
+	PHPEnabled types.Bool   `tfsdk:"php_enabled"`
+	PHPVersion types.String `tfsdk:"php_version"`
 	Config     types.Map    `tfsdk:"config"`
 	Public     types.Bool   `tfsdk:"public"`
 	PublicIP   types.String `tfsdk:"public_ip"`
@@ -58,6 +60,8 @@ type apiWebserverInstance struct {
 	VPCID         string            `json:"vpcId"`
 	SubnetID      string            `json:"subnetId"`
 	TLSEnabled    bool              `json:"tlsEnabled"`
+	PHPEnabled    bool              `json:"phpEnabled"`
+	PHPVersion    string            `json:"phpVersion,omitempty"`
 	EngineConfig  map[string]string `json:"engineConfig,omitempty"`
 	Public        bool              `json:"public"`
 	PublicIP      string            `json:"publicIp,omitempty"`
@@ -107,6 +111,14 @@ func (d *nginxInstanceDataSource) Schema(_ context.Context, _ datasource.SchemaR
 			},
 			"tls_enabled": schema.BoolAttribute{
 				Description: "Whether TLS is enabled.",
+				Computed:    true,
+			},
+			"php_enabled": schema.BoolAttribute{
+				Description: "Whether PHP support is enabled.",
+				Computed:    true,
+			},
+			"php_version": schema.StringAttribute{
+				Description: "The PHP version.",
 				Computed:    true,
 			},
 			"config": schema.MapAttribute{
@@ -192,6 +204,7 @@ func (d *nginxInstanceDataSource) Read(ctx context.Context, req datasource.ReadR
 	state.VPCID = types.StringValue(inst.VPCID)
 	state.SubnetID = types.StringValue(inst.SubnetID)
 	state.TLSEnabled = types.BoolValue(inst.TLSEnabled)
+	state.PHPEnabled = types.BoolValue(inst.PHPEnabled)
 	state.Public = types.BoolValue(inst.Public)
 	state.Status = types.StringValue(inst.Status)
 	state.CreatedAt = types.StringValue(inst.CreatedAt)
@@ -200,6 +213,12 @@ func (d *nginxInstanceDataSource) Read(ctx context.Context, req datasource.ReadR
 		state.PublicIP = types.StringValue(inst.PublicIP)
 	} else {
 		state.PublicIP = types.StringNull()
+	}
+
+	if inst.PHPVersion != "" {
+		state.PHPVersion = types.StringValue(inst.PHPVersion)
+	} else {
+		state.PHPVersion = types.StringNull()
 	}
 
 	if len(inst.EngineConfig) > 0 {

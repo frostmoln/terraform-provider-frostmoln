@@ -18,6 +18,8 @@ type NginxInstanceModel struct {
 	VPCID      types.String `tfsdk:"vpc_id"`
 	SubnetID   types.String `tfsdk:"subnet_id"`
 	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
+	PHPEnabled types.Bool   `tfsdk:"php_enabled"`
+	PHPVersion types.String `tfsdk:"php_version"`
 	Config     types.Map    `tfsdk:"config"`
 	Public     types.Bool   `tfsdk:"public"`
 	PublicIP   types.String `tfsdk:"public_ip"`
@@ -44,6 +46,8 @@ type apiWebserverInstance struct {
 	VPCID         string            `json:"vpcId"`
 	SubnetID      string            `json:"subnetId"`
 	TLSEnabled    bool              `json:"tlsEnabled"`
+	PHPEnabled    bool              `json:"phpEnabled"`
+	PHPVersion    string            `json:"phpVersion,omitempty"`
 	EngineConfig  map[string]string `json:"engineConfig,omitempty"`
 	// Public is OBSERVED (ADR-0097): true when a Floating IP is currently
 	// associated to the instance's engine port. PublicIP is that FIP. Both are
@@ -71,6 +75,8 @@ type apiCreateWebserverInstanceRequest struct {
 	VPCID         string            `json:"vpcId"`
 	SubnetID      string            `json:"subnetId"`
 	TLSEnabled    *bool             `json:"tlsEnabled,omitempty"`
+	PHPEnabled    *bool             `json:"phpEnabled,omitempty"`
+	PHPVersion    string            `json:"phpVersion,omitempty"`
 	EngineConfig  map[string]string `json:"engineConfig,omitempty"`
 	// Public opts the instance into public exposure at create time (ADR-0097):
 	// the create saga associates a Floating IP and surfaces publicIp. Post-create,
@@ -82,16 +88,20 @@ type apiCreateWebserverInstanceRequest struct {
 // webserver instance via PUT. It carries only in-place-updatable fields:
 // storage_gb goes through POST /resize (grow-only) and flavor_id changes are
 // rejected at plan time, so neither is sent here (the backend PUT handler
-// deserializes only name/tlsEnabled/engineConfig and drops the rest silently).
+// deserializes only name/tlsEnabled/phpEnabled/phpVersion/engineConfig and
+// drops the rest silently).
 type apiUpdateWebserverInstanceRequest struct {
 	Name         *string           `json:"name,omitempty"`
 	TLSEnabled   *bool             `json:"tlsEnabled,omitempty"`
+	PHPEnabled   *bool             `json:"phpEnabled,omitempty"`
+	PHPVersion   *string           `json:"phpVersion,omitempty"`
 	EngineConfig map[string]string `json:"engineConfig,omitempty"`
 }
 
 // hasChanges reports whether the update request carries any field to PUT.
 func (r apiUpdateWebserverInstanceRequest) hasChanges() bool {
-	return r.Name != nil || r.TLSEnabled != nil || r.EngineConfig != nil
+	return r.Name != nil || r.TLSEnabled != nil || r.PHPEnabled != nil ||
+		r.PHPVersion != nil || r.EngineConfig != nil
 }
 
 // apiResizeWebserverInstanceRequest is the body for POST /webservers/{id}/resize.
@@ -115,6 +125,13 @@ func (m *NginxInstanceModel) toCreateRequest(ctx context.Context, diags *diag.Di
 	if !m.TLSEnabled.IsNull() && !m.TLSEnabled.IsUnknown() {
 		v := m.TLSEnabled.ValueBool()
 		req.TLSEnabled = &v
+	}
+	if !m.PHPEnabled.IsNull() && !m.PHPEnabled.IsUnknown() {
+		v := m.PHPEnabled.ValueBool()
+		req.PHPEnabled = &v
+	}
+	if !m.PHPVersion.IsNull() && !m.PHPVersion.IsUnknown() {
+		req.PHPVersion = m.PHPVersion.ValueString()
 	}
 	if !m.Config.IsNull() && !m.Config.IsUnknown() {
 		cfg := make(map[string]string)
@@ -141,6 +158,14 @@ func (m *NginxInstanceModel) toUpdateRequest(ctx context.Context, state *NginxIn
 		v := m.TLSEnabled.ValueBool()
 		req.TLSEnabled = &v
 	}
+	if !m.PHPEnabled.Equal(state.PHPEnabled) {
+		v := m.PHPEnabled.ValueBool()
+		req.PHPEnabled = &v
+	}
+	if !m.PHPVersion.Equal(state.PHPVersion) {
+		v := m.PHPVersion.ValueString()
+		req.PHPVersion = &v
+	}
 	if !m.Config.Equal(state.Config) {
 		cfg := make(map[string]string)
 		if !m.Config.IsNull() && !m.Config.IsUnknown() {
@@ -162,6 +187,7 @@ func (m *NginxInstanceModel) fromAPI(ctx context.Context, inst *apiWebserverInst
 	m.VPCID = types.StringValue(inst.VPCID)
 	m.SubnetID = types.StringValue(inst.SubnetID)
 	m.TLSEnabled = types.BoolValue(inst.TLSEnabled)
+	m.PHPEnabled = types.BoolValue(inst.PHPEnabled)
 	m.Public = types.BoolValue(inst.Public)
 	m.Status = types.StringValue(inst.Status)
 	m.CreatedAt = types.StringValue(inst.CreatedAt)
@@ -170,6 +196,12 @@ func (m *NginxInstanceModel) fromAPI(ctx context.Context, inst *apiWebserverInst
 		m.PublicIP = types.StringValue(inst.PublicIP)
 	} else {
 		m.PublicIP = types.StringNull()
+	}
+
+	if inst.PHPVersion != "" {
+		m.PHPVersion = types.StringValue(inst.PHPVersion)
+	} else {
+		m.PHPVersion = types.StringNull()
 	}
 
 	if len(inst.EngineConfig) > 0 {

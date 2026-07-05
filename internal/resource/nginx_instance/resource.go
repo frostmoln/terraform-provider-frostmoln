@@ -240,6 +240,24 @@ func (r *nginxInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 					boolplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"php_enabled": schema.BoolAttribute{
+				Description: "Whether PHP-FPM support is enabled for the webserver. Can be toggled in place; " +
+					"the instance is reconfigured (and briefly reloads) on change.",
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"php_version": schema.StringAttribute{
+				Description: "The PHP version to run (e.g. \"8.1\", \"8.2\", \"8.3\"). Only applicable when " +
+					"php_enabled is true; the platform selects a supported default when omitted.",
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
 			"config": schema.MapAttribute{
 				Description: "Engine-specific configuration applied to the webserver, as key/value pairs " +
 					"(sent as the engineConfig object). Keys must be from the platform's curated allowlist " +
