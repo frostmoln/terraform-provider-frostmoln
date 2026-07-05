@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.0] - 2026-07-05
+
+### 🚀 Features
+
+- *(nginx)* Add php_enabled + php_version to nginx_instance (#179)
+- *(cache)* In-place flavor_id resize for redis/valkey (#181)
+
 ## [0.14.0] - 2026-07-05
 
 ### 🚀 Features
