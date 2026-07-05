@@ -487,3 +487,81 @@ func TestDeleteServerError(t *testing.T) {
 		t.Error("expected error for server error on delete")
 	}
 }
+
+// TestDeleteRetriesOnConflict: the backend 409s a replica delete while the
+// primary is mid-resize. The delete must retry past the transient 409, not fail.
+func TestDeleteRetriesOnConflict(t *testing.T) {
+	var deleteCalls atomic.Int32
+	var deleted atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-1/databases/pg-1/replicas/rr-1":
+			if deleteCalls.Add(1) == 1 {
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]string{"code": "conflict", "message": "cannot delete read replica while the primary instance is resizing"})
+				return
+			}
+			deleted.Store(true)
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/databases/pg-1/replicas/rr-1":
+			if deleted.Load() {
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+			} else {
+				_ = json.NewEncoder(w).Encode(apiPostgresReadReplica{ID: "rr-1", Status: "deleting"})
+			}
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	r := newResource(newClient(t, server))
+	state := buildState(t, PostgresReadReplicaModel{
+		ID: types.StringValue("rr-1"), InstanceID: types.StringValue("pg-1"),
+		Name: types.StringValue("replica-1"), Status: types.StringValue("running"),
+	})
+	deleteResp := resource.DeleteResponse{State: state}
+	r.Delete(context.Background(), resource.DeleteRequest{State: state}, &deleteResp)
+	if deleteResp.Diagnostics.HasError() {
+		t.Fatalf("delete should retry past the transient 409, got %v", deleteResp.Diagnostics.Errors())
+	}
+	if got := deleteCalls.Load(); got < 2 {
+		t.Errorf("expected the delete to be retried (>1 DELETE), got %d", got)
+	}
+}
+
+// TestDeleteConflictTimeoutSurfaces: a 409 that never clears is surfaced as a
+// diagnostic error once the retry budget is exhausted — it must not hang, and
+// must not be swallowed as success (that would leave state drift).
+func TestDeleteConflictTimeoutSurfaces(t *testing.T) {
+	var deleteCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			deleteCalls.Add(1)
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "conflict", "message": "cannot delete read replica while the primary instance is resizing"})
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	// Short budget so the never-clearing 409 exhausts fast, but wide enough that
+	// a slow first round-trip on loaded CI still leaves room for a retry.
+	r := &postgresReadReplicaResource{client: newClient(t, server), pollInterval: 2 * time.Millisecond, pollTimeout: 200 * time.Millisecond}
+	state := buildState(t, PostgresReadReplicaModel{
+		ID: types.StringValue("rr-1"), InstanceID: types.StringValue("pg-1"),
+		Name: types.StringValue("replica-1"), Status: types.StringValue("running"),
+	})
+	deleteResp := resource.DeleteResponse{State: state}
+	r.Delete(context.Background(), resource.DeleteRequest{State: state}, &deleteResp)
+	if !deleteResp.Diagnostics.HasError() {
+		t.Error("expected a persistent 409 to surface as an error, not hang or succeed")
+	}
+	if got := deleteCalls.Load(); got < 2 {
+		t.Errorf("expected multiple DELETE attempts before giving up, got %d", got)
+	}
+}

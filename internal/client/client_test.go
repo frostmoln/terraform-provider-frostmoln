@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -378,6 +379,85 @@ func TestIsAlreadyInDesiredState(t *testing.T) {
 	if IsAlreadyInDesiredState(&APIError{StatusCode: 500, Code: "conflict"}) {
 		t.Error("expected false for a non-409 status")
 	}
+}
+
+func TestIsConflict(t *testing.T) {
+	if IsConflict(nil) {
+		t.Error("expected false for nil error")
+	}
+	// Any 409 matches, regardless of code — the replica-delete retry only cares
+	// that the server said Conflict.
+	if !IsConflict(&APIError{StatusCode: 409, Code: "conflict"}) {
+		t.Error("expected true for a 409 conflict-coded error")
+	}
+	if !IsConflict(&APIError{StatusCode: 409, Code: "invalid_state"}) {
+		t.Error("expected true for a 409 regardless of code")
+	}
+	if IsConflict(&APIError{StatusCode: 500, Code: "conflict"}) {
+		t.Error("expected false for a non-409 status")
+	}
+}
+
+func TestDeleteWithConflictRetry(t *testing.T) {
+	t.Run("retries a 409 then succeeds", func(t *testing.T) {
+		var calls atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if calls.Add(1) == 1 {
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]string{"code": "conflict", "message": "resizing"})
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		defer server.Close()
+
+		c := NewClient(server.URL, "test-key")
+		resp, err := c.DeleteWithConflictRetry(context.Background(), "/v1/x", 2*time.Millisecond, 200*time.Millisecond)
+		if err != nil {
+			t.Fatalf("expected success after retry, got %v", err)
+		}
+		if resp.StatusCode != http.StatusNoContent {
+			t.Errorf("expected 204, got %d", resp.StatusCode)
+		}
+		if got := calls.Load(); got < 2 {
+			t.Errorf("expected >1 attempt, got %d", got)
+		}
+	})
+
+	t.Run("surfaces the last 409 at the deadline", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "conflict", "message": "resizing"})
+		}))
+		defer server.Close()
+
+		c := NewClient(server.URL, "test-key")
+		_, err := c.DeleteWithConflictRetry(context.Background(), "/v1/x", 2*time.Millisecond, 20*time.Millisecond)
+		if !IsConflict(err) {
+			t.Fatalf("expected the persistent 409 to surface, got %v", err)
+		}
+	})
+
+	t.Run("returns ctx error on cancellation mid-backoff", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "conflict", "message": "resizing"})
+		}))
+		defer server.Close()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		// Cancel while the loop is parked in its 2s backoff after the first 409:
+		// 100ms clears the (sub-ms) first round-trip but lands well inside the
+		// sleep, so ctx.Done — not the deadline — is what returns.
+		timer := time.AfterFunc(100*time.Millisecond, cancel)
+		defer timer.Stop()
+
+		c := NewClient(server.URL, "test-key")
+		_, err := c.DeleteWithConflictRetry(ctx, "/v1/x", 2*time.Second, 10*time.Second)
+		if err != context.Canceled {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+	})
 }
 
 func TestParseResponse(t *testing.T) {

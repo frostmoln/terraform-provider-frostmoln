@@ -294,7 +294,11 @@ func (r *mysqlReadReplicaResource) Delete(ctx context.Context, req resource.Dele
 	instanceID := state.InstanceID.ValueString()
 	replicaID := state.ID.ValueString()
 
-	_, err := r.client.Delete(ctx, r.replicaPath(instanceID, replicaID))
+	// Retry on 409: the backend blocks a replica delete while the primary is
+	// mid-resize. A mixed apply (grow primary + drop replica) runs both
+	// concurrently, so without this a delete landing during 'resizing' would
+	// hard-fail an apply that self-heals once the resize completes.
+	_, err := r.client.DeleteWithConflictRetry(ctx, r.replicaPath(instanceID, replicaID), r.getPollInterval(), r.getPollTimeout())
 	if err != nil {
 		if client.IsNotFound(err) {
 			return

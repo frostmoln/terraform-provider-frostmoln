@@ -244,6 +244,19 @@ func IsAlreadyInDesiredState(err error) bool {
 	return false
 }
 
+// IsConflict reports whether err is a 409 Conflict, regardless of error code.
+// It is deliberately broader than IsAlreadyInDesiredState (which matches only
+// the "conflict"-code 409 that means the requested end state is already
+// reached, an idempotent success): IsConflict is the predicate the read-replica
+// delete uses to retry a transient 409, and a persistent 409 it does NOT swallow
+// as success but surfaces as an error.
+func IsConflict(err error) bool {
+	if apiErr, ok := err.(*APIError); ok {
+		return apiErr.StatusCode == http.StatusConflict
+	}
+	return false
+}
+
 // OperationResponse represents an async operation accepted by the API (HTTP 202).
 // Actions like volume detach, resize, and attach return this instead of the full resource.
 type OperationResponse struct {
@@ -571,6 +584,41 @@ func (c *Client) Delete(ctx context.Context, path string) (*Response, error) {
 // DeleteWithQuery sends a DELETE request with query parameters.
 func (c *Client) DeleteWithQuery(ctx context.Context, path string, query url.Values) (*Response, error) {
 	return c.Do(ctx, http.MethodDelete, path, query, nil)
+}
+
+// DeleteWithConflictRetry sends a DELETE and retries while the server returns a
+// 409 Conflict, up to timeout, sleeping interval between attempts. It exists for
+// the managed-database read-replica delete path: the backend 409s a replica
+// delete while the primary instance is mid-resize ("cannot delete read replica
+// while the primary instance is resizing"), a transient state that clears in
+// minutes. A mixed `terraform apply` that grows the primary storage AND removes
+// a replica in the same plan runs the two concurrently (no dependency edge), so
+// surfacing that 409 would hard-fail an apply that self-heals on re-run.
+//
+// Retrying on ANY 409 is safe ONLY because the replica DELETE endpoint returns
+// no other 409. Do NOT reuse this on paths that can 409 permanently (e.g. the
+// instance resize path's wrong-state 409) — it would spin until timeout. Unlike
+// IsAlreadyInDesiredState (a 409 that means the delete is effectively already
+// done), a delete has NOT happened here, so a 409 that never clears is returned
+// as an error for the caller to surface, never swallowed as success.
+func (c *Client) DeleteWithConflictRetry(ctx context.Context, path string, interval, timeout time.Duration) (*Response, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		resp, err := c.Delete(ctx, path)
+		if err == nil || !IsConflict(err) {
+			return resp, err
+		}
+		if !time.Now().Before(deadline) {
+			// The conflict never cleared within the budget — surface the last
+			// 409 (more actionable than a bare deadline error), don't hang.
+			return resp, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(interval):
+		}
+	}
 }
 
 // ParseResponse unmarshals the response body into the given type.
