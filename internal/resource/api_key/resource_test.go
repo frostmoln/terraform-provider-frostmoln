@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -225,6 +226,181 @@ func TestAPIKeyModelFromAPIMinimalFields(t *testing.T) {
 	}
 	if !model.Scopes.IsNull() {
 		t.Error("expected scopes to be null")
+	}
+}
+
+func TestNormalizeAPIKeyExpiry(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{name: "empty stays empty (server default)", in: "", want: ""},
+		{name: "bare date -> end of day UTC", in: "2027-01-01", want: "2027-01-01T23:59:59Z"},
+		{name: "RFC3339 UTC round-trips", in: "2027-01-01T10:00:00Z", want: "2027-01-01T10:00:00Z"},
+		{name: "RFC3339 offset canonicalized to UTC", in: "2027-01-01T12:00:00+02:00", want: "2027-01-01T10:00:00Z"},
+		{name: "garbage errors", in: "not-a-date", wantErr: true},
+		{name: "impossible date errors", in: "2027-13-99", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := normalizeAPIKeyExpiry(tc.in)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %q, got %q", tc.in, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error for %q: %v", tc.in, err)
+			}
+			if got != tc.want {
+				t.Errorf("normalizeAPIKeyExpiry(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAPIKeyModelToCreateRequestBareDate(t *testing.T) {
+	ctx := context.Background()
+	diags := diag.Diagnostics{}
+
+	model := APIKeyModel{
+		Name:        types.StringValue("dated-key"),
+		Description: types.StringNull(),
+		Scopes:      types.ListNull(types.StringType),
+		ExpiresAt:   types.StringValue("2027-01-01"), // bare date, the bug repro
+		RateLimit:   types.Int64Null(),
+	}
+
+	req := model.toCreateRequest(ctx, &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+	}
+	// The wire value must be the canonical RFC3339 identity accepts, not the
+	// bare date that caused the 400.
+	if req.ExpiresAt != "2027-01-01T23:59:59Z" {
+		t.Errorf("expected wire expires_at 2027-01-01T23:59:59Z, got %s", req.ExpiresAt)
+	}
+}
+
+func TestAPIKeyModelToCreateRequestBadDate(t *testing.T) {
+	ctx := context.Background()
+	diags := diag.Diagnostics{}
+
+	model := APIKeyModel{
+		Name:      types.StringValue("bad-key"),
+		Scopes:    types.ListNull(types.StringType),
+		ExpiresAt: types.StringValue("whenever"),
+		RateLimit: types.Int64Null(),
+	}
+
+	model.toCreateRequest(ctx, &diags)
+	if !diags.HasError() {
+		t.Fatal("expected a diagnostic error for an unparseable expires_at")
+	}
+}
+
+func TestAPIKeyModelFromAPIPreservesConfigExpiry(t *testing.T) {
+	ctx := context.Background()
+	diags := diag.Diagnostics{}
+
+	// Model already holds the user's bare date (what config said); the API
+	// returns the normalized RFC3339 for the same instant.
+	model := APIKeyModel{
+		Scopes:    types.ListNull(types.StringType),
+		ExpiresAt: types.StringValue("2027-01-01"),
+	}
+	key := &apiAPIKey{
+		ID:        "ak-1",
+		Name:      "k",
+		KeyPrefix: "fmk",
+		Status:    "active",
+		CreatedAt: "2025-06-01T12:00:00Z",
+		ExpiresAt: "2027-01-01T23:59:59Z",
+	}
+
+	model.fromAPI(ctx, key, &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+	}
+	// state must equal config, else "provider produced inconsistent result".
+	if model.ExpiresAt.ValueString() != "2027-01-01" {
+		t.Errorf("expected config string preserved (2027-01-01), got %s", model.ExpiresAt.ValueString())
+	}
+}
+
+func TestAPIKeyModelFromAPIDifferentInstantTakesAPI(t *testing.T) {
+	ctx := context.Background()
+	diags := diag.Diagnostics{}
+
+	// Config instant and API instant differ -> the API value wins (e.g. after
+	// an out-of-band change or an import overwriting a stale value).
+	model := APIKeyModel{
+		Scopes:    types.ListNull(types.StringType),
+		ExpiresAt: types.StringValue("2027-01-01"),
+	}
+	key := &apiAPIKey{
+		ID:        "ak-2",
+		Name:      "k",
+		KeyPrefix: "fmk",
+		Status:    "active",
+		CreatedAt: "2025-06-01T12:00:00Z",
+		ExpiresAt: "2028-06-06T00:00:00Z",
+	}
+
+	model.fromAPI(ctx, key, &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+	}
+	if model.ExpiresAt.ValueString() != "2028-06-06T00:00:00Z" {
+		t.Errorf("expected API value, got %s", model.ExpiresAt.ValueString())
+	}
+}
+
+func TestExpiresAtSemanticEquality(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name       string
+		state      types.String
+		config     types.String
+		wantPlan   string // expected plan value after the modifier
+		wantIsNull bool
+	}{
+		{
+			name:     "bare date equals canonical state -> keep state (no diff)",
+			state:    types.StringValue("2027-01-01T23:59:59Z"),
+			config:   types.StringValue("2027-01-01"),
+			wantPlan: "2027-01-01T23:59:59Z",
+		},
+		{
+			name:     "different instant -> keep config (forces replace downstream)",
+			state:    types.StringValue("2027-01-01T23:59:59Z"),
+			config:   types.StringValue("2028-01-01"),
+			wantPlan: "2028-01-01",
+		},
+		{
+			name:       "null state (create) -> untouched",
+			state:      types.StringNull(),
+			config:     types.StringValue("2027-01-01"),
+			wantIsNull: false,
+			wantPlan:   "2027-01-01",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := planmodifier.StringRequest{
+				StateValue:  tc.state,
+				ConfigValue: tc.config,
+				PlanValue:   tc.config, // framework seeds plan from config for a known value
+			}
+			resp := &planmodifier.StringResponse{PlanValue: tc.config}
+			expiresAtSemanticEquality{}.PlanModifyString(ctx, req, resp)
+			if resp.PlanValue.ValueString() != tc.wantPlan {
+				t.Errorf("plan value = %q, want %q", resp.PlanValue.ValueString(), tc.wantPlan)
+			}
+		})
 	}
 }
 
@@ -631,14 +807,26 @@ func TestAPIKeyResource_Create_TFSDK(t *testing.T) {
 	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/api-keys":
+			// Decode the request and echo it back inside the create ENVELOPE
+			// ({apiKey: {...}, key: "..."}) exactly as identity does, so the
+			// test exercises both the envelope decode and the expires_at
+			// normalize/readback-preserve round-trip.
+			var req apiCreateAPIKeyRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("failed to decode request: %v", err)
+			}
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(apiAPIKey{
-				ID:        "ak-new",
-				Name:      "test-key",
-				Key:       "fmk_secret123", // pragma: allowlist secret
-				KeyPrefix: "fmk_secr",
-				Status:    "active",
-				CreatedAt: "2025-06-01T12:00:00Z",
+			_ = json.NewEncoder(w).Encode(apiCreateAPIKeyResponse{
+				APIKey: apiAPIKey{
+					ID:        "ak-new",
+					Name:      req.Name,
+					Scopes:    req.Scopes,
+					ExpiresAt: req.ExpiresAt, // server echoes the RFC3339 it received
+					KeyPrefix: "fmk_secr",
+					Status:    "active",
+					CreatedAt: "2025-06-01T12:00:00Z",
+				},
+				Key: "fmk_secret123", // pragma: allowlist secret
 			})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -656,8 +844,8 @@ func TestAPIKeyResource_Create_TFSDK(t *testing.T) {
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"name":        tftypes.NewValue(tftypes.String, "test-key"),
 		"description": tftypes.NewValue(tftypes.String, nil),
-		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
-		"expires_at":  tftypes.NewValue(tftypes.String, nil),
+		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, []tftypes.Value{tftypes.NewValue(tftypes.String, "compute:read")}),
+		"expires_at":  tftypes.NewValue(tftypes.String, "2027-01-01"),
 		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
 		"key":         tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"key_prefix":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -691,6 +879,20 @@ func TestAPIKeyResource_Create_TFSDK(t *testing.T) {
 	}
 	if model.Status.ValueString() != "active" {
 		t.Errorf("expected status active, got %s", model.Status.ValueString())
+	}
+	// Nested envelope fields must survive (they were empty before the fix).
+	if model.Name.ValueString() != "test-key" {
+		t.Errorf("expected name test-key, got %q", model.Name.ValueString())
+	}
+	var scopes []string
+	model.Scopes.ElementsAs(ctx, &scopes, false)
+	if len(scopes) != 1 || scopes[0] != "compute:read" {
+		t.Errorf("expected scopes [compute:read], got %v", scopes)
+	}
+	// expires_at: the bare date the user wrote is preserved (state == config)
+	// even though the wire value was the normalized RFC3339.
+	if model.ExpiresAt.ValueString() != "2027-01-01" {
+		t.Errorf("expected expires_at preserved as 2027-01-01, got %q", model.ExpiresAt.ValueString())
 	}
 }
 

@@ -22,8 +22,8 @@ Manages an API key in the Frostmoln platform.
 ### Optional
 
 - `description` (String) A description of the API key.
-- `expires_at` (String) The expiration timestamp for the API key. Once set, this cannot be changed.
-- `rate_limit` (Number) The rate limit for the API key (requests per minute).
+- `expires_at` (String) The expiration for the API key. Accepts a bare date (`YYYY-MM-DD`, interpreted as the end of that day in UTC — e.g. `2027-01-01` becomes `2027-01-01T23:59:59Z`) or a full RFC3339 timestamp. Note: the fm CLI's `--expires` uses the operator's local timezone for the end-of-day, so the same bare date may resolve to an instant up to a day apart between the two tools; this provider uses UTC so plans are reproducible across machines. Omit to use the server default (~1 year), which is then reflected in state. Once set, this cannot be changed (changing it replaces the key).
+- `rate_limit` (Number) The rate limit for the API key (requests per minute). Omit to use the server default, which is then reflected in state.
 - `scopes` (List of String) The permission scopes granted to the API key.
 
 ### Read-Only

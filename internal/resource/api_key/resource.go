@@ -58,15 +58,25 @@ func (r *apiKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				ElementType: types.StringType,
 			},
 			"expires_at": schema.StringAttribute{
-				Description: "The expiration timestamp for the API key. Once set, this cannot be changed.",
+				Description: "The expiration for the API key. Accepts a bare date (`YYYY-MM-DD`, interpreted as the end of that day in UTC — e.g. `2027-01-01` becomes `2027-01-01T23:59:59Z`) or a full RFC3339 timestamp. Note: the fm CLI's `--expires` uses the operator's local timezone for the end-of-day, so the same bare date may resolve to an instant up to a day apart between the two tools; this provider uses UTC so plans are reproducible across machines. Omit to use the server default (~1 year), which is then reflected in state. Once set, this cannot be changed (changing it replaces the key).",
 				Optional:    true,
+				// Computed so the server's default (~1y) can populate state when
+				// omitted without a "provider produced inconsistent result" error.
+				Computed: true,
 				PlanModifiers: []planmodifier.String{
+					// Suppress a spurious diff (and RequiresReplace) when a bare
+					// date equals the canonical state instant — e.g. after import.
+					expiresAtSemanticEquality{},
+					stringplanmodifier.UseStateForUnknown(),
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"rate_limit": schema.Int64Attribute{
-				Description: "The rate limit for the API key (requests per minute).",
+				Description: "The rate limit for the API key (requests per minute). Omit to use the server default, which is then reflected in state.",
 				Optional:    true,
+				// Computed so the server-applied default populates state when
+				// omitted (otherwise TF reports an inconsistent result).
+				Computed: true,
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.UseStateForUnknown(),
 				},
@@ -89,6 +99,12 @@ func (r *apiKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			"status": schema.StringAttribute{
 				Description: "The current status of the API key.",
 				Computed:    true,
+				// Keep the prior value on plan so a read-only, server-owned field
+				// doesn't show a spurious "known after apply" update (e.g. after
+				// import); a genuine status change is still picked up on refresh.
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"created_at": schema.StringAttribute{
 				Description: "The timestamp when the API key was created.",
@@ -134,15 +150,18 @@ func (r *apiKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	key, err := client.ParseResponse[apiAPIKey](apiResp)
+	// Create returns an envelope {apiKey: {...}, key: "..."}, unlike Read which
+	// returns a bare key object.
+	created, err := client.ParseResponse[apiCreateAPIKeyResponse](apiResp)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to parse API key response", err.Error())
 		return
 	}
+	key := &created.APIKey
 
 	// Save the key value from the create response (only available once).
-	if key.Key != "" {
-		plan.Key = types.StringValue(key.Key)
+	if created.Key != "" {
+		plan.Key = types.StringValue(created.Key)
 	} else {
 		plan.Key = types.StringNull()
 	}

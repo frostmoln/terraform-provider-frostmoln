@@ -50,6 +50,48 @@ func TestAccAPIKey_basic(t *testing.T) {
 	})
 }
 
+// TestAccAPIKey_expiresAtDate proves the write-normalize + readback-preserve
+// fix: a bare date is accepted (no 400) and, because the config string is kept
+// in state, an immediate re-plan is empty (no "inconsistent result" / drift).
+// Unit tests cannot catch this — only TF core enforces plan == state.
+func TestAccAPIKey_expiresAtDate(t *testing.T) {
+	name := acctest.RandomName("apikey")
+	resourceName := "frostmoln_api_key.exp"
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.TestAccPreCheck(t) },
+		ProtoV6ProviderFactories: acctest.TestAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckAPIKeyDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAPIKeyExpiresConfig(name, "2027-01-01"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "id"),
+					resource.TestCheckResourceAttr(resourceName, "expires_at", "2027-01-01"),
+				),
+			},
+			{
+				// Re-plan the same config: the normalized wire value must not
+				// leak back into state and cause a spurious diff.
+				Config:   testAccAPIKeyExpiresConfig(name, "2027-01-01"),
+				PlanOnly: true,
+			},
+			{
+				// Import populates state with the canonical RFC3339; the bare
+				// date in config must NOT force a replace on the next plan
+				// (the semantic-equality plan modifier suppresses it).
+				ResourceName:            resourceName,
+				ImportState:             true,
+				ImportStateVerifyIgnore: []string{"key"},
+			},
+			{
+				Config:   testAccAPIKeyExpiresConfig(name, "2027-01-01"),
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
 func testAccCheckAPIKeyDestroy(s *terraform.State) error {
 	c, err := acctest.TestClient()
 	if err != nil {
@@ -80,4 +122,14 @@ resource "frostmoln_api_key" "test" {
   scopes = ["compute:read", "storage:read"]
 }
 `, name)
+}
+
+func testAccAPIKeyExpiresConfig(name, expires string) string {
+	return fmt.Sprintf(`
+resource "frostmoln_api_key" "exp" {
+  name       = %q
+  scopes     = ["compute:read"]
+  expires_at = %q
+}
+`, name, expires)
 }
