@@ -79,6 +79,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/vpc"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/webserver_deployment"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/webserver_domain"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/workload_identity_binding"
 )
 
 var _ provider.Provider = &FrostmolnProvider{}
@@ -385,6 +386,7 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		nginx_instance.NewResource,
 		webserver_domain.NewResource,
 		webserver_deployment.NewResource,
+		workload_identity_binding.NewResource,
 	}
 }
 
