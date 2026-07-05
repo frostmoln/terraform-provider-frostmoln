@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.0] - 2026-07-05
+
+### 🚀 Features
+
+- *(workload-identity)* Add frostmoln_workload_identity_binding resource (#174)
+
+### 🐛 Bug Fixes
+
+- *(api_key)* Normalize expires_at and fix create-response round-trip (#171)
+- *(read-replica)* Retry replica delete on transient 409 during primary resize (#177)
+
+### 📚 Documentation
+
+- *(api_key)* Note 2y max expiry in expires_at description (#173)
+
 ## [0.13.1] - 2026-07-04
 
 ### ⚙️ Miscellaneous Tasks
