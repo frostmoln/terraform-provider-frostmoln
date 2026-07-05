@@ -61,8 +61,8 @@ type apiCreateValkeyInstanceRequest struct {
 }
 
 // apiUpdateValkeyInstanceRequest is the API request to update a managed Valkey instance
-// (PUT /caches/{id}). The backend accepts only these in-place fields — NOT flavor or storage
-// (flavor is RequiresReplace; storage grows via POST /caches/{id}/resize).
+// (PUT /caches/{id}). The backend accepts only these in-place fields — NOT flavor or storage:
+// both flavor changes and storage grows go via POST /caches/{id}/resize.
 type apiUpdateValkeyInstanceRequest struct {
 	Name            *string `json:"name,omitempty"`
 	PersistenceMode *string `json:"persistenceMode,omitempty"`
@@ -75,11 +75,13 @@ func (r apiUpdateValkeyInstanceRequest) hasChanges() bool {
 	return r.Name != nil || r.PersistenceMode != nil || r.EvictionPolicy != nil
 }
 
-// apiResizeValkeyInstanceRequest is the API request to grow a managed Valkey instance's storage
-// (POST /caches/{id}/resize). Grow-only; the provider rejects a shrink client-side before sending
-// (Cinder volumes cannot shrink).
+// apiResizeValkeyInstanceRequest is the API request to resize a managed Valkey instance
+// (POST /caches/{id}/resize): a storage grow (StorageGB) OR a flavor change (FlavorID), never both
+// in one request (the backend rejects both). Storage is grow-only (the provider rejects a shrink
+// client-side); a flavor change is a Nova resize that RESTARTS the VM.
 type apiResizeValkeyInstanceRequest struct {
-	StorageGB int `json:"storageGb"`
+	StorageGB int    `json:"storageGb,omitempty"`
+	FlavorID  string `json:"flavorId,omitempty"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.

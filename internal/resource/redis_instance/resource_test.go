@@ -118,8 +118,8 @@ func TestRedisInstanceModelToUpdateRequest(t *testing.T) {
 	if req.Name == nil || *req.Name != "new-name" {
 		t.Error("expected name update to new-name")
 	}
-	// flavor_id is RequiresReplace (in-place flavor resize unsupported), so it is NOT in the
-	// update request even when it differs.
+	// flavor_id changes go via POST /caches/{id}/resize (a Nova resize), NOT the PUT — so it is
+	// NOT in the update request even when it differs.
 	if req.PersistenceMode == nil || *req.PersistenceMode != "aof" {
 		t.Error("expected persistenceMode update to aof")
 	}
@@ -650,10 +650,12 @@ func TestUpdate(t *testing.T) {
 	})
 
 	plan := buildRedisInstancePlan(t, RedisInstanceModel{
-		ID:              types.StringValue("redis-123"),
-		Name:            types.StringValue("updated-redis"),
-		Version:         types.StringValue("7.2"),
-		FlavorID:        types.StringValue("cache.large"),
+		ID:      types.StringValue("redis-123"),
+		Name:    types.StringValue("updated-redis"),
+		Version: types.StringValue("7.2"),
+		// Same flavor as state — this test isolates the PUT (name/persistence/eviction); the
+		// flavor-change → /resize path is covered by TestUpdateFlavorResize.
+		FlavorID:        types.StringValue("cache.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
 		PersistenceMode: types.StringValue("aof"),
@@ -672,7 +674,7 @@ func TestUpdate(t *testing.T) {
 	if updatedBody.Name == nil || *updatedBody.Name != "updated-redis" {
 		t.Error("expected name in update request")
 	}
-	// flavor is RequiresReplace (not sent via PUT) and is intentionally absent from the body.
+	// flavor changes go via POST /resize (a Nova resize), never the PUT, so it is absent from the body.
 	if updatedBody.PersistenceMode == nil || *updatedBody.PersistenceMode != "aof" {
 		t.Error("expected persistenceMode in update request")
 	}
@@ -735,6 +737,66 @@ func TestUpdateStorageResize(t *testing.T) {
 	}
 	if putCalled {
 		t.Error("PUT must be skipped when only storage changed")
+	}
+}
+
+// A flavor_id change routes through POST /caches/{id}/resize (a Nova resize, in-place), NOT the PUT,
+// and skips the PUT when nothing else changed. Flavor shrink is allowed (any change → resize).
+func TestUpdateFlavorResize(t *testing.T) {
+	var resizeBody apiResizeRedisInstanceRequest
+	putCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/caches/redis-123/resize":
+			_ = json.NewDecoder(r.Body).Decode(&resizeBody)
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, `{"status":"resizing"}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-1/caches/redis-123":
+			putCalled = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, `{}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/caches/redis-123":
+			_ = json.NewEncoder(w).Encode(apiRedisInstance{
+				ID: "redis-123", Name: "r", EngineVersion: "7.2", FlavorID: "cache.large",
+				VPCID: "vpc-1", SubnetID: "sn-1", PersistenceMode: "rdb", EvictionPolicy: "noeviction",
+				Status: "running", StorageGB: 10, Port: 6379, CreatedAt: "2025-01-01T00:00:00Z",
+			})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client()))
+	c.SetTenantIDForTest("t-1")
+	r := &redisInstanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+
+	base := RedisInstanceModel{
+		ID: types.StringValue("redis-123"), Name: types.StringValue("r"), Version: types.StringValue("7.2"),
+		VPCID: types.StringValue("vpc-1"), SubnetID: types.StringValue("sn-1"),
+		PersistenceMode: types.StringValue("rdb"), EvictionPolicy: types.StringValue("noeviction"),
+		Status: types.StringValue("running"), StorageGB: types.Int64Value(10), CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
+	}
+	stateM, planM := base, base
+	stateM.FlavorID = types.StringValue("cache.small")
+	planM.FlavorID = types.StringValue("cache.large")
+	state := buildRedisInstanceState(t, stateM)
+	plan := buildRedisInstancePlan(t, planM)
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("flavor resize update failed: %v", updateResp.Diagnostics.Errors())
+	}
+	if resizeBody.FlavorID != "cache.large" {
+		t.Errorf("expected resize to flavor cache.large, got %q", resizeBody.FlavorID)
+	}
+	if resizeBody.StorageGB != 0 {
+		t.Errorf("a flavor resize must not send storageGb, got %d", resizeBody.StorageGB)
+	}
+	if putCalled {
+		t.Error("PUT must be skipped when only flavor changed")
 	}
 }
 

@@ -30,7 +30,7 @@ resource "frostmoln_redis_instance" "cache" {
 
 ### Required
 
-- `flavor_id` (String) The flavor/size for the Redis instance (e.g. "cache.gp1.small", "cache.gp1.medium"). In-place flavor resize is not supported, so changing this destroys and recreates the instance — all cached data (and any persisted data) is lost.
+- `flavor_id` (String) The flavor/size for the Redis instance (e.g. "cache.gp1.small", "cache.gp1.medium"). Changing this triggers an in-place Nova flavor resize, which RESTARTS the instance (brief downtime) — unlike an online storage grow. Cannot be changed together with storage_gb in the same apply.
 - `name` (String) The name of the Redis instance.
 - `subnet_id` (String) The subnet ID where the Redis instance will be deployed.
 - `version` (String) The Redis version (e.g. "7.2", "7.4").

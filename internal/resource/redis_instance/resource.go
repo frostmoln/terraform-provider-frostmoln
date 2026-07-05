@@ -73,11 +73,8 @@ func (r *redisInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				},
 			},
 			"flavor_id": schema.StringAttribute{
-				Description: "The flavor/size for the Redis instance (e.g. \"cache.gp1.small\", \"cache.gp1.medium\"). In-place flavor resize is not supported, so changing this destroys and recreates the instance — all cached data (and any persisted data) is lost.",
+				Description: "The flavor/size for the Redis instance (e.g. \"cache.gp1.small\", \"cache.gp1.medium\"). Changing this triggers an in-place Nova flavor resize, which RESTARTS the instance (brief downtime) — unlike an online storage grow. Cannot be changed together with storage_gb in the same apply.",
 				Required:    true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
 			},
 			"storage_gb": schema.Int64Attribute{
 				Description: "The storage size in gigabytes (defaults to 10 if unset). Can only be increased (grow-only); volumes cannot be shrunk.",
@@ -372,8 +369,22 @@ func (r *redisInstanceResource) Update(ctx context.Context, req resource.UpdateR
 		}
 	}
 
+	// Flavor changes via POST /caches/{id}/resize (a Nova resize — the VM RESTARTS, brief downtime).
+	// Mutually exclusive with a storage resize at the backend, so it is a SEPARATE request; if a
+	// single apply changed both, the storage resize above already returned the instance to running.
+	if !plan.FlavorID.IsNull() && !plan.FlavorID.IsUnknown() && plan.FlavorID.ValueString() != state.FlavorID.ValueString() {
+		if _, err := r.client.Post(ctx, r.client.TenantPath("/caches/"+id+"/resize"), apiResizeRedisInstanceRequest{FlavorID: plan.FlavorID.ValueString()}); err != nil {
+			resp.Diagnostics.AddError("Failed to resize Redis flavor", err.Error())
+			return
+		}
+		if err := waitRunning(); err != nil {
+			resp.Diagnostics.AddError("Redis instance failed to reach running state after flavor resize", err.Error())
+			return
+		}
+	}
+
 	// In-place field updates (name/persistence/eviction) via PUT — skip an empty PUT when only
-	// storage changed.
+	// storage/flavor changed.
 	updateReq := plan.toUpdateRequest(&state)
 	if updateReq.hasChanges() {
 		if _, err := r.client.Put(ctx, r.client.TenantPath("/caches/"+id), updateReq); err != nil {
