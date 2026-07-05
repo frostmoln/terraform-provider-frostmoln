@@ -71,7 +71,7 @@ func TestModelFromAPIFullyPopulated(t *testing.T) {
 		ParameterGroupID:    "pg-1",
 		PrivateIP:           "10.0.0.5",
 		Port:                3306,
-		FloatingIP:          "203.0.113.5",
+		PublicIP:            "203.0.113.5",
 		AdminUsername:       "admin",
 		CreatedAt:           "2025-01-01T00:00:00Z",
 		UpdatedAt:           "2025-01-02T00:00:00Z",
@@ -79,8 +79,8 @@ func TestModelFromAPIFullyPopulated(t *testing.T) {
 	}
 	var m MysqlInstanceModel
 	m.fromAPI(context.Background(), api, nil)
-	if m.FloatingIP.ValueString() != "203.0.113.5" {
-		t.Errorf("expected floating ip set, got %s", m.FloatingIP.ValueString())
+	if m.PublicIP.ValueString() != "203.0.113.5" {
+		t.Errorf("expected public ip set, got %s", m.PublicIP.ValueString())
 	}
 	if m.BackupSchedule.ValueString() != "0 2 * * *" {
 		t.Error("expected backup schedule set")

@@ -1,4 +1,4 @@
-package floating_ip_test
+package public_ip_test
 
 import (
 	"testing"
@@ -8,16 +8,16 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/acctest"
 )
 
-func TestAccFloatingIP_basic(t *testing.T) {
-	resourceName := "frostmoln_floating_ip.test"
+func TestAccPublicIP_basic(t *testing.T) {
+	resourceName := "frostmoln_public_ip.test"
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { acctest.TestAccPreCheck(t) },
 		ProtoV6ProviderFactories: acctest.TestAccProtoV6ProviderFactories,
-		CheckDestroy:             acctest.CheckDestroyByTenantPath("frostmoln_floating_ip", "/floating-ips"),
+		CheckDestroy:             acctest.CheckDestroyByTenantPath("frostmoln_public_ip", "/public-ips"),
 		Steps: []resource.TestStep{
 			{
-				Config: testAccFloatingIPConfig(),
+				Config: testAccPublicIPConfig(),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet(resourceName, "id"),
 					resource.TestCheckResourceAttrSet(resourceName, "address"),
@@ -33,8 +33,8 @@ func TestAccFloatingIP_basic(t *testing.T) {
 	})
 }
 
-func testAccFloatingIPConfig() string {
+func testAccPublicIPConfig() string {
 	return `
-resource "frostmoln_floating_ip" "test" {}
+resource "frostmoln_public_ip" "test" {}
 `
 }

@@ -36,10 +36,10 @@ Manages a managed PostgreSQL database instance in the Frostmoln platform.
 
 - `admin_username` (String) The admin username for the PostgreSQL instance.
 - `created_at` (String) The timestamp when the instance was created.
-- `floating_ip` (String) The floating (public) IP address, if assigned.
 - `id` (String) The unique identifier of the PostgreSQL instance.
 - `port` (Number) The port number the PostgreSQL instance is listening on.
 - `private_ip` (String) The private IP address of the PostgreSQL instance.
+- `public_ip` (String) The public IP address, if assigned.
 - `status` (String) The current status of the PostgreSQL instance.
 - `tenant_id` (String) The tenant ID that owns this instance.
 - `updated_at` (String) The timestamp when the instance was last updated.

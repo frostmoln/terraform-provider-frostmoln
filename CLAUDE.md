@@ -9,7 +9,7 @@ For project-wide conventions and architecture details, see:
 
 ## Project Overview
 
-Terraform provider for the Frostmoln Cloud Platform. Enables infrastructure-as-code management of compute instances, VPCs, subnets, security groups, floating IPs, volumes, buckets, snapshots, SSH keys, S3 credentials, and API keys.
+Terraform provider for the Frostmoln Cloud Platform. Enables infrastructure-as-code management of compute instances, VPCs, subnets, security groups, public IPs, volumes, buckets, snapshots, SSH keys, S3 credentials, and API keys.
 
 Provider name: `frostmoln`. Resource prefix: `frostmoln_` (e.g., `frostmoln_vpc`, `frostmoln_instance`).
 
@@ -178,7 +178,7 @@ provider "frostmoln" {
 | Subnets | `/v1/tenants/{t}/subnets` | Most fields ForceNew |
 | Security Groups | `/v1/tenants/{t}/security-groups` | Rules are separate resource |
 | Security Group Rules | `/v1/tenants/{t}/security-groups/{sg}/rules` | All fields ForceNew |
-| Floating IPs | `/v1/tenants/{t}/floating-ips` | Associate/disassociate actions |
+| Public IPs | `/v1/tenants/{t}/public-ips` | Associate/disassociate actions |
 | Volumes | `/v1/tenants/{t}/volumes` | Async create, resize support |
 | Snapshots | `/v1/tenants/{t}/snapshots` | Immutable after create |
 | Instances | `/v1/tenants/{t}/instances` | Async, resize via actions |

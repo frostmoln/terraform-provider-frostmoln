@@ -41,7 +41,7 @@ func TestToCreateRequestMinimal(t *testing.T) {
 	if req.Name != "my-cluster" || req.VPCID != "vpc-1" || req.SubnetID != "sn-1" {
 		t.Errorf("unexpected required fields: %+v", req)
 	}
-	if req.KubernetesVersion != "" || req.ControlPlaneTier != "" || req.Region != "" || req.FloatingIPID != "" {
+	if req.KubernetesVersion != "" || req.ControlPlaneTier != "" || req.Region != "" || req.PublicIPID != "" {
 		t.Errorf("expected empty optional fields, got %+v", req)
 	}
 	if req.InitialNodePool.FlavorID != "k8s.gp1.small" || req.InitialNodePool.NodeCount != 1 {
@@ -60,7 +60,7 @@ func TestToCreateRequestFull(t *testing.T) {
 		Region:           types.StringValue("falkenberg"),
 		VPCID:            types.StringValue("vpc-1"),
 		SubnetID:         types.StringValue("sn-1"),
-		FloatingIPID:     types.StringValue("11111111-2222-3333-4444-555555555555"),
+		PublicIPID:       types.StringValue("11111111-2222-3333-4444-555555555555"),
 		InitialNodePool: &InitialNodePoolModel{
 			Name:      types.StringValue("workers"),
 			FlavorID:  types.StringValue("k8s.gp1.medium"),
@@ -72,8 +72,8 @@ func TestToCreateRequestFull(t *testing.T) {
 	if req.KubernetesVersion != "1.35" || req.ControlPlaneTier != "standard" || req.Region != "falkenberg" {
 		t.Errorf("unexpected optional fields: %+v", req)
 	}
-	if req.FloatingIPID != "11111111-2222-3333-4444-555555555555" {
-		t.Errorf("unexpected floatingIpId: %s", req.FloatingIPID)
+	if req.PublicIPID != "11111111-2222-3333-4444-555555555555" {
+		t.Errorf("unexpected publicIpId: %s", req.PublicIPID)
 	}
 	if req.InitialNodePool.Name != "workers" || req.InitialNodePool.NodeCount != 3 {
 		t.Errorf("unexpected initial pool: %+v", req.InitialNodePool)
@@ -82,8 +82,8 @@ func TestToCreateRequestFull(t *testing.T) {
 
 func TestFromAPIPreservesWriteOnlyFields(t *testing.T) {
 	m := KubernetesClusterModel{
-		FloatingIPID: types.StringValue("fip-uuid"),
-		Kubeconfig:   types.StringValue("prior-kubeconfig"),
+		PublicIPID: types.StringValue("fip-uuid"),
+		Kubeconfig: types.StringValue("prior-kubeconfig"),
 	}
 
 	m.fromAPI(&apiKubernetesCluster{
@@ -95,18 +95,18 @@ func TestFromAPIPreservesWriteOnlyFields(t *testing.T) {
 		Region:            "falkenberg",
 		VPCID:             "vpc-1",
 		SubnetID:          "sn-1",
-		FloatingIP:        "203.0.113.10",
+		PublicIP:          "203.0.113.10",
 		CreatedAt:         "2026-07-01T00:00:00Z",
 	})
 
-	if m.FloatingIPID.ValueString() != "fip-uuid" {
-		t.Error("fromAPI must not touch floating_ip_id (write-only, never echoed)")
+	if m.PublicIPID.ValueString() != "fip-uuid" {
+		t.Error("fromAPI must not touch public_ip_id (write-only, never echoed)")
 	}
 	if m.Kubeconfig.ValueString() != "prior-kubeconfig" {
 		t.Error("fromAPI must not touch kubeconfig (separate endpoint)")
 	}
-	if m.FloatingIP.ValueString() != "203.0.113.10" {
-		t.Errorf("expected floating_ip address, got %s", m.FloatingIP.ValueString())
+	if m.PublicIP.ValueString() != "203.0.113.10" {
+		t.Errorf("expected public_ip address, got %s", m.PublicIP.ValueString())
 	}
 }
 
@@ -129,7 +129,7 @@ func TestFromAPINulls(t *testing.T) {
 		"service_cidr":     m.ServiceCIDR,
 		"endpoint":         m.Endpoint,
 		"load_balancer_id": m.LoadBalancerID,
-		"floating_ip":      m.FloatingIP,
+		"public_ip":        m.PublicIP,
 		"ca_cert_hash":     m.CACertHash,
 		"updated_at":       m.UpdatedAt,
 	} {
@@ -414,8 +414,8 @@ func TestSchema(t *testing.T) {
 
 	for _, attr := range []string{
 		"id", "name", "version", "control_plane_tier", "region", "vpc_id", "subnet_id",
-		"scheme", "floating_ip_id", "addons", "initial_node_pool", "status", "ha_enabled", "pod_cidr",
-		"service_cidr", "endpoint", "load_balancer_id", "floating_ip", "ca_cert_hash",
+		"scheme", "public_ip_id", "addons", "initial_node_pool", "status", "ha_enabled", "pod_cidr",
+		"service_cidr", "endpoint", "load_balancer_id", "public_ip", "ca_cert_hash",
 		"kubeconfig", "created_at", "updated_at", "tenant_id",
 	} {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
@@ -449,12 +449,12 @@ func TestValidateConfigScheme(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			model := KubernetesClusterModel{
-				Name:         types.StringValue("my-cluster"),
-				VPCID:        types.StringValue("vpc-1"),
-				SubnetID:     types.StringValue("sn-1"),
-				Scheme:       tt.scheme,
-				FloatingIPID: tt.fip,
-				Addons:       types.SetNull(types.StringType),
+				Name:       types.StringValue("my-cluster"),
+				VPCID:      types.StringValue("vpc-1"),
+				SubnetID:   types.StringValue("sn-1"),
+				Scheme:     tt.scheme,
+				PublicIPID: tt.fip,
+				Addons:     types.SetNull(types.StringType),
 				InitialNodePool: &InitialNodePoolModel{
 					FlavorID:  types.StringValue("k8s.gp1.small"),
 					NodeCount: types.Int64Value(1),
@@ -476,7 +476,7 @@ func TestValidateConfigScheme(t *testing.T) {
 // Regression (expert-review Medium): a wholly-unknown initial_node_pool — the
 // `initial_node_pool = var.pool` module pattern, unknown during
 // `terraform validate` — must not break ValidateConfig. The validator reads only
-// scheme + floating_ip_id via GetAttribute, so the unknown pool is never decoded
+// scheme + public_ip_id via GetAttribute, so the unknown pool is never decoded
 // into the *struct model (which cannot carry unknown and would hard-error).
 func TestValidateConfigUnknownInitialNodePool(t *testing.T) {
 	ctx := context.Background()
@@ -602,7 +602,7 @@ func runningCluster() apiKubernetesCluster {
 		ServiceCIDR:       "10.180.64.0/18",
 		Endpoint:          "https://203.0.113.10:6443",
 		LoadBalancerID:    "lb-1",
-		FloatingIP:        "203.0.113.10",
+		PublicIP:          "203.0.113.10",
 		CACertHash:        "sha256:abc",
 		Addons:            []string{"external-secrets"},
 		CreatedAt:         "2026-07-01T00:00:00Z",
@@ -639,8 +639,8 @@ func TestCreate(t *testing.T) {
 			if err := json.Unmarshal(rawBody, &body); err != nil {
 				t.Errorf("failed to decode request: %v", err)
 			}
-			if body.FloatingIPID != "11111111-2222-3333-4444-555555555555" {
-				t.Errorf("expected floatingIpId in create request, got %q", body.FloatingIPID)
+			if body.PublicIPID != "11111111-2222-3333-4444-555555555555" {
+				t.Errorf("expected publicIpId in create request, got %q", body.PublicIPID)
 			}
 			// addons was left unset in the plan → the field must be OMITTED so
 			// the server applies its catalog defaults (nil pointer, no "addons"
@@ -658,7 +658,7 @@ func TestCreate(t *testing.T) {
 			created.Status = "creating"
 			created.Endpoint = ""
 			created.LoadBalancerID = ""
-			created.FloatingIP = ""
+			created.PublicIP = ""
 			created.CACertHash = ""
 			w.WriteHeader(http.StatusCreated)
 			writeJSON(t, w, created)
@@ -704,7 +704,7 @@ func TestCreate(t *testing.T) {
 		Region:           types.StringUnknown(),
 		VPCID:            types.StringValue("vpc-1"),
 		SubnetID:         types.StringValue("sn-1"),
-		FloatingIPID:     types.StringValue("11111111-2222-3333-4444-555555555555"),
+		PublicIPID:       types.StringValue("11111111-2222-3333-4444-555555555555"),
 		Addons:           types.SetUnknown(types.StringType),
 		InitialNodePool: &InitialNodePoolModel{
 			ID:        types.StringUnknown(),
@@ -732,8 +732,8 @@ func TestCreate(t *testing.T) {
 	if result.Version.ValueString() != "1.35" {
 		t.Errorf("expected resolved version 1.35, got %s", result.Version.ValueString())
 	}
-	if result.FloatingIPID.ValueString() != "11111111-2222-3333-4444-555555555555" {
-		t.Error("expected floating_ip_id preserved in state (write-only field)")
+	if result.PublicIPID.ValueString() != "11111111-2222-3333-4444-555555555555" {
+		t.Error("expected public_ip_id preserved in state (write-only field)")
 	}
 	if result.Kubeconfig.ValueString() != "kubeconfig-yaml" {
 		t.Errorf("expected kubeconfig from retry, got %q", result.Kubeconfig.ValueString())
@@ -928,7 +928,7 @@ func stateModel() KubernetesClusterModel {
 		Region:           types.StringValue("falkenberg"),
 		VPCID:            types.StringValue("vpc-1"),
 		SubnetID:         types.StringValue("sn-1"),
-		FloatingIPID:     types.StringValue("fip-uuid"),
+		PublicIPID:       types.StringValue("fip-uuid"),
 		Addons:           stringSliceToSet([]string{"external-secrets"}),
 		Status:           types.StringValue(statusRunning),
 		HAEnabled:        types.BoolValue(false),
@@ -975,8 +975,8 @@ func TestRead(t *testing.T) {
 
 	var result KubernetesClusterModel
 	readResp.State.Get(context.Background(), &result)
-	if result.FloatingIPID.ValueString() != "fip-uuid" {
-		t.Error("expected floating_ip_id preserved from prior state")
+	if result.PublicIPID.ValueString() != "fip-uuid" {
+		t.Error("expected public_ip_id preserved from prior state")
 	}
 	if result.InitialNodePool.NodeCount.ValueInt64() != 5 {
 		t.Errorf("expected node_count drift 5, got %d", result.InitialNodePool.NodeCount.ValueInt64())
@@ -1384,5 +1384,60 @@ func TestImportRejectsPathSeparator(t *testing.T) {
 	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "../v1/api-keys/k-1"}, &importResp)
 	if !importResp.Diagnostics.HasError() {
 		t.Error("expected error for an import ID containing path separators")
+	}
+}
+
+// TestUpgradeState_V0ToV1 proves the v0→v1 upgrader copies the prior
+// `floating_ip_id` value into `public_ip_id`, exposes the old attribute in the
+// prior schema, and carries the other attributes through unchanged.
+func TestUpgradeState_V0ToV1(t *testing.T) {
+	ctx := context.Background()
+	r := &kubernetesClusterResource{}
+
+	up, ok := r.UpgradeState(ctx)[0]
+	if !ok {
+		t.Fatal("expected a v0 state upgrader")
+	}
+	if up.PriorSchema == nil {
+		t.Fatal("expected PriorSchema for v0")
+	}
+	if _, ok := up.PriorSchema.Attributes["floating_ip_id"]; !ok {
+		t.Error("prior schema must carry the old `floating_ip_id` attribute")
+	}
+	if _, ok := up.PriorSchema.Attributes["public_ip_id"]; ok {
+		t.Error("prior schema must not carry the new `public_ip_id` attribute")
+	}
+
+	priorType := up.PriorSchema.Type().TerraformType(ctx)
+	raw := map[string]tftypes.Value{}
+	for name, at := range priorType.(tftypes.Object).AttributeTypes {
+		raw[name] = tftypes.NewValue(at, nil)
+	}
+	raw["id"] = tftypes.NewValue(tftypes.String, "k8s-123")
+	raw["name"] = tftypes.NewValue(tftypes.String, "my-cluster")
+	raw["floating_ip_id"] = tftypes.NewValue(tftypes.String, "fip-uuid")
+	priorVal := tftypes.NewValue(priorType, raw)
+
+	var schemaResp resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
+
+	req := resource.UpgradeStateRequest{State: &tfsdk.State{Schema: *up.PriorSchema, Raw: priorVal}}
+	resp := &resource.UpgradeStateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+
+	up.StateUpgrader(ctx, req, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics.Errors())
+	}
+	var model KubernetesClusterModel
+	resp.State.Get(ctx, &model)
+	if model.PublicIPID.ValueString() != "fip-uuid" {
+		t.Errorf("expected public_ip_id fip-uuid, got %s", model.PublicIPID.ValueString())
+	}
+	if model.ID.ValueString() != "k8s-123" {
+		t.Errorf("expected id carried through, got %s", model.ID.ValueString())
+	}
+	if model.Name.ValueString() != "my-cluster" {
+		t.Errorf("expected name carried through, got %s", model.Name.ValueString())
 	}
 }

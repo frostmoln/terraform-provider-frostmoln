@@ -56,10 +56,10 @@ output "mysql_endpoint" {
 
 - `admin_username` (String) The admin username for the MySQL instance.
 - `created_at` (String) The timestamp when the instance was created.
-- `floating_ip` (String) The floating (public) IP address, if assigned.
 - `id` (String) The unique identifier of the MySQL instance.
 - `port` (Number) The port number the MySQL instance is listening on.
 - `private_ip` (String) The private IP address of the MySQL instance.
+- `public_ip` (String) The public IP address, if assigned.
 - `status` (String) The current status of the MySQL instance.
 - `tenant_id` (String) The tenant ID that owns this instance.
 - `updated_at` (String) The timestamp when the instance was last updated.

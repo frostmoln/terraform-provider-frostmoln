@@ -9,9 +9,9 @@ resource "frostmoln_kubernetes_cluster" "main" {
   subnet_id = frostmoln_subnet.nodes.id
 
   # Endpoint exposure. Omit for the default "public" (LB VIP reachable via a
-  # floating IP). Set "internal" for a private VIP-only endpoint reachable only
-  # from inside the VPC, with no floating IP allocated. Create-only: changing it
-  # replaces the cluster. scheme = "internal" conflicts with floating_ip_id.
+  # public IP). Set "internal" for a private VIP-only endpoint reachable only
+  # from inside the VPC, with no public IP allocated. Create-only: changing it
+  # replaces the cluster. scheme = "internal" conflicts with public_ip_id.
   # scheme = "internal"
 
   # Cluster addons are installed once, at creation, and cannot be changed on an

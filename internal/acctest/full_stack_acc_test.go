@@ -27,8 +27,8 @@ func TestAccFullStack_basic(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("frostmoln_instance.test", "status", "running"),
 					resource.TestCheckResourceAttrSet("frostmoln_volume.test", "status"),
-					resource.TestCheckResourceAttrSet("frostmoln_floating_ip.test", "instance_id"),
-					resource.TestCheckResourceAttrSet("frostmoln_floating_ip.test", "address"),
+					resource.TestCheckResourceAttrSet("frostmoln_public_ip.test", "instance_id"),
+					resource.TestCheckResourceAttrSet("frostmoln_public_ip.test", "address"),
 				),
 			},
 		},
@@ -95,7 +95,7 @@ resource "frostmoln_volume_attachment" "test" {
   instance_id = frostmoln_instance.test.id
 }
 
-resource "frostmoln_floating_ip" "test" {
+resource "frostmoln_public_ip" "test" {
   instance_id = frostmoln_instance.test.id
 }
 `, imageName, flavorName, sshKeyName, vpcName, subnetName, sgName, instanceName, volumeName)

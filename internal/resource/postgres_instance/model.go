@@ -25,7 +25,7 @@ type PostgresInstanceModel struct {
 	Status              types.String `tfsdk:"status"`
 	PrivateIP           types.String `tfsdk:"private_ip"`
 	Port                types.Int64  `tfsdk:"port"`
-	FloatingIP          types.String `tfsdk:"floating_ip"`
+	PublicIP            types.String `tfsdk:"public_ip"`
 	AdminUsername       types.String `tfsdk:"admin_username"`
 	CreatedAt           types.String `tfsdk:"created_at"`
 	UpdatedAt           types.String `tfsdk:"updated_at"`
@@ -49,7 +49,7 @@ type apiPostgresInstance struct {
 	Status              string `json:"status"`
 	PrivateIP           string `json:"privateIp,omitempty"`
 	Port                int    `json:"port,omitempty"`
-	FloatingIP          string `json:"floatingIp,omitempty"`
+	PublicIP            string `json:"publicIp,omitempty"`
 	AdminUsername       string `json:"adminUsername,omitempty"`
 	CreatedAt           string `json:"createdAt"`
 	UpdatedAt           string `json:"updatedAt,omitempty"`
@@ -201,10 +201,10 @@ func (m *PostgresInstanceModel) fromAPI(_ context.Context, inst *apiPostgresInst
 		m.Port = types.Int64Null()
 	}
 
-	if inst.FloatingIP != "" {
-		m.FloatingIP = types.StringValue(inst.FloatingIP)
+	if inst.PublicIP != "" {
+		m.PublicIP = types.StringValue(inst.PublicIP)
 	} else {
-		m.FloatingIP = types.StringNull()
+		m.PublicIP = types.StringNull()
 	}
 
 	if inst.AdminUsername != "" {

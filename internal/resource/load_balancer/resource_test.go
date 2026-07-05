@@ -126,8 +126,8 @@ func planValue(t *testing.T, schemaResp resource.SchemaResponse, ctx context.Con
 		"description":         tftypes.NewValue(tftypes.String, nil),
 		"vip_address":         tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"scheme":              tftypes.NewValue(tftypes.String, "internal"),
-		"floating_ip_id":      tftypes.NewValue(tftypes.String, nil),
-		"floating_ip_address": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"public_ip_id":        tftypes.NewValue(tftypes.String, nil),
+		"public_ip_address":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"provider_type":       tftypes.NewValue(tftypes.String, "amphora"),
 		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
@@ -141,9 +141,9 @@ func planValue(t *testing.T, schemaResp resource.SchemaResponse, ctx context.Con
 }
 
 // schemeConfigValue builds a raw config value with the given scheme and
-// floating_ip_id (pass nil for an unset/null attribute) and every other
+// public_ip_id (pass nil for an unset/null attribute) and every other
 // attribute null, for exercising ValidateConfig.
-func schemeConfigValue(t *testing.T, schemaResp resource.SchemaResponse, ctx context.Context, scheme, floatingIPID interface{}) tftypes.Value {
+func schemeConfigValue(t *testing.T, schemaResp resource.SchemaResponse, ctx context.Context, scheme, publicIPID interface{}) tftypes.Value {
 	t.Helper()
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 	return tftypes.NewValue(tfType, map[string]tftypes.Value{
@@ -154,8 +154,8 @@ func schemeConfigValue(t *testing.T, schemaResp resource.SchemaResponse, ctx con
 		"description":         tftypes.NewValue(tftypes.String, nil),
 		"vip_address":         tftypes.NewValue(tftypes.String, nil),
 		"scheme":              tftypes.NewValue(tftypes.String, scheme),
-		"floating_ip_id":      tftypes.NewValue(tftypes.String, floatingIPID),
-		"floating_ip_address": tftypes.NewValue(tftypes.String, nil),
+		"public_ip_id":        tftypes.NewValue(tftypes.String, publicIPID),
+		"public_ip_address":   tftypes.NewValue(tftypes.String, nil),
 		"provider_type":       tftypes.NewValue(tftypes.String, nil),
 		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
@@ -405,8 +405,8 @@ func TestLoadBalancerDeleteAsyncOperationPoll(t *testing.T) {
 		"description":         tftypes.NewValue(tftypes.String, nil),
 		"vip_address":         tftypes.NewValue(tftypes.String, "10.0.0.7"),
 		"scheme":              tftypes.NewValue(tftypes.String, "internal"),
-		"floating_ip_id":      tftypes.NewValue(tftypes.String, nil),
-		"floating_ip_address": tftypes.NewValue(tftypes.String, nil),
+		"public_ip_id":        tftypes.NewValue(tftypes.String, nil),
+		"public_ip_address":   tftypes.NewValue(tftypes.String, nil),
 		"provider_type":       tftypes.NewValue(tftypes.String, "amphora"),
 		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
@@ -437,5 +437,60 @@ func TestLoadBalancerMetadata(t *testing.T) {
 	r.Metadata(context.Background(), resource.MetadataRequest{ProviderTypeName: "frostmoln"}, resp)
 	if resp.TypeName != "frostmoln_load_balancer" {
 		t.Errorf("expected frostmoln_load_balancer, got %s", resp.TypeName)
+	}
+}
+
+// TestUpgradeState_V0ToV1 proves the v0→v1 upgrader copies the prior
+// `floating_ip_id` value into `public_ip_id`, exposes the old attribute in the
+// prior schema, and carries the other attributes through unchanged.
+func TestUpgradeState_V0ToV1(t *testing.T) {
+	ctx := context.Background()
+	r := &loadBalancerResource{}
+
+	up, ok := r.UpgradeState(ctx)[0]
+	if !ok {
+		t.Fatal("expected a v0 state upgrader")
+	}
+	if up.PriorSchema == nil {
+		t.Fatal("expected PriorSchema for v0")
+	}
+	if _, ok := up.PriorSchema.Attributes["floating_ip_id"]; !ok {
+		t.Error("prior schema must carry the old `floating_ip_id` attribute")
+	}
+	if _, ok := up.PriorSchema.Attributes["public_ip_id"]; ok {
+		t.Error("prior schema must not carry the new `public_ip_id` attribute")
+	}
+
+	priorType := up.PriorSchema.Type().TerraformType(ctx)
+	raw := map[string]tftypes.Value{}
+	for name, at := range priorType.(tftypes.Object).AttributeTypes {
+		raw[name] = tftypes.NewValue(at, nil)
+	}
+	raw["id"] = tftypes.NewValue(tftypes.String, "lb-123")
+	raw["name"] = tftypes.NewValue(tftypes.String, "my-lb")
+	raw["floating_ip_id"] = tftypes.NewValue(tftypes.String, "fip-uuid")
+	priorVal := tftypes.NewValue(priorType, raw)
+
+	var schemaResp resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
+
+	req := resource.UpgradeStateRequest{State: &tfsdk.State{Schema: *up.PriorSchema, Raw: priorVal}}
+	resp := &resource.UpgradeStateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+
+	up.StateUpgrader(ctx, req, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics.Errors())
+	}
+	var model LoadBalancerModel
+	resp.State.Get(ctx, &model)
+	if model.PublicIPID.ValueString() != "fip-uuid" {
+		t.Errorf("expected public_ip_id fip-uuid, got %s", model.PublicIPID.ValueString())
+	}
+	if model.ID.ValueString() != "lb-123" {
+		t.Errorf("expected id carried through, got %s", model.ID.ValueString())
+	}
+	if model.Name.ValueString() != "my-lb" {
+		t.Errorf("expected name carried through, got %s", model.Name.ValueString())
 	}
 }

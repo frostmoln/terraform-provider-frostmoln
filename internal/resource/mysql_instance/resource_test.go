@@ -224,8 +224,8 @@ func TestMysqlInstanceModelFromAPINulls(t *testing.T) {
 	if !model.Port.IsNull() {
 		t.Error("expected null port")
 	}
-	if !model.FloatingIP.IsNull() {
-		t.Error("expected null floating_ip")
+	if !model.PublicIP.IsNull() {
+		t.Error("expected null public_ip")
 	}
 	if !model.AdminUsername.IsNull() {
 		t.Error("expected null admin_username")
@@ -270,7 +270,7 @@ func TestSchema(t *testing.T) {
 		}
 	}
 
-	computedAttrs := []string{"id", "status", "private_ip", "port", "floating_ip", "admin_username", "created_at", "updated_at", "tenant_id"}
+	computedAttrs := []string{"id", "status", "private_ip", "port", "public_ip", "admin_username", "created_at", "updated_at", "tenant_id"}
 	for _, attr := range computedAttrs {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected computed attribute %s in schema", attr)
@@ -725,6 +725,63 @@ func TestUpgradeState_V0ToV1(t *testing.T) {
 	resp.State.Get(ctx, &model)
 	if model.FlavorID.ValueString() != "db.gp1.small" {
 		t.Errorf("expected flavor_id db.gp1.small, got %s", model.FlavorID.ValueString())
+	}
+	if model.ID.ValueString() != "db-123" {
+		t.Errorf("expected id carried through, got %s", model.ID.ValueString())
+	}
+	if model.Name.ValueString() != "my-db" {
+		t.Errorf("expected name carried through, got %s", model.Name.ValueString())
+	}
+}
+
+// TestUpgradeState_V1ToV2 guards the v1→v2 migration: a v1 state row carries the
+// old computed `floating_ip` attribute; the upgrader must copy it into
+// `public_ip` and carry the other attributes through, so the upgrade is a clean
+// no-op until the next refresh re-reads the value. Other attributes are
+// null-filled here — only the rename behaviour is under test.
+func TestUpgradeState_V1ToV2(t *testing.T) {
+	ctx := context.Background()
+	r := &mysqlInstanceResource{}
+
+	up, ok := r.UpgradeState(ctx)[1]
+	if !ok {
+		t.Fatal("expected a v1 state upgrader")
+	}
+	if up.PriorSchema == nil {
+		t.Fatal("expected PriorSchema for v1")
+	}
+	if _, ok := up.PriorSchema.Attributes["floating_ip"]; !ok {
+		t.Error("prior schema must carry the old `floating_ip` attribute")
+	}
+	if _, ok := up.PriorSchema.Attributes["public_ip"]; ok {
+		t.Error("prior schema must not carry the new `public_ip` attribute")
+	}
+
+	priorType := up.PriorSchema.Type().TerraformType(ctx)
+	raw := map[string]tftypes.Value{}
+	for name, at := range priorType.(tftypes.Object).AttributeTypes {
+		raw[name] = tftypes.NewValue(at, nil)
+	}
+	raw["id"] = tftypes.NewValue(tftypes.String, "db-123")
+	raw["name"] = tftypes.NewValue(tftypes.String, "my-db")
+	raw["floating_ip"] = tftypes.NewValue(tftypes.String, "203.0.113.5")
+	priorVal := tftypes.NewValue(priorType, raw)
+
+	var schemaResp resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
+
+	req := resource.UpgradeStateRequest{State: &tfsdk.State{Schema: *up.PriorSchema, Raw: priorVal}}
+	resp := &resource.UpgradeStateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+
+	up.StateUpgrader(ctx, req, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics.Errors())
+	}
+	var model MysqlInstanceModel
+	resp.State.Get(ctx, &model)
+	if model.PublicIP.ValueString() != "203.0.113.5" {
+		t.Errorf("expected public_ip 203.0.113.5, got %s", model.PublicIP.ValueString())
 	}
 	if model.ID.ValueString() != "db-123" {
 		t.Errorf("expected id carried through, got %s", model.ID.ValueString())

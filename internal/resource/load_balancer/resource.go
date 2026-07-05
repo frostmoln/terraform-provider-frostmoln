@@ -17,12 +17,14 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
 )
 
 var (
 	_ resource.Resource                   = &loadBalancerResource{}
 	_ resource.ResourceWithImportState    = &loadBalancerResource{}
 	_ resource.ResourceWithValidateConfig = &loadBalancerResource{}
+	_ resource.ResourceWithUpgradeState   = &loadBalancerResource{}
 )
 
 type loadBalancerResource struct {
@@ -56,6 +58,10 @@ func (r *loadBalancerResource) Metadata(_ context.Context, req resource.Metadata
 
 func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		// v1: the HCL attributes `floating_ip_id`/`floating_ip_address` were
+		// renamed to `public_ip_id`/`public_ip_address`. See UpgradeState for the
+		// v0→v1 migration.
+		Version:     1,
 		Description: "Manages a load balancer in the Frostmoln Cloud Platform. Load balancer creation and deletion are asynchronous (Octavia), so applies wait on the provisioning operation to complete.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -96,7 +102,7 @@ func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 				},
 			},
 			"scheme": schema.StringAttribute{
-				Description: "Reachability scheme: internal (default, private VIP only) or public (a bring-your-own floating IP is attached to the VIP for external reachability). When public, floating_ip_id is required. There is no in-place change between schemes; changing this forces a new resource.",
+				Description: "Reachability scheme: internal (default, private VIP only) or public (a bring-your-own public IP is attached to the VIP for external reachability). When public, public_ip_id is required. There is no in-place change between schemes; changing this forces a new resource.",
 				Optional:    true,
 				Computed:    true,
 				Default:     stringdefault.StaticString("internal"),
@@ -107,15 +113,15 @@ func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 					stringvalidator.OneOf("internal", "public"),
 				},
 			},
-			"floating_ip_id": schema.StringAttribute{
-				Description: "ID of a pre-allocated, tenant-owned, unassociated floating IP to attach to the VIP. Required when scheme is public; must be omitted when scheme is internal. Changing this forces a new resource.",
+			"public_ip_id": schema.StringAttribute{
+				Description: "ID of a pre-allocated, tenant-owned, unassociated public IP to attach to the VIP. Required when scheme is public; must be omitted when scheme is internal. Changing this forces a new resource.",
 				Optional:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"floating_ip_address": schema.StringAttribute{
-				Description: "The public IP address of the attached floating IP (present only when scheme is public).",
+			"public_ip_address": schema.StringAttribute{
+				Description: "The address of the attached public IP (present only when scheme is public).",
 				Computed:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
@@ -182,8 +188,8 @@ func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 	}
 }
 
-// ValidateConfig enforces the scheme<->floating_ip_id invariant at plan time:
-// a public load balancer must reference a floating IP; an internal one must not.
+// ValidateConfig enforces the scheme<->public_ip_id invariant at plan time:
+// a public load balancer must reference a public IP; an internal one must not.
 // Unknown (interpolated) values are skipped — the backend stays authoritative.
 func (r *loadBalancerResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 	var cfg LoadBalancerModel
@@ -191,7 +197,7 @@ func (r *loadBalancerResource) ValidateConfig(ctx context.Context, req resource.
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if cfg.Scheme.IsUnknown() || cfg.FloatingIPID.IsUnknown() {
+	if cfg.Scheme.IsUnknown() || cfg.PublicIPID.IsUnknown() {
 		return
 	}
 
@@ -200,23 +206,23 @@ func (r *loadBalancerResource) ValidateConfig(ctx context.Context, req resource.
 	if !cfg.Scheme.IsNull() {
 		scheme = cfg.Scheme.ValueString()
 	}
-	hasFIP := !cfg.FloatingIPID.IsNull() && cfg.FloatingIPID.ValueString() != ""
+	hasFIP := !cfg.PublicIPID.IsNull() && cfg.PublicIPID.ValueString() != ""
 
 	switch scheme {
 	case "public":
 		if !hasFIP {
 			resp.Diagnostics.AddAttributeError(
-				path.Root("floating_ip_id"),
-				"Missing floating_ip_id",
-				`floating_ip_id is required when scheme is "public".`,
+				path.Root("public_ip_id"),
+				"Missing public_ip_id",
+				`public_ip_id is required when scheme is "public".`,
 			)
 		}
 	case "internal":
 		if hasFIP {
 			resp.Diagnostics.AddAttributeError(
-				path.Root("floating_ip_id"),
-				"Unexpected floating_ip_id",
-				`floating_ip_id must not be set when scheme is "internal" (the default); set scheme = "public" to attach a floating IP.`,
+				path.Root("public_ip_id"),
+				"Unexpected public_ip_id",
+				`public_ip_id must not be set when scheme is "internal" (the default); set scheme = "public" to attach a public IP.`,
 			)
 		}
 	}
@@ -400,6 +406,23 @@ func (r *loadBalancerResource) Delete(ctx context.Context, req resource.DeleteRe
 
 func (r *loadBalancerResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// UpgradeState migrates v0 state (HCL attribute `floating_ip_id`) to v1
+// (`public_ip_id`). The rename is HCL-surface only, so the migration copies the
+// prior `floating_ip_id` value into `public_ip_id` and carries every other
+// attribute through unchanged. `floating_ip_id` is RequiresReplace, so without
+// this the first post-upgrade plan would want to destroy and recreate the load
+// balancer. The computed `floating_ip_address`→`public_ip_address` rename rides
+// along: the framework decodes the prior state with IgnoreUndefinedAttributes,
+// so the old computed value is dropped and `public_ip_address` is re-read on the
+// next refresh.
+func (r *loadBalancerResource) UpgradeState(ctx context.Context) map[int64]resource.StateUpgrader {
+	schemaResp := resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
+	return map[int64]resource.StateUpgrader{
+		0: stateupgrade.RenameStringAttr(ctx, schemaResp.Schema, "floating_ip_id", "public_ip_id"),
+	}
 }
 
 // getLoadBalancer fetches a load balancer by ID.

@@ -127,11 +127,11 @@ func (d *apacheInstanceDataSource) Schema(_ context.Context, _ datasource.Schema
 				ElementType: types.StringType,
 			},
 			"public": schema.BoolAttribute{
-				Description: "Whether the instance is publicly exposed (a Floating IP is associated so the site is reachable on the public internet).",
+				Description: "Whether the instance is publicly exposed (a Public IP is associated so the site is reachable on the public internet).",
 				Computed:    true,
 			},
 			"public_ip": schema.StringAttribute{
-				Description: "The public Floating IP address associated with the instance while it is exposed (empty when not public).",
+				Description: "The public IP address associated with the instance while it is exposed (empty when not public).",
 				Computed:    true,
 			},
 			"status": schema.StringAttribute{

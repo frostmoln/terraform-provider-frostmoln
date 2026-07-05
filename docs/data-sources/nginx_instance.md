@@ -29,8 +29,8 @@ Look up a managed Nginx webserver instance by ID.
 - `php_version` (String) The PHP version.
 - `port` (Number) The port number the Nginx instance is listening on.
 - `private_ip` (String) The private IP address of the Nginx instance.
-- `public` (Boolean) Whether the instance is publicly exposed (a Floating IP is associated so the site is reachable on the public internet).
-- `public_ip` (String) The public Floating IP address associated with the instance while it is exposed (empty when not public).
+- `public` (Boolean) Whether the instance is publicly exposed (a Public IP is associated so the site is reachable on the public internet).
+- `public_ip` (String) The public IP address associated with the instance while it is exposed (empty when not public).
 - `status` (String) The current status of the Nginx instance.
 - `storage_gb` (Number) The storage size in gigabytes.
 - `subnet_id` (String) The subnet ID where the instance is deployed.

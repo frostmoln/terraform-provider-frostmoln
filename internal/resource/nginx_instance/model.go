@@ -49,7 +49,7 @@ type apiWebserverInstance struct {
 	PHPEnabled    bool              `json:"phpEnabled"`
 	PHPVersion    string            `json:"phpVersion,omitempty"`
 	EngineConfig  map[string]string `json:"engineConfig,omitempty"`
-	// Public is OBSERVED (ADR-0097): true when a Floating IP is currently
+	// Public is OBSERVED (ADR-0097): true when a Public IP is currently
 	// associated to the instance's engine port. PublicIP is that FIP. Both are
 	// set by the create saga (create with public=true) or the expose/unexpose
 	// action, never written directly on the instance PUT.
@@ -79,7 +79,7 @@ type apiCreateWebserverInstanceRequest struct {
 	PHPVersion    string            `json:"phpVersion,omitempty"`
 	EngineConfig  map[string]string `json:"engineConfig,omitempty"`
 	// Public opts the instance into public exposure at create time (ADR-0097):
-	// the create saga associates a Floating IP and surfaces publicIp. Post-create,
+	// the create saga associates a Public IP and surfaces publicIp. Post-create,
 	// exposure toggles via the POST /expose and /unexpose actions, never here.
 	Public *bool `json:"public,omitempty"`
 }

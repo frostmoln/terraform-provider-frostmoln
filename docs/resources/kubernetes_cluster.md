@@ -24,9 +24,9 @@ resource "frostmoln_kubernetes_cluster" "main" {
   subnet_id = frostmoln_subnet.nodes.id
 
   # Endpoint exposure. Omit for the default "public" (LB VIP reachable via a
-  # floating IP). Set "internal" for a private VIP-only endpoint reachable only
-  # from inside the VPC, with no floating IP allocated. Create-only: changing it
-  # replaces the cluster. scheme = "internal" conflicts with floating_ip_id.
+  # public IP). Set "internal" for a private VIP-only endpoint reachable only
+  # from inside the VPC, with no public IP allocated. Create-only: changing it
+  # replaces the cluster. scheme = "internal" conflicts with public_ip_id.
   # scheme = "internal"
 
   # Cluster addons are installed once, at creation, and cannot be changed on an
@@ -65,9 +65,9 @@ output "kubeconfig" {
 
 - `addons` (Set of String) The set of cluster-addon catalog keys to install at cluster creation (see the frostmoln_kubernetes_addons data source for available keys). Addons are applied ONCE, at cluster creation, from first-boot manifests — they cannot be changed on an existing cluster, so changing this set REPLACES the cluster. Leave it unset to apply the platform default addons (currently external-secrets); set it to an explicit empty set ([]) to install no addons.
 - `control_plane_tier` (String) The control-plane tier key (see the frostmoln_kubernetes_tiers data source for canonical keys). Defaults to the platform default tier.
-- `floating_ip_id` (String) The ID of an existing floating IP to use for the cluster API endpoint (bring-your-own FIP). Write-only on the API: reads expose only the resolved address (floating_ip), so imports cannot recover this value — after importing a cluster created with a BYO floating IP, omit this attribute or add `lifecycle { ignore_changes = [floating_ip_id] }`, otherwise the next plan will want to replace the cluster. A BYO floating IP survives cluster deletion.
+- `public_ip_id` (String) The ID of an existing public IP to use for the cluster API endpoint (bring-your-own public IP). Write-only on the API: reads expose only the resolved address (public_ip), so imports cannot recover this value — after importing a cluster created with a BYO public IP, omit this attribute or add `lifecycle { ignore_changes = [public_ip_id] }`, otherwise the next plan will want to replace the cluster. A BYO public IP survives cluster deletion.
 - `region` (String) The region to create the cluster in. Defaults server-side.
-- `scheme` (String) The endpoint exposure scheme: "public" (the default) fronts the Kubernetes API with a load-balancer VIP reachable via a floating IP; "internal" makes the endpoint the private LB VIP only — reachable exclusively from inside the VPC, with NO floating IP allocated. Defaults server-side to public. Create-only: changing it REPLACES the cluster. scheme = "internal" conflicts with floating_ip_id (an internal cluster has no floating IP).
+- `scheme` (String) The endpoint exposure scheme: "public" (the default) fronts the Kubernetes API with a load-balancer VIP reachable via a public IP; "internal" makes the endpoint the private LB VIP only — reachable exclusively from inside the VPC, with NO public IP allocated. Defaults server-side to public. Create-only: changing it REPLACES the cluster. scheme = "internal" conflicts with public_ip_id (an internal cluster has no public IP).
 - `version` (String) The Kubernetes version (e.g. "1.35"). Defaults to the platform default version. Changing it currently REPLACES the cluster — in-place upgrade is not available yet.
 
 ### Read-Only
@@ -75,12 +75,12 @@ output "kubeconfig" {
 - `ca_cert_hash` (String) The cluster CA certificate hash.
 - `created_at` (String) The timestamp when the cluster was created.
 - `endpoint` (String) The Kubernetes API endpoint URL.
-- `floating_ip` (String) The public (floating) IP address of the cluster API endpoint.
 - `ha_enabled` (Boolean) Whether the control plane is highly available (derived from the control-plane tier).
 - `id` (String) The unique identifier of the cluster.
 - `kubeconfig` (String, Sensitive) A kubeconfig for the cluster. Stored in the Terraform state in plaintext — protect the state file accordingly.
 - `load_balancer_id` (String) The ID of the load balancer fronting the Kubernetes API.
 - `pod_cidr` (String) The server-allocated pod network CIDR.
+- `public_ip` (String) The public IP address of the cluster API endpoint.
 - `service_cidr` (String) The server-allocated service network CIDR.
 - `status` (String) The current status of the cluster.
 - `tenant_id` (String) The tenant ID that owns this cluster.
@@ -110,8 +110,8 @@ Import is supported using the following syntax:
 The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
-# Import a cluster by its ID. floating_ip_id cannot be recovered (write-only
+# Import a cluster by its ID. public_ip_id cannot be recovered (write-only
 # on the API) — after import, omit it or add
-# lifecycle { ignore_changes = [floating_ip_id] } to avoid a replacement plan.
+# lifecycle { ignore_changes = [public_ip_id] } to avoid a replacement plan.
 terraform import frostmoln_kubernetes_cluster.main 51455a51-db3d-4231-ac27-4fee2553c15f
 ```

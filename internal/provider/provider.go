@@ -45,7 +45,6 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/bucket"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_record"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_zone"
-	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/floating_ip"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/instance_port_security_groups"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/kubernetes_cluster"
@@ -64,6 +63,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/postgres_backup"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/postgres_instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/postgres_read_replica"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/public_ip"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/redis_instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/s3_credential"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/scale_group"
@@ -354,7 +354,7 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		subnet.NewResource,
 		security_group.NewResource,
 		security_group_rule.NewResource,
-		floating_ip.NewResource,
+		public_ip.NewResource,
 		dns_zone.NewResource,
 		dns_record.NewResource,
 		load_balancer.NewResource,

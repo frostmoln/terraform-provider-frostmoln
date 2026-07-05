@@ -1,4 +1,4 @@
-package floating_ip
+package public_ip
 
 import (
 	"context"
@@ -28,8 +28,8 @@ func writeInstanceWithPort(w http.ResponseWriter, instanceID, portID string) {
 	})
 }
 
-func TestFloatingIPModelFromAPI(t *testing.T) {
-	fip := &apiFloatingIP{
+func TestPublicIPModelFromAPI(t *testing.T) {
+	fip := &apiPublicIP{
 		ID:        "fip-123",
 		Address:   "203.0.113.10",
 		Status:    "active",
@@ -39,7 +39,7 @@ func TestFloatingIPModelFromAPI(t *testing.T) {
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}
 
-	var model FloatingIPModel
+	var model PublicIPModel
 	// instance_id is preserved from config (never read from the wire); while the
 	// FIP is attached (portId present) the configured value is kept.
 	model.InstanceID = types.StringValue("inst-456")
@@ -71,15 +71,15 @@ func TestFloatingIPModelFromAPI(t *testing.T) {
 	}
 }
 
-func TestFloatingIPModelFromAPIMinimal(t *testing.T) {
-	fip := &apiFloatingIP{
+func TestPublicIPModelFromAPIMinimal(t *testing.T) {
+	fip := &apiPublicIP{
 		ID:        "fip-789",
 		Address:   "203.0.113.20",
 		Status:    "available",
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}
 
-	var model FloatingIPModel
+	var model PublicIPModel
 	// A detached FIP (no portId) clears any previously-configured instance_id.
 	model.InstanceID = types.StringValue("inst-stale")
 	model.Tags = types.MapNull(types.StringType)
@@ -102,11 +102,11 @@ func TestFloatingIPModelFromAPIMinimal(t *testing.T) {
 	}
 }
 
-func TestFloatingIPModelToAllocateRequest(t *testing.T) {
+func TestPublicIPModelToAllocateRequest(t *testing.T) {
 	ctx := context.Background()
 	tags, _ := types.MapValueFrom(ctx, types.StringType, map[string]string{"env": "prod"})
 
-	model := FloatingIPModel{
+	model := PublicIPModel{
 		Tags: tags,
 	}
 
@@ -122,8 +122,8 @@ func TestFloatingIPModelToAllocateRequest(t *testing.T) {
 	}
 }
 
-func TestFloatingIPModelToAllocateRequestMinimal(t *testing.T) {
-	model := FloatingIPModel{
+func TestPublicIPModelToAllocateRequestMinimal(t *testing.T) {
+	model := PublicIPModel{
 		Tags: types.MapNull(types.StringType),
 	}
 
@@ -139,12 +139,12 @@ func TestFloatingIPModelToAllocateRequestMinimal(t *testing.T) {
 	}
 }
 
-// TestFloatingIPAllocateRequestWireContract locks the allocate request to the
+// TestPublicIPAllocateRequestWireContract locks the allocate request to the
 // backend contract: region is not part of the wire body (ADR-0022), only tags.
-func TestFloatingIPAllocateRequestWireContract(t *testing.T) {
+func TestPublicIPAllocateRequestWireContract(t *testing.T) {
 	ctx := context.Background()
 	tags, _ := types.MapValueFrom(ctx, types.StringType, map[string]string{"env": "prod"})
-	model := FloatingIPModel{Tags: tags}
+	model := PublicIPModel{Tags: tags}
 
 	var diags diag.Diagnostics
 	req := model.toAllocateRequest(ctx, &diags)
@@ -165,10 +165,10 @@ func TestFloatingIPAllocateRequestWireContract(t *testing.T) {
 	}
 }
 
-// TestFloatingIPAssociateRequestWireContract locks the associate request to the
+// TestPublicIPAssociateRequestWireContract locks the associate request to the
 // backend contract: it carries portId, never instanceId.
-func TestFloatingIPAssociateRequestWireContract(t *testing.T) {
-	raw, err := json.Marshal(apiAssociateFloatingIPRequest{PortID: "port-abc"})
+func TestPublicIPAssociateRequestWireContract(t *testing.T) {
+	raw, err := json.Marshal(apiAssociatePublicIPRequest{PortID: "port-abc"})
 	if err != nil {
 		t.Fatalf("marshal failed: %v", err)
 	}
@@ -184,15 +184,15 @@ func TestFloatingIPAssociateRequestWireContract(t *testing.T) {
 	}
 }
 
-func TestFloatingIPResourceCRUD(t *testing.T) {
-	fipData := apiFloatingIP{
+func TestPublicIPResourceCRUD(t *testing.T) {
+	fipData := apiPublicIP{
 		ID:        "fip-test-1",
 		Address:   "203.0.113.50",
 		Status:    "available",
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}
 
-	fipAssociated := apiFloatingIP{
+	fipAssociated := apiPublicIP{
 		ID:        "fip-test-1",
 		Address:   "203.0.113.50",
 		Status:    "active",
@@ -201,7 +201,7 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}
 
-	fipDisassociated := apiFloatingIP{
+	fipDisassociated := apiPublicIP{
 		ID:        "fip-test-1",
 		Address:   "203.0.113.50",
 		Status:    "available",
@@ -212,11 +212,11 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(fipData)
 
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-test-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-test-1":
 			w.WriteHeader(http.StatusOK)
 			if associated {
 				_ = json.NewEncoder(w).Encode(fipAssociated)
@@ -224,17 +224,17 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(fipDisassociated)
 			}
 
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-test-1/associate":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-test-1/associate":
 			associated = true
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(fipAssociated)
 
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-test-1/disassociate":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-test-1/disassociate":
 			associated = false
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(fipDisassociated)
 
-		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-test-1":
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-test-1":
 			w.WriteHeader(http.StatusOK)
 			if associated {
 				_ = json.NewEncoder(w).Encode(fipAssociated)
@@ -242,7 +242,7 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(fipDisassociated)
 			}
 
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-test-1":
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-test-1":
 			w.WriteHeader(http.StatusNoContent)
 
 		default:
@@ -260,8 +260,8 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 	ctx := context.Background()
 
 	// Test Allocate (allocate request only carries tags; no region).
-	allocateReq := apiAllocateFloatingIPRequest{}
-	apiResp, err := c.Post(ctx, c.TenantPath("/floating-ips"), allocateReq)
+	allocateReq := apiAllocatePublicIPRequest{}
+	apiResp, err := c.Post(ctx, c.TenantPath("/public-ips"), allocateReq)
 	if err != nil {
 		t.Fatalf("Allocate failed: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 		t.Errorf("expected status 201, got %d", apiResp.StatusCode)
 	}
 
-	var allocated apiFloatingIP
+	var allocated apiPublicIP
 	if err := json.Unmarshal(apiResp.Body, &allocated); err != nil {
 		t.Fatalf("failed to parse allocate response: %v", err)
 	}
@@ -281,12 +281,12 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 	}
 
 	// Test Associate (by resolved portId).
-	assocReq := apiAssociateFloatingIPRequest{PortID: "port-abc"}
-	assocResp, err := c.Post(ctx, c.TenantPath("/floating-ips/fip-test-1/associate"), assocReq)
+	assocReq := apiAssociatePublicIPRequest{PortID: "port-abc"}
+	assocResp, err := c.Post(ctx, c.TenantPath("/public-ips/fip-test-1/associate"), assocReq)
 	if err != nil {
 		t.Fatalf("Associate failed: %v", err)
 	}
-	var assocFIP apiFloatingIP
+	var assocFIP apiPublicIP
 	if err := json.Unmarshal(assocResp.Body, &assocFIP); err != nil {
 		t.Fatalf("failed to parse associate response: %v", err)
 	}
@@ -295,17 +295,17 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 	}
 
 	// Test Disassociate.
-	_, err = c.Post(ctx, c.TenantPath("/floating-ips/fip-test-1/disassociate"), nil)
+	_, err = c.Post(ctx, c.TenantPath("/public-ips/fip-test-1/disassociate"), nil)
 	if err != nil {
 		t.Fatalf("Disassociate failed: %v", err)
 	}
 
 	// Verify disassociated (no portId on the wire).
-	readResp, err := c.Get(ctx, c.TenantPath("/floating-ips/fip-test-1"), nil)
+	readResp, err := c.Get(ctx, c.TenantPath("/public-ips/fip-test-1"), nil)
 	if err != nil {
 		t.Fatalf("Read failed: %v", err)
 	}
-	var readFIP apiFloatingIP
+	var readFIP apiPublicIP
 	if err := json.Unmarshal(readResp.Body, &readFIP); err != nil {
 		t.Fatalf("failed to parse read response: %v", err)
 	}
@@ -314,17 +314,17 @@ func TestFloatingIPResourceCRUD(t *testing.T) {
 	}
 
 	// Test Delete.
-	_, err = c.Delete(ctx, c.TenantPath("/floating-ips/fip-test-1"))
+	_, err = c.Delete(ctx, c.TenantPath("/public-ips/fip-test-1"))
 	if err != nil {
 		t.Fatalf("Delete failed: %v", err)
 	}
 }
 
-func TestFloatingIPReadNotFound(t *testing.T) {
+func TestPublicIPReadNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "floating IP not found"},
+			"error": map[string]string{"code": "NOT_FOUND", "message": "public IP not found"},
 		})
 	}))
 	defer server.Close()
@@ -332,7 +332,7 @@ func TestFloatingIPReadNotFound(t *testing.T) {
 	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
 	c.SetTenantIDForTest("t-123")
 
-	_, err := c.Get(context.Background(), c.TenantPath("/floating-ips/nonexistent"), nil)
+	_, err := c.Get(context.Background(), c.TenantPath("/public-ips/nonexistent"), nil)
 	if err == nil {
 		t.Fatal("expected error for not found")
 	}
@@ -378,8 +378,8 @@ func TestFIPMetadata(t *testing.T) {
 	resp := &resource.MetadataResponse{}
 	r.Metadata(context.Background(), req, resp)
 
-	if resp.TypeName != "frostmoln_floating_ip" {
-		t.Errorf("expected type name frostmoln_floating_ip, got %s", resp.TypeName)
+	if resp.TypeName != "frostmoln_public_ip" {
+		t.Errorf("expected type name frostmoln_public_ip, got %s", resp.TypeName)
 	}
 }
 
@@ -427,7 +427,7 @@ func TestFIPConfigureValidClient(t *testing.T) {
 }
 
 func TestFIPResourceCreate(t *testing.T) {
-	fipResp := apiFloatingIP{
+	fipResp := apiPublicIP{
 		ID:        "fip-new-1",
 		Address:   "203.0.113.100",
 		Status:    "available",
@@ -436,10 +436,10 @@ func TestFIPResourceCreate(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(fipResp)
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-new-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-new-1":
 			_ = json.NewEncoder(w).Encode(fipResp)
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -475,7 +475,7 @@ func TestFIPResourceCreate(t *testing.T) {
 		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
 	}
 
-	var state FloatingIPModel
+	var state PublicIPModel
 	resp.State.Get(context.Background(), &state)
 
 	if state.ID.ValueString() != "fip-new-1" {
@@ -490,14 +490,14 @@ func TestFIPResourceCreate(t *testing.T) {
 }
 
 func TestFIPResourceCreateWithAssociation(t *testing.T) {
-	fipAllocated := apiFloatingIP{
+	fipAllocated := apiPublicIP{
 		ID:        "fip-assoc-1",
 		Address:   "203.0.113.101",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
 
-	fipAssociated := apiFloatingIP{
+	fipAssociated := apiPublicIP{
 		ID:        "fip-assoc-1",
 		Address:   "203.0.113.101",
 		Status:    "active",
@@ -506,20 +506,20 @@ func TestFIPResourceCreateWithAssociation(t *testing.T) {
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
 
-	var associateBody apiAssociateFloatingIPRequest
+	var associateBody apiAssociatePublicIPRequest
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(fipAllocated)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-123":
 			// resolvePortID reads the instance's first network port.
 			writeInstanceWithPort(w, "inst-123", "port-abc")
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-assoc-1/associate":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-assoc-1/associate":
 			_ = json.NewDecoder(r.Body).Decode(&associateBody)
 			_ = json.NewEncoder(w).Encode(fipAssociated)
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-assoc-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-assoc-1":
 			// Final read after the (sync, in this mock) associate -> associated state.
 			_ = json.NewEncoder(w).Encode(fipAssociated)
 		default:
@@ -561,7 +561,7 @@ func TestFIPResourceCreateWithAssociation(t *testing.T) {
 		t.Errorf("expected associate request portId=port-abc, got %q", associateBody.PortID)
 	}
 
-	var state FloatingIPModel
+	var state PublicIPModel
 	resp.State.Get(context.Background(), &state)
 
 	if state.InstanceID.ValueString() != "inst-123" {
@@ -573,7 +573,7 @@ func TestFIPResourceCreateWithAssociation(t *testing.T) {
 }
 
 func TestFIPResourceRead(t *testing.T) {
-	fipResp := apiFloatingIP{
+	fipResp := apiPublicIP{
 		ID:        "fip-read-1",
 		Address:   "203.0.113.50",
 		Status:    "available",
@@ -581,7 +581,7 @@ func TestFIPResourceRead(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-read-1" {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-read-1" {
 			_ = json.NewEncoder(w).Encode(fipResp)
 			return
 		}
@@ -617,7 +617,7 @@ func TestFIPResourceRead(t *testing.T) {
 		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
 	}
 
-	var model FloatingIPModel
+	var model PublicIPModel
 	resp.State.Get(context.Background(), &model)
 	if model.Address.ValueString() != "203.0.113.50" {
 		t.Errorf("expected Address 203.0.113.50, got %s", model.Address.ValueString())
@@ -625,14 +625,14 @@ func TestFIPResourceRead(t *testing.T) {
 }
 
 // TestFIPResourceReadParsesWireContract proves the read parses the backend's
-// floatingIpAddress / fixedIpAddress / portId fields, and that a present portId
+// publicIpAddress / fixedIpAddress / portId fields, and that a present portId
 // preserves the configured instance_id.
 func TestFIPResourceReadParsesWireContract(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-wire-1" {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-wire-1" {
 			_, _ = w.Write([]byte(`{
 				"id": "fip-wire-1",
-				"floatingIpAddress": "203.0.113.77",
+				"publicIpAddress": "203.0.113.77",
 				"status": "active",
 				"portId": "port-zzz",
 				"fixedIpAddress": "10.0.5.9",
@@ -669,10 +669,10 @@ func TestFIPResourceReadParsesWireContract(t *testing.T) {
 		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
 	}
 
-	var model FloatingIPModel
+	var model PublicIPModel
 	resp.State.Get(context.Background(), &model)
 	if model.Address.ValueString() != "203.0.113.77" {
-		t.Errorf("expected Address from floatingIpAddress, got %s", model.Address.ValueString())
+		t.Errorf("expected Address from publicIpAddress, got %s", model.Address.ValueString())
 	}
 	if model.PrivateIP.ValueString() != "10.0.5.9" {
 		t.Errorf("expected PrivateIP from fixedIpAddress, got %s", model.PrivateIP.ValueString())
@@ -723,13 +723,13 @@ func TestFIPResourceReadNotFoundRemovesState(t *testing.T) {
 
 func TestFIPResourceUpdate(t *testing.T) {
 	associated := false
-	fipResp := apiFloatingIP{
+	fipResp := apiPublicIP{
 		ID:        "fip-upd-1",
 		Address:   "203.0.113.50",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
-	fipAssocResp := apiFloatingIP{
+	fipAssocResp := apiPublicIP{
 		ID:        "fip-upd-1",
 		Address:   "203.0.113.50",
 		Status:    "active",
@@ -740,15 +740,15 @@ func TestFIPResourceUpdate(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-upd-1/disassociate":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-upd-1/disassociate":
 			associated = false
 			_ = json.NewEncoder(w).Encode(fipResp)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-new":
 			writeInstanceWithPort(w, "inst-new", "port-new")
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-upd-1/associate":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-upd-1/associate":
 			associated = true
 			_ = json.NewEncoder(w).Encode(fipAssocResp)
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-upd-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-upd-1":
 			if associated {
 				_ = json.NewEncoder(w).Encode(fipAssocResp)
 			} else {
@@ -802,7 +802,7 @@ func TestFIPResourceUpdate(t *testing.T) {
 		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
 	}
 
-	var model FloatingIPModel
+	var model PublicIPModel
 	resp.State.Get(context.Background(), &model)
 	if model.InstanceID.ValueString() != "inst-new" {
 		t.Errorf("expected InstanceID inst-new, got %s", model.InstanceID.ValueString())
@@ -815,7 +815,7 @@ func TestFIPResourceUpdate(t *testing.T) {
 func TestFIPResourceDelete(t *testing.T) {
 	deleted := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-del-1" {
+		if r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-del-1" {
 			deleted = true
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -895,7 +895,7 @@ func TestFIPResourceDeleteAlreadyGone(t *testing.T) {
 
 func TestFIPResourceCreateAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips" {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips" {
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "server error"},
@@ -934,7 +934,7 @@ func TestFIPResourceCreateAPIError(t *testing.T) {
 
 func TestFIPResourceCreateBadResponseBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips" {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips" {
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte("not json"))
 			return
@@ -970,7 +970,7 @@ func TestFIPResourceCreateBadResponseBody(t *testing.T) {
 }
 
 func TestFIPResourceCreateAssociationError(t *testing.T) {
-	fipResp := apiFloatingIP{
+	fipResp := apiPublicIP{
 		ID:        "fip-ae-1",
 		Address:   "203.0.113.55",
 		Status:    "available",
@@ -979,12 +979,12 @@ func TestFIPResourceCreateAssociationError(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(fipResp)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-fail":
 			writeInstanceWithPort(w, "inst-fail", "port-fail")
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-ae-1/associate":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-ae-1/associate":
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "association failed"},
@@ -1027,7 +1027,7 @@ func TestFIPResourceCreateAssociationError(t *testing.T) {
 // TestFIPResourceCreateResolvePortError covers the path where the target
 // instance has no resolvable network port for association.
 func TestFIPResourceCreateResolvePortError(t *testing.T) {
-	fipResp := apiFloatingIP{
+	fipResp := apiPublicIP{
 		ID:        "fip-rp-1",
 		Address:   "203.0.113.56",
 		Status:    "available",
@@ -1036,7 +1036,7 @@ func TestFIPResourceCreateResolvePortError(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(fipResp)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-noport":
@@ -1078,14 +1078,14 @@ func TestFIPResourceCreateResolvePortError(t *testing.T) {
 }
 
 func TestFIPResourceCreateAssociationBadResponseThenReread(t *testing.T) {
-	fipAllocated := apiFloatingIP{
+	fipAllocated := apiPublicIP{
 		ID:        "fip-reread-1",
 		Address:   "203.0.113.60",
 		Status:    "available",
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
 
-	fipAssociated := apiFloatingIP{
+	fipAssociated := apiPublicIP{
 		ID:        "fip-reread-1",
 		Address:   "203.0.113.60",
 		Status:    "active",
@@ -1096,16 +1096,16 @@ func TestFIPResourceCreateAssociationBadResponseThenReread(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(fipAllocated)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-789":
 			writeInstanceWithPort(w, "inst-789", "port-789")
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-reread-1/associate":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-reread-1/associate":
 			// Return a non-JSON body; the provider does not parse a sync (200) associate body.
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-reread-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-reread-1":
 			_ = json.NewEncoder(w).Encode(fipAssociated)
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -1141,7 +1141,7 @@ func TestFIPResourceCreateAssociationBadResponseThenReread(t *testing.T) {
 		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
 	}
 
-	var state FloatingIPModel
+	var state PublicIPModel
 	resp.State.Get(context.Background(), &state)
 
 	if state.InstanceID.ValueString() != "inst-789" {
@@ -1153,7 +1153,7 @@ func TestFIPResourceCreateAssociationBadResponseThenReread(t *testing.T) {
 }
 
 func TestFIPResourceCreateAssocRereadGetError(t *testing.T) {
-	fipAllocated := apiFloatingIP{
+	fipAllocated := apiPublicIP{
 		ID:        "fip-rre-1",
 		Address:   "203.0.113.70",
 		Status:    "available",
@@ -1162,15 +1162,15 @@ func TestFIPResourceCreateAssocRereadGetError(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(fipAllocated)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-fail":
 			writeInstanceWithPort(w, "inst-fail", "port-fail")
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-rre-1/associate":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-rre-1/associate":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-rre-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-rre-1":
 			// Re-read also fails
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1212,7 +1212,7 @@ func TestFIPResourceCreateAssocRereadGetError(t *testing.T) {
 }
 
 func TestFIPResourceCreateAssocRereadBadJSON(t *testing.T) {
-	fipAllocated := apiFloatingIP{
+	fipAllocated := apiPublicIP{
 		ID:        "fip-rbj-1",
 		Address:   "203.0.113.71",
 		Status:    "available",
@@ -1221,15 +1221,15 @@ func TestFIPResourceCreateAssocRereadBadJSON(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(fipAllocated)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-fail":
 			writeInstanceWithPort(w, "inst-fail", "port-fail")
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-rbj-1/associate":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-rbj-1/associate":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-rbj-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-rbj-1":
 			// Re-read succeeds HTTP-wise but returns bad JSON
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("bad json"))
@@ -1337,7 +1337,7 @@ func TestFIPResourceReadBadJSON(t *testing.T) {
 }
 
 func TestFIPResourceUpdateDisassociateOnly(t *testing.T) {
-	fipResp := apiFloatingIP{
+	fipResp := apiPublicIP{
 		ID:        "fip-dis-1",
 		Address:   "203.0.113.50",
 		Status:    "available",
@@ -1346,9 +1346,9 @@ func TestFIPResourceUpdateDisassociateOnly(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-dis-1/disassociate":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-dis-1/disassociate":
 			_ = json.NewEncoder(w).Encode(fipResp)
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-dis-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-dis-1":
 			_ = json.NewEncoder(w).Encode(fipResp)
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -1398,7 +1398,7 @@ func TestFIPResourceUpdateDisassociateOnly(t *testing.T) {
 		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
 	}
 
-	var model FloatingIPModel
+	var model PublicIPModel
 	resp.State.Get(context.Background(), &model)
 	if !model.InstanceID.IsNull() {
 		t.Errorf("expected InstanceID to be null, got %s", model.InstanceID.ValueString())
@@ -1409,7 +1409,7 @@ func TestFIPResourceUpdateDisassociateOnly(t *testing.T) {
 }
 
 func TestFIPResourceUpdateTagsOnly(t *testing.T) {
-	fipResp := apiFloatingIP{
+	fipResp := apiPublicIP{
 		ID:        "fip-tags-1",
 		Address:   "203.0.113.50",
 		Status:    "available",
@@ -1420,10 +1420,10 @@ func TestFIPResourceUpdateTagsOnly(t *testing.T) {
 	var patchCalled bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-tags-1":
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-tags-1":
 			patchCalled = true
 			_ = json.NewEncoder(w).Encode(fipResp)
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-tags-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-tags-1":
 			_ = json.NewEncoder(w).Encode(fipResp)
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -1483,7 +1483,7 @@ func TestFIPResourceUpdateTagsOnly(t *testing.T) {
 func TestFIPResourceUpdateDisassociateError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-de-1/disassociate":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-de-1/disassociate":
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "disassociate failed"},
@@ -1535,11 +1535,11 @@ func TestFIPResourceUpdateDisassociateError(t *testing.T) {
 func TestFIPResourceUpdateAssociateError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-ae2-1/disassociate":
-			_ = json.NewEncoder(w).Encode(apiFloatingIP{})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-ae2-1/disassociate":
+			_ = json.NewEncoder(w).Encode(apiPublicIP{})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-new":
 			writeInstanceWithPort(w, "inst-new", "port-new")
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-ae2-1/associate":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-ae2-1/associate":
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "associate failed"},
@@ -1591,7 +1591,7 @@ func TestFIPResourceUpdateAssociateError(t *testing.T) {
 func TestFIPResourceUpdatePatchError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-pe-1":
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-pe-1":
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "patch failed"},
@@ -1645,7 +1645,7 @@ func TestFIPResourceUpdatePatchError(t *testing.T) {
 func TestFIPResourceUpdateReadError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-re-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-re-1":
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "read failed"},
@@ -1698,7 +1698,7 @@ func TestFIPResourceUpdateReadError(t *testing.T) {
 func TestFIPResourceUpdateReadBadJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/floating-ips/fip-rbj-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-rbj-1":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("not json"))
 		default:
@@ -1805,11 +1805,67 @@ func TestFIPResourceImportState(t *testing.T) {
 		t.Fatalf("ImportState failed: %v", importResp.Diagnostics)
 	}
 
-	var model FloatingIPModel
+	var model PublicIPModel
 	importResp.State.Get(ctx, &model)
 
 	if model.ID.ValueString() != "fip-import-1" {
 		t.Errorf("expected ID fip-import-1, got %s", model.ID.ValueString())
+	}
+}
+
+// TestMoveState_FromFloatingIP proves the ResourceWithMoveState implementation
+// accepts a `moved` from the old frostmoln_floating_ip type (copying the
+// identical source state verbatim) and skips any other source type.
+func TestMoveState_FromFloatingIP(t *testing.T) {
+	ctx := context.Background()
+	r := &publicIPResource{}
+
+	movers := r.MoveState(ctx)
+	if len(movers) != 1 {
+		t.Fatalf("expected 1 state mover, got %d", len(movers))
+	}
+	mover := movers[0]
+	if mover.SourceSchema == nil {
+		t.Fatal("expected a SourceSchema on the state mover")
+	}
+
+	// Build a source state matching the (identical) schema.
+	srcType := mover.SourceSchema.Type().TerraformType(ctx)
+	raw := map[string]tftypes.Value{}
+	for name, at := range srcType.(tftypes.Object).AttributeTypes {
+		raw[name] = tftypes.NewValue(at, nil)
+	}
+	raw["id"] = tftypes.NewValue(tftypes.String, "fip-123")
+	raw["address"] = tftypes.NewValue(tftypes.String, "203.0.113.10")
+	raw["instance_id"] = tftypes.NewValue(tftypes.String, "inst-9")
+	srcState := &tfsdk.State{Schema: *mover.SourceSchema, Raw: tftypes.NewValue(srcType, raw)}
+
+	// A non-matching source type is skipped: no diagnostics, target state unset.
+	skip := &resource.MoveStateResponse{TargetState: tfsdk.State{Schema: *mover.SourceSchema}}
+	mover.StateMover(ctx, resource.MoveStateRequest{SourceTypeName: "frostmoln_other", SourceState: srcState}, skip)
+	if skip.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors on skip: %v", skip.Diagnostics.Errors())
+	}
+	if !skip.TargetState.Raw.IsNull() {
+		t.Error("expected a non-matching source type to be skipped (target state left unset)")
+	}
+
+	// A move from frostmoln_floating_ip copies state verbatim.
+	resp := &resource.MoveStateResponse{TargetState: tfsdk.State{Schema: *mover.SourceSchema}}
+	mover.StateMover(ctx, resource.MoveStateRequest{SourceTypeName: "frostmoln_floating_ip", SourceState: srcState}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics.Errors())
+	}
+	var model PublicIPModel
+	resp.TargetState.Get(ctx, &model)
+	if model.ID.ValueString() != "fip-123" {
+		t.Errorf("expected id fip-123, got %s", model.ID.ValueString())
+	}
+	if model.Address.ValueString() != "203.0.113.10" {
+		t.Errorf("expected address carried through, got %s", model.Address.ValueString())
+	}
+	if model.InstanceID.ValueString() != "inst-9" {
+		t.Errorf("expected instance_id carried through, got %s", model.InstanceID.ValueString())
 	}
 }
 

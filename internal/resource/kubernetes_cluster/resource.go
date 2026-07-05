@@ -21,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
 )
 
 // Cluster and node-pool statuses (kubernetes service vocabulary). Deletes are
@@ -41,6 +42,7 @@ var (
 	_ resource.Resource                   = &kubernetesClusterResource{}
 	_ resource.ResourceWithImportState    = &kubernetesClusterResource{}
 	_ resource.ResourceWithValidateConfig = &kubernetesClusterResource{}
+	_ resource.ResourceWithUpgradeState   = &kubernetesClusterResource{}
 )
 
 // NewResource returns a new kubernetes_cluster resource factory.
@@ -74,6 +76,9 @@ func (r *kubernetesClusterResource) Metadata(_ context.Context, req resource.Met
 
 func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		// v1: the HCL attributes `floating_ip_id`/`floating_ip` were renamed to
+		// `public_ip_id`/`public_ip`. See UpgradeState for the v0→v1 migration.
+		Version: 1,
 		Description: "Manages a managed Kubernetes cluster in the Frostmoln platform. " +
 			"The cluster owns its initial node pool (created embedded, scaled in-place). " +
 			"Additional node pools are managed with the frostmoln_kubernetes_node_pool resource.",
@@ -134,10 +139,10 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 			},
 			"scheme": schema.StringAttribute{
 				Description: "The endpoint exposure scheme: \"public\" (the default) fronts the Kubernetes API with " +
-					"a load-balancer VIP reachable via a floating IP; \"internal\" makes the endpoint the private " +
-					"LB VIP only — reachable exclusively from inside the VPC, with NO floating IP allocated. " +
+					"a load-balancer VIP reachable via a public IP; \"internal\" makes the endpoint the private " +
+					"LB VIP only — reachable exclusively from inside the VPC, with NO public IP allocated. " +
 					"Defaults server-side to public. Create-only: changing it REPLACES the cluster. " +
-					"scheme = \"internal\" conflicts with floating_ip_id (an internal cluster has no floating IP).",
+					"scheme = \"internal\" conflicts with public_ip_id (an internal cluster has no public IP).",
 				Optional: true,
 				Computed: true,
 				PlanModifiers: []planmodifier.String{
@@ -148,12 +153,12 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 					stringvalidator.OneOf("public", "internal"),
 				},
 			},
-			"floating_ip_id": schema.StringAttribute{
-				Description: "The ID of an existing floating IP to use for the cluster API endpoint (bring-your-own FIP). " +
-					"Write-only on the API: reads expose only the resolved address (floating_ip), so imports cannot recover " +
-					"this value — after importing a cluster created with a BYO floating IP, omit this attribute or add " +
-					"`lifecycle { ignore_changes = [floating_ip_id] }`, otherwise the next plan will want to replace the " +
-					"cluster. A BYO floating IP survives cluster deletion.",
+			"public_ip_id": schema.StringAttribute{
+				Description: "The ID of an existing public IP to use for the cluster API endpoint (bring-your-own public IP). " +
+					"Write-only on the API: reads expose only the resolved address (public_ip), so imports cannot recover " +
+					"this value — after importing a cluster created with a BYO public IP, omit this attribute or add " +
+					"`lifecycle { ignore_changes = [public_ip_id] }`, otherwise the next plan will want to replace the " +
+					"cluster. A BYO public IP survives cluster deletion.",
 				Optional: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -255,8 +260,8 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"floating_ip": schema.StringAttribute{
-				Description: "The public (floating) IP address of the cluster API endpoint.",
+			"public_ip": schema.StringAttribute{
+				Description: "The public IP address of the cluster API endpoint.",
 				Computed:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
@@ -300,38 +305,38 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 	}
 }
 
-// ValidateConfig rejects the one invalid scheme/floating_ip_id combination at
+// ValidateConfig rejects the one invalid scheme/public_ip_id combination at
 // plan time: an "internal" cluster has a private VIP-only endpoint and no
-// floating IP, so pairing scheme = "internal" with floating_ip_id is a config
+// public IP, so pairing scheme = "internal" with public_ip_id is a config
 // error the API would 400. A ConflictsWith validator is NOT usable here because
-// the valid case (scheme "public" WITH floating_ip_id, i.e. bring-your-own FIP)
+// the valid case (scheme "public" WITH public_ip_id, i.e. bring-your-own FIP)
 // also sets both attributes. Unknown (interpolated) values are skipped — the
 // backend stays authoritative. A null scheme defaults to public server-side,
-// which never conflicts with a floating IP.
+// which never conflicts with a public IP.
 func (r *kubernetesClusterResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 	// Read ONLY the two attributes involved — decoding the whole model here would
 	// hard-error on a wholly-unknown initial_node_pool (a *struct target cannot
 	// carry unknown), breaking `terraform validate` for the common
 	// `initial_node_pool = var.pool` module pattern (expert-review Medium).
-	var scheme, floatingIPID types.String
+	var scheme, publicIPID types.String
 	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("scheme"), &scheme)...)
-	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("floating_ip_id"), &floatingIPID)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("public_ip_id"), &publicIPID)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if scheme.IsUnknown() || floatingIPID.IsUnknown() {
+	if scheme.IsUnknown() || publicIPID.IsUnknown() {
 		return
 	}
 	if scheme.IsNull() || scheme.ValueString() != "internal" {
 		return
 	}
-	if !floatingIPID.IsNull() && floatingIPID.ValueString() != "" {
+	if !publicIPID.IsNull() && publicIPID.ValueString() != "" {
 		resp.Diagnostics.AddAttributeError(
-			path.Root("floating_ip_id"),
-			"Unexpected floating_ip_id",
-			`floating_ip_id must not be set when scheme is "internal": an internal cluster exposes only its `+
-				`private load-balancer VIP inside the VPC and has no floating IP. Use scheme = "public" (the `+
-				`default) to attach a bring-your-own floating IP.`,
+			path.Root("public_ip_id"),
+			"Unexpected public_ip_id",
+			`public_ip_id must not be set when scheme is "internal": an internal cluster exposes only its `+
+				`private load-balancer VIP inside the VPC and has no public IP. Use scheme = "public" (the `+
+				`default) to attach a bring-your-own public IP.`,
 		)
 	}
 }
@@ -595,7 +600,7 @@ func (r *kubernetesClusterResource) Read(ctx context.Context, req resource.ReadR
 		return
 	}
 
-	// fromAPI leaves floating_ip_id and kubeconfig untouched (preserved from
+	// fromAPI leaves public_ip_id and kubeconfig untouched (preserved from
 	// prior state).
 	state.fromAPI(cluster)
 
@@ -756,7 +761,7 @@ func (r *kubernetesClusterResource) Delete(ctx context.Context, req resource.Del
 }
 
 func (r *kubernetesClusterResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	// floating_ip_id cannot be recovered on import (write-only on the API);
+	// public_ip_id cannot be recovered on import (write-only on the API);
 	// documented as a known limitation.
 	if strings.Contains(req.ID, "/") {
 		resp.Diagnostics.AddError(
@@ -766,4 +771,21 @@ func (r *kubernetesClusterResource) ImportState(ctx context.Context, req resourc
 		return
 	}
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// UpgradeState migrates v0 state (HCL attribute `floating_ip_id`) to v1
+// (`public_ip_id`). The rename is HCL-surface only, so the migration copies the
+// prior `floating_ip_id` value into `public_ip_id` and carries every other
+// attribute through unchanged. `floating_ip_id` is RequiresReplace, so without
+// this the first post-upgrade plan would want to destroy and recreate the
+// cluster (which would release the BYO public IP). The computed
+// `floating_ip`→`public_ip` rename rides along: the framework decodes the prior
+// state with IgnoreUndefinedAttributes, so the old computed value is dropped and
+// `public_ip` is re-read on the next refresh.
+func (r *kubernetesClusterResource) UpgradeState(ctx context.Context) map[int64]resource.StateUpgrader {
+	schemaResp := resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
+	return map[int64]resource.StateUpgrader{
+		0: stateupgrade.RenameStringAttr(ctx, schemaResp.Schema, "floating_ip_id", "public_ip_id"),
+	}
 }

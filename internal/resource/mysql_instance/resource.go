@@ -93,7 +93,10 @@ func (r *mysqlInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 		// v1: the HCL attribute `flavor` was renamed to `flavor_id` to match the
 		// flagship frostmoln_instance and the cache/messaging offers (the wire tag
 		// was always flavorId). See UpgradeState for the v0→v1 migration.
-		Version:     1,
+		// v2: the computed attribute `floating_ip` was renamed to `public_ip` to
+		// match the backend, which now serves the instance's public IP as
+		// `publicIp`. See UpgradeState for the v1→v2 migration.
+		Version:     2,
 		Description: "Manages a managed MySQL database instance in the Frostmoln platform.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -189,8 +192,8 @@ func (r *mysqlInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 					int64planmodifier.UseStateForUnknown(),
 				},
 			},
-			"floating_ip": schema.StringAttribute{
-				Description: "The floating (public) IP address, if assigned.",
+			"public_ip": schema.StringAttribute{
+				Description: "The public IP address, if assigned.",
 				Computed:    true,
 			},
 			"admin_username": schema.StringAttribute{
@@ -503,17 +506,22 @@ func (r *mysqlInstanceResource) ImportState(ctx context.Context, req resource.Im
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
-// UpgradeState migrates v0 state (HCL attribute `flavor`) to v1 (`flavor_id`).
-// The rename is HCL-surface only — the wire tag was always flavorId — so the
-// migration is purely local: it copies the prior `flavor` value into `flavor_id`
-// and carries every other attribute through unchanged. `flavor` is in-place
-// updatable (not RequiresReplace), so without this the first post-upgrade plan
-// would show a spurious update rather than a destroy; the upgrader keeps the
-// upgrade a clean no-op.
+// UpgradeState migrates prior state across the two HCL-surface renames:
+//   - v0→v1: the attribute `flavor` was renamed to `flavor_id`. The wire tag was
+//     always flavorId, so the migration is purely local: it copies the prior
+//     `flavor` value into `flavor_id` and carries every other attribute through
+//     unchanged. `flavor` is in-place updatable (not RequiresReplace), so without
+//     this the first post-upgrade plan would show a spurious update rather than a
+//     destroy; the upgrader keeps the upgrade a clean no-op.
+//   - v1→v2: the computed attribute `floating_ip` was renamed to `public_ip`. It
+//     is Computed-only, so the value is refreshed on the next Read regardless;
+//     the upgrader still carries the prior value across so state stays consistent
+//     until then.
 func (r *mysqlInstanceResource) UpgradeState(ctx context.Context) map[int64]resource.StateUpgrader {
 	schemaResp := resource.SchemaResponse{}
 	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
 	return map[int64]resource.StateUpgrader{
 		0: stateupgrade.RenameStringAttr(ctx, schemaResp.Schema, "flavor", "flavor_id"),
+		1: stateupgrade.RenameStringAttr(ctx, schemaResp.Schema, "floating_ip", "public_ip"),
 	}
 }

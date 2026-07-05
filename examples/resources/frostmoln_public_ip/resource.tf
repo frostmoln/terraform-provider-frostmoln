@@ -1,4 +1,4 @@
-resource "frostmoln_floating_ip" "example" {
+resource "frostmoln_public_ip" "example" {
   instance_id = frostmoln_instance.example.id
 
   tags = {

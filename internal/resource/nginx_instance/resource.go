@@ -154,7 +154,7 @@ func (r *nginxInstanceResource) pollPublicExposed(ctx context.Context, id string
 
 // ModifyPlan marks public_ip as unknown when the desired public value is
 // changing on an existing instance. Exposure is action-based (expose/unexpose),
-// so the Floating IP is (re)assigned or released during Update; without this the
+// so the Public IP is (re)assigned or released during Update; without this the
 // public_ip attribute's UseStateForUnknown would pin the plan to the stale value
 // and Terraform would reject the post-apply value as an inconsistent result.
 func (r *nginxInstanceResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
@@ -271,7 +271,7 @@ func (r *nginxInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				},
 			},
 			"public": schema.BoolAttribute{
-				Description: "Whether the instance is publicly exposed (ADR-0097): when true a Floating IP is " +
+				Description: "Whether the instance is publicly exposed (ADR-0097): when true a Public IP is " +
 					"associated to the instance's engine port so the deployed site is reachable on the public " +
 					"internet, and public_ip is populated. Set at create to expose immediately; toggling it " +
 					"afterwards runs the platform's expose (true) or unexpose (false) action.",
@@ -282,7 +282,7 @@ func (r *nginxInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				},
 			},
 			"public_ip": schema.StringAttribute{
-				Description: "The public Floating IP address associated with the instance while it is exposed (empty when not public).",
+				Description: "The public IP address associated with the instance while it is exposed (empty when not public).",
 				Computed:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),

@@ -17,8 +17,8 @@ type LoadBalancerModel struct {
 	Description        types.String `tfsdk:"description"`
 	VIPAddress         types.String `tfsdk:"vip_address"`
 	Scheme             types.String `tfsdk:"scheme"`
-	FloatingIPID       types.String `tfsdk:"floating_ip_id"`
-	FloatingIPAddress  types.String `tfsdk:"floating_ip_address"`
+	PublicIPID         types.String `tfsdk:"public_ip_id"`
+	PublicIPAddress    types.String `tfsdk:"public_ip_address"`
 	Provider           types.String `tfsdk:"provider_type"`
 	FlavorID           types.String `tfsdk:"flavor_id"`
 	Tags               types.Map    `tfsdk:"tags"`
@@ -40,8 +40,8 @@ type apiLoadBalancer struct {
 	VIPAddress         string            `json:"vipAddress,omitempty"`
 	VIPPortID          string            `json:"vipPortId,omitempty"`
 	Scheme             string            `json:"scheme,omitempty"`
-	FloatingIPID       string            `json:"floatingIpId,omitempty"`
-	FloatingIPAddress  string            `json:"floatingIpAddress,omitempty"`
+	PublicIPID         string            `json:"publicIpId,omitempty"`
+	PublicIPAddress    string            `json:"publicIpAddress,omitempty"`
 	Provider           string            `json:"provider,omitempty"`
 	FlavorID           string            `json:"flavorId,omitempty"`
 	Status             string            `json:"status"`
@@ -54,16 +54,16 @@ type apiLoadBalancer struct {
 
 // apiCreateLoadBalancerRequest is the API request to create a load balancer.
 type apiCreateLoadBalancerRequest struct {
-	Name         string            `json:"name"`
-	Description  string            `json:"description,omitempty"`
-	VPCID        string            `json:"vpcId"`
-	SubnetID     string            `json:"subnetId"`
-	VIPAddress   string            `json:"vipAddress,omitempty"`
-	Scheme       string            `json:"scheme,omitempty"`
-	FloatingIPID string            `json:"floatingIpId,omitempty"`
-	Provider     string            `json:"provider,omitempty"`
-	FlavorID     string            `json:"flavorId,omitempty"`
-	Tags         map[string]string `json:"tags,omitempty"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	VPCID       string            `json:"vpcId"`
+	SubnetID    string            `json:"subnetId"`
+	VIPAddress  string            `json:"vipAddress,omitempty"`
+	Scheme      string            `json:"scheme,omitempty"`
+	PublicIPID  string            `json:"publicIpId,omitempty"`
+	Provider    string            `json:"provider,omitempty"`
+	FlavorID    string            `json:"flavorId,omitempty"`
+	Tags        map[string]string `json:"tags,omitempty"`
 }
 
 // apiUpdateLoadBalancerRequest is the API request to update a load balancer.
@@ -91,8 +91,8 @@ func (m *LoadBalancerModel) toCreateRequest(ctx context.Context, diags *diag.Dia
 	if !m.Scheme.IsNull() && !m.Scheme.IsUnknown() {
 		req.Scheme = m.Scheme.ValueString()
 	}
-	if !m.FloatingIPID.IsNull() && !m.FloatingIPID.IsUnknown() {
-		req.FloatingIPID = m.FloatingIPID.ValueString()
+	if !m.PublicIPID.IsNull() && !m.PublicIPID.IsUnknown() {
+		req.PublicIPID = m.PublicIPID.ValueString()
 	}
 	if !m.Provider.IsNull() && !m.Provider.IsUnknown() {
 		req.Provider = m.Provider.ValueString()
@@ -171,17 +171,17 @@ func (m *LoadBalancerModel) fromAPI(ctx context.Context, lb *apiLoadBalancer, di
 		m.Scheme = types.StringValue("internal")
 	}
 
-	// floating_ip_id is the bring-your-own FIP (config); reflect the attached
-	// FIP from the read. floating_ip_address is computed.
-	if lb.FloatingIPID != "" {
-		m.FloatingIPID = types.StringValue(lb.FloatingIPID)
+	// public_ip_id is the bring-your-own FIP (config); reflect the attached
+	// FIP from the read. public_ip_address is computed.
+	if lb.PublicIPID != "" {
+		m.PublicIPID = types.StringValue(lb.PublicIPID)
 	} else {
-		m.FloatingIPID = types.StringNull()
+		m.PublicIPID = types.StringNull()
 	}
-	if lb.FloatingIPAddress != "" {
-		m.FloatingIPAddress = types.StringValue(lb.FloatingIPAddress)
+	if lb.PublicIPAddress != "" {
+		m.PublicIPAddress = types.StringValue(lb.PublicIPAddress)
 	} else {
-		m.FloatingIPAddress = types.StringNull()
+		m.PublicIPAddress = types.StringNull()
 	}
 
 	if lb.Provider != "" {

@@ -72,7 +72,7 @@ func TestAccKubernetesCluster_full(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceName, "initial_node_pool.status", "active"),
 					resource.TestCheckResourceAttrSet(resourceName, "initial_node_pool.id"),
 					resource.TestCheckResourceAttrSet(resourceName, "endpoint"),
-					resource.TestCheckResourceAttrSet(resourceName, "floating_ip"),
+					resource.TestCheckResourceAttrSet(resourceName, "public_ip"),
 					resource.TestCheckResourceAttrSet(resourceName, "load_balancer_id"),
 					resource.TestCheckResourceAttrSet(resourceName, "pod_cidr"),
 					resource.TestCheckResourceAttrSet(resourceName, "service_cidr"),
@@ -138,19 +138,19 @@ func TestAccKubernetesCluster_full(t *testing.T) {
 	})
 }
 
-// TestAccKubernetesCluster_byoFloatingIP creates a cluster on a
-// bring-your-own floating IP, then removes only the cluster from the config
+// TestAccKubernetesCluster_byoPublicIP creates a cluster on a
+// bring-your-own public IP, then removes only the cluster from the config
 // and verifies the FIP SURVIVES the cluster deletion: the plan must treat the
 // FIP as a no-op (a saga that wrongly released it would refresh to 404 and
 // plan a re-create), and an out-of-band API read must return the same
 // address. Re-association was proven in the live BYO-FIP acceptance (Ambix
 // 019ecab4-6125); re-proving it here would cost a second cluster create.
-func TestAccKubernetesCluster_byoFloatingIP(t *testing.T) {
+func TestAccKubernetesCluster_byoPublicIP(t *testing.T) {
 	name := acctest.RandomName("k8s-byo")
 	vpcName := acctest.RandomName("vpc")
 	subnetName := acctest.RandomName("subnet")
 	resourceName := "frostmoln_kubernetes_cluster.test"
-	fipResourceName := "frostmoln_floating_ip.byo"
+	fipResourceName := "frostmoln_public_ip.byo"
 
 	// Captured in step 1 so step 2 can verify — out of band — that the
 	// cluster is gone and the exact same FIP survived after the cluster left
@@ -165,15 +165,15 @@ func TestAccKubernetesCluster_byoFloatingIP(t *testing.T) {
 			// Network FIPs hard-delete (404), unlike the soft-deleted K8s
 			// rows — but the release is async (202 fire-and-forget), so poll
 			// instead of the immediate acctest.CheckDestroyByTenantPath.
-			checkFloatingIPsReleased,
+			checkPublicIPsReleased,
 		),
 		Steps: []resource.TestStep{
 			{
 				Config: testAccKubernetesClusterBYOFIPConfig(vpcName, subnetName, name, true),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(resourceName, "status", "running"),
-					resource.TestCheckResourceAttrPair(resourceName, "floating_ip_id", fipResourceName, "id"),
-					resource.TestCheckResourceAttrPair(resourceName, "floating_ip", fipResourceName, "address"),
+					resource.TestCheckResourceAttrPair(resourceName, "public_ip_id", fipResourceName, "id"),
+					resource.TestCheckResourceAttrPair(resourceName, "public_ip", fipResourceName, "address"),
 					func(s *terraform.State) error {
 						cl, ok := s.RootModule().Resources[resourceName]
 						if !ok {
@@ -216,18 +216,18 @@ func TestAccKubernetesCluster_byoFloatingIP(t *testing.T) {
 							return err
 						}
 						// The very same FIP still exists with its address.
-						resp, err := c.Get(context.Background(), c.TenantPath("/floating-ips/"+fipID), nil)
+						resp, err := c.Get(context.Background(), c.TenantPath("/public-ips/"+fipID), nil)
 						if err != nil {
-							return fmt.Errorf("BYO floating IP %s did not survive the cluster delete: %w", fipID, err)
+							return fmt.Errorf("BYO public IP %s did not survive the cluster delete: %w", fipID, err)
 						}
 						fip, err := client.ParseResponse[struct {
-							Address string `json:"floatingIpAddress"`
+							Address string `json:"publicIpAddress"`
 						}](resp)
 						if err != nil {
-							return fmt.Errorf("failed to parse floating IP %s: %w", fipID, err)
+							return fmt.Errorf("failed to parse public IP %s: %w", fipID, err)
 						}
 						if fip.Address != fipAddress {
-							return fmt.Errorf("BYO floating IP %s changed address: had %s, now %s", fipID, fipAddress, fip.Address)
+							return fmt.Errorf("BYO public IP %s changed address: had %s, now %s", fipID, fipAddress, fip.Address)
 						}
 						return nil
 					},
@@ -294,22 +294,22 @@ func checkSoftDeleted(c *client.Client, what, path string) error {
 	return nil
 }
 
-// checkFloatingIPsReleased verifies every floating IP left in state is gone
+// checkPublicIPsReleased verifies every public IP left in state is gone
 // (404). The FIP resource's Delete is async fire-and-forget (202), so the
 // allocation lingers briefly after destroy returns — poll before declaring a
 // leak.
-func checkFloatingIPsReleased(s *terraform.State) error {
+func checkPublicIPsReleased(s *terraform.State) error {
 	c, err := acctest.TestClient()
 	if err != nil {
 		return err
 	}
 	for name, rs := range s.RootModule().Resources {
-		if rs.Type != "frostmoln_floating_ip" {
+		if rs.Type != "frostmoln_public_ip" {
 			continue
 		}
 		deadline := time.Now().Add(90 * time.Second)
 		for {
-			_, err := c.Get(context.Background(), c.TenantPath("/floating-ips/"+rs.Primary.ID), nil)
+			_, err := c.Get(context.Background(), c.TenantPath("/public-ips/"+rs.Primary.ID), nil)
 			if client.IsNotFound(err) {
 				break
 			}
@@ -317,7 +317,7 @@ func checkFloatingIPsReleased(s *terraform.State) error {
 				return fmt.Errorf("unexpected error checking %s (%s): %w", name, rs.Primary.ID, err)
 			}
 			if time.Now().After(deadline) {
-				return fmt.Errorf("floating IP %s (%s) still exists 90s after destroy", name, rs.Primary.ID)
+				return fmt.Errorf("public IP %s (%s) still exists 90s after destroy", name, rs.Primary.ID)
 			}
 			time.Sleep(5 * time.Second)
 		}
@@ -413,7 +413,7 @@ resource "frostmoln_kubernetes_cluster" "test" {
 %[5]s`, vpcName, subnetName, clusterName, initialNodeCount, extra, testAccNodeFlavorLocals)
 }
 
-// testAccKubernetesClusterBYOFIPConfig renders a standalone floating IP and,
+// testAccKubernetesClusterBYOFIPConfig renders a standalone public IP and,
 // when withCluster is true, a cluster using it as the API endpoint FIP.
 func testAccKubernetesClusterBYOFIPConfig(vpcName, subnetName, clusterName string, withCluster bool) string {
 	cluster := ""
@@ -423,7 +423,7 @@ resource "frostmoln_kubernetes_cluster" "test" {
   name           = %[1]q
   vpc_id         = frostmoln_vpc.test.id
   subnet_id      = frostmoln_subnet.test.id
-  floating_ip_id = frostmoln_floating_ip.byo.id
+  public_ip_id = frostmoln_public_ip.byo.id
 
   initial_node_pool = {
     flavor_id  = local.node_flavor
@@ -448,6 +448,6 @@ resource "frostmoln_subnet" "test" {
   cidr   = "10.43.1.0/24"
 }
 
-resource "frostmoln_floating_ip" "byo" {}
+resource "frostmoln_public_ip" "byo" {}
 %[3]s`, vpcName, subnetName, cluster, testAccNodeFlavorLocals)
 }

@@ -81,8 +81,8 @@ func TestLoadBalancerFromAPIInternalDefaults(t *testing.T) {
 	if !m.VIPAddress.IsNull() {
 		t.Error("expected null vip_address")
 	}
-	if !m.FloatingIPID.IsNull() {
-		t.Error("expected null floating_ip_id")
+	if !m.PublicIPID.IsNull() {
+		t.Error("expected null public_ip_id")
 	}
 	if !m.Tags.IsNull() {
 		t.Error("expected null tags")
@@ -99,7 +99,7 @@ func TestLoadBalancerNewResource(t *testing.T) {
 
 func TestLoadBalancerSchema(t *testing.T) {
 	schemaResp := getSchema(t)
-	for _, attr := range []string{"id", "name", "vpc_id", "subnet_id", "description", "vip_address", "scheme", "floating_ip_id", "floating_ip_address", "provider_type", "flavor_id", "tags", "vip_port_id", "status", "provisioning_status", "operating_status", "created_at", "updated_at"} {
+	for _, attr := range []string{"id", "name", "vpc_id", "subnet_id", "description", "vip_address", "scheme", "public_ip_id", "public_ip_address", "provider_type", "flavor_id", "tags", "vip_port_id", "status", "provisioning_status", "operating_status", "created_at", "updated_at"} {
 		if _, ok := schemaResp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %q", attr)
 		}
@@ -243,8 +243,8 @@ func lbStateValue(t *testing.T, schemaResp resource.SchemaResponse, ctx context.
 		"description":         tftypes.NewValue(tftypes.String, nil),
 		"vip_address":         tftypes.NewValue(tftypes.String, "10.0.0.7"),
 		"scheme":              tftypes.NewValue(tftypes.String, "internal"),
-		"floating_ip_id":      tftypes.NewValue(tftypes.String, nil),
-		"floating_ip_address": tftypes.NewValue(tftypes.String, nil),
+		"public_ip_id":        tftypes.NewValue(tftypes.String, nil),
+		"public_ip_address":   tftypes.NewValue(tftypes.String, nil),
 		"provider_type":       tftypes.NewValue(tftypes.String, "amphora"),
 		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
@@ -367,8 +367,8 @@ func TestLoadBalancerUpdate(t *testing.T) {
 		"description":         tftypes.NewValue(tftypes.String, nil),
 		"vip_address":         tftypes.NewValue(tftypes.String, "10.0.0.7"),
 		"scheme":              tftypes.NewValue(tftypes.String, "internal"),
-		"floating_ip_id":      tftypes.NewValue(tftypes.String, nil),
-		"floating_ip_address": tftypes.NewValue(tftypes.String, nil),
+		"public_ip_id":        tftypes.NewValue(tftypes.String, nil),
+		"public_ip_address":   tftypes.NewValue(tftypes.String, nil),
 		"provider_type":       tftypes.NewValue(tftypes.String, "amphora"),
 		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),

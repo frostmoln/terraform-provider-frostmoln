@@ -27,18 +27,18 @@ resource "frostmoln_load_balancer" "web" {
   }
 }
 
-# A PUBLIC load balancer: attach a pre-allocated, unassociated floating IP to
-# the VIP for external reachability. scheme and floating_ip_id are ForceNew
-# (there is no in-place internal<->public migration). floating_ip_id is REQUIRED
+# A PUBLIC load balancer: attach a pre-allocated, unassociated public IP to
+# the VIP for external reachability. scheme and public_ip_id are ForceNew
+# (there is no in-place internal<->public migration). public_ip_id is REQUIRED
 # when scheme = "public" and must be omitted when scheme = "internal".
-resource "frostmoln_floating_ip" "ingress" {}
+resource "frostmoln_public_ip" "ingress" {}
 
 resource "frostmoln_load_balancer" "public_web" {
   name           = "public-web-lb"
   vpc_id         = frostmoln_vpc.main.id
   subnet_id      = frostmoln_subnet.public.id
   scheme         = "public"
-  floating_ip_id = frostmoln_floating_ip.ingress.id
+  public_ip_id = frostmoln_public_ip.ingress.id
 
-  # floating_ip_address is computed (the attached FIP's public address).
+  # public_ip_address is computed (the attached public IP's address).
 }
