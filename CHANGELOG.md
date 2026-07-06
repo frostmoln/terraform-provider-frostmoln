@@ -2,12 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.1] - 2026-07-06
+
+### 🚜 Refactor
+
+- Remove dead floating_ip state-upgraders (no TF users, breaking) (#188)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.6.0 (#185)
+- Reuse shared go-build.yml workflow (test + coverage only) (#184)
+
 ## [0.15.0] - 2026-07-05
 
 ### 🚀 Features
 
 - *(nginx)* Add php_enabled + php_version to nginx_instance (#179)
 - *(cache)* In-place flavor_id resize for redis/valkey (#181)
+- Rename frostmoln_floating_ip -> frostmoln_public_ip (+ MoveState, LB/k8s/db attrs) (#183)
 
 ## [0.14.0] - 2026-07-05
 
