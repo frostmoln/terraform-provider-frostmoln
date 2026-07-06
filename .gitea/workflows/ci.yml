@@ -7,78 +7,13 @@ on:
     branches: [main]
 
 jobs:
+  # Reusable Go test + coverage (build:false — the provider ships binaries via
+  # goreleaser, no OCI image). Keep name: CI + job id `test` so the required
+  # context stays `CI / test (pull_request)`; version-pin (ADR-0048), Renovate bumps.
   test:
-    if: gitea.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    env:
-      GOPRIVATE: go.frostmoln.internal/*
-      GONOSUMCHECK: go.frostmoln.internal/*
-      GOINSECURE: go.frostmoln.internal,git.sm.internal
-      GIT_SSL_NO_VERIFY: "true"
-      GIT_CONFIG_GLOBAL: /tmp/.gitconfig-ci
-    steps:
-      - uses: actions/checkout@v7
-      # Go is baked into the anchor-runner image (GOTOOLCHAIN=auto matches
-      # go.mod), so no actions/setup-go. The provider now imports
-      # go.frostmoln.internal/oidc, so it DOES need the private-module rewrite:
-      # `go mod` clones into a fresh repo that doesn't inherit checkout's per-repo
-      # credentials, so the rewrite URL embeds the ci-runner token and targets
-      # git.sm.internal (the k3s dind-bridge runners NXDOMAIN on bare `gitea`).
-      - name: Configure Go private modules
-        env:
-          GITEA_TOKEN: ${{ secrets.CI_GITEA_TOKEN }}
-        run: |  # pragma: allowlist secret
-          printf '[url "https://ci-runner:%s@git.sm.internal/frostmoln/"]\n  insteadOf = http://go.frostmoln.internal/\n  insteadOf = https://go.frostmoln.internal/\n  insteadOf = http://git.sm.internal/frostmoln/\n  insteadOf = https://git.sm.internal/frostmoln/\n' "$GITEA_TOKEN" > /tmp/.gitconfig-ci
-      - name: Test
-        run: go test ./... -race -coverprofile=coverage.out
-      - name: Check coverage
-        id: coverage
-        run: |
-          # renovate: datasource=go depName=github.com/vladopajic/go-test-coverage/v2
-          go install github.com/vladopajic/go-test-coverage/v2@v2.18.8
-          go-test-coverage --config ./.testcoverage.yml --github-action-output
-      - name: Download baseline coverage
-        if: gitea.event_name == 'pull_request'
-        uses: actions/download-artifact@v3
-        with:
-          name: coverage-baseline
-          path: ./baseline
-        continue-on-error: true
-      - name: Compare coverage
-        if: gitea.event_name == 'pull_request'
-        run: |
-          CURRENT="${{ steps.coverage.outputs.total-coverage }}"
-          if [ -f ./baseline/coverage.txt ]; then
-            BASE=$(cat ./baseline/coverage.txt)
-            echo "Base coverage: ${BASE}%"
-            echo "Current coverage: ${CURRENT}%"
-            if [ "$(echo "$CURRENT < $BASE" | bc -l)" -eq 1 ]; then
-              echo "::error::Coverage decreased from ${BASE}% to ${CURRENT}%"
-              exit 1
-            fi
-            echo "Coverage maintained or improved: ${BASE}% -> ${CURRENT}%"
-          else
-            echo "No baseline coverage found, skipping comparison"
-            echo "Current coverage: ${CURRENT}%"
-          fi
-      - name: Save coverage baseline
-        if: gitea.ref == 'refs/heads/main'
-        run: echo "${{ steps.coverage.outputs.total-coverage }}" > coverage.txt
-      - name: Upload coverage baseline
-        if: gitea.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v3
-        with:
-          name: coverage-baseline
-          path: coverage.txt
-          retention-days: 90
-      - name: Post coverage comment
-        if: gitea.event_name == 'pull_request'
-        env:
-          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
-          GITEA_URL: ${{ gitea.server_url }}
-        run: |
-          COVERAGE="${{ steps.coverage.outputs.total-coverage }}"
-          curl -X POST "${GITEA_URL}/api/v1/repos/${{ gitea.repository }}/issues/${{ gitea.event.pull_request.number }}/comments" \
-            -H "Authorization: token ${GITEA_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "{\"body\": \"## Coverage Report\n\nTotal coverage: **${COVERAGE}%**\"}"
+    uses: frostmoln/workflows/.gitea/workflows/go-build.yml@v0.6.0
+    with:
+      build: false
+    secrets:
+      CI_GITEA_TOKEN: ${{ secrets.CI_GITEA_TOKEN }}
+      GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
