@@ -20,7 +20,6 @@ import (
 var (
 	_ resource.Resource                = &publicIPResource{}
 	_ resource.ResourceWithImportState = &publicIPResource{}
-	_ resource.ResourceWithMoveState   = &publicIPResource{}
 )
 
 type publicIPResource struct {
@@ -375,52 +374,4 @@ func (r *publicIPResource) Delete(ctx context.Context, req resource.DeleteReques
 
 func (r *publicIPResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
-}
-
-// MoveState lets a practitioner migrate an existing resource from the old
-// frostmoln_floating_ip type to frostmoln_public_ip with a `moved` block:
-//
-//	moved {
-//	  from = frostmoln_floating_ip.example
-//	  to   = frostmoln_public_ip.example
-//	}
-//
-// The old type was renamed in place: its schema is byte-for-byte identical to
-// this one, so the move is a straight state passthrough. This avoids a
-// destroy/recreate, which would RELEASE the customer's allocated IP address.
-// The old frostmoln_floating_ip type is no longer registered by the provider —
-// this StateMover is the only supported migration path.
-func (r *publicIPResource) MoveState(ctx context.Context) []resource.StateMover {
-	// Reuse this resource's schema as the source schema: it is identical to the
-	// old frostmoln_floating_ip schema, so the framework can decode the source
-	// state into SourceState for a clean Get/Set passthrough.
-	schemaResp := resource.SchemaResponse{}
-	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
-
-	return []resource.StateMover{
-		{
-			SourceSchema: &schemaResp.Schema,
-			StateMover: func(ctx context.Context, req resource.MoveStateRequest, resp *resource.MoveStateResponse) {
-				// Only handle a move from the old floating IP type; any other
-				// source is left for another StateMover (framework skips this one).
-				if req.SourceTypeName != "frostmoln_floating_ip" {
-					return
-				}
-				if req.SourceState == nil {
-					resp.Diagnostics.AddError(
-						"Unable to Move Public IP State",
-						"the source frostmoln_floating_ip state could not be read against the expected schema.",
-					)
-					return
-				}
-
-				var src PublicIPModel
-				resp.Diagnostics.Append(req.SourceState.Get(ctx, &src)...)
-				if resp.Diagnostics.HasError() {
-					return
-				}
-				resp.Diagnostics.Append(resp.TargetState.Set(ctx, &src)...)
-			},
-		},
-	}
 }

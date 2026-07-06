@@ -21,7 +21,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
-	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
 )
 
 // Cluster and node-pool statuses (kubernetes service vocabulary). Deletes are
@@ -42,7 +41,6 @@ var (
 	_ resource.Resource                   = &kubernetesClusterResource{}
 	_ resource.ResourceWithImportState    = &kubernetesClusterResource{}
 	_ resource.ResourceWithValidateConfig = &kubernetesClusterResource{}
-	_ resource.ResourceWithUpgradeState   = &kubernetesClusterResource{}
 )
 
 // NewResource returns a new kubernetes_cluster resource factory.
@@ -76,9 +74,6 @@ func (r *kubernetesClusterResource) Metadata(_ context.Context, req resource.Met
 
 func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		// v1: the HCL attributes `floating_ip_id`/`floating_ip` were renamed to
-		// `public_ip_id`/`public_ip`. See UpgradeState for the v0→v1 migration.
-		Version: 1,
 		Description: "Manages a managed Kubernetes cluster in the Frostmoln platform. " +
 			"The cluster owns its initial node pool (created embedded, scaled in-place). " +
 			"Additional node pools are managed with the frostmoln_kubernetes_node_pool resource.",
@@ -771,21 +766,4 @@ func (r *kubernetesClusterResource) ImportState(ctx context.Context, req resourc
 		return
 	}
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
-}
-
-// UpgradeState migrates v0 state (HCL attribute `floating_ip_id`) to v1
-// (`public_ip_id`). The rename is HCL-surface only, so the migration copies the
-// prior `floating_ip_id` value into `public_ip_id` and carries every other
-// attribute through unchanged. `floating_ip_id` is RequiresReplace, so without
-// this the first post-upgrade plan would want to destroy and recreate the
-// cluster (which would release the BYO public IP). The computed
-// `floating_ip`→`public_ip` rename rides along: the framework decodes the prior
-// state with IgnoreUndefinedAttributes, so the old computed value is dropped and
-// `public_ip` is re-read on the next refresh.
-func (r *kubernetesClusterResource) UpgradeState(ctx context.Context) map[int64]resource.StateUpgrader {
-	schemaResp := resource.SchemaResponse{}
-	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
-	return map[int64]resource.StateUpgrader{
-		0: stateupgrade.RenameStringAttr(ctx, schemaResp.Schema, "floating_ip_id", "public_ip_id"),
-	}
 }

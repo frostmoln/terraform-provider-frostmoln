@@ -17,14 +17,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
-	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
 )
 
 var (
 	_ resource.Resource                   = &loadBalancerResource{}
 	_ resource.ResourceWithImportState    = &loadBalancerResource{}
 	_ resource.ResourceWithValidateConfig = &loadBalancerResource{}
-	_ resource.ResourceWithUpgradeState   = &loadBalancerResource{}
 )
 
 type loadBalancerResource struct {
@@ -58,10 +56,6 @@ func (r *loadBalancerResource) Metadata(_ context.Context, req resource.Metadata
 
 func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		// v1: the HCL attributes `floating_ip_id`/`floating_ip_address` were
-		// renamed to `public_ip_id`/`public_ip_address`. See UpgradeState for the
-		// v0→v1 migration.
-		Version:     1,
 		Description: "Manages a load balancer in the Frostmoln Cloud Platform. Load balancer creation and deletion are asynchronous (Octavia), so applies wait on the provisioning operation to complete.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -406,23 +400,6 @@ func (r *loadBalancerResource) Delete(ctx context.Context, req resource.DeleteRe
 
 func (r *loadBalancerResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
-}
-
-// UpgradeState migrates v0 state (HCL attribute `floating_ip_id`) to v1
-// (`public_ip_id`). The rename is HCL-surface only, so the migration copies the
-// prior `floating_ip_id` value into `public_ip_id` and carries every other
-// attribute through unchanged. `floating_ip_id` is RequiresReplace, so without
-// this the first post-upgrade plan would want to destroy and recreate the load
-// balancer. The computed `floating_ip_address`→`public_ip_address` rename rides
-// along: the framework decodes the prior state with IgnoreUndefinedAttributes,
-// so the old computed value is dropped and `public_ip_address` is re-read on the
-// next refresh.
-func (r *loadBalancerResource) UpgradeState(ctx context.Context) map[int64]resource.StateUpgrader {
-	schemaResp := resource.SchemaResponse{}
-	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
-	return map[int64]resource.StateUpgrader{
-		0: stateupgrade.RenameStringAttr(ctx, schemaResp.Schema, "floating_ip_id", "public_ip_id"),
-	}
 }
 
 // getLoadBalancer fetches a load balancer by ID.
