@@ -75,8 +75,12 @@ func (r *postgresInstanceResource) pollRunning(ctx context.Context, id string) (
 
 // resizeStorage grows the instance's storage online via POST /resize, then waits
 // for it to return to "running". Grow-only: a shrink is rejected at plan time.
+//
+// The resize retries a TRANSIENT 409 (a mixed apply that also removes a replica
+// can 409 the resize while the replica is mid-delete); a permanent 409 (wrong
+// state) surfaces immediately via IsTransientResizeConflict's default-deny.
 func (r *postgresInstanceResource) resizeStorage(ctx context.Context, id string, storageGB int) error {
-	_, err := r.client.Post(ctx, r.client.TenantPath("/databases/"+id+"/resize"), apiResizePostgresInstanceRequest{StorageGB: storageGB})
+	_, err := r.client.PostWithConflictRetry(ctx, r.client.TenantPath("/databases/"+id+"/resize"), apiResizePostgresInstanceRequest{StorageGB: storageGB}, client.IsTransientResizeConflict, r.getPollInterval(), r.getPollTimeout())
 	if err != nil {
 		return err
 	}

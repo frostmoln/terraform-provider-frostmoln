@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"go.frostmoln.internal/oidc"
@@ -253,6 +254,45 @@ func IsAlreadyInDesiredState(err error) bool {
 func IsConflict(err error) bool {
 	if apiErr, ok := err.(*APIError); ok {
 		return apiErr.StatusCode == http.StatusConflict
+	}
+	return false
+}
+
+// resizeTransientConflictMarkers are the message substrings of the two
+// TRANSIENT 409s the managed-database resize path emits — a backup running, or
+// a replica not yet running (typically mid-delete). Both clear on their own in
+// minutes, so a resize is worth retrying. They are matched on stable substrings
+// only, never the volatile replica id/status the backend interpolates.
+//
+// The message text is owned by the database service
+// (database/internal/service/impl/instance.go, the 409s at ~:483 and ~:531); it
+// is the only discriminator, because the resize path's permanent 409s share the
+// code:"conflict"/status-409 wire shape. If either message is reworded there,
+// this list must follow — a transient reword degrades safely (the resize
+// surfaces the 409 as before the fix) but silently.
+var resizeTransientConflictMarkers = []string{
+	"a backup is in progress",
+	"all replicas must be running to resize",
+}
+
+// IsTransientResizeConflict reports whether err is a 409 Conflict from the
+// managed-database resize path that is TRANSIENT (worth retrying). Unlike
+// IsConflict, it is deliberately default-deny: the resize path also emits
+// PERMANENT 409s (wrong instance state, replica has no data volume) that would
+// spin until timeout under a blind retry, so it matches only the two known
+// transient messages. Anything else — including those permanent 409s — returns
+// false and is surfaced immediately. This is the narrow predicate the resize
+// retry uses, the reason DeleteWithConflictRetry's blanket IsConflict cannot be
+// reused here (see its doc-comment).
+func IsTransientResizeConflict(err error) bool {
+	apiErr, ok := err.(*APIError)
+	if !ok || apiErr.StatusCode != http.StatusConflict || apiErr.Code != "conflict" {
+		return false
+	}
+	for _, marker := range resizeTransientConflictMarkers {
+		if strings.Contains(apiErr.Message, marker) {
+			return true
+		}
 	}
 	return false
 }
@@ -611,6 +651,46 @@ func (c *Client) DeleteWithConflictRetry(ctx context.Context, path string, inter
 		if !time.Now().Before(deadline) {
 			// The conflict never cleared within the budget — surface the last
 			// 409 (more actionable than a bare deadline error), don't hang.
+			return resp, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(interval):
+		}
+	}
+}
+
+// PostWithConflictRetry sends a POST and retries while retryable(err) is true,
+// up to timeout, sleeping interval between attempts. It exists for the managed-
+// database instance resize path (POST /databases/{id}/resize): a mixed
+// `terraform apply` that grows the primary storage AND removes a read replica in
+// the same plan runs the two concurrently (no dependency edge), so the resize
+// can 409 transiently while the replica is mid-delete — the mirror of the
+// replica-delete 409 DeleteWithConflictRetry handles.
+//
+// Unlike DeleteWithConflictRetry, the retry predicate is a parameter rather than
+// a hardcoded IsConflict: the resize path emits PERMANENT 409s (wrong instance
+// state, replica with no data volume) alongside the transient ones, and blindly
+// retrying those would spin until timeout. Callers pass IsTransientResizeConflict
+// so only the two transient messages retry; every other error (including a
+// permanent 409) returns on the first attempt.
+//
+// Idempotency: a resize 409 is always rejected before the resize workflow
+// starts — either pre-CAS (backup in progress) or with the instance reverted
+// resizing→running before the call returns (a replica not yet running) — so no
+// partial resize is ever in flight and re-POSTing is safe. Once the call
+// succeeds (202/200) the loop stops. A transient 409 that never clears within
+// the budget surfaces the last 409 (more actionable than a bare deadline error),
+// never swallowed as success.
+func (c *Client) PostWithConflictRetry(ctx context.Context, path string, body any, retryable func(error) bool, interval, timeout time.Duration) (*Response, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		resp, err := c.Post(ctx, path, body)
+		if err == nil || !retryable(err) {
+			return resp, err
+		}
+		if !time.Now().Before(deadline) {
 			return resp, err
 		}
 		select {

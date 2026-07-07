@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -454,6 +455,140 @@ func TestDeleteWithConflictRetry(t *testing.T) {
 
 		c := NewClient(server.URL, "test-key")
 		_, err := c.DeleteWithConflictRetry(ctx, "/v1/x", 2*time.Second, 10*time.Second)
+		if err != context.Canceled {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+	})
+}
+
+func TestIsTransientResizeConflict(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"non-api error", errors.New("boom"), false},
+		{
+			"transient: backup in progress",
+			&APIError{StatusCode: 409, Code: "conflict", Message: "a backup is in progress for this instance; retry the resize after it completes"},
+			true,
+		},
+		{
+			"transient: replica not running",
+			&APIError{StatusCode: 409, Code: "conflict", Message: "cannot resize: read replica 7f3a is stopped; all replicas must be running to resize (or delete it first)"},
+			true,
+		},
+		{
+			"permanent: wrong instance state",
+			&APIError{StatusCode: 409, Code: "conflict", Message: "cannot resize instance in deleting state"},
+			false,
+		},
+		{
+			"permanent: replica has no data volume",
+			&APIError{StatusCode: 409, Code: "conflict", Message: "cannot resize: read replica 7f3a has no data volume recorded"},
+			false,
+		},
+		{
+			"conflict message but not a 409",
+			&APIError{StatusCode: 500, Code: "conflict", Message: "a backup is in progress"},
+			false,
+		},
+		{
+			"409 with a non-conflict code",
+			&APIError{StatusCode: 409, Code: "invalid_state", Message: "a backup is in progress"},
+			false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsTransientResizeConflict(tc.err); got != tc.want {
+				t.Errorf("IsTransientResizeConflict(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPostWithConflictRetry(t *testing.T) {
+	transientBody := map[string]string{"code": "conflict", "message": "cannot resize: read replica 7f3a is stopped; all replicas must be running to resize (or delete it first)"}
+	permanentBody := map[string]string{"code": "conflict", "message": "cannot resize instance in deleting state"}
+
+	t.Run("retries a transient 409 then succeeds", func(t *testing.T) {
+		var calls atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if calls.Add(1) == 1 {
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(transientBody)
+				return
+			}
+			w.WriteHeader(http.StatusAccepted)
+		}))
+		defer server.Close()
+
+		c := NewClient(server.URL, "test-key")
+		resp, err := c.PostWithConflictRetry(context.Background(), "/v1/x", map[string]int{"storageGb": 15}, IsTransientResizeConflict, 2*time.Millisecond, 200*time.Millisecond)
+		if err != nil {
+			t.Fatalf("expected success after retry, got %v", err)
+		}
+		if resp.StatusCode != http.StatusAccepted {
+			t.Errorf("expected 202, got %d", resp.StatusCode)
+		}
+		if got := calls.Load(); got < 2 {
+			t.Errorf("expected >1 attempt, got %d", got)
+		}
+	})
+
+	t.Run("surfaces a permanent 409 immediately without retrying", func(t *testing.T) {
+		var calls atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			calls.Add(1)
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(permanentBody)
+		}))
+		defer server.Close()
+
+		c := NewClient(server.URL, "test-key")
+		// A generous timeout: if the predicate wrongly retried the permanent
+		// 409, this budget would allow ~100 attempts before returning.
+		_, err := c.PostWithConflictRetry(context.Background(), "/v1/x", nil, IsTransientResizeConflict, 2*time.Millisecond, 200*time.Millisecond)
+		if !IsConflict(err) {
+			t.Fatalf("expected the permanent 409 to surface, got %v", err)
+		}
+		if got := calls.Load(); got != 1 {
+			t.Errorf("permanent 409 must not retry: expected exactly 1 attempt, got %d", got)
+		}
+	})
+
+	t.Run("surfaces the last 409 when the transient conflict never clears", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(transientBody)
+		}))
+		defer server.Close()
+
+		c := NewClient(server.URL, "test-key")
+		_, err := c.PostWithConflictRetry(context.Background(), "/v1/x", nil, IsTransientResizeConflict, 2*time.Millisecond, 20*time.Millisecond)
+		if !IsTransientResizeConflict(err) {
+			t.Fatalf("expected the persistent transient 409 to surface, got %v", err)
+		}
+	})
+
+	t.Run("returns ctx error on cancellation mid-backoff", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(transientBody)
+		}))
+		defer server.Close()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		// Cancel while the loop is parked in its 2s backoff after the first 409:
+		// 100ms clears the (sub-ms) first round-trip but lands well inside the
+		// sleep, so ctx.Done — not the deadline — is what returns.
+		timer := time.AfterFunc(100*time.Millisecond, cancel)
+		defer timer.Stop()
+
+		c := NewClient(server.URL, "test-key")
+		_, err := c.PostWithConflictRetry(ctx, "/v1/x", nil, IsTransientResizeConflict, 2*time.Second, 10*time.Second)
 		if err != context.Canceled {
 			t.Fatalf("expected context.Canceled, got %v", err)
 		}
