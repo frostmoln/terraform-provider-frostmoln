@@ -22,6 +22,7 @@ import (
 	dnszoneds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/dns_zone"
 	flavords "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/flavor"
 	flavorsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/flavors"
+	iampolicydocumentds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/iam_policy_document"
 	imageds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/image"
 	imagesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/images"
 	instanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/instance"
@@ -45,6 +46,8 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/bucket"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_record"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_zone"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/iam_policy"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/iam_policy_attachment"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/instance_port_security_groups"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/kubernetes_cluster"
@@ -382,6 +385,8 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		scale_group.NewResource,
 		secret.NewResource,
 		api_key.NewResource,
+		iam_policy.NewResource,
+		iam_policy_attachment.NewResource,
 		apache_instance.NewResource,
 		nginx_instance.NewResource,
 		webserver_domain.NewResource,
@@ -415,5 +420,6 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		kubernetestiersds.NewDataSource,
 		kubernetesflavorsds.NewDataSource,
 		kubernetesaddonsds.NewDataSource,
+		iampolicydocumentds.NewDataSource,
 	}
 }
