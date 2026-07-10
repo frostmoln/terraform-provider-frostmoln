@@ -251,14 +251,24 @@ func (r *iamPolicyAttachmentResource) ImportState(ctx context.Context, req resou
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("attachee_id"), parts[2])...)
 }
 
-// findAttachment pages the policy's attachment list looking for the given
+// findAttachment looks up the one attachment binding the policy to the given
 // principal. It returns (attachment, true, nil) on a match, (nil, false, nil)
-// when the whole list is exhausted without one, or a non-nil error on a
-// transport failure (a 404 from a deleted policy surfaces via client.IsNotFound).
+// when there is none, or a non-nil error on a transport failure (a 404 from a
+// deleted policy surfaces via client.IsNotFound).
+//
+// It passes the attacheeType/attacheeId filter so a filter-aware identity
+// (single-attachment lookup) answers in ONE request (a page of at most the one
+// match, empty nextCursor) — the O(1) fast path. The bounded paging loop is kept
+// as a version-compat fallback: an older identity ignores the unknown filter and
+// returns the full list, which the loop still pages+matches correctly. Either way
+// the per-row match check below is authoritative, so the filter is a pure
+// optimisation and never changes the result.
 func (r *iamPolicyAttachmentResource) findAttachment(ctx context.Context, policyID, attacheeType, attacheeID string) (*apiAttachment, bool, error) {
 	cursor := ""
 	for page := 0; page < maxAttachmentPages; page++ {
 		q := url.Values{}
+		q.Set("attacheeType", attacheeType)
+		q.Set("attacheeId", attacheeID)
 		if cursor != "" {
 			q.Set("cursor", cursor)
 		}

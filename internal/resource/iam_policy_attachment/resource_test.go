@@ -92,6 +92,43 @@ func TestFindAttachment_Paginates(t *testing.T) {
 	}
 }
 
+func TestFindAttachment_FilterFastPath(t *testing.T) {
+	var listCalls int
+	var gotType, gotID string
+	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/iam/policies/pol-1/attachments" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		listCalls++
+		gotType = r.URL.Query().Get("attacheeType")
+		gotID = r.URL.Query().Get("attacheeId")
+		// A filter-aware identity answers a single-attachment lookup with just the
+		// one match and an empty cursor — the loop must then stop after one request.
+		_ = json.NewEncoder(w).Encode(apiAttachmentList{
+			Attachments: []apiAttachment{{PolicyID: "pol-1", AttacheeType: "api_key", AttacheeID: "ak-1", AttachedAt: "t1"}},
+			NextCursor:  "",
+		})
+	})
+	defer server.Close()
+
+	r := configured(t, server.URL)
+	att, found, err := r.findAttachment(context.Background(), "pol-1", "api_key", "ak-1")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !found || att.AttachedAt != "t1" {
+		t.Errorf("expected the filtered match, got found=%v att=%+v", found, att)
+	}
+	if listCalls != 1 {
+		t.Errorf("the filter fast path must issue exactly ONE list request, got %d", listCalls)
+	}
+	if gotType != "api_key" || gotID != "ak-1" {
+		t.Errorf("the attacheeType/attacheeId filter was not sent: type=%q id=%q", gotType, gotID)
+	}
+}
+
 func TestCreate_AttachesAndReadsBack(t *testing.T) {
 	attached := false
 	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
