@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.0] - 2026-07-09
+
+### 🚀 Features
+
+- *(client)* Retry transient 409 on managed-DB primary resize (#192)
+- *(iam)* Terraform IAM policy resources + policy-document data source (#196)
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.1 (#190)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.2 (#199)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.3 (#201)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.6.1 (#194)
+- *(deps)* Update dependency frostmoln/workflows to v0.6.2 (#198)
+
 ## [0.15.1] - 2026-07-06
 
 ### 🚜 Refactor
