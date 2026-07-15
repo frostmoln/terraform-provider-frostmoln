@@ -2,7 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.16.0] - 2026-07-09
+## [0.17.0] - 2026-07-10
+
+### 🚀 Features
+
+- *(iam)* Single-attachment lookup for policy_attachment reads (#203)
+
+## [0.16.0] - 2026-07-10
 
 ### 🚀 Features
 
