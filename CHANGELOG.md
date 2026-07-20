@@ -2,7 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.17.0] - 2026-07-10
+## [0.17.1] - 2026-07-20
+
+### 📚 Documentation
+
+- Remove internal ADR refs from customer-facing schema descriptions (#205)
+
+## [0.17.0] - 2026-07-15
 
 ### 🚀 Features
 
