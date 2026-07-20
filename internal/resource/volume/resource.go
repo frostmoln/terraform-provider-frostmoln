@@ -84,9 +84,10 @@ func (r *volumeResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				},
 			},
 			"encrypted": schema.BoolAttribute{
-				Description: "Whether the volume is encrypted.",
-				Optional:    true,
-				Computed:    true,
+				Description: "Whether the volume is encrypted. Volume encryption is not available yet — " +
+					"setting this to true is rejected at apply time.",
+				Optional: true,
+				Computed: true,
 				PlanModifiers: []planmodifier.Bool{
 					boolplanmodifier.RequiresReplace(),
 					boolplanmodifier.UseStateForUnknown(),

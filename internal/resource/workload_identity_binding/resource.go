@@ -48,7 +48,7 @@ func (r *workloadIdentityBindingResource) Metadata(_ context.Context, req resour
 
 func (r *workloadIdentityBindingResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a Workload Identity Federation binding (ADR-0095), mapping a managed " +
+		Description: "Manages a Workload Identity Federation binding, mapping a managed " +
 			"Kubernetes (namespace, service account) to a set of least-privilege Frostmoln scopes. " +
 			"A pod running as that service account can exchange its projected token for a short-lived, " +
 			"scoped Frostmoln credential. The binding is owned by the tenant resolved from the " +

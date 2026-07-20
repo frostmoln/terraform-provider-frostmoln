@@ -3,17 +3,17 @@
 page_title: "frostmoln_iam_policy Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a reusable IAM access policy (ADR-0102). A policy is a set of allow/deny rules over operations, targets (FRNs) and constraints; attach it to an API key, workload identity, or group with frostmoln_iam_policy_attachment. The policy is owned by the tenant resolved from the provider credential. Authoring requires an fm CLI / OIDC session — a machine token may not author or attach a policy.
+  Manages a reusable IAM access policy. A policy is a set of allow/deny rules over operations, targets (FRNs) and constraints; attach it to an API key, workload identity, or group with frostmoln_iam_policy_attachment. The policy is owned by the tenant resolved from the provider credential. Authoring requires an fm CLI / OIDC session — a machine token may not author or attach a policy.
 ---
 
 # frostmoln_iam_policy (Resource)
 
-Manages a reusable IAM access policy (ADR-0102). A policy is a set of allow/deny rules over operations, targets (FRNs) and constraints; attach it to an API key, workload identity, or group with `frostmoln_iam_policy_attachment`. The policy is owned by the tenant resolved from the provider credential. Authoring requires an fm CLI / OIDC session — a machine token may not author or attach a policy.
+Manages a reusable IAM access policy. A policy is a set of allow/deny rules over operations, targets (FRNs) and constraints; attach it to an API key, workload identity, or group with `frostmoln_iam_policy_attachment`. The policy is owned by the tenant resolved from the provider credential. Authoring requires an fm CLI / OIDC session — a machine token may not author or attach a policy.
 
 ## Example Usage
 
 ```terraform
-# A reusable IAM access policy (ADR-0102). Compose the document with the
+# A reusable IAM access policy. Compose the document with the
 # frostmoln_iam_policy_document data source, then attach the policy to a
 # principal with frostmoln_iam_policy_attachment.
 resource "frostmoln_iam_policy" "ci" {

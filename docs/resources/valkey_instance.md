@@ -17,7 +17,7 @@ Manages a managed Valkey instance in the Frostmoln platform.
 
 ### Required
 
-- `flavor_id` (String) The flavor/size for the Valkey instance (e.g. "cache.gp1.small", "cache.gp1.medium"). Changing this triggers an in-place Nova flavor resize, which RESTARTS the instance (brief downtime) — unlike an online storage grow. Cannot be changed together with storage_gb in the same apply.
+- `flavor_id` (String) The flavor/size for the Valkey instance (e.g. "cache.gp1.small", "cache.gp1.medium"). Changing this triggers an in-place flavor resize, which RESTARTS the instance (brief downtime) — unlike an online storage grow. Cannot be changed together with storage_gb in the same apply.
 - `name` (String) The name of the Valkey instance.
 - `subnet_id` (String) The subnet ID where the Valkey instance will be deployed.
 - `version` (String) The Valkey version (e.g. "8.0").

@@ -105,7 +105,7 @@ func (d *kubernetesFlavorsDataSource) Schema(_ context.Context, _ datasource.Sch
 							Computed:    true,
 						},
 						"pricing_tier": schema.StringAttribute{
-							Description: "The billing pricing-tier key for this flavor. Prices are resolved by the billing service; the catalog never carries a price.",
+							Description: "The billing pricing-tier key for this flavor. The flavor catalog never carries a price; prices are resolved separately.",
 							Computed:    true,
 						},
 					},

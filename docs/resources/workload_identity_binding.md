@@ -3,17 +3,17 @@
 page_title: "frostmoln_workload_identity_binding Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a Workload Identity Federation binding (ADR-0095), mapping a managed Kubernetes (namespace, service account) to a set of least-privilege Frostmoln scopes. A pod running as that service account can exchange its projected token for a short-lived, scoped Frostmoln credential. The binding is owned by the tenant resolved from the provider credential (API key or OIDC session), not by a provider tenant_id override.
+  Manages a Workload Identity Federation binding, mapping a managed Kubernetes (namespace, service account) to a set of least-privilege Frostmoln scopes. A pod running as that service account can exchange its projected token for a short-lived, scoped Frostmoln credential. The binding is owned by the tenant resolved from the provider credential (API key or OIDC session), not by a provider tenant_id override.
 ---
 
 # frostmoln_workload_identity_binding (Resource)
 
-Manages a Workload Identity Federation binding (ADR-0095), mapping a managed Kubernetes (namespace, service account) to a set of least-privilege Frostmoln scopes. A pod running as that service account can exchange its projected token for a short-lived, scoped Frostmoln credential. The binding is owned by the tenant resolved from the provider credential (API key or OIDC session), not by a provider `tenant_id` override.
+Manages a Workload Identity Federation binding, mapping a managed Kubernetes (namespace, service account) to a set of least-privilege Frostmoln scopes. A pod running as that service account can exchange its projected token for a short-lived, scoped Frostmoln credential. The binding is owned by the tenant resolved from the provider credential (API key or OIDC session), not by a provider `tenant_id` override.
 
 ## Example Usage
 
 ```terraform
-# A Workload Identity Federation binding (ADR-0095): a pod running as the given
+# A Workload Identity Federation binding: a pod running as the given
 # Kubernetes service account can exchange its projected token for a short-lived,
 # scoped Frostmoln credential — no long-lived secret in the pod.
 resource "frostmoln_workload_identity_binding" "app" {

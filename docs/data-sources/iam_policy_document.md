@@ -3,20 +3,20 @@
 page_title: "frostmoln_iam_policy_document Data Source - Frostmoln"
 subcategory: ""
 description: |-
-  Composes a Frostmoln IAM access-policy document (ADR-0102) from rule blocks and exposes it as json, ready to assign to a frostmoln_iam_policy resource's document. Native vocabulary: rule / access / operations / targets / constraints / FRN. This is a pure local computation — it makes no API call; the server validates operations against the append-only catalog when the policy is created.
+  Composes a Frostmoln IAM access-policy document from rule blocks and exposes it as json, ready to assign to a frostmoln_iam_policy resource's document. Native vocabulary: rule / access / operations / targets / constraints / FRN. This is a pure local computation — it makes no API call; the server validates operations against the append-only catalog when the policy is created.
   Evaluation is default-deny; an explicit deny overrides any allow. Note that a constraint on a deny rule narrows the deny — the deny only fires when the constraint holds, so the operation stays permitted whenever it does not. To forbid an operation unconditionally, use a deny rule with no constraint; to restrict an allow (e.g. to a source-IP range or region), put the constraint on the allow rule.
 ---
 
 # frostmoln_iam_policy_document (Data Source)
 
-Composes a Frostmoln IAM access-policy document (ADR-0102) from `rule` blocks and exposes it as `json`, ready to assign to a `frostmoln_iam_policy` resource's `document`. Native vocabulary: rule / access / operations / targets / constraints / FRN. This is a pure local computation — it makes no API call; the server validates operations against the append-only catalog when the policy is created.
+Composes a Frostmoln IAM access-policy document from `rule` blocks and exposes it as `json`, ready to assign to a `frostmoln_iam_policy` resource's `document`. Native vocabulary: rule / access / operations / targets / constraints / FRN. This is a pure local computation — it makes no API call; the server validates operations against the append-only catalog when the policy is created.
 
 Evaluation is default-deny; an explicit `deny` overrides any `allow`. Note that a `constraint` on a **`deny`** rule *narrows* the deny — the deny only fires when the constraint holds, so the operation stays permitted whenever it does not. To forbid an operation unconditionally, use a `deny` rule with no `constraint`; to restrict an `allow` (e.g. to a source-IP range or region), put the `constraint` on the `allow` rule.
 
 ## Example Usage
 
 ```terraform
-# Compose a Frostmoln IAM access-policy document (ADR-0102) from rule blocks.
+# Compose a Frostmoln IAM access-policy document from rule blocks.
 # This is a pure local computation — no API call — and its `json` output is
 # assigned to a frostmoln_iam_policy resource's `document`.
 data "frostmoln_iam_policy_document" "ci" {
@@ -61,7 +61,7 @@ output "policy_json" {
 
 ### Optional
 
-- `rule` (Block List) An access-policy rule. A rule matches only when its operation pattern, its target FRN pattern, and every constraint hold. (see [below for nested schema](#nestedblock--rule))
+- `rule` (Block List) An access-policy rule. A rule matches only when its operation pattern, its target FRN pattern, and every constraint hold. At least one rule is required. (see [below for nested schema](#nestedblock--rule))
 
 ### Read-Only
 

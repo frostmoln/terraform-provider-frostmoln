@@ -145,7 +145,7 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				},
 			},
 			"instance_access": schema.BoolAttribute{
-				Description: "Install the Frostmoln in-guest agent at first boot to enable `fm ssh` terminal and `fm forward` access to the instance (ADR-0092; using a session also requires the tenant's `instance-access` entitlement). Create-time only; the API does not return it, and `terraform import` leaves it unset — a `true` config on an imported instance plans a replacement. Enabling or disabling the agent forces replacement; unset and `false` both mean no agent, and switching between them does not.",
+				Description: "Install the Frostmoln in-guest agent at first boot to enable `fm ssh` terminal and `fm forward` access to the instance (using a session also requires the tenant's `instance-access` entitlement). Create-time only; the API does not return it, and `terraform import` leaves it unset — a `true` config on an imported instance plans a replacement. Enabling or disabling the agent forces replacement; unset and `false` both mean no agent, and switching between them does not.",
 				Optional:    true,
 				PlanModifiers: []planmodifier.Bool{
 					boolplanmodifier.RequiresReplaceIf(

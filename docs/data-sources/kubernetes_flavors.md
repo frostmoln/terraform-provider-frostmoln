@@ -37,6 +37,6 @@ Read-Only:
 - `family` (String) The flavor family (e.g. "general-purpose").
 - `id` (String) The unique identifier of the flavor (used as `flavor_id` on node pools).
 - `name` (String) The human-readable flavor name.
-- `pricing_tier` (String) The billing pricing-tier key for this flavor. Prices are resolved by the billing service; the catalog never carries a price.
+- `pricing_tier` (String) The billing pricing-tier key for this flavor. The flavor catalog never carries a price; prices are resolved separately.
 - `ram_mb` (Number) The amount of RAM per node in MB.
 - `vcpus` (Number) The number of virtual CPUs per node.

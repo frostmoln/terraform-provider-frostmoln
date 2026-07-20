@@ -153,7 +153,9 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 					"Write-only on the API: reads expose only the resolved address (public_ip), so imports cannot recover " +
 					"this value — after importing a cluster created with a BYO public IP, omit this attribute or add " +
 					"`lifecycle { ignore_changes = [public_ip_id] }`, otherwise the next plan will want to replace the " +
-					"cluster. A BYO public IP survives cluster deletion.",
+					"cluster. A BYO public IP survives cluster deletion. Must not be combined with " +
+					"scheme = \"internal\" (an internal cluster has no public IP) — that combination is rejected " +
+					"at plan/apply time.",
 				Optional: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),

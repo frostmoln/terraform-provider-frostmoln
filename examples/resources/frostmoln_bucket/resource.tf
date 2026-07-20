@@ -1,7 +1,7 @@
-resource "fm_bucket" "example" {
+resource "frostmoln_bucket" "example" {
   name          = "my-data-bucket"
   region        = "sweden"
-  storage_class = "standard"
+  storage_class = "STANDARD"
   versioning    = "enabled"
 
   tags = {

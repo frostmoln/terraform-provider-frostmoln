@@ -15,7 +15,7 @@ Manages a load balancer in the Frostmoln Cloud Platform. Load balancer creation 
 ```terraform
 # An amphora load balancer.
 #
-# provider and flavor_id are ForceNew: there is no in-place migration between
+# provider_type and flavor_id are ForceNew: there is no in-place migration between
 # the amphora (default; full L7 + TLS) and ovn (L4-only, source-IP preserving,
 # zero VM overhead) Octavia drivers. Switching providers destroys and recreates
 # the load balancer. Choose amphora unless you specifically need OVN's
@@ -49,10 +49,10 @@ resource "frostmoln_load_balancer" "web" {
 resource "frostmoln_public_ip" "ingress" {}
 
 resource "frostmoln_load_balancer" "public_web" {
-  name           = "public-web-lb"
-  vpc_id         = frostmoln_vpc.main.id
-  subnet_id      = frostmoln_subnet.public.id
-  scheme         = "public"
+  name         = "public-web-lb"
+  vpc_id       = frostmoln_vpc.main.id
+  subnet_id    = frostmoln_subnet.public.id
+  scheme       = "public"
   public_ip_id = frostmoln_public_ip.ingress.id
 
   # public_ip_address is computed (the attached public IP's address).

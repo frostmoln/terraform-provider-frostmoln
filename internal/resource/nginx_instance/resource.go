@@ -271,7 +271,7 @@ func (r *nginxInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				},
 			},
 			"public": schema.BoolAttribute{
-				Description: "Whether the instance is publicly exposed (ADR-0097): when true a Public IP is " +
+				Description: "Whether the instance is publicly exposed: when true a Public IP is " +
 					"associated to the instance's engine port so the deployed site is reachable on the public " +
 					"internet, and public_ip is populated. Set at create to expose immediately; toggling it " +
 					"afterwards runs the platform's expose (true) or unexpose (false) action.",

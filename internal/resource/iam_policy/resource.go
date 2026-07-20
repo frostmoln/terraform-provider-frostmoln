@@ -45,7 +45,7 @@ func (r *iamPolicyResource) Metadata(_ context.Context, req resource.MetadataReq
 
 func (r *iamPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a reusable IAM access policy (ADR-0102). A policy is a set of " +
+		Description: "Manages a reusable IAM access policy. A policy is a set of " +
 			"allow/deny rules over operations, targets (FRNs) and constraints; attach it to an " +
 			"API key, workload identity, or group with `frostmoln_iam_policy_attachment`. The " +
 			"policy is owned by the tenant resolved from the provider credential. Authoring " +

@@ -73,7 +73,7 @@ func (r *redisInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				},
 			},
 			"flavor_id": schema.StringAttribute{
-				Description: "The flavor/size for the Redis instance (e.g. \"cache.gp1.small\", \"cache.gp1.medium\"). Changing this triggers an in-place Nova flavor resize, which RESTARTS the instance (brief downtime) — unlike an online storage grow. Cannot be changed together with storage_gb in the same apply.",
+				Description: "The flavor/size for the Redis instance (e.g. \"cache.gp1.small\", \"cache.gp1.medium\"). Changing this triggers an in-place flavor resize, which RESTARTS the instance (brief downtime) — unlike an online storage grow. Cannot be changed together with storage_gb in the same apply.",
 				Required:    true,
 			},
 			"storage_gb": schema.Int64Attribute{

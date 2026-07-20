@@ -168,7 +168,7 @@ func (r *mysqlInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				Optional:    true,
 			},
 			"backup_retention_days": schema.Int64Attribute{
-				Description: "Number of days to retain backups. Minimum 35 (backups are immutably object-locked for 35 days, ADR-0085); maximum 90.",
+				Description: "Number of days to retain backups. Minimum 35 (backups are immutably object-locked for 35 days); maximum 90.",
 				Optional:    true,
 				Validators: []validator.Int64{
 					int64validator.Between(35, 90),

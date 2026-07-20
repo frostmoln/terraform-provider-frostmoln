@@ -68,7 +68,7 @@ func (d *documentDataSource) Metadata(_ context.Context, req datasource.Metadata
 
 func (d *documentDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Composes a Frostmoln IAM access-policy document (ADR-0102) from `rule` blocks " +
+		Description: "Composes a Frostmoln IAM access-policy document from `rule` blocks " +
 			"and exposes it as `json`, ready to assign to a `frostmoln_iam_policy` resource's `document`. " +
 			"Native vocabulary: rule / access / operations / targets / constraints / FRN. This is a pure " +
 			"local computation — it makes no API call; the server validates operations against the " +
@@ -91,7 +91,7 @@ func (d *documentDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 		Blocks: map[string]schema.Block{
 			"rule": schema.ListNestedBlock{
 				Description: "An access-policy rule. A rule matches only when its operation pattern, " +
-					"its target FRN pattern, and every constraint hold.",
+					"its target FRN pattern, and every constraint hold. At least one rule is required.",
 				NestedObject: schema.NestedBlockObject{
 					Attributes: map[string]schema.Attribute{
 						"name": schema.StringAttribute{

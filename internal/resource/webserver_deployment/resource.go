@@ -68,9 +68,9 @@ func (r *webserverDeploymentResource) Metadata(_ context.Context, req resource.M
 
 func (r *webserverDeploymentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Deploys static/PHP site content to a managed Apache or Nginx webserver instance " +
-			"(ADR-0091). The provider runs the full deploy flow: it requests a presigned upload from the " +
-			"webserver service, uploads the local archive, starts the deploy with the archive checksum, and " +
+		Description: "Deploys static/PHP site content to a managed Apache or Nginx webserver instance. " +
+			"The provider runs the full deploy flow: it requests a presigned upload from the " +
+			"platform, uploads the local archive, starts the deploy with the archive checksum, and " +
 			"waits for the in-guest agent to verify, extract, and publish the release. A changed archive " +
 			"(detected via source_hash) triggers a new deploy. Destroying the resource only drops it from " +
 			"Terraform state — content already published on the instance is left in place (there is no " +

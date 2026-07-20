@@ -1,4 +1,4 @@
-# Compose a Frostmoln IAM access-policy document (ADR-0102) from rule blocks.
+# Compose a Frostmoln IAM access-policy document from rule blocks.
 # This is a pure local computation — no API call — and its `json` output is
 # assigned to a frostmoln_iam_policy resource's `document`.
 data "frostmoln_iam_policy_document" "ci" {

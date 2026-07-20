@@ -54,9 +54,11 @@ func (r *bucketResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				},
 			},
 			"storage_class": schema.StringAttribute{
-				Description: "The storage class for the bucket.",
-				Optional:    true,
-				Computed:    true,
+				Description: "The default storage class for objects in the bucket. One of `STANDARD`, " +
+					"`STANDARD_IA`, `REDUCED_REDUNDANCY`, `GLACIER` — the values are case-sensitive. " +
+					"Defaults server-side to `STANDARD`.",
+				Optional: true,
+				Computed: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 					stringplanmodifier.UseStateForUnknown(),

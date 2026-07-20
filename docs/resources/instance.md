@@ -17,7 +17,7 @@ resource "frostmoln_instance" "example" {
   name      = "web-server-01"
   flavor_id = data.frostmoln_flavor.medium.id
   image_id  = data.frostmoln_image.ubuntu.id
-  zone      = "sweden-a"
+  zone      = "falkenberg"
   vpc_id    = frostmoln_vpc.example.id
   subnet_id = frostmoln_subnet.example.id
 
@@ -49,7 +49,7 @@ resource "frostmoln_instance" "example" {
 ### Optional
 
 - `console_password` (String, Sensitive) Password for the default OS user, usable only at the VNC console; SSH stays key-only. Changing forces replacement.
-- `instance_access` (Boolean) Install the Frostmoln in-guest agent at first boot to enable `fm ssh` terminal and `fm forward` access to the instance (ADR-0092; using a session also requires the tenant's `instance-access` entitlement). Create-time only; the API does not return it, and `terraform import` leaves it unset — a `true` config on an imported instance plans a replacement. Enabling or disabling the agent forces replacement; unset and `false` both mean no agent, and switching between them does not.
+- `instance_access` (Boolean) Install the Frostmoln in-guest agent at first boot to enable `fm ssh` terminal and `fm forward` access to the instance (using a session also requires the tenant's `instance-access` entitlement). Create-time only; the API does not return it, and `terraform import` leaves it unset — a `true` config on an imported instance plans a replacement. Enabling or disabling the agent forces replacement; unset and `false` both mean no agent, and switching between them does not.
 - `security_groups` (Set of String) The security group IDs attached to the instance. Updated in place (replace semantics): changing the set replaces the instance's security groups across all its ports. Setting it to [] or removing the attribute clears ALL security groups (the instance falls back to default-drop — typically no inbound access). Out-of-band changes (made via the portal, CLI, or another client) are detected as drift on refresh when every port shares the same set; if ports hold differing sets, the configured value is preserved and a warning is emitted (edit per port instead).
 - `ssh_key_names` (Set of String) The SSH key names to inject into the instance.
 - `subnet_id` (String) The subnet ID for the instance.

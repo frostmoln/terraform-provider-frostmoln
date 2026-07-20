@@ -1,4 +1,4 @@
-resource "fm_vpc" "example" {
+resource "frostmoln_vpc" "example" {
   name        = "production-vpc"
   description = "Production VPC"
   cidr        = "10.0.0.0/16"
