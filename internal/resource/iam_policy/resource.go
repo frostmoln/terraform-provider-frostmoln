@@ -70,8 +70,11 @@ func (r *iamPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				Description: "The access-policy document as a JSON string " +
 					"(`{\"schemaVersion\":\"1\",\"rules\":[...]}`). Compose it with the " +
 					"`frostmoln_iam_policy_document` data source rather than hand-writing it. " +
-					"The server validates operations against the append-only catalog and " +
-					"rejects a malformed document.",
+					"The server validates operations against the append-only catalog, requires " +
+					"the region segment of every target FRN to be `*` (region-scoped targets are " +
+					"not supported yet), and rejects a malformed document. A hand-written or " +
+					"`file()`-loaded document is only checked at apply time; the data source " +
+					"catches these at plan time.",
 				Required: true,
 			},
 			"tenant_id": schema.StringAttribute{

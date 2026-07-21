@@ -5,9 +5,14 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 )
 
@@ -19,7 +24,7 @@ func TestBuildPolicyJSON_ScalarAndArrayConstraints(t *testing.T) {
 			Name:       "compute-read-in-region",
 			Access:     "allow",
 			Operations: []string{"compute:instances:read", "compute:instances:list"},
-			Targets:    []string{"frn:compute:se-sto-1:*:instances/*"},
+			Targets:    []string{"frn:compute:*:*:instances/*"},
 			Constraints: []constraintInput{
 				// scalar operator -> emitted as a bare string
 				{Operator: "equals", Key: "frn:region", Values: []string{"se-sto-1"}},
@@ -147,6 +152,99 @@ func contains(s, sub string) bool {
 	return false
 }
 
+// --- target validator tests ---
+
+// TestWildcardRegionTarget covers the one rule the validator owns: a 5-field
+// target FRN whose region segment is not `*` fails at plan time. Everything
+// else (including a malformed FRN) is the server's business.
+func TestWildcardRegionTarget(t *testing.T) {
+	tests := []struct {
+		name    string
+		target  string
+		wantErr bool
+	}{
+		{"region pinned", "frn:compute:se-sto-1:*:instances/*", true},
+		{"region pinned with tenant", "frn:compute:se-sto-1:t-123:instances/i-1", true},
+		// An object id legitimately contains colons, so the trailing field must
+		// be split with SplitN — a plain Split counts 6 fields and lets a
+		// region-pinned object target through to a failed apply.
+		{"region pinned object key", "frn:storage:se-sto-1:t-abc:object/bucket:key", true},
+		{"wildcard region object key", "frn:storage:*:t-abc:object/bucket:key", false},
+		{"wildcard region", "frn:compute:*:*:instances/*", false},
+		{"whole-string wildcard", "*", false},
+		{"not five fields", "frn:compute:*", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &validator.StringResponse{}
+			wildcardRegionTarget{}.ValidateString(
+				context.Background(),
+				validator.StringRequest{
+					Path:        path.Root("rule"),
+					ConfigValue: types.StringValue(tt.target),
+				},
+				resp,
+			)
+			if got := resp.Diagnostics.HasError(); got != tt.wantErr {
+				t.Fatalf("HasError() = %v, want %v (diags: %v)", got, tt.wantErr, resp.Diagnostics)
+			}
+			if tt.wantErr && !contains(resp.Diagnostics.Errors()[0].Detail(), "use * for the region segment") {
+				t.Errorf("error must name the fix, got %q", resp.Diagnostics.Errors()[0].Detail())
+			}
+		})
+	}
+}
+
+func TestWildcardRegionTarget_NullAndUnknownAreSkipped(t *testing.T) {
+	for _, v := range []types.String{types.StringNull(), types.StringUnknown()} {
+		resp := &validator.StringResponse{}
+		wildcardRegionTarget{}.ValidateString(
+			context.Background(),
+			validator.StringRequest{Path: path.Root("rule"), ConfigValue: v},
+			resp,
+		)
+		if resp.Diagnostics.HasError() {
+			t.Errorf("%v produced errors: %v", v, resp.Diagnostics)
+		}
+	}
+}
+
+// TestTargetsAttributeRejectsRegionPinnedTarget runs the `targets` attribute's
+// own validators, so the guard cannot be silently unwired from the schema.
+func TestTargetsAttributeRejectsRegionPinnedTarget(t *testing.T) {
+	ctx := context.Background()
+	targets, ok := documentSchema(t).Blocks["rule"].(schema.ListNestedBlock).
+		NestedObject.Attributes["targets"].(schema.ListAttribute)
+	if !ok {
+		t.Fatal("expected rule.targets to be a ListAttribute")
+	}
+
+	run := func(vals ...string) diag.Diagnostics {
+		elems := make([]attr.Value, len(vals))
+		for i, v := range vals {
+			elems[i] = types.StringValue(v)
+		}
+		list, diags := types.ListValue(types.StringType, elems)
+		if diags.HasError() {
+			t.Fatalf("building list: %v", diags)
+		}
+		var out diag.Diagnostics
+		for _, v := range targets.ListValidators() {
+			resp := &validator.ListResponse{}
+			v.ValidateList(ctx, validator.ListRequest{Path: path.Root("rule"), ConfigValue: list}, resp)
+			out.Append(resp.Diagnostics...)
+		}
+		return out
+	}
+
+	if !run("frn:compute:se-sto-1:*:instances/*").HasError() {
+		t.Error("a region-pinned target must be rejected by the targets attribute")
+	}
+	if d := run("frn:compute:*:*:instances/*", "*"); d.HasError() {
+		t.Errorf("wildcard-region targets must be accepted, got %v", d)
+	}
+}
+
 // --- data source plumbing tests ---
 
 func TestDocumentDataSource_Metadata(t *testing.T) {
@@ -214,7 +312,7 @@ func TestDocumentDataSource_Read(t *testing.T) {
 		"name":       tftypes.NewValue(tftypes.String, "r1"),
 		"access":     tftypes.NewValue(tftypes.String, "allow"),
 		"operations": strList("compute:instances:read"),
-		"targets":    strList("frn:compute:se-sto-1:*:instances/*"),
+		"targets":    strList("frn:compute:*:*:instances/*"),
 		"constraint": tftypes.NewValue(tftypes.List{ElementType: constraintObjType}, []tftypes.Value{constraint}),
 	})
 

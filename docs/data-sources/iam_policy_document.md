@@ -4,14 +4,14 @@ page_title: "frostmoln_iam_policy_document Data Source - Frostmoln"
 subcategory: ""
 description: |-
   Composes a Frostmoln IAM access-policy document from rule blocks and exposes it as json, ready to assign to a frostmoln_iam_policy resource's document. Native vocabulary: rule / access / operations / targets / constraints / FRN. This is a pure local computation — it makes no API call; the server validates operations against the append-only catalog when the policy is created.
-  Evaluation is default-deny; an explicit deny overrides any allow. Note that a constraint on a deny rule narrows the deny — the deny only fires when the constraint holds, so the operation stays permitted whenever it does not. To forbid an operation unconditionally, use a deny rule with no constraint; to restrict an allow (e.g. to a source-IP range or region), put the constraint on the allow rule.
+  Evaluation is default-deny; an explicit deny overrides any allow. Note that a constraint on a deny rule narrows the deny — the deny only fires when the constraint holds, so the operation stays permitted whenever it does not. To forbid an operation unconditionally, use a deny rule with no constraint; to restrict an allow (e.g. to a source-IP range), put the constraint on the allow rule.
 ---
 
 # frostmoln_iam_policy_document (Data Source)
 
 Composes a Frostmoln IAM access-policy document from `rule` blocks and exposes it as `json`, ready to assign to a `frostmoln_iam_policy` resource's `document`. Native vocabulary: rule / access / operations / targets / constraints / FRN. This is a pure local computation — it makes no API call; the server validates operations against the append-only catalog when the policy is created.
 
-Evaluation is default-deny; an explicit `deny` overrides any `allow`. Note that a `constraint` on a **`deny`** rule *narrows* the deny — the deny only fires when the constraint holds, so the operation stays permitted whenever it does not. To forbid an operation unconditionally, use a `deny` rule with no `constraint`; to restrict an `allow` (e.g. to a source-IP range or region), put the `constraint` on the `allow` rule.
+Evaluation is default-deny; an explicit `deny` overrides any `allow`. Note that a `constraint` on a **`deny`** rule *narrows* the deny — the deny only fires when the constraint holds, so the operation stays permitted whenever it does not. To forbid an operation unconditionally, use a `deny` rule with no `constraint`; to restrict an `allow` (e.g. to a source-IP range), put the `constraint` on the `allow` rule.
 
 ## Example Usage
 
@@ -20,20 +20,18 @@ Evaluation is default-deny; an explicit `deny` overrides any `allow`. Note that 
 # This is a pure local computation — no API call — and its `json` output is
 # assigned to a frostmoln_iam_policy resource's `document`.
 data "frostmoln_iam_policy_document" "ci" {
-  # Allow a CI key to create and read compute instances in one region, and only
-  # from the office network. The source-IP constraint is on the ALLOW rule, so
-  # the grant itself is network-restricted.
+  # Allow a CI key to create and read compute instances, but only from the
+  # office network. The source-IP constraint is on the ALLOW rule, so the grant
+  # itself is network-restricted.
+  #
+  # The region segment of a target FRN must be `*`: region-scoped targets are
+  # not supported yet.
   rule {
     name       = "compute-create-read-from-office"
     access     = "allow"
     operations = ["compute:instances:create", "compute:instances:read", "compute:instances:list"]
-    targets    = ["frn:compute:se-sto-1:*:instances/*"]
+    targets    = ["frn:compute:*:*:instances/*"]
 
-    constraint {
-      operator = "equals"
-      key      = "frn:region"
-      values   = ["se-sto-1"]
-    }
     constraint {
       operator = "ipInRange"
       key      = "frn:sourceIp"
@@ -75,7 +73,7 @@ Required:
 
 - `access` (String) `allow` grants the matched operation on the matched targets; `deny` forbids it. An explicit deny overrides any allow.
 - `operations` (List of String) One or more `service:resource:action` operation patterns with per-segment `*` (e.g. `compute:instances:create`, `compute:*`, `*:*:delete`).
-- `targets` (List of String) One or more FRN target patterns with per-segment `*` (e.g. `frn:compute:se-sto-1:*:instances/*`, `*`).
+- `targets` (List of String) One or more FRN target patterns with per-segment `*` (e.g. `frn:compute:*:*:instances/*`, `*`). The region segment must be `*` — region-scoped targets are not supported yet.
 
 Optional:
 
@@ -87,6 +85,6 @@ Optional:
 
 Required:
 
-- `key` (String) The constraint key, e.g. `frn:region`, `frn:sourceIp`, `frn:currentTime`, `frn:requestTag/<k>`, `frn:resourceTag/<k>`.
+- `key` (String) The constraint key, e.g. `frn:sourceIp`, `frn:currentTime`, `frn:requestTag/<k>`, `frn:resourceTag/<k>`. `frn:region` is part of the key vocabulary but is **not usable yet**: it evaluates as unknown on every request, so an `allow` carrying it never grants and a `deny` carrying it fires in every region. There is currently no way to scope a policy to a region.
 - `operator` (String) One of `equals`, `notEquals`, `like`, `ipInRange`, `before`, `after`.
 - `values` (List of String) The constraint value(s). Exactly one for every operator except `ipInRange`, which accepts a list of CIDRs.

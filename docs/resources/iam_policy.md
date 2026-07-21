@@ -18,7 +18,7 @@ Manages a reusable IAM access policy. A policy is a set of allow/deny rules over
 # principal with frostmoln_iam_policy_attachment.
 resource "frostmoln_iam_policy" "ci" {
   name        = "ci-compute-operator"
-  description = "CI pipeline: create/read compute in se-sto-1, never delete"
+  description = "CI pipeline: create/read compute from the office network, never delete"
   document    = data.frostmoln_iam_policy_document.ci.json
 }
 ```
@@ -28,7 +28,7 @@ resource "frostmoln_iam_policy" "ci" {
 
 ### Required
 
-- `document` (String) The access-policy document as a JSON string (`{"schemaVersion":"1","rules":[...]}`). Compose it with the `frostmoln_iam_policy_document` data source rather than hand-writing it. The server validates operations against the append-only catalog and rejects a malformed document.
+- `document` (String) The access-policy document as a JSON string (`{"schemaVersion":"1","rules":[...]}`). Compose it with the `frostmoln_iam_policy_document` data source rather than hand-writing it. The server validates operations against the append-only catalog, requires the region segment of every target FRN to be `*` (region-scoped targets are not supported yet), and rejects a malformed document. A hand-written or `file()`-loaded document is only checked at apply time; the data source catches these at plan time.
 - `name` (String) The name of the policy.
 
 ### Optional

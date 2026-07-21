@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -77,7 +78,7 @@ func (d *documentDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 			"`constraint` on a **`deny`** rule *narrows* the deny — the deny only fires when the " +
 			"constraint holds, so the operation stays permitted whenever it does not. To forbid an " +
 			"operation unconditionally, use a `deny` rule with no `constraint`; to restrict an `allow` " +
-			"(e.g. to a source-IP range or region), put the `constraint` on the `allow` rule.",
+			"(e.g. to a source-IP range), put the `constraint` on the `allow` rule.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "A content hash of the generated document.",
@@ -117,11 +118,13 @@ func (d *documentDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 						},
 						"targets": schema.ListAttribute{
 							Description: "One or more FRN target patterns with per-segment `*` " +
-								"(e.g. `frn:compute:se-sto-1:*:instances/*`, `*`).",
+								"(e.g. `frn:compute:*:*:instances/*`, `*`). The region segment must be " +
+								"`*` — region-scoped targets are not supported yet.",
 							Required:    true,
 							ElementType: types.StringType,
 							Validators: []validator.List{
 								listvalidator.SizeAtLeast(1),
+								listvalidator.ValueStringsAre(wildcardRegionTarget{}),
 							},
 						},
 					},
@@ -139,8 +142,11 @@ func (d *documentDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 										},
 									},
 									"key": schema.StringAttribute{
-										Description: "The constraint key, e.g. `frn:region`, `frn:sourceIp`, " +
-											"`frn:currentTime`, `frn:requestTag/<k>`, `frn:resourceTag/<k>`.",
+										Description: "The constraint key, e.g. `frn:sourceIp`, `frn:currentTime`, " +
+											"`frn:requestTag/<k>`, `frn:resourceTag/<k>`. `frn:region` is part of the key " +
+											"vocabulary but is **not usable yet**: it evaluates as unknown on every request, " +
+											"so an `allow` carrying it never grants and a `deny` carrying it fires in every " +
+											"region. There is currently no way to scope a policy to a region.",
 										Required: true,
 									},
 									"values": schema.ListAttribute{
@@ -163,6 +169,54 @@ func (d *documentDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 			},
 		},
 	}
+}
+
+var _ validator.String = wildcardRegionTarget{}
+
+// wildcardRegionTarget rejects a target FRN that pins the region segment of
+// `frn:<service>:<region>:<tenant>:<type>/<id>` to anything but `*`. No service
+// resolves a customer region, so a region-pinned target matches every request in
+// the pre-handler check and no request once the resource has loaded — a `deny`
+// written that way silently stops protecting. The server rejects it at create
+// time; catching it here turns a failed apply into a failed plan.
+//
+// The split is SplitN(..., 5), matching the server: the trailing
+// `<type>/<id>` field may legitimately contain colons (an object FRN is
+// `frn:storage:*:t-abc:object/bucket:key`), so a plain Split would count 6+
+// fields and wave that target through to a failed apply. Anything that does not
+// resolve to 5 fields is left to the server, which owns FRN shape validation.
+//
+// Not expressible as stringvalidator.RegexMatches: the rule is a negation and
+// Go's RE2 has no negative lookahead.
+type wildcardRegionTarget struct{}
+
+func (wildcardRegionTarget) Description(_ context.Context) string {
+	return "target FRN must use `*` for the region segment"
+}
+
+func (v wildcardRegionTarget) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (wildcardRegionTarget) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	fields := strings.SplitN(req.ConfigValue.ValueString(), ":", 5)
+	if len(fields) != 5 || fields[2] == "*" {
+		return
+	}
+	resp.Diagnostics.AddAttributeError(
+		req.Path,
+		"Region-pinned policy target",
+		fmt.Sprintf(
+			"Target %q names region %q, but a region-pinned target cannot be matched: it matches every "+
+				"request before the resource is loaded and none afterwards, so a deny written this way "+
+				"stops protecting. Region-scoped targets are not supported yet — use * for the region "+
+				"segment, e.g. frn:compute:*:*:instances/*.",
+			req.ConfigValue.ValueString(), fields[2],
+		),
+	)
 }
 
 func (d *documentDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {

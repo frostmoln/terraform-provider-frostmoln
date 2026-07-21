@@ -3,6 +3,6 @@
 # principal with frostmoln_iam_policy_attachment.
 resource "frostmoln_iam_policy" "ci" {
   name        = "ci-compute-operator"
-  description = "CI pipeline: create/read compute in se-sto-1, never delete"
+  description = "CI pipeline: create/read compute from the office network, never delete"
   document    = data.frostmoln_iam_policy_document.ci.json
 }
