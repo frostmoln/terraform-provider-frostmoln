@@ -58,8 +58,8 @@ output "nginx_site_public_ip" {
 ### Optional
 
 - `config` (Map of String) Engine-specific configuration applied to the webserver, as key/value pairs (sent as the engineConfig object). Keys must be from the platform's curated allowlist (e.g. gzip, securityHeaders, clientMaxBodySize, spaFallback); unknown keys are rejected. Changing this reconfigures the running instance in place.
-- `php_enabled` (Boolean) Whether PHP-FPM support is enabled for the webserver. Can be toggled in place; the instance is reconfigured (and briefly reloads) on change.
-- `php_version` (String) The PHP version to run (e.g. "8.1", "8.2", "8.3"). Only applicable when php_enabled is true; the platform selects a supported default when omitted.
+- `php_enabled` (Boolean) Whether PHP-FPM support is enabled for the webserver. Fixed for the life of the instance — php-fpm is installed at boot, not by a live config apply, so changing this replaces the instance.
+- `php_version` (String) The PHP version to run (e.g. "8.1", "8.2", "8.3"). Only applicable when php_enabled is true; the platform selects a supported default when omitted. Fixed for the life of the instance — changing it replaces the instance.
 - `public` (Boolean) Whether the instance is publicly exposed: when true a Public IP is associated to the instance's engine port so the deployed site is reachable on the public internet, and public_ip is populated. Set at create to expose immediately; toggling it afterwards runs the platform's expose (true) or unexpose (false) action.
 - `tls_enabled` (Boolean) Whether TLS is enabled for the webserver.
 

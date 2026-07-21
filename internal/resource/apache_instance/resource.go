@@ -241,21 +241,28 @@ func (r *apacheInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 				},
 			},
 			"php_enabled": schema.BoolAttribute{
-				Description: "Whether PHP-FPM support is enabled for the webserver. Can be toggled in place; " +
-					"the instance is reconfigured (and briefly reloads) on change.",
+				Description: "Whether PHP-FPM support is enabled for the webserver. Fixed for the life of " +
+					"the instance — php-fpm is installed at boot, not by a live config apply, so changing " +
+					"this replaces the instance.",
 				Optional: true,
 				Computed: true,
 				PlanModifiers: []planmodifier.Bool{
+					// UseStateForUnknown FIRST: the framework marks an unconfigured Computed
+					// attribute unknown on update, and RequiresReplace compares plan vs state —
+					// reversed, every unrelated update would plan a destroy/recreate.
 					boolplanmodifier.UseStateForUnknown(),
+					boolplanmodifier.RequiresReplace(),
 				},
 			},
 			"php_version": schema.StringAttribute{
 				Description: "The PHP version to run (e.g. \"8.1\", \"8.2\", \"8.3\"). Only applicable when " +
-					"php_enabled is true; the platform selects a supported default when omitted.",
+					"php_enabled is true; the platform selects a supported default when omitted. Fixed for " +
+					"the life of the instance — changing it replaces the instance.",
 				Optional: true,
 				Computed: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"config": schema.MapAttribute{

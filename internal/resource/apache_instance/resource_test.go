@@ -11,7 +11,10 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -153,12 +156,6 @@ func TestApacheInstanceModelToUpdateRequest(t *testing.T) {
 	if req.TLSEnabled == nil || !*req.TLSEnabled {
 		t.Error("expected tlsEnabled update")
 	}
-	if req.PHPEnabled == nil || !*req.PHPEnabled {
-		t.Error("expected phpEnabled update")
-	}
-	if req.PHPVersion == nil || *req.PHPVersion != "8.3" {
-		t.Error("expected phpVersion update")
-	}
 	if req.EngineConfig["ServerTokens"] != "Prod" {
 		t.Errorf("expected engineConfig ServerTokens=Prod, got %v", req.EngineConfig)
 	}
@@ -182,8 +179,7 @@ func TestApacheInstanceModelToUpdateRequestNoChanges(t *testing.T) {
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
-	if req.Name != nil ||
-		req.TLSEnabled != nil || req.PHPEnabled != nil || req.PHPVersion != nil || req.EngineConfig != nil {
+	if req.Name != nil || req.TLSEnabled != nil || req.EngineConfig != nil {
 		t.Error("expected no changes in update request")
 	}
 }
@@ -342,6 +338,99 @@ func TestSchema(t *testing.T) {
 			t.Errorf("expected computed attribute %s in schema", attr)
 		}
 	}
+}
+
+// PHP is installed at boot (php-fpm apt install) and the webserver API rejects a PHP
+// change on PUT with 400, so both attributes must force a replacement. Both cases are
+// behavioural, because the ORDER of the plan modifiers decides the outcome: they are
+// Optional+Computed, so the framework marks them unknown on any update where config
+// omits them, and RequiresReplace-before-UseStateForUnknown would then compare unknown
+// against the state value and replace a running instance on every unrelated change.
+func TestPHPAttributesReplaceOnlyOnRealChange(t *testing.T) {
+	r := NewResource()
+	var schemaResp resource.SchemaResponse
+	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
+
+	phpEnabled, ok := schemaResp.Schema.Attributes["php_enabled"].(schema.BoolAttribute)
+	if !ok {
+		t.Fatalf("php_enabled is not a BoolAttribute")
+	}
+	phpVersion, ok := schemaResp.Schema.Attributes["php_version"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("php_version is not a StringAttribute")
+	}
+
+	stateModel := ApacheInstanceModel{
+		ID:         types.StringValue("ws-1"),
+		Name:       types.StringValue("site-1"),
+		PHPEnabled: types.BoolValue(true),
+		PHPVersion: types.StringValue("8.3"),
+		Config:     types.MapNull(types.StringType),
+	}
+	state := buildApacheInstanceState(t, stateModel)
+	planModel := stateModel
+	planModel.Name = types.StringValue("site-renamed")
+	plan := buildApacheInstancePlan(t, planModel)
+
+	// A real change replaces.
+	if !runBoolModifiers(t, phpEnabled.PlanModifiers, state, plan, types.BoolValue(true), types.BoolValue(false)) {
+		t.Error("php_enabled true->false must require replacement")
+	}
+	if !runStringModifiers(t, phpVersion.PlanModifiers, state, plan, types.StringValue("8.3"), types.StringValue("8.2")) {
+		t.Error("php_version 8.3->8.2 must require replacement")
+	}
+
+	// An unrelated update with PHP omitted from config (framework marks it unknown)
+	// must NOT replace — this is what a wrong modifier order destroys.
+	if runBoolModifiers(t, phpEnabled.PlanModifiers, state, plan, types.BoolValue(true), types.BoolUnknown()) {
+		t.Error("php_enabled must not require replacement when it is unknown-from-computed and unchanged in state")
+	}
+	if runStringModifiers(t, phpVersion.PlanModifiers, state, plan, types.StringValue("8.3"), types.StringUnknown()) {
+		t.Error("php_version must not require replacement when it is unknown-from-computed and unchanged in state")
+	}
+}
+
+// runBoolModifiers / runStringModifiers mirror how the framework chains attribute plan
+// modifiers (internal/fwserver/attribute_plan_modification.go): each modifier sees the
+// previous one's PlanValue, and RequiresReplace, once set, is never unset.
+func runBoolModifiers(t *testing.T, mods []planmodifier.Bool, state tfsdk.State, plan tfsdk.Plan, stateValue, planValue types.Bool) bool {
+	t.Helper()
+	req := planmodifier.BoolRequest{
+		Path:        path.Root("php_enabled"),
+		State:       state,
+		Plan:        plan,
+		StateValue:  stateValue,
+		PlanValue:   planValue,
+		ConfigValue: types.BoolNull(),
+	}
+	replace := false
+	for _, m := range mods {
+		resp := &planmodifier.BoolResponse{PlanValue: req.PlanValue}
+		m.PlanModifyBool(context.Background(), req, resp)
+		req.PlanValue = resp.PlanValue
+		replace = replace || resp.RequiresReplace
+	}
+	return replace
+}
+
+func runStringModifiers(t *testing.T, mods []planmodifier.String, state tfsdk.State, plan tfsdk.Plan, stateValue, planValue types.String) bool {
+	t.Helper()
+	req := planmodifier.StringRequest{
+		Path:        path.Root("php_version"),
+		State:       state,
+		Plan:        plan,
+		StateValue:  stateValue,
+		PlanValue:   planValue,
+		ConfigValue: types.StringNull(),
+	}
+	replace := false
+	for _, m := range mods {
+		resp := &planmodifier.StringResponse{PlanValue: req.PlanValue}
+		m.PlanModifyString(context.Background(), req, resp)
+		req.PlanValue = resp.PlanValue
+		replace = replace || resp.RequiresReplace
+	}
+	return replace
 }
 
 func TestConfigureNilProviderData(t *testing.T) {

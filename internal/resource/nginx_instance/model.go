@@ -91,17 +91,16 @@ type apiCreateWebserverInstanceRequest struct {
 // deserializes only name/tlsEnabled/phpEnabled/phpVersion/engineConfig and
 // drops the rest silently).
 type apiUpdateWebserverInstanceRequest struct {
+	// No PHP fields: php_enabled / php_version force a replacement (the API rejects a
+	// PHP change on this PUT with 400), so they can never reach an update.
 	Name         *string           `json:"name,omitempty"`
 	TLSEnabled   *bool             `json:"tlsEnabled,omitempty"`
-	PHPEnabled   *bool             `json:"phpEnabled,omitempty"`
-	PHPVersion   *string           `json:"phpVersion,omitempty"`
 	EngineConfig map[string]string `json:"engineConfig,omitempty"`
 }
 
 // hasChanges reports whether the update request carries any field to PUT.
 func (r apiUpdateWebserverInstanceRequest) hasChanges() bool {
-	return r.Name != nil || r.TLSEnabled != nil || r.PHPEnabled != nil ||
-		r.PHPVersion != nil || r.EngineConfig != nil
+	return r.Name != nil || r.TLSEnabled != nil || r.EngineConfig != nil
 }
 
 // apiResizeWebserverInstanceRequest is the body for POST /webservers/{id}/resize.
@@ -157,14 +156,6 @@ func (m *NginxInstanceModel) toUpdateRequest(ctx context.Context, state *NginxIn
 	if !m.TLSEnabled.Equal(state.TLSEnabled) {
 		v := m.TLSEnabled.ValueBool()
 		req.TLSEnabled = &v
-	}
-	if !m.PHPEnabled.Equal(state.PHPEnabled) {
-		v := m.PHPEnabled.ValueBool()
-		req.PHPEnabled = &v
-	}
-	if !m.PHPVersion.Equal(state.PHPVersion) {
-		v := m.PHPVersion.ValueString()
-		req.PHPVersion = &v
 	}
 	if !m.Config.Equal(state.Config) {
 		cfg := make(map[string]string)
