@@ -86,19 +86,22 @@ type apiCreateWebserverInstanceRequest struct {
 // webserver instance via PUT. It carries only in-place-updatable fields:
 // storage_gb goes through POST /resize (grow-only) and flavor_id changes are
 // rejected at plan time, so neither is sent here (the backend PUT handler
-// deserializes only name/tlsEnabled/phpEnabled/phpVersion/engineConfig and
-// drops the rest silently).
+// deserializes only name/tlsEnabled/phpEnabled/phpVersion and drops the rest
+// silently).
 type apiUpdateWebserverInstanceRequest struct {
 	// No PHP fields: php_enabled / php_version force a replacement (the API rejects a
 	// PHP change on this PUT with 400), so they can never reach an update.
-	Name         *string           `json:"name,omitempty"`
-	TLSEnabled   *bool             `json:"tlsEnabled,omitempty"`
-	EngineConfig map[string]string `json:"engineConfig,omitempty"`
+	//
+	// No engineConfig either: this PUT rejects it with 400 ("use PUT /:id/config to
+	// change engine configuration") because a write here would never be validated,
+	// rendered or actuated on the VM. Config goes through apiUpdateEngineConfigRequest.
+	Name       *string `json:"name,omitempty"`
+	TLSEnabled *bool   `json:"tlsEnabled,omitempty"`
 }
 
 // hasChanges reports whether the update request carries any field to PUT.
 func (r apiUpdateWebserverInstanceRequest) hasChanges() bool {
-	return r.Name != nil || r.TLSEnabled != nil || r.EngineConfig != nil
+	return r.Name != nil || r.TLSEnabled != nil
 }
 
 // apiResizeWebserverInstanceRequest is the body for POST /webservers/{id}/resize.
@@ -106,6 +109,29 @@ func (r apiUpdateWebserverInstanceRequest) hasChanges() bool {
 type apiResizeWebserverInstanceRequest struct {
 	StorageGB int `json:"storageGb"`
 }
+
+// apiUpdateEngineConfigRequest is the body for PUT /webservers/{id}/config — the only
+// route that applies engine config. NO omitempty: an empty map is meaningful (it resets
+// the engine to its boot defaults), and omitting the field would make a reset a silent
+// no-op server-side.
+type apiUpdateEngineConfigRequest struct {
+	EngineConfig map[string]string `json:"engineConfig"`
+}
+
+// apiEngineConfigResponse is the PUT /config ack and the GET /config body. The apply is
+// asynchronous: the ack reports configStatus "applying" and the runtime validator can
+// still fail it, so the terminal state is reached by polling GET /config. configError
+// carries the engine's rejection message on a failure. The stored engineConfig itself is
+// not modelled here — state is refreshed from the instance read-back.
+type apiEngineConfigResponse struct {
+	ConfigVersion int64  `json:"configVersion"`
+	ConfigStatus  string `json:"configStatus,omitempty"`
+	ConfigError   string `json:"configError,omitempty"`
+}
+
+// maxConfigErrorBytes bounds how much of the platform's configError is echoed into a
+// Terraform diagnostic.
+const maxConfigErrorBytes = 512
 
 // toCreateRequest converts the Terraform model to an API create request.
 func (m *ApacheInstanceModel) toCreateRequest(ctx context.Context, diags *diag.Diagnostics) apiCreateWebserverInstanceRequest {
@@ -144,7 +170,7 @@ func (m *ApacheInstanceModel) toCreateRequest(ctx context.Context, diags *diag.D
 }
 
 // toUpdateRequest converts the Terraform model to an API update request, comparing with current state.
-func (m *ApacheInstanceModel) toUpdateRequest(ctx context.Context, state *ApacheInstanceModel, diags *diag.Diagnostics) apiUpdateWebserverInstanceRequest {
+func (m *ApacheInstanceModel) toUpdateRequest(state *ApacheInstanceModel) apiUpdateWebserverInstanceRequest {
 	req := apiUpdateWebserverInstanceRequest{}
 
 	if !m.Name.Equal(state.Name) {
@@ -155,15 +181,22 @@ func (m *ApacheInstanceModel) toUpdateRequest(ctx context.Context, state *Apache
 		v := m.TLSEnabled.ValueBool()
 		req.TLSEnabled = &v
 	}
-	if !m.Config.Equal(state.Config) {
-		cfg := make(map[string]string)
-		if !m.Config.IsNull() && !m.Config.IsUnknown() {
-			diags.Append(m.Config.ElementsAs(ctx, &cfg, false)...)
-		}
-		req.EngineConfig = cfg
-	}
 
 	return req
+}
+
+// engineConfigChange reports the engine config to apply, and whether it changed at all.
+// An explicitly configured EMPTY map is a real change (it resets the engine to its boot
+// defaults). A null or unknown plan value is NOT: `config` is Optional+Computed, so an
+// attribute left out of the configuration keeps its prior value, and an unknown must never
+// be read as "reset to defaults".
+func (m *ApacheInstanceModel) engineConfigChange(ctx context.Context, state *ApacheInstanceModel, diags *diag.Diagnostics) (map[string]string, bool) {
+	if m.Config.IsNull() || m.Config.IsUnknown() || m.Config.Equal(state.Config) {
+		return nil, false
+	}
+	cfg := make(map[string]string, len(m.Config.Elements()))
+	diags.Append(m.Config.ElementsAs(ctx, &cfg, false)...)
+	return cfg, true
 }
 
 // fromAPI populates the Terraform model from an API response.
@@ -193,11 +226,16 @@ func (m *ApacheInstanceModel) fromAPI(ctx context.Context, inst *apiWebserverIns
 		m.PHPVersion = types.StringNull()
 	}
 
-	if len(inst.EngineConfig) > 0 {
+	switch {
+	case len(inst.EngineConfig) > 0:
 		cfgMap, d := types.MapValueFrom(ctx, types.StringType, inst.EngineConfig)
 		diags.Append(d...)
 		m.Config = cfgMap
-	} else {
+	case !m.Config.IsNull() && !m.Config.IsUnknown() && len(m.Config.Elements()) == 0:
+		// The instance read-back OMITS engineConfig when the stored config is empty, so an
+		// explicit `config = {}` (reset to boot defaults) would otherwise flip to null on
+		// every refresh and diff forever. Keep the configured empty map.
+	default:
 		m.Config = types.MapNull(types.StringType)
 	}
 

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -131,7 +133,7 @@ func TestNginxInstanceModelToUpdateRequest(t *testing.T) {
 		TLSEnabled: types.BoolValue(true),
 		PHPEnabled: types.BoolValue(true),
 		PHPVersion: types.StringValue("8.3"),
-		Config:     mustCfgMap(map[string]string{"gzip": "on"}),
+		Config:     mustCfgMap(map[string]string{"gzip": "true"}),
 	}
 	state := NginxInstanceModel{
 		Name:       types.StringValue("old-name"),
@@ -143,18 +145,61 @@ func TestNginxInstanceModelToUpdateRequest(t *testing.T) {
 		Config:     types.MapNull(types.StringType),
 	}
 
-	req := plan.toUpdateRequest(ctx, &state, &diags)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
-	}
+	req := plan.toUpdateRequest(&state)
 	if req.Name == nil || *req.Name != "new-name" {
 		t.Error("expected name update")
 	}
 	if req.TLSEnabled == nil || !*req.TLSEnabled {
 		t.Error("expected tlsEnabled update")
 	}
-	if req.EngineConfig["gzip"] != "on" {
-		t.Errorf("expected engineConfig gzip=on, got %v", req.EngineConfig)
+
+	// Engine config is NOT part of the instance PUT (the backend rejects it there with
+	// 400); it is reported separately so Update can route it to PUT /:id/config.
+	cfg, changed := plan.engineConfigChange(ctx, &state, &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+	}
+	if !changed {
+		t.Fatal("expected an engine config change")
+	}
+	if cfg["gzip"] != "true" {
+		t.Errorf("expected engineConfig gzip=true, got %v", cfg)
+	}
+}
+
+// TestNginxInstanceModelEngineConfigChange covers the three plan shapes that decide
+// whether an engine config apply runs at all: an explicit empty map is a real change
+// (reset to boot defaults), while null (attribute removed) and unknown are not.
+func TestNginxInstanceModelEngineConfigChange(t *testing.T) {
+	ctx := context.Background()
+	state := NginxInstanceModel{Config: mustCfgMap(map[string]string{"gzip": "true"})}
+
+	t.Run("empty map is a reset", func(t *testing.T) {
+		diags := diag.Diagnostics{}
+		plan := NginxInstanceModel{Config: mustCfgMap(map[string]string{})}
+		cfg, changed := plan.engineConfigChange(ctx, &state, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+		}
+		if !changed || len(cfg) != 0 {
+			t.Errorf("expected an empty-map change, got changed=%v cfg=%v", changed, cfg)
+		}
+	})
+
+	for name, planCfg := range map[string]types.Map{
+		"null is no change":    types.MapNull(types.StringType),
+		"unknown is no change": types.MapUnknown(types.StringType),
+	} {
+		t.Run(name, func(t *testing.T) {
+			diags := diag.Diagnostics{}
+			plan := NginxInstanceModel{Config: planCfg}
+			if _, changed := plan.engineConfigChange(ctx, &state, &diags); changed {
+				t.Error("expected no engine config change")
+			}
+			if diags.HasError() {
+				t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+			}
+		})
 	}
 }
 
@@ -169,15 +214,18 @@ func TestNginxInstanceModelToUpdateRequestNoChanges(t *testing.T) {
 		TLSEnabled: types.BoolValue(true),
 		PHPEnabled: types.BoolValue(false),
 		PHPVersion: types.StringValue("8.2"),
-		Config:     mustCfgMap(map[string]string{"gzip": "on"}),
+		Config:     mustCfgMap(map[string]string{"gzip": "true"}),
 	}
 
-	req := same.toUpdateRequest(ctx, &same, &diags)
+	req := same.toUpdateRequest(&same)
+	if req.Name != nil || req.TLSEnabled != nil {
+		t.Error("expected no changes in update request")
+	}
+	if _, changed := same.engineConfigChange(ctx, &same, &diags); changed {
+		t.Error("expected no engine config change")
+	}
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
-	}
-	if req.Name != nil || req.TLSEnabled != nil || req.EngineConfig != nil {
-		t.Error("expected no changes in update request")
 	}
 }
 
@@ -851,8 +899,253 @@ func TestUpdate(t *testing.T) {
 	if updatedBody.Name == nil || *updatedBody.Name != "updated-nginx" {
 		t.Error("expected name in update request")
 	}
-	if updatedBody.EngineConfig != nil {
-		t.Errorf("expected no engineConfig change, got %v", updatedBody.EngineConfig)
+}
+
+// TestUpdateConfigUsesConfigRoute verifies a `config` change is routed to
+// PUT /webservers/{id}/config — never to the instance PUT, which rejects engineConfig
+// with 400 — and that the provider waits for the async apply to reach "applied".
+func TestUpdateConfigUsesConfigRoute(t *testing.T) {
+	var configBody string
+	var instancePutCalled bool
+	var configGets int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123/config":
+			b, _ := io.ReadAll(r.Body)
+			configBody = string(b)
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = fmt.Fprint(w, `{"engineConfig":{"gzip":"true"},"configVersion":4,"configStatus":"applying"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123/config":
+			// Still applying on the first poll, terminal on the next.
+			if atomic.AddInt32(&configGets, 1) == 1 {
+				_, _ = fmt.Fprint(w, `{"engineConfig":{"gzip":"true"},"configVersion":4,"configStatus":"applying"}`)
+				return
+			}
+			_, _ = fmt.Fprint(w, `{"engineConfig":{"gzip":"true"},"configVersion":4,"configStatus":"applied"}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123":
+			instancePutCalled = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, `{}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123":
+			_, _ = fmt.Fprint(w, `{"id":"nginx-123","name":"my-nginx","engine":"nginx","engineVersion":"1.27",`+
+				`"flavorId":"web.gp1.small","storageGb":20,"vpcId":"vpc-1","subnetId":"sn-1","tlsEnabled":true,`+
+				`"engineConfig":{"gzip":"true"},"status":"running","port":443,"createdAt":"2025-01-01T00:00:00Z"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+
+	r := newTestNginxResource(c)
+
+	stateModel := baseNginxModel()
+	stateModel.ID = types.StringValue("nginx-123")
+	stateModel.Status = types.StringValue("running")
+	stateModel.CreatedAt = types.StringValue("2025-01-01T00:00:00Z")
+	state := buildNginxInstanceState(t, stateModel)
+
+	planModel := stateModel
+	planModel.Config = mustCfgMap(map[string]string{"gzip": "true"})
+	plan := buildNginxInstancePlan(t, planModel)
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
+	}
+	if instancePutCalled {
+		t.Error("engineConfig must not be PUT on the instance route (the backend rejects it with 400)")
+	}
+	if configBody != `{"engineConfig":{"gzip":"true"}}` {
+		t.Errorf("unexpected config body: %s", configBody)
+	}
+	if configGets < 2 {
+		t.Errorf("expected the provider to poll until the apply left \"applying\", got %d GETs", configGets)
+	}
+}
+
+// TestUpdateConfigEmptyMapResets verifies an explicitly empty `config` reaches the API as
+// a present (not omitted) empty object — the reset-to-boot-defaults contract. Omitting it
+// would make the reset a silent server-side no-op.
+func TestUpdateConfigEmptyMapResets(t *testing.T) {
+	var configBody string
+	var configGets int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123/config":
+			b, _ := io.ReadAll(r.Body)
+			configBody = string(b)
+			// The service ALWAYS acks "applying" (it starts the apply saga), so the reset
+			// path polls to a terminal state exactly like any other config change.
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = fmt.Fprint(w, `{"engineConfig":{},"configVersion":9,"configStatus":"applying"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123/config":
+			atomic.AddInt32(&configGets, 1)
+			_, _ = fmt.Fprint(w, `{"engineConfig":{},"configVersion":9,"configStatus":"applied"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123":
+			// An instance with an empty stored config OMITS engineConfig entirely.
+			_, _ = fmt.Fprint(w, `{"id":"nginx-123","name":"my-nginx","engine":"nginx","engineVersion":"1.27",`+
+				`"flavorId":"web.gp1.small","storageGb":20,"vpcId":"vpc-1","subnetId":"sn-1","tlsEnabled":true,`+
+				`"status":"running","port":443,"createdAt":"2025-01-01T00:00:00Z"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+
+	r := newTestNginxResource(c)
+
+	stateModel := baseNginxModel()
+	stateModel.ID = types.StringValue("nginx-123")
+	stateModel.Status = types.StringValue("running")
+	stateModel.CreatedAt = types.StringValue("2025-01-01T00:00:00Z")
+	state := buildNginxInstanceState(t, stateModel)
+
+	planModel := stateModel
+	planModel.Config = mustCfgMap(map[string]string{})
+	plan := buildNginxInstancePlan(t, planModel)
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
+	}
+	if configBody != `{"engineConfig":{}}` {
+		t.Errorf("expected an explicit empty engineConfig object, got: %s", configBody)
+	}
+	if configGets == 0 {
+		t.Error("expected the reset to poll the config route to a terminal state")
+	}
+
+	// The read-back omits engineConfig; the configured empty map must survive, otherwise
+	// `config = {}` diffs forever.
+	var saved NginxInstanceModel
+	if diags := updateResp.State.Get(context.Background(), &saved); diags.HasError() {
+		t.Fatalf("failed to read state: %v", diags.Errors())
+	}
+	if saved.Config.IsNull() || len(saved.Config.Elements()) != 0 {
+		t.Errorf("expected an empty (not null) config in state, got %v", saved.Config)
+	}
+}
+
+// TestUpdateConfigSupersededByAnotherClient verifies the poller does not adopt a NEWER
+// revision's terminal state as its own outcome: if the portal, the fm CLI or a second
+// workspace applies a different config mid-flight, the apply must fail closed rather than
+// report someone else's result as success.
+func TestUpdateConfigSupersededByAnotherClient(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123/config":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = fmt.Fprint(w, `{"engineConfig":{"gzip":"true"},"configVersion":4,"configStatus":"applying"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123/config":
+			// Someone else's revision 5 landed and applied cleanly.
+			_, _ = fmt.Fprint(w, `{"engineConfig":{"spaFallback":"true"},"configVersion":5,"configStatus":"applied"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123":
+			_, _ = fmt.Fprint(w, `{"id":"nginx-123","name":"my-nginx","engine":"nginx","engineVersion":"1.27",`+
+				`"flavorId":"web.gp1.small","storageGb":20,"vpcId":"vpc-1","subnetId":"sn-1","tlsEnabled":true,`+
+				`"engineConfig":{"spaFallback":"true"},"status":"running","port":443,"createdAt":"2025-01-01T00:00:00Z"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+
+	r := newTestNginxResource(c)
+
+	stateModel := baseNginxModel()
+	stateModel.ID = types.StringValue("nginx-123")
+	stateModel.Status = types.StringValue("running")
+	stateModel.CreatedAt = types.StringValue("2025-01-01T00:00:00Z")
+	state := buildNginxInstanceState(t, stateModel)
+
+	planModel := stateModel
+	planModel.Config = mustCfgMap(map[string]string{"gzip": "true"})
+	plan := buildNginxInstancePlan(t, planModel)
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+
+	if !updateResp.Diagnostics.HasError() {
+		t.Fatal("expected the update to fail when another client superseded the revision")
+	}
+	if !strings.Contains(updateResp.Diagnostics.Errors()[0].Detail(), "superseded by revision 5") {
+		t.Errorf("expected a superseded-revision diagnostic, got: %s",
+			updateResp.Diagnostics.Errors()[0].Detail())
+	}
+}
+
+// TestUpdateConfigApplyFailed verifies a failed runtime apply fails the Terraform apply
+// and surfaces the engine's own rejection reason rather than reporting success.
+func TestUpdateConfigApplyFailed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123/config":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = fmt.Fprint(w, `{"engineConfig":{"gzip":"true"},"configVersion":7,"configStatus":"applying"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123/config":
+			_, _ = fmt.Fprint(w, `{"engineConfig":{"gzip":"true"},"configVersion":7,"configStatus":"failed",`+
+				`"configError":"nginx: [emerg] unknown directive"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123":
+			// A rename that landed BEFORE the config apply failed.
+			_, _ = fmt.Fprint(w, `{"id":"nginx-123","name":"renamed-nginx","engine":"nginx","engineVersion":"1.27",`+
+				`"flavorId":"web.gp1.small","storageGb":20,"vpcId":"vpc-1","subnetId":"sn-1","tlsEnabled":true,`+
+				`"status":"running","port":443,"createdAt":"2025-01-01T00:00:00Z"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+
+	r := newTestNginxResource(c)
+
+	stateModel := baseNginxModel()
+	stateModel.ID = types.StringValue("nginx-123")
+	stateModel.Status = types.StringValue("running")
+	stateModel.CreatedAt = types.StringValue("2025-01-01T00:00:00Z")
+	state := buildNginxInstanceState(t, stateModel)
+
+	planModel := stateModel
+	planModel.Config = mustCfgMap(map[string]string{"gzip": "true"})
+	plan := buildNginxInstancePlan(t, planModel)
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+
+	if !updateResp.Diagnostics.HasError() {
+		t.Fatal("expected the update to fail when the engine rejects the config")
+	}
+	if !strings.Contains(updateResp.Diagnostics.Errors()[0].Detail(), "unknown directive") {
+		t.Errorf("expected the engine's rejection reason in the diagnostic, got: %s",
+			updateResp.Diagnostics.Errors()[0].Detail())
+	}
+
+	// Mutations that already landed (here: the rename) must be recorded even though the
+	// update failed, otherwise a later `-refresh=false` apply re-proposes them.
+	var saved NginxInstanceModel
+	if diags := updateResp.State.Get(context.Background(), &saved); diags.HasError() {
+		t.Fatalf("failed to read state: %v", diags.Errors())
+	}
+	if saved.Name.ValueString() != "renamed-nginx" {
+		t.Errorf("expected the pre-failure state to be persisted, got name %q", saved.Name.ValueString())
 	}
 }
 

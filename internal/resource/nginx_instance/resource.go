@@ -3,8 +3,11 @@ package nginx_instance
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"time"
+	"unicode/utf8"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -52,6 +55,20 @@ func (r *nginxInstanceResource) getPollTimeout() time.Duration {
 	return 15 * time.Minute
 }
 
+// configApplyTimeout bounds the wait for an engine-config apply. It MATCHES provisioning's
+// applyConfigPollDeadline (2h, itself pinned to the agent job's queue-side TTL): a shorter
+// ceiling would give up on an apply the platform still considers live, and because the
+// instance read-back returns the stored revision without its status, the next plan would
+// then converge on a configuration the engine never loaded.
+const configApplyTimeout = 2 * time.Hour
+
+func (r *nginxInstanceResource) getConfigApplyTimeout() time.Duration {
+	if r.pollTimeout > 0 {
+		return r.pollTimeout
+	}
+	return configApplyTimeout
+}
+
 // pollRunning waits until the instance returns to "running" state.
 func (r *nginxInstanceResource) pollRunning(ctx context.Context, id string) (string, error) {
 	return client.WaitForState(ctx, client.PollConfig{
@@ -83,6 +100,141 @@ func (r *nginxInstanceResource) resizeStorage(ctx context.Context, id string, st
 	}
 	_, err = r.pollRunning(ctx, id)
 	return err
+}
+
+// applyEngineConfig routes an engine-config change to PUT /webservers/{id}/config — the
+// only route that validates, renders and actuates it (the instance PUT rejects
+// engineConfig with 400). An empty cfg resets the engine to its boot defaults.
+//
+// The apply is asynchronous: the ack reports configStatus "applying" and the engine's own
+// runtime validator can still reject the rendered config, so wait for a terminal state
+// instead of declaring success on the 202.
+func (r *nginxInstanceResource) applyEngineConfig(ctx context.Context, id string, cfg map[string]string) error {
+	configPath := r.client.TenantPath("/webservers/" + url.PathEscape(id) + "/config")
+	resp, err := r.client.Put(ctx, configPath, apiUpdateEngineConfigRequest{EngineConfig: cfg})
+	if err != nil {
+		return err
+	}
+	ack, err := client.ParseResponse[apiEngineConfigResponse](resp)
+	if err != nil {
+		return err
+	}
+	// Resolve only on a state that is genuinely terminal. Anything else — "applying", or
+	// an ack that carries no status at all (the field is omitempty) — falls through to the
+	// poll rather than being reported as a failed apply.
+	switch ack.ConfigStatus {
+	case "applied", "failed":
+		return configApplyResult(ack)
+	}
+
+	var last apiEngineConfigResponse
+	// terminalErr carries a better message for the two states synthesised below, which are
+	// not platform statuses: they exist so the poller stops on the spot rather than
+	// spinning to the (2 h) timeout.
+	var terminalErr error
+	if _, err := client.WaitForState(ctx, client.PollConfig{
+		Interval:     r.getPollInterval(),
+		Timeout:      r.getConfigApplyTimeout(),
+		TargetStates: []string{"applied"},
+		ErrorStates:  []string{"failed", "superseded", "gone"},
+		ResourceName: "nginx_instance engine config apply",
+		PollFunc: func(pollCtx context.Context) (string, error) {
+			pollResp, pollErr := r.client.Get(pollCtx, configPath, nil)
+			if pollErr != nil {
+				if client.IsNotFound(pollErr) {
+					// The instance was deleted out of band. WaitForState retries every
+					// PollFunc error as transient, so without this the apply would block
+					// for the whole timeout and then blame the timeout.
+					terminalErr = fmt.Errorf("instance %s no longer exists; the engine config apply cannot complete", id)
+					return "gone", nil
+				}
+				return "", pollErr
+			}
+			current, parseErr := client.ParseResponse[apiEngineConfigResponse](pollResp)
+			if parseErr != nil {
+				return "", parseErr
+			}
+			switch {
+			case current.ConfigVersion < ack.ConfigVersion:
+				// A read of a revision older than the one we just started: keep polling
+				// rather than resolve on a previous apply's terminal state.
+				return "", nil
+			case current.ConfigVersion > ack.ConfigVersion:
+				// Another client (portal, fm CLI, a second workspace) applied a DIFFERENT
+				// config while ours was in flight. Its terminal state says nothing about
+				// ours, so fail closed instead of reporting someone else's outcome.
+				terminalErr = fmt.Errorf(
+					"engine config revision %d was superseded by revision %d applied by another client; "+
+						"re-run to converge on the configuration in this Terraform configuration",
+					ack.ConfigVersion, current.ConfigVersion,
+				)
+				return "superseded", nil
+			}
+			last = *current
+			return current.ConfigStatus, nil
+		},
+	}); err != nil {
+		if terminalErr != nil {
+			return terminalErr
+		}
+		if last.ConfigStatus == "failed" {
+			return configApplyResult(&last)
+		}
+		return err
+	}
+	return nil
+}
+
+// configApplyResult turns a terminal engine-config apply state into an error (or nil when
+// it applied). The failure message names the engine's own rejection reason AND the fact
+// that the platform keeps the rejected configuration stored: a later plan reads it back
+// from the instance and shows no diff until it is corrected.
+func configApplyResult(resp *apiEngineConfigResponse) error {
+	if resp.ConfigStatus == "applied" {
+		return nil
+	}
+	reason := resp.ConfigError
+	switch {
+	case reason == "":
+		reason = "no reason reported by the platform"
+	case len(reason) > maxConfigErrorBytes:
+		// The platform caps the ENGINE's own validator detail, but its infrastructure
+		// failure paths pass a raw error through. Bound what lands in a practitioner's
+		// (often archived) CI log. Engine output is not guaranteed ASCII, so cut back to
+		// a rune boundary rather than splitting a multibyte rune into U+FFFD.
+		cut := maxConfigErrorBytes
+		for cut > 0 && !utf8.RuneStart(reason[cut]) {
+			cut--
+		}
+		reason = reason[:cut] + "… (truncated)"
+	}
+	return fmt.Errorf(
+		"engine config apply finished in state %q: %s. The platform stores the rejected configuration, "+
+			"so a later plan reads it back and shows no diff until the config is corrected",
+		resp.ConfigStatus, reason,
+	)
+}
+
+// refreshStateAfterPartialUpdate persists what an Update actually accomplished before it
+// returns an error, so mutations that already succeeded (a storage resize, a name/TLS PUT)
+// are not lost from state. Best-effort: a failure to read back leaves the prior state,
+// which is exactly where the caller would have been anyway, so it adds no diagnostic of
+// its own and lets the caller's real error stand.
+func (r *nginxInstanceResource) refreshStateAfterPartialUpdate(ctx context.Context, id string, plan *NginxInstanceModel, resp *resource.UpdateResponse) {
+	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/webservers/"+url.PathEscape(id)), nil)
+	if err != nil {
+		return
+	}
+	inst, err := client.ParseResponse[apiWebserverInstance](apiResp)
+	if err != nil {
+		return
+	}
+	var partial diag.Diagnostics
+	plan.fromAPI(ctx, inst, &partial)
+	if partial.HasError() {
+		return
+	}
+	resp.State.Set(ctx, plan)
 }
 
 // setExposure toggles the instance's public exposure via the action endpoints
@@ -269,7 +421,11 @@ func (r *nginxInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				Description: "Engine-specific configuration applied to the webserver, as key/value pairs " +
 					"(sent as the engineConfig object). Keys must be from the platform's curated allowlist " +
 					"(e.g. gzip, securityHeaders, clientMaxBodySize, spaFallback); unknown keys are rejected. " +
-					"Changing this reconfigures the running instance in place.",
+					"Changing this reconfigures the running instance: Terraform waits for the platform to " +
+					"validate the new configuration and load it into the engine (up to the platform's two-hour " +
+					"apply deadline, reached only when the instance's agent is unreachable), and the apply fails if the " +
+					"engine rejects it. Setting it to an empty map resets the engine to its boot defaults; " +
+					"removing the attribute leaves the current configuration in place.",
 				Optional:    true,
 				Computed:    true,
 				ElementType: types.StringType,
@@ -549,12 +705,10 @@ func (r *nginxInstanceResource) Update(ctx context.Context, req resource.UpdateR
 		}
 	}
 
-	// In-place field updates (name, TLS, config) via PUT. Skip the call entirely
-	// when nothing PUT-able changed (e.g. a storage-only resize).
-	updateReq := plan.toUpdateRequest(ctx, &state, &resp.Diagnostics)
-	if resp.Diagnostics.HasError() {
-		return
-	}
+	// In-place field updates (name, TLS) via PUT. Skip the call entirely when nothing
+	// PUT-able changed (e.g. a storage-only resize). Engine config is NOT part of this
+	// PUT — see the config apply below.
+	updateReq := plan.toUpdateRequest(&state)
 	if updateReq.hasChanges() {
 		if _, err := r.client.Put(ctx, r.client.TenantPath("/webservers/"+id), updateReq); err != nil {
 			resp.Diagnostics.AddError("Failed to update Nginx instance", err.Error())
@@ -564,6 +718,27 @@ func (r *nginxInstanceResource) Update(ctx context.Context, req resource.UpdateR
 		// Poll until instance is back to "running" after the update.
 		if _, err := r.pollRunning(ctx, id); err != nil {
 			resp.Diagnostics.AddError("Nginx instance failed to reach running state after update", err.Error())
+			return
+		}
+	}
+
+	// Engine config is applied through its own route (PUT /:id/config), which validates,
+	// renders and actuates it. It runs after any resize/PUT above, both of which poll back
+	// to "running" — the apply is refused with 409 in any other state. A config-only change
+	// takes neither branch, so it is applied against whatever state the instance is in and
+	// a stopped instance surfaces the platform's own 409.
+	cfg, cfgChanged := plan.engineConfigChange(ctx, &state, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if cfgChanged {
+		if err := r.applyEngineConfig(ctx, id, cfg); err != nil {
+			// A resize and/or the instance PUT above may already have succeeded. Record
+			// what actually landed before failing, so a later `-refresh=false` apply does
+			// not re-propose a resize the backend has already performed (and now rejects
+			// as a shrink). Terraform persists a returned state even alongside errors.
+			r.refreshStateAfterPartialUpdate(ctx, id, &plan, resp)
+			resp.Diagnostics.AddError("Failed to apply Nginx instance engine config", err.Error())
 			return
 		}
 	}
