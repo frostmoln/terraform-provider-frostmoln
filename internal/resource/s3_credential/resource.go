@@ -3,6 +3,8 @@ package s3_credential
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -19,6 +21,21 @@ var (
 	_ resource.Resource                = &s3CredentialResource{}
 	_ resource.ResourceWithImportState = &s3CredentialResource{}
 )
+
+// missingIDSummary is raised when a credential in state has no access key ID.
+// Provider versions up to v0.17.1 decoded the identifier from an `id` field the
+// API does not send, so state written by them carries an empty id. Guessing the
+// credential (e.g. by name — names are not unique) could bind Terraform to the
+// wrong live key, so both Read and Delete stop and ask for a re-import instead.
+const missingIDSummary = "S3 credential is missing its access key ID"
+
+const missingIDRemedy = "State written by provider versions up to v0.17.1 carries an empty id, because the " +
+	"identifier was decoded from a field the API does not send. The credential itself still exists and its " +
+	"keys still work — Terraform just cannot address it.\n\n" +
+	"Find its access key ID in the portal or with `fm storage s3-credential list`, then either re-import it:\n" +
+	"  terraform state rm <address> && terraform import <address> <accessKeyId>\n" +
+	"(secret_access_key cannot be recovered on import — the API returns it only at creation), or delete the " +
+	"credential and remove it from state with `terraform state rm <address>`."
 
 // NewResource returns a new S3 credential resource factory.
 func NewResource() resource.Resource {
@@ -41,7 +58,7 @@ func (r *s3CredentialResource) Schema(_ context.Context, _ resource.SchemaReques
 			"downstream consumers. Per-credential scoping requires the RGW-IAM object-storage backend.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
-				Description: "The unique identifier of the S3 credential.",
+				Description: "The access key ID of the S3 credential — the identifier used with secret_access_key when talking to the S3 endpoint, and the value to pass to terraform import.",
 				Computed:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
@@ -152,7 +169,18 @@ func (r *s3CredentialResource) Create(ctx context.Context, req resource.CreateRe
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// Persist state before failing on a missing id: the credential was created
+	// and its secret_access_key is returned only once, so dropping the state
+	// would lose it. The error tells the operator how to reconcile.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	if cred.ID == "" {
+		resp.Diagnostics.AddError(
+			missingIDSummary,
+			"The API created the credential but returned no accessKeyId, so Terraform cannot address it. "+
+				"Its secret_access_key is in state and cannot be fetched again, so prefer editing the id in "+
+				"place (terraform state pull / push) over a re-import.\n\n"+missingIDRemedy,
+		)
+	}
 }
 
 func (r *s3CredentialResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -162,33 +190,36 @@ func (r *s3CredentialResource) Read(ctx context.Context, req resource.ReadReques
 		return
 	}
 
-	// The API lists all credentials; we need to find ours by ID.
-	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/credentials"), nil)
+	if state.ID.ValueString() == "" {
+		resp.Diagnostics.AddError(missingIDSummary, missingIDRemedy)
+		return
+	}
+
+	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/credentials/"+url.PathEscape(state.ID.ValueString())), nil)
 	if err != nil {
 		if client.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
 			return
 		}
-		resp.Diagnostics.AddError("Failed to read S3 credentials", err.Error())
+		resp.Diagnostics.AddError("Failed to read S3 credential", err.Error())
 		return
 	}
 
-	list, err := client.ParseResponse[apiS3CredentialList](apiResp)
+	found, err := client.ParseResponse[apiS3Credential](apiResp)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to parse S3 credentials response", err.Error())
+		resp.Diagnostics.AddError("Failed to parse S3 credential response", err.Error())
 		return
 	}
 
-	var found *apiS3Credential
-	for i := range list.Credentials {
-		if list.Credentials[i].ID == state.ID.ValueString() {
-			found = &list.Credentials[i]
-			break
-		}
-	}
-
-	if found == nil {
-		resp.State.RemoveResource(ctx)
+	// Never let a response rewrite the identity of the resource being read: a
+	// body that is not the requested credential (a misrouted path collapsing to
+	// the collection, a shape change) would otherwise blank state's id via
+	// fromAPI and strand the credential.
+	if found.ID != state.ID.ValueString() {
+		resp.Diagnostics.AddError(
+			"Unexpected S3 credential in read response",
+			fmt.Sprintf("Requested %q but the API answered with %q.", state.ID.ValueString(), found.ID),
+		)
 		return
 	}
 
@@ -222,7 +253,15 @@ func (r *s3CredentialResource) Delete(ctx context.Context, req resource.DeleteRe
 		return
 	}
 
-	_, err := r.client.Delete(ctx, r.client.TenantPath("/credentials/"+state.ID.ValueString()))
+	// Without this guard the request would be DELETE on the collection path,
+	// which answers 404 and would be swallowed below as "already gone" —
+	// reporting a successful destroy while the credential stays live.
+	if state.ID.ValueString() == "" {
+		resp.Diagnostics.AddError(missingIDSummary, missingIDRemedy)
+		return
+	}
+
+	_, err := r.client.Delete(ctx, r.client.TenantPath("/credentials/"+url.PathEscape(state.ID.ValueString())))
 	if err != nil {
 		if client.IsNotFound(err) {
 			return
@@ -232,5 +271,17 @@ func (r *s3CredentialResource) Delete(ctx context.Context, req resource.DeleteRe
 }
 
 func (r *s3CredentialResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// Dot-segments survive url.PathEscape (unreserved characters) and are then
+	// collapsed by the client's path.Join, so an import ID like "." would aim
+	// requests at the credentials collection instead of one credential. Reject
+	// them here, the trust boundary where an operator-supplied ID enters state
+	// (same guard as kubernetes_node_pool).
+	if req.ID == "" || req.ID == "." || req.ID == ".." || strings.Contains(req.ID, "/") {
+		resp.Diagnostics.AddError(
+			"Invalid Import ID",
+			fmt.Sprintf("%q is not a valid S3 credential access key ID.", req.ID),
+		)
+		return
+	}
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }

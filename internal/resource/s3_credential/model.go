@@ -24,12 +24,14 @@ type S3CredentialModel struct {
 	IPWhitelist    types.List `tfsdk:"ip_whitelist"`
 }
 
-// apiS3Credential is the API representation of an S3 credential.
+// apiS3Credential is the API representation of an S3 credential. The storage
+// API has no "id" field — the credential's identifier is the access key ID
+// (`accessKeyId`), which is also what the member routes take as their path
+// segment. Same shape the fm CLI and the portal decode.
 type apiS3Credential struct {
-	ID              string   `json:"id"`
+	ID              string   `json:"accessKeyId"`
 	Name            string   `json:"name"`
 	Description     string   `json:"description,omitempty"`
-	AccessKey       string   `json:"accessKey,omitempty"`
 	SecretAccessKey string   `json:"secretAccessKey,omitempty"`
 	Status          string   `json:"status"`
 	AllowedBuckets  []string `json:"allowedBuckets,omitempty"`
@@ -45,11 +47,6 @@ type apiCreateS3CredentialRequest struct {
 	AllowedBuckets []string `json:"allowedBuckets,omitempty"`
 	AllowedActions []string `json:"allowedActions,omitempty"`
 	IPWhitelist    []string `json:"ipWhitelist,omitempty"`
-}
-
-// apiS3CredentialList is the API response for listing S3 credentials.
-type apiS3CredentialList struct {
-	Credentials []apiS3Credential `json:"credentials"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.

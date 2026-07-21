@@ -24,6 +24,10 @@ resource "frostmoln_s3_credential" "example" {
   allowed_actions = ["s3:GetObject", "s3:PutObject", "s3:ListBucket"]
 }
 
+output "s3_access_key_id" {
+  value = frostmoln_s3_credential.example.id
+}
+
 output "s3_secret_key" {
   value     = frostmoln_s3_credential.example.secret_access_key
   sensitive = true
@@ -47,6 +51,19 @@ output "s3_secret_key" {
 ### Read-Only
 
 - `created_at` (String) The timestamp when the S3 credential was created.
-- `id` (String) The unique identifier of the S3 credential.
+- `id` (String) The access key ID of the S3 credential — the identifier used with secret_access_key when talking to the S3 endpoint, and the value to pass to terraform import.
 - `secret_access_key` (String, Sensitive) The secret access key. Only returned when the credential is first created.
 - `status` (String) The status of the S3 credential.
+
+## Import
+
+Import is supported using the following syntax:
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+# S3 credentials are imported by their access key ID.
+# secret_access_key is NOT recoverable on import - the API returns it only when
+# the credential is created. Rotate or replace the credential if you need it.
+terraform import frostmoln_s3_credential.example <access-key-id>
+```

@@ -26,6 +26,14 @@ func TestAccS3Credential_basic(t *testing.T) {
 					resource.TestCheckResourceAttrSet(resourceName, "secret_access_key"),
 				),
 			},
+			{
+				ResourceName:      resourceName,
+				ImportState:       true,
+				ImportStateVerify: true,
+				// The API returns the secret only at creation, so an imported
+				// credential cannot carry it.
+				ImportStateVerifyIgnore: []string{"secret_access_key"},
+			},
 		},
 	})
 }

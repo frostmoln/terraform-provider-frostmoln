@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -137,14 +138,14 @@ func TestS3CredentialCreate(t *testing.T) {
 				t.Errorf("expected name test-cred, got %s", req.Name)
 			}
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(apiS3Credential{
-				ID:              "cred-abc",
-				Name:            req.Name,
-				Description:     req.Description,
-				SecretAccessKey: "generated-secret-key", // pragma: allowlist secret
-				Status:          "active",
-				CreatedAt:       "2025-06-01T12:00:00Z",
-			})
+			// Fixtures write raw JSON on purpose: encoding through
+			// apiS3Credential would agree with whatever json tags the
+			// provider declares, so a wrong tag (the `id`-vs-`accessKeyId`
+			// bug) could never turn a test red. Shape mirrors
+			// storage/internal/domain/credential.go.
+			fmt.Fprintf(w, `{"accessKeyId":"cred-abc","name":%q,"description":%q,`+
+				`"secretAccessKey":"generated-secret-key","status":"active",`+ // pragma: allowlist secret
+				`"createdAt":"2025-06-01T12:00:00Z"}`, req.Name, req.Description)
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -176,158 +177,6 @@ func TestS3CredentialCreate(t *testing.T) {
 	}
 	if cred.Status != "active" {
 		t.Errorf("expected status active, got %s", cred.Status)
-	}
-}
-
-func TestS3CredentialReadFromList(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"id":       "user-123",
-				"tenantId": "tenant-456",
-			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/credentials":
-			_ = json.NewEncoder(w).Encode(apiS3CredentialList{
-				Credentials: []apiS3Credential{
-					{
-						ID:        "cred-other",
-						Name:      "other-cred",
-						Status:    "active",
-						CreatedAt: "2025-05-01T10:00:00Z",
-					},
-					{
-						ID:        "cred-abc",
-						Name:      "test-cred",
-						Status:    "active",
-						CreatedAt: "2025-06-01T12:00:00Z",
-					},
-				},
-			})
-		default:
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-
-	c := client.NewClient(server.URL, "test-key")
-	if err := c.Configure(context.Background()); err != nil {
-		t.Fatalf("configure failed: %v", err)
-	}
-
-	resp, err := c.Get(context.Background(), c.TenantPath("/credentials"), nil)
-	if err != nil {
-		t.Fatalf("get failed: %v", err)
-	}
-
-	list, err := client.ParseResponse[apiS3CredentialList](resp)
-	if err != nil {
-		t.Fatalf("parse failed: %v", err)
-	}
-
-	// Verify we can find the credential by ID.
-	var found *apiS3Credential
-	for i := range list.Credentials {
-		if list.Credentials[i].ID == "cred-abc" {
-			found = &list.Credentials[i]
-			break
-		}
-	}
-
-	if found == nil {
-		t.Fatal("expected to find credential cred-abc in list")
-	}
-	if found.Name != "test-cred" {
-		t.Errorf("expected name test-cred, got %s", found.Name)
-	}
-}
-
-func TestS3CredentialReadNotFoundInList(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"id":       "user-123",
-				"tenantId": "tenant-456",
-			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/credentials":
-			_ = json.NewEncoder(w).Encode(apiS3CredentialList{
-				Credentials: []apiS3Credential{
-					{
-						ID:        "cred-other",
-						Name:      "other-cred",
-						Status:    "active",
-						CreatedAt: "2025-05-01T10:00:00Z",
-					},
-				},
-			})
-		default:
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-
-	c := client.NewClient(server.URL, "test-key")
-	if err := c.Configure(context.Background()); err != nil {
-		t.Fatalf("configure failed: %v", err)
-	}
-
-	resp, err := c.Get(context.Background(), c.TenantPath("/credentials"), nil)
-	if err != nil {
-		t.Fatalf("get failed: %v", err)
-	}
-
-	list, err := client.ParseResponse[apiS3CredentialList](resp)
-	if err != nil {
-		t.Fatalf("parse failed: %v", err)
-	}
-
-	var found *apiS3Credential
-	for i := range list.Credentials {
-		if list.Credentials[i].ID == "cred-nonexistent" {
-			found = &list.Credentials[i]
-			break
-		}
-	}
-
-	if found != nil {
-		t.Error("expected credential to not be found")
-	}
-}
-
-func TestS3CredentialDelete(t *testing.T) {
-	deleted := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"id":       "user-123",
-				"tenantId": "tenant-456",
-			})
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-456/credentials/cred-abc":
-			deleted = true
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-
-	c := client.NewClient(server.URL, "test-key")
-	if err := c.Configure(context.Background()); err != nil {
-		t.Fatalf("configure failed: %v", err)
-	}
-
-	_, err := c.Delete(context.Background(), c.TenantPath("/credentials/cred-abc"))
-	if err != nil {
-		t.Fatalf("delete failed: %v", err)
-	}
-
-	if !deleted {
-		t.Error("expected delete to be called")
 	}
 }
 
@@ -555,14 +404,9 @@ func TestS3CredentialResource_Create_TFSDK(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/credentials":
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(apiS3Credential{
-				ID:              "cred-abc",
-				Name:            "test-cred",
-				Description:     "test",
-				SecretAccessKey: "generated-secret", // pragma: allowlist secret
-				Status:          "active",
-				CreatedAt:       "2025-06-01T12:00:00Z",
-			})
+			fmt.Fprint(w, `{"accessKeyId":"cred-abc","name":"test-cred","description":"test",`+
+				`"secretAccessKey":"generated-secret","status":"active",`+ // pragma: allowlist secret
+				`"createdAt":"2025-06-01T12:00:00Z"}`)
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -656,23 +500,11 @@ func TestS3CredentialResource_Create_APIError(t *testing.T) {
 func TestS3CredentialResource_Read_TFSDK(t *testing.T) {
 	server := s3CredMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/credentials":
-			_ = json.NewEncoder(w).Encode(apiS3CredentialList{
-				Credentials: []apiS3Credential{
-					{
-						ID:        "cred-other",
-						Name:      "other-cred",
-						Status:    "active",
-						CreatedAt: "2025-05-01T10:00:00Z",
-					},
-					{
-						ID:        "cred-abc",
-						Name:      "test-cred",
-						Status:    "active",
-						CreatedAt: "2025-06-01T12:00:00Z",
-					},
-				},
-			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/credentials/cred-abc":
+			// "id" is a decoy: the API does not send it, and the provider must
+			// not read it.
+			fmt.Fprint(w, `{"id":"WRONG-ID","accessKeyId":"cred-abc","name":"test-cred",`+
+				`"status":"active","createdAt":"2025-06-01T12:00:00Z"}`)
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -724,14 +556,13 @@ func TestS3CredentialResource_Read_TFSDK(t *testing.T) {
 	}
 }
 
-func TestS3CredentialResource_Read_NotFoundInList_TFSDK(t *testing.T) {
+func TestS3CredentialResource_Read_NotFound_TFSDK(t *testing.T) {
 	server := s3CredMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/credentials":
-			_ = json.NewEncoder(w).Encode(apiS3CredentialList{
-				Credentials: []apiS3Credential{
-					{ID: "cred-other", Name: "other", Status: "active", CreatedAt: "2025-05-01T10:00:00Z"},
-				},
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/credentials/cred-nonexistent":
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
 			})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -769,9 +600,9 @@ func TestS3CredentialResource_Read_NotFoundInList_TFSDK(t *testing.T) {
 	if readResp.Diagnostics.HasError() {
 		t.Fatalf("expected no errors, got %v", readResp.Diagnostics.Errors())
 	}
-	// State should be removed since the credential was not found in the list.
+	// State should be removed since the credential is gone (404).
 	if !readResp.State.Raw.IsNull() {
-		t.Error("expected null state after credential not found in list")
+		t.Error("expected null state after the credential 404s")
 	}
 }
 
@@ -991,5 +822,146 @@ func TestS3CredentialResource_ImportState_TFSDK(t *testing.T) {
 	importResp.State.Get(context.Background(), &model)
 	if model.ID.ValueString() != "cred-abc" {
 		t.Errorf("expected imported ID cred-abc, got %s", model.ID.ValueString())
+	}
+}
+
+// s3CredStateWithID builds a resource state whose id is the given value.
+func s3CredStateWithID(t *testing.T, id string) tftypes.Value {
+	t.Helper()
+	return tftypes.NewValue(s3CredTFType(t), map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, id),
+		"name":              tftypes.NewValue(tftypes.String, "test-cred"),
+		"description":       tftypes.NewValue(tftypes.String, nil),
+		"secret_access_key": tftypes.NewValue(tftypes.String, "secret"), // pragma: allowlist secret
+		"status":            tftypes.NewValue(tftypes.String, "active"),
+		"created_at":        tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+	})
+}
+
+// State written by provider versions up to v0.17.1 carries an empty id. Read
+// must say so rather than quietly dropping the resource (which would make the
+// next apply create a replacement and leave the old credential live).
+func TestS3CredentialResource_Read_EmptyID_Errors(t *testing.T) {
+	server := s3CredMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no credential request expected, got: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	})
+	defer server.Close()
+
+	s := s3CredSchema(t)
+	readResp := &resource.ReadResponse{State: tfsdk.State{Schema: s, Raw: s3CredStateWithID(t, "")}}
+	configuredS3CredResource(t, server.URL).Read(context.Background(),
+		resource.ReadRequest{State: tfsdk.State{Schema: s, Raw: s3CredStateWithID(t, "")}}, readResp)
+
+	// The resource must stay in state: removing it would make the next apply
+	// create a replacement and leave the old credential live.
+	if readResp.State.Raw.IsNull() {
+		t.Error("expected the resource to stay in state")
+	}
+	if !readResp.Diagnostics.HasError() {
+		t.Fatal("expected an error for state with an empty access key ID")
+	}
+	if readResp.Diagnostics.Errors()[0].Summary() != missingIDSummary {
+		t.Errorf("expected %q, got %q", missingIDSummary, readResp.Diagnostics.Errors()[0].Summary())
+	}
+}
+
+// Deleting with an empty id would hit the collection path, whose 404 the
+// not-found branch would swallow — reporting a destroy that never happened.
+func TestS3CredentialResource_Delete_EmptyID_Errors(t *testing.T) {
+	server := s3CredMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no credential request expected, got: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	})
+	defer server.Close()
+
+	s := s3CredSchema(t)
+	deleteResp := &resource.DeleteResponse{}
+	configuredS3CredResource(t, server.URL).Delete(context.Background(),
+		resource.DeleteRequest{State: tfsdk.State{Schema: s, Raw: s3CredStateWithID(t, "")}}, deleteResp)
+
+	if !deleteResp.Diagnostics.HasError() {
+		t.Fatal("expected an error for state with an empty access key ID")
+	}
+	if deleteResp.Diagnostics.Errors()[0].Summary() != missingIDSummary {
+		t.Errorf("expected %q, got %q", missingIDSummary, deleteResp.Diagnostics.Errors()[0].Summary())
+	}
+}
+
+// Create must not silently record an unusable id if the API ever stops sending
+// accessKeyId — but it must still persist the secret it just handed out once.
+func TestS3CredentialResource_Create_NoAccessKeyID_Errors(t *testing.T) {
+	server := s3CredMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprint(w, `{"name":"test-cred","secretAccessKey":"generated-secret",`+ // pragma: allowlist secret
+			`"status":"active","createdAt":"2025-06-01T12:00:00Z"}`)
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	s := s3CredSchema(t)
+	planVal := tftypes.NewValue(s3CredTFType(t), map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":              tftypes.NewValue(tftypes.String, "test-cred"),
+		"description":       tftypes.NewValue(tftypes.String, nil),
+		"secret_access_key": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"status":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+	})
+
+	createResp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	configuredS3CredResource(t, server.URL).Create(ctx,
+		resource.CreateRequest{Plan: tfsdk.Plan{Schema: s, Raw: planVal}}, createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("expected an error when the response carries no accessKeyId")
+	}
+	var model S3CredentialModel
+	createResp.State.Get(ctx, &model)
+	if model.SecretAccessKey.ValueString() != "generated-secret" { // pragma: allowlist secret
+		t.Errorf("expected the secret to be persisted despite the error, got %q", model.SecretAccessKey.ValueString())
+	}
+}
+
+// A body that is not the requested credential must not rewrite state's id.
+func TestS3CredentialResource_Read_IDMismatch_Errors(t *testing.T) {
+	server := s3CredMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"accessKeyId":"cred-other","name":"other","status":"active","createdAt":"2025-05-01T10:00:00Z"}`)
+	})
+	defer server.Close()
+
+	s := s3CredSchema(t)
+	readResp := &resource.ReadResponse{State: tfsdk.State{Schema: s, Raw: s3CredStateWithID(t, "cred-abc")}}
+	configuredS3CredResource(t, server.URL).Read(context.Background(),
+		resource.ReadRequest{State: tfsdk.State{Schema: s, Raw: s3CredStateWithID(t, "cred-abc")}}, readResp)
+
+	if !readResp.Diagnostics.HasError() {
+		t.Fatal("expected an error when the response is a different credential")
+	}
+	var model S3CredentialModel
+	readResp.State.Get(context.Background(), &model)
+	if model.ID.ValueString() != "cred-abc" {
+		t.Errorf("state id must be untouched, got %q", model.ID.ValueString())
+	}
+}
+
+// Dot-segments collapse in the client's path.Join and would aim requests at the
+// credentials collection, so they are rejected where an operator-supplied ID
+// enters state.
+func TestS3CredentialResource_ImportState_Rejects_PathSegments(t *testing.T) {
+	s := s3CredSchema(t)
+	for _, id := range []string{"", ".", "..", "a/b"} {
+		importResp := &resource.ImportStateResponse{State: tfsdk.State{Schema: s, Raw: s3CredStateWithID(t, "")}}
+		(&s3CredentialResource{}).ImportState(context.Background(),
+			resource.ImportStateRequest{ID: id}, importResp)
+		if !importResp.Diagnostics.HasError() {
+			t.Errorf("expected %q to be rejected", id)
+		}
 	}
 }

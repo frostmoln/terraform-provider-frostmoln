@@ -9,6 +9,10 @@ resource "frostmoln_s3_credential" "example" {
   allowed_actions = ["s3:GetObject", "s3:PutObject", "s3:ListBucket"]
 }
 
+output "s3_access_key_id" {
+  value = frostmoln_s3_credential.example.id
+}
+
 output "s3_secret_key" {
   value     = frostmoln_s3_credential.example.secret_access_key
   sensitive = true
