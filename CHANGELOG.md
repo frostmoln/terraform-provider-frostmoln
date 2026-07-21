@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.0] - 2026-07-21
+
+### 🚀 Features
+
+- *(iam)* Reject region-pinned policy targets at plan time (#215)
+
+### 🐛 Bug Fixes
+
+- *(webserver)* Php_enabled and php_version force a replacement (#211)
+- *(provider)* Order RequiresReplace after UseStateForUnknown on 26 attributes (#213)
+
+### 📚 Documentation
+
+- *(examples)* Add Example Usage for the 11 resources and data sources missing one (#209)
+
 ## [0.17.2] - 2026-07-21
 
 ### 🐛 Bug Fixes
