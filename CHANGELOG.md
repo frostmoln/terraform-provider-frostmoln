@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.2] - 2026-07-21
+
+### 🐛 Bug Fixes
+
+- *(s3_credential)* Decode the credential id from accessKeyId (#207)
+
 ## [0.17.1] - 2026-07-20
 
 ### 📚 Documentation
