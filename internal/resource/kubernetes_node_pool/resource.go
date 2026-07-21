@@ -111,8 +111,8 @@ func (r *kubernetesNodePoolResource) Schema(_ context.Context, _ resource.Schema
 				Optional: true,
 				Computed: true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
 					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
 				},
 				Validators: []validator.String{
 					stringvalidator.LengthAtMost(maxNodePoolNameLen),

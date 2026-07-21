@@ -116,6 +116,43 @@ Unit tests use `httptest` for HTTP mocking. Each resource test should:
 4. Create `resource_test.go` with unit tests
 5. Register the resource in `internal/provider/provider.go` `Resources()` method
 6. Add example HCL in `examples/resources/frostmoln_<name>/resource.tf`
+7. For any Optional+Computed attribute that is create-only, follow *Plan modifier
+   order* below and add it to `mustReplaceOnRealChange`
+
+### Plan modifier order: `UseStateForUnknown()` before `RequiresReplace()`
+
+On an **Optional+Computed** attribute the two modifiers must be ordered
+`UseStateForUnknown()` first, `RequiresReplace()` second:
+
+```go
+PlanModifiers: []planmodifier.String{
+    stringplanmodifier.UseStateForUnknown(),
+    stringplanmodifier.RequiresReplace(),
+},
+```
+
+The framework marks every Computed attribute whose *config* value is null as
+unknown on update, attribute plan modifiers run in slice order chaining their
+PlanValue, and `RequiresReplace` is sticky once set. Reversed, it compares that
+unknown against the state value, they differ, and it records a replacement — so
+for a practitioner who omits the attribute (the intended usage for a
+server-defaulted Computed attribute) *any* unrelated change plans a full
+destroy/recreate: the VM, the volume and its data.
+
+`UseStateForUnknown()` alone is safe here: it was already running before the fix,
+just one modifier too late, so the planned value was pinned to state either way —
+the ordering decides only whether a replacement is recorded.
+
+`internal/provider/planmodifier_order_test.go` enforces this behaviourally for
+every Optional+Computed attribute of every resource. A new create-only
+Optional+Computed attribute goes in its `mustReplaceOnRealChange` table, which
+guards the other direction (that `RequiresReplace()` was not simply dropped); the
+test fails if an attribute replaces without an entry, so the table cannot drift.
+
+An attribute with a schema `Default` is exempt: `MarkComputedNilsAsUnknown`
+returns a default-bearing attribute untouched, so a null config never makes its
+plan value unknown. (An unknown *config expression* still can, but no ordering
+helps there — `UseStateForUnknown` bails on an unknown config value by design.)
 
 ### Managed-service instance resource conventions
 

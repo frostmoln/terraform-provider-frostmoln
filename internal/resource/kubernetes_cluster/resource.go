@@ -95,8 +95,8 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 				Optional: true,
 				Computed: true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
 					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"control_plane_tier": schema.StringAttribute{
@@ -105,8 +105,8 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 				Optional: true,
 				Computed: true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
 					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"region": schema.StringAttribute{
@@ -114,8 +114,8 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 				Optional:    true,
 				Computed:    true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
 					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"vpc_id": schema.StringAttribute{
@@ -141,8 +141,8 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 				Optional: true,
 				Computed: true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
 					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
 				},
 				Validators: []validator.String{
 					stringvalidator.OneOf("public", "internal"),
@@ -171,8 +171,8 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 				Computed:    true,
 				ElementType: types.StringType,
 				PlanModifiers: []planmodifier.Set{
-					setplanmodifier.RequiresReplace(),
 					setplanmodifier.UseStateForUnknown(),
+					setplanmodifier.RequiresReplace(),
 				},
 			},
 			"initial_node_pool": schema.SingleNestedAttribute{
@@ -191,8 +191,8 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 						Optional:    true,
 						Computed:    true,
 						PlanModifiers: []planmodifier.String{
-							stringplanmodifier.RequiresReplace(),
 							stringplanmodifier.UseStateForUnknown(),
+							stringplanmodifier.RequiresReplace(),
 						},
 					},
 					"flavor_id": schema.StringAttribute{
