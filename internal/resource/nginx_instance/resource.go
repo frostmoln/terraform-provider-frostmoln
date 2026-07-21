@@ -198,7 +198,7 @@ func (r *nginxInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				Required:    true,
 			},
 			"version": schema.StringAttribute{
-				Description: "The Nginx version (e.g. \"1.24\", \"1.26\").",
+				Description: "The Nginx version (e.g. \"1.30\", \"1.31\").",
 				Required:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),

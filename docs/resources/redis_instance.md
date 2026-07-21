@@ -16,7 +16,7 @@ Manages a managed Redis instance in the Frostmoln platform.
 resource "frostmoln_redis_instance" "cache" {
   name      = "my-cache"
   version   = "7.2"
-  flavor_id = "cache.small"
+  flavor_id = "cache.gp1.small"
   vpc_id    = frostmoln_vpc.main.id
   subnet_id = frostmoln_subnet.private.id
 

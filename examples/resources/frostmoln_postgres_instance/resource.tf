@@ -1,6 +1,6 @@
-resource "frostmoln_mysql_instance" "main" {
-  name       = "my-mysql-db"
-  version    = "8.4"
+resource "frostmoln_postgres_instance" "main" {
+  name       = "app-db"
+  version    = "16"
   flavor_id  = "db.gp1.small"
   storage_gb = 50
   vpc_id     = frostmoln_vpc.main.id
@@ -11,6 +11,6 @@ resource "frostmoln_mysql_instance" "main" {
   backup_retention_days = 35
 }
 
-output "mysql_endpoint" {
-  value = "${frostmoln_mysql_instance.main.private_ip}:${frostmoln_mysql_instance.main.port}"
+output "postgres_endpoint" {
+  value = "${frostmoln_postgres_instance.main.private_ip}:${frostmoln_postgres_instance.main.port}"
 }

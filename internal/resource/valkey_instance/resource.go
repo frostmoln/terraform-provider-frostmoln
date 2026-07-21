@@ -66,7 +66,7 @@ func (r *valkeyInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 				Required:    true,
 			},
 			"version": schema.StringAttribute{
-				Description: "The Valkey version (e.g. \"8.0\").",
+				Description: "The Valkey version (e.g. \"8.1\").",
 				Required:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -99,7 +99,7 @@ func (r *valkeyInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 				},
 			},
 			"persistence_mode": schema.StringAttribute{
-				Description: "The persistence mode for the Valkey instance (\"rdb\", \"aof\", or \"none\"). Defaults to \"rdb\".",
+				Description: "The persistence mode for the Valkey instance (\"rdb\", \"aof\", \"rdb+aof\", or \"none\"). Defaults to \"rdb\".",
 				Optional:    true,
 				Computed:    true,
 				Default:     stringdefault.StaticString("rdb"),

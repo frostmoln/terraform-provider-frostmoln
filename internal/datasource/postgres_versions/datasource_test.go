@@ -113,6 +113,9 @@ func emptyConfigVal(t *testing.T) tftypes.Value {
 func TestReadVersions(t *testing.T) {
 	server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/databases/versions" {
+			if got := r.URL.Query().Get("engine"); got != "postgresql" {
+				t.Errorf("expected engine=postgresql query param, got %q", got)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(apiPostgresVersionList{
 				Versions: []apiPostgresVersion{

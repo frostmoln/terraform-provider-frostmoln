@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -109,7 +110,10 @@ func (d *postgresVersionsDataSource) Read(ctx context.Context, req datasource.Re
 		return
 	}
 
-	apiResp, err := d.client.Get(ctx, "/v1/databases/versions", nil)
+	query := url.Values{}
+	query.Set("engine", "postgresql")
+
+	apiResp, err := d.client.Get(ctx, "/v1/databases/versions", query)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to list PostgreSQL versions", err.Error())
 		return

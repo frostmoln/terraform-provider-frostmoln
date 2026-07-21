@@ -16,12 +16,11 @@ Manages a managed MySQL database instance in the Frostmoln platform.
 resource "frostmoln_mysql_instance" "main" {
   name       = "my-mysql-db"
   version    = "8.4"
-  flavor_id  = "db.small"
+  flavor_id  = "db.gp1.small"
   storage_gb = 50
   vpc_id     = frostmoln_vpc.main.id
   subnet_id  = frostmoln_subnet.db.id
 
-  ha_enabled            = true
   backup_enabled        = true
   backup_schedule       = "0 2 * * *"
   backup_retention_days = 35
