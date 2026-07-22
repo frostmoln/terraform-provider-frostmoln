@@ -7,4 +7,9 @@ resource "frostmoln_redis_instance" "cache" {
 
   persistence_mode = "rdb"
   eviction_policy  = "allkeys-lru"
+
+  # Scheduled backups require a persistence_mode other than "none".
+  backup_enabled        = true
+  backup_schedule       = "0 2 * * *"
+  backup_retention_days = 35
 }

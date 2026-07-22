@@ -22,6 +22,11 @@ resource "frostmoln_redis_instance" "cache" {
 
   persistence_mode = "rdb"
   eviction_policy  = "allkeys-lru"
+
+  # Scheduled backups require a persistence_mode other than "none".
+  backup_enabled        = true
+  backup_schedule       = "0 2 * * *"
+  backup_retention_days = 35
 }
 ```
 
@@ -38,6 +43,9 @@ resource "frostmoln_redis_instance" "cache" {
 
 ### Optional
 
+- `backup_enabled` (Boolean) Whether automated backups are enabled. Requires a persistence_mode other than "none".
+- `backup_retention_days` (Number) Number of days to retain backups. Minimum 35 (backups are immutably object-locked for 35 days); maximum 90. Defaults to 35 server-side.
+- `backup_schedule` (String) Cron expression for the backup schedule. Defaults to "0 2 * * *".
 - `eviction_policy` (String) The eviction policy for the Redis instance (e.g. "noeviction", "allkeys-lru"). Defaults to "noeviction".
 - `persistence_mode` (String) The persistence mode for the Redis instance ("rdb", "aof", or "none"). Defaults to "rdb".
 - `storage_gb` (Number) The storage size in gigabytes (defaults to 10 if unset). Can only be increased (grow-only); volumes cannot be shrunk.

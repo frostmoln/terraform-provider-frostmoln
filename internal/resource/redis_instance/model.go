@@ -19,12 +19,17 @@ type RedisInstanceModel struct {
 	SubnetID        types.String `tfsdk:"subnet_id"`
 	PersistenceMode types.String `tfsdk:"persistence_mode"`
 	EvictionPolicy  types.String `tfsdk:"eviction_policy"`
-	Status          types.String `tfsdk:"status"`
-	PrivateIP       types.String `tfsdk:"private_ip"`
-	Port            types.Int64  `tfsdk:"port"`
-	AdminUsername   types.String `tfsdk:"admin_username"`
-	CreatedAt       types.String `tfsdk:"created_at"`
-	UpdatedAt       types.String `tfsdk:"updated_at"`
+
+	BackupEnabled       types.Bool   `tfsdk:"backup_enabled"`
+	BackupSchedule      types.String `tfsdk:"backup_schedule"`
+	BackupRetentionDays types.Int64  `tfsdk:"backup_retention_days"`
+
+	Status        types.String `tfsdk:"status"`
+	PrivateIP     types.String `tfsdk:"private_ip"`
+	Port          types.Int64  `tfsdk:"port"`
+	AdminUsername types.String `tfsdk:"admin_username"`
+	CreatedAt     types.String `tfsdk:"created_at"`
+	UpdatedAt     types.String `tfsdk:"updated_at"`
 }
 
 // apiRedisInstance is the API representation of a managed Redis instance.
@@ -38,12 +43,17 @@ type apiRedisInstance struct {
 	SubnetID        string `json:"subnetId"`
 	PersistenceMode string `json:"persistenceMode"`
 	EvictionPolicy  string `json:"evictionPolicy"`
-	Status          string `json:"status"`
-	PrivateIP       string `json:"privateIp,omitempty"`
-	Port            int    `json:"port,omitempty"`
-	AdminUsername   string `json:"adminUsername,omitempty"`
-	CreatedAt       string `json:"createdAt"`
-	UpdatedAt       string `json:"updatedAt,omitempty"`
+
+	BackupEnabled       bool   `json:"backupEnabled"`
+	BackupSchedule      string `json:"backupSchedule,omitempty"`
+	BackupRetentionDays int    `json:"backupRetentionDays,omitempty"`
+
+	Status        string `json:"status"`
+	PrivateIP     string `json:"privateIp,omitempty"`
+	Port          int    `json:"port,omitempty"`
+	AdminUsername string `json:"adminUsername,omitempty"`
+	CreatedAt     string `json:"createdAt"`
+	UpdatedAt     string `json:"updatedAt,omitempty"`
 }
 
 // apiCreateRedisInstanceRequest is the API request to create a managed Redis instance.
@@ -57,6 +67,10 @@ type apiCreateRedisInstanceRequest struct {
 	SubnetID        string `json:"subnetId"`
 	PersistenceMode string `json:"persistenceMode,omitempty"`
 	EvictionPolicy  string `json:"evictionPolicy,omitempty"`
+
+	BackupEnabled       *bool  `json:"backupEnabled,omitempty"`
+	BackupSchedule      string `json:"backupSchedule,omitempty"`
+	BackupRetentionDays *int   `json:"backupRetentionDays,omitempty"`
 }
 
 // apiUpdateRedisInstanceRequest is the API request to update a managed Redis instance
@@ -66,12 +80,17 @@ type apiUpdateRedisInstanceRequest struct {
 	Name            *string `json:"name,omitempty"`
 	PersistenceMode *string `json:"persistenceMode,omitempty"`
 	EvictionPolicy  *string `json:"evictionPolicy,omitempty"`
+
+	BackupEnabled       *bool   `json:"backupEnabled,omitempty"`
+	BackupSchedule      *string `json:"backupSchedule,omitempty"`
+	BackupRetentionDays *int    `json:"backupRetentionDays,omitempty"`
 }
 
 // hasChanges reports whether any in-place-updatable field is set, so Update can skip an empty PUT
 // when only storage changed (which routes through /resize instead).
 func (r apiUpdateRedisInstanceRequest) hasChanges() bool {
-	return r.Name != nil || r.PersistenceMode != nil || r.EvictionPolicy != nil
+	return r.Name != nil || r.PersistenceMode != nil || r.EvictionPolicy != nil ||
+		r.BackupEnabled != nil || r.BackupSchedule != nil || r.BackupRetentionDays != nil
 }
 
 // apiResizeRedisInstanceRequest is the API request to resize a managed Redis instance
@@ -103,6 +122,17 @@ func (m *RedisInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnost
 	if !m.EvictionPolicy.IsNull() && !m.EvictionPolicy.IsUnknown() {
 		req.EvictionPolicy = m.EvictionPolicy.ValueString()
 	}
+	if !m.BackupEnabled.IsNull() && !m.BackupEnabled.IsUnknown() {
+		v := m.BackupEnabled.ValueBool()
+		req.BackupEnabled = &v
+	}
+	if !m.BackupSchedule.IsNull() && !m.BackupSchedule.IsUnknown() {
+		req.BackupSchedule = m.BackupSchedule.ValueString()
+	}
+	if !m.BackupRetentionDays.IsNull() && !m.BackupRetentionDays.IsUnknown() {
+		v := int(m.BackupRetentionDays.ValueInt64())
+		req.BackupRetentionDays = &v
+	}
 
 	return req
 }
@@ -123,6 +153,21 @@ func (m *RedisInstanceModel) toUpdateRequest(state *RedisInstanceModel) apiUpdat
 		v := m.EvictionPolicy.ValueString()
 		req.EvictionPolicy = &v
 	}
+	// Guard on !IsUnknown so a still-unresolved Computed plan value is never serialized as
+	// &"" / &0 (ValueString/ValueInt64 return the zero value for unknown), which would fire a
+	// spurious no-op PUT — mirrors the toCreateRequest guards.
+	if !m.BackupEnabled.IsUnknown() && !m.BackupEnabled.Equal(state.BackupEnabled) {
+		v := m.BackupEnabled.ValueBool()
+		req.BackupEnabled = &v
+	}
+	if !m.BackupSchedule.IsUnknown() && !m.BackupSchedule.Equal(state.BackupSchedule) {
+		v := m.BackupSchedule.ValueString()
+		req.BackupSchedule = &v
+	}
+	if !m.BackupRetentionDays.IsUnknown() && !m.BackupRetentionDays.Equal(state.BackupRetentionDays) {
+		v := int(m.BackupRetentionDays.ValueInt64())
+		req.BackupRetentionDays = &v
+	}
 
 	return req
 }
@@ -138,8 +183,21 @@ func (m *RedisInstanceModel) fromAPI(_ context.Context, inst *apiRedisInstance, 
 	m.SubnetID = types.StringValue(inst.SubnetID)
 	m.PersistenceMode = types.StringValue(inst.PersistenceMode)
 	m.EvictionPolicy = types.StringValue(inst.EvictionPolicy)
+	m.BackupEnabled = types.BoolValue(inst.BackupEnabled)
 	m.Status = types.StringValue(inst.Status)
 	m.CreatedAt = types.StringValue(inst.CreatedAt)
+
+	if inst.BackupSchedule != "" {
+		m.BackupSchedule = types.StringValue(inst.BackupSchedule)
+	} else {
+		m.BackupSchedule = types.StringNull()
+	}
+
+	if inst.BackupRetentionDays > 0 {
+		m.BackupRetentionDays = types.Int64Value(int64(inst.BackupRetentionDays))
+	} else {
+		m.BackupRetentionDays = types.Int64Null()
+	}
 
 	if inst.PrivateIP != "" {
 		m.PrivateIP = types.StringValue(inst.PrivateIP)

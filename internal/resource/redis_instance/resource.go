@@ -5,13 +5,16 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
@@ -109,6 +112,40 @@ func (r *redisInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				Optional:    true,
 				Computed:    true,
 				Default:     stringdefault.StaticString("noeviction"),
+			},
+			// backup_enabled and backup_retention_days are ALWAYS echoed by the cache backend
+			// (enabled is a plain bool; retention is a NOT-NULL column unconditionally defaulted
+			// to 35), so Optional+Computed+UseStateForUnknown pins the server value into state
+			// with no spurious diff. backup_schedule is DIFFERENT: the backend stores "" (which
+			// fromAPI maps to null) whenever backups are off, and UseStateForUnknown is a no-op
+			// against a null prior state — that would leave the planned value perpetually
+			// "(known after apply)" for every backups-off instance. A schema Default sidesteps it
+			// (a defaulted attribute is never marked unknown), matching persistence_mode /
+			// eviction_policy above; the backend stores + echoes whatever schedule we send.
+			"backup_enabled": schema.BoolAttribute{
+				Description: "Whether automated backups are enabled. Requires a persistence_mode other than \"none\".",
+				Optional:    true,
+				Computed:    true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"backup_schedule": schema.StringAttribute{
+				Description: "Cron expression for the backup schedule. Defaults to \"0 2 * * *\".",
+				Optional:    true,
+				Computed:    true,
+				Default:     stringdefault.StaticString("0 2 * * *"),
+			},
+			"backup_retention_days": schema.Int64Attribute{
+				Description: "Number of days to retain backups. Minimum 35 (backups are immutably object-locked for 35 days); maximum 90. Defaults to 35 server-side.",
+				Optional:    true,
+				Computed:    true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
+				Validators: []validator.Int64{
+					int64validator.Between(35, 90),
+				},
 			},
 			"status": schema.StringAttribute{
 				Description: "The current status of the Redis instance.",

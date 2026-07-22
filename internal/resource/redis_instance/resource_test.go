@@ -75,13 +75,16 @@ func TestRedisInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 	diags := diag.Diagnostics{}
 
 	model := RedisInstanceModel{
-		Name:            types.StringValue("my-redis"),
-		Version:         types.StringValue("7.4"),
-		FlavorID:        types.StringValue("cache.medium"),
-		VPCID:           types.StringValue("vpc-123"),
-		SubnetID:        types.StringValue("subnet-456"),
-		PersistenceMode: types.StringValue("aof"),
-		EvictionPolicy:  types.StringValue("allkeys-lru"),
+		Name:                types.StringValue("my-redis"),
+		Version:             types.StringValue("7.4"),
+		FlavorID:            types.StringValue("cache.medium"),
+		VPCID:               types.StringValue("vpc-123"),
+		SubnetID:            types.StringValue("subnet-456"),
+		PersistenceMode:     types.StringValue("aof"),
+		EvictionPolicy:      types.StringValue("allkeys-lru"),
+		BackupEnabled:       types.BoolValue(true),
+		BackupSchedule:      types.StringValue("0 2 * * *"),
+		BackupRetentionDays: types.Int64Value(35),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
@@ -98,20 +101,64 @@ func TestRedisInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 	if req.EvictionPolicy != "allkeys-lru" {
 		t.Errorf("expected evictionPolicy allkeys-lru, got %s", req.EvictionPolicy)
 	}
+	if req.BackupEnabled == nil || !*req.BackupEnabled {
+		t.Error("expected backupEnabled true")
+	}
+	if req.BackupSchedule != "0 2 * * *" {
+		t.Errorf("expected backupSchedule '0 2 * * *', got %s", req.BackupSchedule)
+	}
+	if req.BackupRetentionDays == nil || *req.BackupRetentionDays != 35 {
+		t.Error("expected backupRetentionDays 35")
+	}
+}
+
+// A null backup config leaves the create request's pointer fields nil, so the
+// backend applies its own defaults (retention 35, backups off).
+func TestRedisInstanceModelToCreateRequestNullBackups(t *testing.T) {
+	ctx := context.Background()
+	diags := diag.Diagnostics{}
+
+	model := RedisInstanceModel{
+		Name:                types.StringValue("my-redis"),
+		Version:             types.StringValue("7.4"),
+		FlavorID:            types.StringValue("cache.medium"),
+		VPCID:               types.StringValue("vpc-123"),
+		SubnetID:            types.StringValue("subnet-456"),
+		BackupEnabled:       types.BoolNull(),
+		BackupSchedule:      types.StringNull(),
+		BackupRetentionDays: types.Int64Null(),
+	}
+
+	req := model.toCreateRequest(ctx, &diags)
+	if req.BackupEnabled != nil {
+		t.Error("expected nil backupEnabled for null value")
+	}
+	if req.BackupSchedule != "" {
+		t.Errorf("expected empty backupSchedule for null value, got %s", req.BackupSchedule)
+	}
+	if req.BackupRetentionDays != nil {
+		t.Error("expected nil backupRetentionDays for null value")
+	}
 }
 
 func TestRedisInstanceModelToUpdateRequest(t *testing.T) {
 	plan := RedisInstanceModel{
-		Name:            types.StringValue("new-name"),
-		FlavorID:        types.StringValue("cache.large"),
-		PersistenceMode: types.StringValue("aof"),
-		EvictionPolicy:  types.StringValue("allkeys-lru"),
+		Name:                types.StringValue("new-name"),
+		FlavorID:            types.StringValue("cache.large"),
+		PersistenceMode:     types.StringValue("aof"),
+		EvictionPolicy:      types.StringValue("allkeys-lru"),
+		BackupEnabled:       types.BoolValue(true),
+		BackupSchedule:      types.StringValue("0 3 * * *"),
+		BackupRetentionDays: types.Int64Value(60),
 	}
 	state := RedisInstanceModel{
-		Name:            types.StringValue("old-name"),
-		FlavorID:        types.StringValue("cache.small"),
-		PersistenceMode: types.StringValue("rdb"),
-		EvictionPolicy:  types.StringValue("noeviction"),
+		Name:                types.StringValue("old-name"),
+		FlavorID:            types.StringValue("cache.small"),
+		PersistenceMode:     types.StringValue("rdb"),
+		EvictionPolicy:      types.StringValue("noeviction"),
+		BackupEnabled:       types.BoolValue(false),
+		BackupSchedule:      types.StringNull(),
+		BackupRetentionDays: types.Int64Value(35),
 	}
 
 	req := plan.toUpdateRequest(&state)
@@ -126,19 +173,61 @@ func TestRedisInstanceModelToUpdateRequest(t *testing.T) {
 	if req.EvictionPolicy == nil || *req.EvictionPolicy != "allkeys-lru" {
 		t.Error("expected evictionPolicy update to allkeys-lru")
 	}
+	if req.BackupEnabled == nil || !*req.BackupEnabled {
+		t.Error("expected backupEnabled update to true")
+	}
+	if req.BackupSchedule == nil || *req.BackupSchedule != "0 3 * * *" {
+		t.Error("expected backupSchedule update to '0 3 * * *'")
+	}
+	if req.BackupRetentionDays == nil || *req.BackupRetentionDays != 60 {
+		t.Error("expected backupRetentionDays update to 60")
+	}
 }
 
 func TestRedisInstanceModelToUpdateRequestNoChanges(t *testing.T) {
 	same := RedisInstanceModel{
-		Name:            types.StringValue("same"),
-		FlavorID:        types.StringValue("cache.small"),
-		PersistenceMode: types.StringValue("rdb"),
-		EvictionPolicy:  types.StringValue("noeviction"),
+		Name:                types.StringValue("same"),
+		FlavorID:            types.StringValue("cache.small"),
+		PersistenceMode:     types.StringValue("rdb"),
+		EvictionPolicy:      types.StringValue("noeviction"),
+		BackupEnabled:       types.BoolValue(true),
+		BackupSchedule:      types.StringValue("0 2 * * *"),
+		BackupRetentionDays: types.Int64Value(35),
 	}
 
 	req := same.toUpdateRequest(&same)
 	if req.Name != nil || req.PersistenceMode != nil || req.EvictionPolicy != nil {
 		t.Error("expected no changes in update request")
+	}
+	if req.BackupEnabled != nil || req.BackupSchedule != nil || req.BackupRetentionDays != nil {
+		t.Error("expected no backup changes in update request")
+	}
+}
+
+// An unknown (unresolved Computed) backup plan value must never be serialized into the PUT —
+// ValueString/ValueBool/ValueInt64 return the zero value for unknown, so without the IsUnknown
+// guard a storage-only resize would fire a spurious no-op backup PUT.
+func TestRedisInstanceModelToUpdateRequestUnknownBackupsSkipped(t *testing.T) {
+	plan := RedisInstanceModel{
+		Name:                types.StringValue("same"),
+		PersistenceMode:     types.StringValue("rdb"),
+		EvictionPolicy:      types.StringValue("noeviction"),
+		BackupEnabled:       types.BoolUnknown(),
+		BackupSchedule:      types.StringUnknown(),
+		BackupRetentionDays: types.Int64Unknown(),
+	}
+	state := RedisInstanceModel{
+		Name:                types.StringValue("same"),
+		PersistenceMode:     types.StringValue("rdb"),
+		EvictionPolicy:      types.StringValue("noeviction"),
+		BackupEnabled:       types.BoolValue(true),
+		BackupSchedule:      types.StringValue("0 2 * * *"),
+		BackupRetentionDays: types.Int64Value(35),
+	}
+
+	req := plan.toUpdateRequest(&state)
+	if req.BackupEnabled != nil || req.BackupSchedule != nil || req.BackupRetentionDays != nil {
+		t.Error("unknown backup plan values must not be serialized into the update request")
 	}
 }
 
@@ -147,21 +236,24 @@ func TestRedisInstanceModelFromAPI(t *testing.T) {
 	diags := diag.Diagnostics{}
 
 	api := &apiRedisInstance{
-		ID:              "redis-123",
-		Name:            "my-redis",
-		EngineVersion:   "7.2",
-		FlavorID:        "cache.small",
-		StorageGB:       25,
-		VPCID:           "vpc-123",
-		SubnetID:        "subnet-456",
-		PersistenceMode: "rdb",
-		EvictionPolicy:  "noeviction",
-		Status:          "running",
-		PrivateIP:       "10.0.1.5",
-		Port:            6379,
-		AdminUsername:   "default",
-		CreatedAt:       "2025-01-01T00:00:00Z",
-		UpdatedAt:       "2025-01-02T00:00:00Z",
+		ID:                  "redis-123",
+		Name:                "my-redis",
+		EngineVersion:       "7.2",
+		FlavorID:            "cache.small",
+		StorageGB:           25,
+		VPCID:               "vpc-123",
+		SubnetID:            "subnet-456",
+		PersistenceMode:     "rdb",
+		EvictionPolicy:      "noeviction",
+		BackupEnabled:       true,
+		BackupSchedule:      "0 2 * * *",
+		BackupRetentionDays: 35,
+		Status:              "running",
+		PrivateIP:           "10.0.1.5",
+		Port:                6379,
+		AdminUsername:       "default",
+		CreatedAt:           "2025-01-01T00:00:00Z",
+		UpdatedAt:           "2025-01-02T00:00:00Z",
 	}
 
 	var model RedisInstanceModel
@@ -193,6 +285,15 @@ func TestRedisInstanceModelFromAPI(t *testing.T) {
 	}
 	if model.EvictionPolicy.ValueString() != "noeviction" {
 		t.Errorf("expected eviction_policy noeviction, got %s", model.EvictionPolicy.ValueString())
+	}
+	if !model.BackupEnabled.ValueBool() {
+		t.Error("expected backup_enabled true")
+	}
+	if model.BackupSchedule.ValueString() != "0 2 * * *" {
+		t.Errorf("expected backup_schedule '0 2 * * *', got %s", model.BackupSchedule.ValueString())
+	}
+	if model.BackupRetentionDays.ValueInt64() != 35 {
+		t.Errorf("expected backup_retention_days 35, got %d", model.BackupRetentionDays.ValueInt64())
 	}
 }
 
@@ -230,6 +331,17 @@ func TestRedisInstanceModelFromAPINulls(t *testing.T) {
 	}
 	if !model.UpdatedAt.IsNull() {
 		t.Error("expected null updated_at")
+	}
+	// backup_enabled is always present (bool zero value false); schedule/retention are null
+	// when the API omits them.
+	if model.BackupEnabled.ValueBool() {
+		t.Error("expected backup_enabled false")
+	}
+	if !model.BackupSchedule.IsNull() {
+		t.Error("expected null backup_schedule")
+	}
+	if !model.BackupRetentionDays.IsNull() {
+		t.Error("expected null backup_retention_days")
 	}
 }
 
@@ -273,7 +385,7 @@ func TestSchema(t *testing.T) {
 	}
 
 	// Verify defaults
-	optionalAttrs := []string{"storage_gb", "persistence_mode", "eviction_policy"}
+	optionalAttrs := []string{"storage_gb", "persistence_mode", "eviction_policy", "backup_enabled", "backup_schedule", "backup_retention_days"}
 	for _, attr := range optionalAttrs {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected optional attribute %s in schema", attr)
