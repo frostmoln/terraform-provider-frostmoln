@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.0] - 2026-07-26
+
+### 🚀 Features
+
+- *(redis)* Add backup_enabled/schedule/retention_days attributes (#219)
+
+### 🐛 Bug Fixes
+
+- *(provider)* Route webserver config changes to PUT /webservers/{id}/config (#217)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.4 (#223)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.6.3 (#221)
+- *(deps)* Update dependency frostmoln/workflows to v0.7.0 (#224)
+
 ## [0.18.0] - 2026-07-21
 
 ### 🚀 Features
