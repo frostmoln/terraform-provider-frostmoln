@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.2] - 2026-07-29
+
+### 🐛 Bug Fixes
+
+- *(instance)* Report the instance's real VPC id in the data source (#229)
+
 ## [0.19.1] - 2026-07-26
 
 ### 🐛 Bug Fixes
