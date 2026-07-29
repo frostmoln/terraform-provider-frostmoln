@@ -292,6 +292,78 @@ func TestTFSDK_ReadInstanceByID(t *testing.T) {
 	if state.PublicIP.ValueString() != "203.0.113.10" {
 		t.Errorf("expected PublicIP 203.0.113.10, got %s", state.PublicIP.ValueString())
 	}
+	// vpc_id was hardcoded null on the claim that networks[].networkId holds the
+	// network NAME. A Frostmoln VPC IS a Neutron network, so the id is the VPC id
+	// — and the provider was reporting no VPC for instances the portal showed one
+	// for.
+	if state.VPCID.ValueString() != "vpc-1" {
+		t.Errorf("expected VPCID vpc-1 from networks[0].networkId, got %q", state.VPCID.ValueString())
+	}
+	if state.SubnetID.ValueString() != "sub-1" {
+		t.Errorf("expected SubnetID sub-1, got %q", state.SubnetID.ValueString())
+	}
+}
+
+// An instance whose VPC could not be resolved must report NOTHING rather than
+// something wrong: compute leaves networkId empty unless it resolved a real
+// Neutron network id.
+func TestTFSDK_ReadInstance_UnresolvedVPCIsNull(t *testing.T) {
+	instances := map[string]apiInstance{
+		"inst-1": {
+			ID:        "inst-1",
+			Name:      "web-server-1",
+			Status:    "active",
+			FlavorID:  "flv-1",
+			ImageID:   "img-1",
+			Zone:      "sweden-a",
+			Networks:  []apiInstanceNetwork{{NetworkID: "", SubnetID: "sub-1"}},
+			CreatedAt: "2025-01-01T00:00:00Z",
+		},
+	}
+	server := newTestServer(t, instances)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	ds := NewDataSource()
+	configureInstanceDS(t, ds, c)
+	schemaResp := getInstanceDSSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "inst-1"),
+		"name":        tftypes.NewValue(tftypes.String, nil),
+		"flavor_id":   tftypes.NewValue(tftypes.String, nil),
+		"flavor_name": tftypes.NewValue(tftypes.String, nil),
+		"image_id":    tftypes.NewValue(tftypes.String, nil),
+		"image_name":  tftypes.NewValue(tftypes.String, nil),
+		"zone":        tftypes.NewValue(tftypes.String, nil),
+		"vpc_id":      tftypes.NewValue(tftypes.String, nil),
+		"subnet_id":   tftypes.NewValue(tftypes.String, nil),
+		"private_ip":  tftypes.NewValue(tftypes.String, nil),
+		"public_ip":   tftypes.NewValue(tftypes.String, nil),
+		"status":      tftypes.NewValue(tftypes.String, nil),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"created_at":  tftypes.NewValue(tftypes.String, nil),
+	})
+
+	readReq := datasource.ReadRequest{Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal}}
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+	ds.Read(ctx, readReq, &readResp)
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	var state instanceModel
+	readResp.State.Get(ctx, &state)
+	if !state.VPCID.IsNull() {
+		t.Errorf("an unresolved VPC must be null, got %q", state.VPCID.ValueString())
+	}
 }
 
 func TestTFSDK_ReadInstanceNotFound(t *testing.T) {

@@ -42,5 +42,5 @@ output "instance_ip" {
 - `status` (String) The status of the instance.
 - `subnet_id` (String) The subnet ID of the instance.
 - `tags` (Map of String) The tags associated with the instance.
-- `vpc_id` (String) The VPC ID of the instance.
+- `vpc_id` (String) The VPC ID of the instance, derived from its first network attachment. MAY BE NULL when the platform cannot resolve it (resolution is best-effort), and a multi-NIC instance reports only one of its VPCs. Do not feed this into a RequiresReplace attribute such as frostmoln_instance.vpc_id — a null-to-value transition would plan a destroy and recreate. Reference frostmoln_vpc.<name>.id for that.
 - `zone` (String) The availability zone of the instance.

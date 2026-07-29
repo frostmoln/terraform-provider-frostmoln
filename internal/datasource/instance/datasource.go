@@ -111,8 +111,14 @@ func (d *instanceDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 				Computed:    true,
 			},
 			"vpc_id": schema.StringAttribute{
-				Description: "The VPC ID of the instance.",
-				Computed:    true,
+				Description: "The VPC ID of the instance, derived from its first " +
+					"network attachment. MAY BE NULL when the platform cannot resolve " +
+					"it (resolution is best-effort), and a multi-NIC instance reports " +
+					"only one of its VPCs. Do not feed this into a RequiresReplace " +
+					"attribute such as frostmoln_instance.vpc_id — a null-to-value " +
+					"transition would plan a destroy and recreate. Reference " +
+					"frostmoln_vpc.<name>.id for that.",
+				Computed: true,
 			},
 			"subnet_id": schema.StringAttribute{
 				Description: "The subnet ID of the instance.",
@@ -209,14 +215,26 @@ func (d *instanceDataSource) Read(ctx context.Context, req datasource.ReadReques
 		state.PublicIP = types.StringNull()
 	}
 
-	// subnet_id comes from the first network attachment (enriched to the real
-	// Neutron subnet id on GET). vpc_id is NOT derivable from the instance read:
-	// networks[].networkId is the network NAME, not the VPC UUID, and the backend
-	// exposes no instance→VPC id. Leave vpc_id null rather than report the name.
-	state.VPCID = types.StringNull()
+	// vpc_id and subnet_id both come from networks[0] — the ALPHABETICALLY-FIRST
+	// attached network. compute sorts by network name
+	// (repository/openstack/mapper.go), which is what makes it stable across
+	// reads; there is no Nova concept of a primary interface. A multi-NIC
+	// instance therefore reports only one of its VPCs.
+	//
+	// This used to say networks[].networkId is the network NAME rather than a
+	// UUID, and left vpc_id null on that basis. It was a name only briefly, and
+	// that was the bug: compute now leaves the field EMPTY unless it resolved a
+	// real Neutron network id — and a Frostmoln VPC *is* a Neutron network, so
+	// the network id IS the VPC id.
+	//
+	// Empty maps to NULL for both, so "could not resolve" stays distinguishable
+	// from a real value in HCL (coalesce/try/!= null). Resolution is best-effort
+	// in compute, so null is a reachable state, not a theoretical one.
 	if len(inst.Networks) > 0 {
-		state.SubnetID = types.StringValue(inst.Networks[0].SubnetID)
+		state.VPCID = stringOrNull(inst.Networks[0].NetworkID)
+		state.SubnetID = stringOrNull(inst.Networks[0].SubnetID)
 	} else {
+		state.VPCID = types.StringNull()
 		state.SubnetID = types.StringNull()
 	}
 
@@ -232,4 +250,15 @@ func (d *instanceDataSource) Read(ctx context.Context, req datasource.ReadReques
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+}
+
+// stringOrNull maps an absent wire value to a Terraform null rather than "".
+// In HCL those are meaningfully different for coalesce/try/!= null, and an
+// empty string would assert "this instance has no VPC" when the truth is that
+// the platform could not determine one.
+func stringOrNull(v string) types.String {
+	if v == "" {
+		return types.StringNull()
+	}
+	return types.StringValue(v)
 }
