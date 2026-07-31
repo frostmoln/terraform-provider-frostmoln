@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.3] - 2026-07-31
+
+### 🐛 Bug Fixes
+
+- *(db)* Pin server backup policy on postgres+mysql instances (#231)
+
 ## [0.19.2] - 2026-07-29
 
 ### 🐛 Bug Fixes
