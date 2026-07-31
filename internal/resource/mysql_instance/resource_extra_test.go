@@ -58,16 +58,18 @@ func TestModelToUpdateRequestAllFields(t *testing.T) {
 
 func TestModelFromAPIFullyPopulated(t *testing.T) {
 	api := &apiMysqlInstance{
-		ID:                  "db-1",
-		Name:                "db",
-		EngineVersion:       "8.0",
-		FlavorID:            "db.small",
-		StorageGB:           100,
-		VPCID:               "vpc-1",
-		SubnetID:            "sn-1",
-		Status:              "running",
-		BackupSchedule:      "0 2 * * *",
-		BackupRetentionDays: 7,
+		ID:             "db-1",
+		Name:           "db",
+		EngineVersion:  "8.0",
+		FlavorID:       "db.small",
+		StorageGB:      100,
+		VPCID:          "vpc-1",
+		SubnetID:       "sn-1",
+		Status:         "running",
+		BackupSchedule: "0 2 * * *",
+		// 60, not a sub-floor value: fromAPI floors anything below 35 (ADR-0085), so a 7 here
+		// would exercise the floor rather than the pass-through this test is about.
+		BackupRetentionDays: 60,
 		ParameterGroupID:    "pg-1",
 		PrivateIP:           "10.0.0.5",
 		Port:                3306,
@@ -85,7 +87,7 @@ func TestModelFromAPIFullyPopulated(t *testing.T) {
 	if m.BackupSchedule.ValueString() != "0 2 * * *" {
 		t.Error("expected backup schedule set")
 	}
-	if m.BackupRetentionDays.ValueInt64() != 7 {
+	if m.BackupRetentionDays.ValueInt64() != 60 {
 		t.Error("expected retention days set")
 	}
 	if m.ParameterGroupID.ValueString() != "pg-1" {

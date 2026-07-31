@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -163,13 +164,55 @@ func (r *mysqlInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 					boolplanmodifier.UseStateForUnknown(),
 				},
 			},
+			// backup_schedule and backup_retention_days are server-defaulted (ADR-0085:
+			// "0 2 * * *" and the 35-day object-lock floor) but ONLY when backups are enabled --
+			// the database backend gates both defaults on backup_enabled, and both columns are
+			// nullable. Optional-without-Computed therefore failed the apply outright for
+			// `backup_enabled = true` with the attribute omitted: config is null, the server
+			// echoes its default, and Terraform reports "Provider produced inconsistent result
+			// after apply". Both are Computed for that reason.
+			//
+			// They deliberately do NOT carry a schema Default, which is what redis_instance uses
+			// for the schedule. TransformDefaults applies a default whenever the CONFIG value is
+			// null, irrespective of prior state, so a Default of 35 would rewrite a
+			// deliberately-raised retention back down the moment the practitioner drops the
+			// attribute from HCL -- and the retention reaper's window is
+			// GREATEST(COALESCE(backup_retention_days, 35), 35) and is NOT gated on
+			// backup_enabled, so a 90 -> 35 rewrite makes every backup older than 35 days
+			// reapable on the next sweep tick. Silent backup loss, where the Optional-only schema
+			// at least failed loudly (it sent 0, which the server rejects).
+			//
+			// planmod.*UseStateOrDefault pins the server's value instead: an omitted attribute
+			// keeps whatever the instance already has and is never sent. Plain UseStateForUnknown
+			// is not enough -- it copies a NULL prior state straight into the plan, and state
+			// written before these attributes became Computed holds exactly that, so under
+			// `-refresh=false` (no Read, nothing normalized) the plan would carry null while the
+			// apply reads back a real value: an inconsistent-result error AFTER the PUT landed.
+			// The null-state arm plans the documented default instead, which also heals a legacy
+			// row left at (backup_enabled = true, schedule NULL) -- a row the sweep's due-list
+			// skips entirely, so it silently takes no backups at all.
 			"backup_schedule": schema.StringAttribute{
-				Description: "Cron expression for the backup schedule (e.g. \"0 2 * * *\").",
+				Description: "Cron expression for the backup schedule. Defaults to \"0 2 * * *\" server-side.",
 				Optional:    true,
+				Computed:    true,
+				PlanModifiers: []planmodifier.String{
+					planmod.StringUseStateOrDefault(defaultBackupSchedule),
+				},
+				Validators: []validator.String{
+					// "" is not "unset": it is dropped by omitempty, stored as NULL, and read back
+					// as the default -- an inconsistent-result error at apply. The backend has no
+					// "clear the schedule" operation either (an Update re-applies the default while
+					// backups are on); backup_enabled = false is the only off switch.
+					stringvalidator.LengthAtLeast(1),
+				},
 			},
 			"backup_retention_days": schema.Int64Attribute{
-				Description: "Number of days to retain backups. Minimum 35 (backups are immutably object-locked for 35 days); maximum 90.",
+				Description: "Number of days to retain backups. Minimum 35 (backups are immutably object-locked for 35 days); maximum 90. Defaults to 35 server-side.",
 				Optional:    true,
+				Computed:    true,
+				PlanModifiers: []planmodifier.Int64{
+					planmod.Int64UseStateOrDefault(defaultBackupRetentionDays),
+				},
 				Validators: []validator.Int64{
 					int64validator.Between(35, 90),
 				},

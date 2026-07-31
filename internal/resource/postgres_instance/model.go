@@ -8,6 +8,15 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
+// The backup policy the database service applies itself when backups are enabled without an
+// explicit value (ADR-0085: the retention floor equals the 35-day COMPLIANCE object-lock window).
+// Mirrors domain.DefaultBackupSchedule / domain.BackupRetentionMinDays in the database service --
+// if the platform ever moves either, this must move with it.
+const (
+	defaultBackupSchedule      = "0 2 * * *"
+	defaultBackupRetentionDays = 35
+)
+
 // PostgresInstanceModel is the Terraform state model for a managed PostgreSQL instance.
 type PostgresInstanceModel struct {
 	ID                  types.String `tfsdk:"id"`
@@ -141,13 +150,25 @@ func (m *PostgresInstanceModel) toUpdateRequest(state *PostgresInstanceModel) ap
 		v := m.BackupEnabled.ValueBool()
 		req.BackupEnabled = &v
 	}
-	if !m.BackupSchedule.Equal(state.BackupSchedule) {
+	// An enable carries the backup policy explicitly even when neither value changed. Both are
+	// pinned to state by the plan modifier, so on an omitted attribute plan == state and the
+	// diff-only rule would send nothing -- leaving the server to fill the NULL columns from its
+	// own constants. Those happen to equal ours today, but a divergence would surface as an
+	// inconsistent-result error on every enable, and a schedule the server does NOT write (the
+	// pre-ADR-0085 path) leaves a row that silently takes no backups. Sending the planned values
+	// makes the outcome ours to guarantee.
+	enabling := m.BackupEnabled.ValueBool() && !state.BackupEnabled.ValueBool()
+	if enabling || !m.BackupSchedule.Equal(state.BackupSchedule) {
 		v := m.BackupSchedule.ValueString()
-		req.BackupSchedule = &v
+		if v != "" {
+			req.BackupSchedule = &v
+		}
 	}
-	if !m.BackupRetentionDays.Equal(state.BackupRetentionDays) {
+	if enabling || !m.BackupRetentionDays.Equal(state.BackupRetentionDays) {
 		v := int(m.BackupRetentionDays.ValueInt64())
-		req.BackupRetentionDays = &v
+		if v > 0 {
+			req.BackupRetentionDays = &v
+		}
 	}
 	if !m.ParameterGroupID.Equal(state.ParameterGroupID) {
 		v := m.ParameterGroupID.ValueString()
@@ -171,16 +192,38 @@ func (m *PostgresInstanceModel) fromAPI(_ context.Context, inst *apiPostgresInst
 	m.Status = types.StringValue(inst.Status)
 	m.CreatedAt = types.StringValue(inst.CreatedAt)
 
-	if inst.BackupSchedule != "" {
+	// Both backup fields are absent from the response whenever the backend column is NULL --
+	// every instance created with backups off, since the server applies its defaults only when
+	// backup_enabled is true. Reading that back as null would leave the plan carrying null while
+	// the apply reads a real value the moment backups are enabled, so the absent value is mapped
+	// to what the server itself would apply. That substitution is only sound where the NULL
+	// column and the literal are genuinely equivalent, which differs per field:
+	//
+	//   retention -- equivalent unconditionally. The reaper reads the column as
+	//     GREATEST(COALESCE(backup_retention_days, 35), 35) and provisioning's sweep floors a
+	//     zero the same way, so NULL already MEANS 35. Sub-floor legacy values (written before
+	//     the floor existed; no migration backfilled them) are floored here too -- the server
+	//     clamps them on the next update, and reporting the pre-clamp number would mismatch.
+	//
+	//   schedule -- equivalent ONLY while backups are off. With backups ON, a NULL schedule is
+	//     not "the default": the sweep's due-list requires `backup_schedule <> ''`, so such a row
+	//     takes no backups at all and appears in no overdue metric. That row is reachable (an
+	//     Update carried no defaults-on-enable before the ADR-0085 work, and nothing backfilled
+	//     the column). Substituting the default there would report a silently-unbacked-up
+	//     instance as healthy, so it is left null and the plan modifier surfaces it as a diff.
+	switch {
+	case inst.BackupSchedule != "":
 		m.BackupSchedule = types.StringValue(inst.BackupSchedule)
-	} else {
+	case inst.BackupEnabled:
 		m.BackupSchedule = types.StringNull()
+	default:
+		m.BackupSchedule = types.StringValue(defaultBackupSchedule)
 	}
 
-	if inst.BackupRetentionDays > 0 {
+	if inst.BackupRetentionDays > defaultBackupRetentionDays {
 		m.BackupRetentionDays = types.Int64Value(int64(inst.BackupRetentionDays))
 	} else {
-		m.BackupRetentionDays = types.Int64Null()
+		m.BackupRetentionDays = types.Int64Value(defaultBackupRetentionDays)
 	}
 
 	if inst.ParameterGroupID != "" {

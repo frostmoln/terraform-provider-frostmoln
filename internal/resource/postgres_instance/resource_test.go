@@ -11,6 +11,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -187,17 +188,19 @@ func TestPostgresInstanceModelFromAPI(t *testing.T) {
 	diags := diag.Diagnostics{}
 
 	api := &apiPostgresInstance{
-		ID:                  "pg-123",
-		Name:                "my-pg",
-		PostgresVersion:     "16",
-		FlavorID:            "db.gp1.small",
-		StorageGB:           50,
-		VPCID:               "vpc-1",
-		SubnetID:            "sn-1",
-		HAEnabled:           true,
-		BackupEnabled:       true,
-		BackupSchedule:      "0 2 * * *",
-		BackupRetentionDays: 7,
+		ID:              "pg-123",
+		Name:            "my-pg",
+		PostgresVersion: "16",
+		FlavorID:        "db.gp1.small",
+		StorageGB:       50,
+		VPCID:           "vpc-1",
+		SubnetID:        "sn-1",
+		HAEnabled:       true,
+		BackupEnabled:   true,
+		BackupSchedule:  "0 2 * * *",
+		// 60, not a sub-floor value: fromAPI floors anything below 35 (ADR-0085), so a 7 here
+		// would exercise the floor rather than the pass-through this test is about.
+		BackupRetentionDays: 60,
 		ParameterGroupID:    "pg-grp-1",
 		Status:              "running",
 		PrivateIP:           "10.0.1.5",
@@ -239,8 +242,8 @@ func TestPostgresInstanceModelFromAPI(t *testing.T) {
 	if model.TenantID.ValueString() != "t-1" {
 		t.Errorf("expected tenant_id t-1, got %s", model.TenantID.ValueString())
 	}
-	if model.BackupRetentionDays.ValueInt64() != 7 {
-		t.Errorf("expected backup_retention_days 7, got %d", model.BackupRetentionDays.ValueInt64())
+	if model.BackupRetentionDays.ValueInt64() != 60 {
+		t.Errorf("expected backup_retention_days 60, got %d", model.BackupRetentionDays.ValueInt64())
 	}
 }
 
@@ -266,11 +269,10 @@ func TestPostgresInstanceModelFromAPINulls(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
 
-	if !model.BackupSchedule.IsNull() {
-		t.Error("expected null backup_schedule")
-	}
-	if !model.BackupRetentionDays.IsNull() {
-		t.Error("expected null backup_retention_days")
+	// Not null: an absent schedule/retention is normalized to the value the server applies on
+	// enable, so UseStateForUnknown has something to pin (see TestSchemaBackupAttributes).
+	if model.BackupSchedule.IsNull() || model.BackupRetentionDays.IsNull() {
+		t.Error("expected normalized backup_schedule/backup_retention_days, got null")
 	}
 	if !model.ParameterGroupID.IsNull() {
 		t.Error("expected null parameter_group_id")
@@ -329,6 +331,114 @@ func TestSchema(t *testing.T) {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected computed attribute %s in schema", attr)
 		}
+	}
+}
+
+// TestSchemaBackupAttributes pins the plan-time shape of the two backup attributes the
+// database backend server-defaults when backups are enabled.
+//
+// Optional alone is an apply failure for `backup_enabled = true` with the attribute omitted
+// (config null vs a server-echoed value -> "Provider produced inconsistent result after
+// apply"), so both must be Computed. Neither may carry a schema Default: TransformDefaults
+// substitutes a default whenever the CONFIG value is null regardless of prior state, so a
+// Default of 35 rewrites a deliberately-raised retention down to the floor the moment the
+// attribute is dropped from HCL — and the retention reaper then reaps every backup older than
+// 35 days. UseStateForUnknown pins the server's value instead, which is only sound because
+// fromAPI never leaves these attributes null (see TestPostgresInstanceModelFromAPIBackupDefaults).
+func TestSchemaBackupAttributes(t *testing.T) {
+	ctx := context.Background()
+	var resp resource.SchemaResponse
+	NewResource().Schema(ctx, resource.SchemaRequest{}, &resp)
+
+	sched, ok := resp.Schema.Attributes["backup_schedule"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("backup_schedule is %T, want schema.StringAttribute", resp.Schema.Attributes["backup_schedule"])
+	}
+	if !sched.Optional || !sched.Computed {
+		t.Errorf("backup_schedule Optional=%v Computed=%v, want both true", sched.Optional, sched.Computed)
+	}
+	if sched.Default != nil {
+		t.Error("backup_schedule must not carry a schema Default: dropping it from config would then rewrite the server's schedule")
+	}
+	if len(sched.PlanModifiers) != 1 {
+		t.Fatalf("backup_schedule has %d plan modifiers, want exactly 1 (UseStateForUnknown)", len(sched.PlanModifiers))
+	}
+	if got := sched.PlanModifiers[0].Description(ctx); got != useStateOrDefaultDescription {
+		t.Errorf("backup_schedule plan modifier = %q, want planmod.StringUseStateOrDefault (%q)", got, useStateOrDefaultDescription)
+	}
+
+	ret, ok := resp.Schema.Attributes["backup_retention_days"].(schema.Int64Attribute)
+	if !ok {
+		t.Fatalf("backup_retention_days is %T, want schema.Int64Attribute", resp.Schema.Attributes["backup_retention_days"])
+	}
+	if !ret.Optional || !ret.Computed {
+		t.Errorf("backup_retention_days Optional=%v Computed=%v, want both true", ret.Optional, ret.Computed)
+	}
+	if ret.Default != nil {
+		t.Error("backup_retention_days must not carry a schema Default: dropping it from config would then downgrade retention to the floor and the reaper would delete backups")
+	}
+	if len(ret.PlanModifiers) != 1 {
+		t.Fatalf("backup_retention_days has %d plan modifiers, want exactly 1 (UseStateForUnknown)", len(ret.PlanModifiers))
+	}
+	if got := ret.PlanModifiers[0].Description(ctx); got != useStateOrDefaultDescription {
+		t.Errorf("backup_retention_days plan modifier = %q, want planmod.Int64UseStateOrDefault (%q)", got, useStateOrDefaultDescription)
+	}
+}
+
+// useStateOrDefaultDescription is planmod.{String,Int64}UseStateOrDefault's own description
+// string; the plan-modifier interface exposes no other identity. Plain UseStateForUnknown is
+// NOT interchangeable here — it copies a null prior state into the plan (see planmod).
+const useStateOrDefaultDescription = "keeps the value already in state; a null state plans the server-side default"
+
+// TestPostgresInstanceModelFromAPIBackupDefaults covers the backups-off read: the backend
+// column is NULL, so the response omits both fields. They must land in state as the values an
+// enable would apply, NOT as null — UseStateForUnknown has nothing to pin against a null prior
+// state, so a null here means the plan still carries null across a backups-off -> backups-on
+// flip and the server's default breaks the apply. Values are literals matching the database
+// service's domain.DefaultBackupSchedule / BackupRetentionMinDays.
+func TestPostgresInstanceModelFromAPIBackupDefaults(t *testing.T) {
+	ctx := context.Background()
+	diags := diag.Diagnostics{}
+
+	var model PostgresInstanceModel
+	model.fromAPI(ctx, &apiPostgresInstance{ID: "pg-1", BackupEnabled: false}, &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+	}
+	if got := model.BackupSchedule.ValueString(); got != "0 2 * * *" {
+		t.Errorf("backup_schedule = %q, want %q", got, "0 2 * * *")
+	}
+	if got := model.BackupRetentionDays.ValueInt64(); got != 35 {
+		t.Errorf("backup_retention_days = %d, want 35 (ADR-0085 object-lock floor)", got)
+	}
+
+	// Backups ON with the schedule absent is a genuinely broken row (the sweep's due-list skips
+	// it, so it takes no backups). It must NOT be normalized: reporting the default there would
+	// present a silently-unbacked-up instance as healthy and suppress the healing diff.
+	model.fromAPI(ctx, &apiPostgresInstance{ID: "po-1", BackupEnabled: true}, &diags)
+	if !model.BackupSchedule.IsNull() {
+		t.Errorf("backup_schedule = %s, want null when backups are enabled and the API omits it", model.BackupSchedule)
+	}
+
+	// A legacy sub-floor retention is floored: the server clamps it on the next update, so
+	// carrying the pre-clamp number into state would mismatch the echo.
+	model.fromAPI(ctx, &apiPostgresInstance{ID: "po-1", BackupEnabled: true, BackupSchedule: "0 2 * * *", BackupRetentionDays: 7}, &diags)
+	if got := model.BackupRetentionDays.ValueInt64(); got != 35 {
+		t.Errorf("backup_retention_days = %d, want 35 (legacy sub-floor value floored)", got)
+	}
+
+	// An explicit server value is never overwritten by the normalization.
+	model.fromAPI(ctx, &apiPostgresInstance{
+		ID:                  "pg-1",
+		BackupEnabled:       true,
+		BackupSchedule:      "0 4 * * *",
+		BackupRetentionDays: 90,
+	}, &diags)
+	if got := model.BackupSchedule.ValueString(); got != "0 4 * * *" {
+		t.Errorf("backup_schedule = %q, want %q", got, "0 4 * * *")
+	}
+	if got := model.BackupRetentionDays.ValueInt64(); got != 90 {
+		t.Errorf("backup_retention_days = %d, want 90", got)
 	}
 }
 
@@ -937,5 +1047,36 @@ func TestUpgradeState_V0ToV1(t *testing.T) {
 	}
 	if model.Name.ValueString() != "my-inst" {
 		t.Errorf("expected name carried through, got %s", model.Name.ValueString())
+	}
+}
+
+// TestPostgresInstanceToUpdateRequestEnableCarriesPolicy pins that turning backups ON sends the
+// planned schedule and retention even though the plan modifier pinned both to state and neither
+// changed. Without it the server fills its NULL columns from its own constants: a divergence from
+// ours becomes an inconsistent-result error on every enable, and the pre-ADR-0085 backend wrote no
+// schedule at all, leaving a row that silently takes no backups.
+func TestPostgresInstanceToUpdateRequestEnableCarriesPolicy(t *testing.T) {
+	state := PostgresInstanceModel{
+		BackupEnabled:       types.BoolValue(false),
+		BackupSchedule:      types.StringValue("0 2 * * *"),
+		BackupRetentionDays: types.Int64Value(35),
+	}
+	plan := state
+	plan.BackupEnabled = types.BoolValue(true)
+
+	req := plan.toUpdateRequest(&state)
+	if req.BackupSchedule == nil || *req.BackupSchedule != "0 2 * * *" {
+		t.Error("expected the enable to carry backupSchedule")
+	}
+	if req.BackupRetentionDays == nil || *req.BackupRetentionDays != 35 {
+		t.Error("expected the enable to carry backupRetentionDays")
+	}
+
+	// Disabling carries only the flag: the columns already hold the values, and resending them
+	// would be noise on a path where nothing about the policy changed.
+	off := plan
+	off.BackupEnabled = types.BoolValue(false)
+	if req := off.toUpdateRequest(&plan); req.BackupSchedule != nil || req.BackupRetentionDays != nil {
+		t.Error("expected a disable to carry only backupEnabled")
 	}
 }
