@@ -340,7 +340,7 @@ const useStateOrDefaultDescription = "keeps the value already in state; a null s
 // would apply, NOT as null — UseStateForUnknown has nothing to pin against a null prior state,
 // so a null here means the plan still carries null across a backups-off -> backups-on flip and
 // the server's default breaks the apply. Values are literals matching the database service's
-// domain.DefaultBackupSchedule / BackupRetentionMinDays.
+// shared servicekit/managedbackup DefaultBackupSchedule / BackupRetentionMinDays.
 func TestMysqlInstanceModelFromAPIBackupDefaults(t *testing.T) {
 	ctx := context.Background()
 	diags := diag.Diagnostics{}

@@ -10,8 +10,10 @@ import (
 
 // The backup policy the database service applies itself when backups are enabled without an
 // explicit value (ADR-0085: the retention floor equals the 35-day COMPLIANCE object-lock window).
-// Mirrors domain.DefaultBackupSchedule / domain.BackupRetentionMinDays in the database service --
-// if the platform ever moves either, this must move with it.
+// Mirrors managedbackup.DefaultBackupSchedule / managedbackup.BackupRetentionMinDays in
+// servicekit (the shared package both managed offers validate against as of servicekit v1.22.0) --
+// if the platform ever moves either, this must move with it. The provider does not import
+// servicekit, so this is a deliberate copy, not an oversight.
 const (
 	defaultBackupSchedule      = "0 2 * * *"
 	defaultBackupRetentionDays = 35
