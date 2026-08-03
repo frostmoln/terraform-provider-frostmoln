@@ -328,11 +328,11 @@ func TestAPIErrorNestedFormat(t *testing.T) {
 func TestAPIErrorFlatFormat(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(APIError{
-			Code:    "VALIDATION_ERROR",
-			Message: "invalid input",
-			Details: "name is required",
-		})
+		// Written as wire JSON rather than encoded from APIError: a fixture
+		// marshalled through the struct under test agrees with whatever field types
+		// that struct happens to declare, so it can never catch one being wrong —
+		// which is exactly how `details` stayed a string.
+		_, _ = w.Write([]byte(`{"code":"VALIDATION_ERROR","message":"invalid input","details":{"field":"name"}}`))
 	}))
 	defer server.Close()
 
@@ -347,6 +347,87 @@ func TestAPIErrorFlatFormat(t *testing.T) {
 	}
 	if apiErr.Code != "VALIDATION_ERROR" {
 		t.Errorf("expected code VALIDATION_ERROR, got %s", apiErr.Code)
+	}
+}
+
+// The NESTED envelope carrying a structured `details` OBJECT, which is what every
+// service actually sends — identity emits {"reason","min","max"} on a refused label
+// via servicekit's map[string]any.
+//
+// Declared as a string, this body did NOT parse: encoding/json skips a mismatched
+// field and returns the error at the end, so `err == nil` was false, the nested
+// branch was skipped, the flat branch found no top-level code, and the whole thing
+// fell through to `ERROR: HTTP 400: {"error":{...}}` — the raw blob in a plan
+// diagnostic, code lost. It reproduced on a `frostmoln_api_key` with a refused name.
+//
+// IsNotFound/IsConflict kept working throughout because they read StatusCode, which
+// is why only the practitioner-facing half of the failure was visible.
+func TestAPIErrorNestedWithObjectDetails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":"INVALID_API_KEY_NAME","message":"name must be 2 to 100 characters after invisible characters are removed and the text is normalised","details":{"reason":"too_short","min":2,"max":100}}}`))
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "key")
+	_, err := c.Post(context.Background(), "/v1/api-keys", map[string]string{"name": "a"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("expected *APIError, got %T", err)
+	}
+	if apiErr.Code != "INVALID_API_KEY_NAME" {
+		t.Errorf("expected code INVALID_API_KEY_NAME, got %q (raw-blob fallthrough?)", apiErr.Code)
+	}
+	if apiErr.Details["reason"] != "too_short" {
+		t.Errorf("expected details.reason too_short, got %v", apiErr.Details["reason"])
+	}
+	// json decodes numbers into any as float64; the point is that they SURVIVE.
+	if apiErr.Details["max"] != float64(100) {
+		t.Errorf("expected details.max 100, got %v", apiErr.Details["max"])
+	}
+	// What the practitioner reads: the message alone, with no decoded map appended.
+	want := "INVALID_API_KEY_NAME: name must be 2 to 100 characters after invisible characters are removed and the text is normalised"
+	if apiErr.Error() != want {
+		t.Errorf("Error() must not spill details into a diagnostic:\n got %q\nwant %q", apiErr.Error(), want)
+	}
+}
+
+// identity's customer-register handler emits this same nested envelope with a
+// STRING details (internal/handler/http/customer_register.go). The provider does not
+// call that endpoint, but the shape proves the point: the branch must not care what
+// details is. Before the `err == nil` guard came off, a string here parsed and an
+// object did not — a decode that is correct only for the shapes it happens to have
+// met is not a contract, it is luck.
+func TestAPIErrorNestedSurvivesAnyDetailsShape(t *testing.T) {
+	for _, body := range []string{
+		`{"error":{"code":"INVALID_REQUEST","message":"invalid request body","details":"Key: 'x' failed"}}`,
+		`{"error":{"code":"INVALID_REQUEST","message":"invalid request body","details":["a","b"]}}`,
+		`{"error":{"code":"INVALID_REQUEST","message":"invalid request body","details":null}}`,
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(body))
+		}))
+
+		c := NewClient(server.URL, "key")
+		_, err := c.Get(context.Background(), "/test", nil)
+		server.Close()
+
+		apiErr, ok := err.(*APIError)
+		if !ok {
+			t.Fatalf("expected *APIError, got %T for %s", err, body)
+		}
+		if apiErr.Code != "INVALID_REQUEST" {
+			t.Errorf("raw-blob fallthrough on %s: code %q", body, apiErr.Code)
+		}
+		if apiErr.Message != "invalid request body" {
+			t.Errorf("lost message on %s: %q", body, apiErr.Message)
+		}
 	}
 }
 

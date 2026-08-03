@@ -206,19 +206,30 @@ func (c *Client) UserPath(subpath string) string {
 
 // APIError represents an error returned by the API.
 type APIError struct {
-	Code       string `json:"code"`
-	Message    string `json:"message"`
-	Details    string `json:"details,omitempty"`
-	StatusCode int    `json:"-"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	// Details is an OBJECT on the wire, never a string: servicekit's error type
+	// carries map[string]any and every service emits through it — identity sends
+	// {"reason":…,"min":…,"max":…} on a refused label and
+	// {"unbillableTenantIds":[…]} on a refused close.
+	//
+	// It was declared as a string, which is worse than useless: encoding/json does
+	// not abort on a type mismatch, it skips the field and returns the error at the
+	// END, so the `err == nil` guard in Do() failed and the whole envelope was
+	// discarded. A refused `frostmoln_api_key` name then surfaced in the plan
+	// diagnostic as a raw JSON body, with the code lost — and IsNotFound/IsConflict
+	// kept working only because they read StatusCode rather than Code.
+	Details    map[string]any `json:"details,omitempty"`
+	StatusCode int            `json:"-"`
 	// RetryAfter is the server-suggested wait in seconds on a 429 (from the
 	// rate-limit body's retry_after or the Retry-After header); 0 when absent.
 	RetryAfter int `json:"retry_after,omitempty"`
 }
 
+// Error renders code and message only. Details is machine-readable context for a
+// caller that branches on it, not practitioner copy: spilling a decoded map into a
+// diagnostic is the JSON blob this type exists to avoid.
 func (e *APIError) Error() string {
-	if e.Details != "" {
-		return fmt.Sprintf("%s: %s (%s)", e.Code, e.Message, e.Details)
-	}
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
 
@@ -572,7 +583,16 @@ func (c *Client) do(ctx context.Context, method, reqPath string, query url.Value
 		var nested struct {
 			Error APIError `json:"error"`
 		}
-		if err := json.Unmarshal(respBody, &nested); err == nil && nested.Error.Code != "" {
+		// Deliberately NOT gated on the unmarshal error. encoding/json fills every
+		// field it can and reports a type mismatch only at the END, so a single
+		// unexpected shape anywhere in the envelope used to discard a code and
+		// message it had already decoded perfectly — that is how an object `details`
+		// turned every refusal into a raw JSON blob in a plan diagnostic. A body
+		// that is not this envelope leaves Code empty and falls through exactly as
+		// before, so the guard costs nothing and this branch is now immune to
+		// whatever shape a future `details` (or any other added key) arrives in.
+		_ = json.Unmarshal(respBody, &nested)
+		if nested.Error.Code != "" {
 			nested.Error.StatusCode = httpResp.StatusCode
 			return nil, &nested.Error
 		}
