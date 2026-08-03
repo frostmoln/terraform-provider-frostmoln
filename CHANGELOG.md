@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.5] - 2026-08-03
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.7 (#239)
+- *(client)* Decode the error envelope's details as an object, not a string (#243)
+
+### 📚 Documentation
+
+- *(backup)* Point the mirrored backup defaults at servicekit (#241)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.8.0 (#237)
+- *(deps)* Update dependency frostmoln/workflows to v0.8.2 (#245)
+
 ## [0.19.4] - 2026-08-01
 
 ### 🐛 Bug Fixes
