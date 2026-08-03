@@ -46,6 +46,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/bucket"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_record"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_zone"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/egress_gateway"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/iam_policy"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/iam_policy_attachment"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/instance"
@@ -359,6 +360,7 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		security_group_rule.NewResource,
 		public_ip.NewResource,
 		dns_zone.NewResource,
+		egress_gateway.NewResource,
 		dns_record.NewResource,
 		load_balancer.NewResource,
 		lb_listener.NewResource,
