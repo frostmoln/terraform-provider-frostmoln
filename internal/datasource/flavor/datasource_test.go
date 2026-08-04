@@ -18,7 +18,7 @@ import (
 // TestApiFlavorDecodesBackendKeys locks the wire contract against the backend's
 // actual JSON (memory/disk); a tag regression to ramMb/diskGb would zero RAM/disk.
 func TestApiFlavorDecodesBackendKeys(t *testing.T) {
-	const backendJSON = `{"id":"flv-1","name":"nl.small","vcpus":2,"memory":2048,"disk":40}`
+	const backendJSON = `{"id":"flv-1","name":"gp1.small","vcpus":2,"memory":2048,"disk":40}`
 	var f apiFlavor
 	if err := json.Unmarshal([]byte(backendJSON), &f); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -107,8 +107,8 @@ func newTestServer(t *testing.T, flavors []apiFlavor) *httptest.Server {
 
 func TestReadByID(t *testing.T) {
 	flavors := []apiFlavor{
-		{ID: "flv-1", Name: "nl.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general", Family: "gp", Generation: 1, Status: "active", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0},
-		{ID: "flv-2", Name: "nl.medium", VCPUs: 2, RAMMB: 2048, DiskGB: 40, Category: "general", Family: "gp", Generation: 1, Status: "active", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0},
+		{ID: "flv-1", Name: "gp1.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general", Family: "gp", Generation: 1, Status: "active", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0},
+		{ID: "flv-2", Name: "gp1.medium", VCPUs: 2, RAMMB: 2048, DiskGB: 40, Category: "general", Family: "gp", Generation: 1, Status: "active", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0},
 	}
 	server := newTestServer(t, flavors)
 	defer server.Close()
@@ -143,8 +143,8 @@ func TestReadByID(t *testing.T) {
 	if found == nil {
 		t.Fatal("expected to find flavor with ID flv-1")
 	}
-	if found.Name != "nl.small" {
-		t.Errorf("expected name nl.small, got %s", found.Name)
+	if found.Name != "gp1.small" {
+		t.Errorf("expected name gp1.small, got %s", found.Name)
 	}
 	if found.VCPUs != 1 {
 		t.Errorf("expected 1 vcpu, got %d", found.VCPUs)
@@ -153,7 +153,7 @@ func TestReadByID(t *testing.T) {
 
 func TestReadByName(t *testing.T) {
 	flavors := []apiFlavor{
-		{ID: "flv-1", Name: "nl.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general", Family: "gp", Generation: 1, Status: "active", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0},
+		{ID: "flv-1", Name: "gp1.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general", Family: "gp", Generation: 1, Status: "active", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0},
 	}
 	server := newTestServer(t, flavors)
 	defer server.Close()
@@ -176,19 +176,19 @@ func TestReadByName(t *testing.T) {
 	// Verify lookup by name
 	var found *apiFlavor
 	for i := range list.Flavors {
-		if list.Flavors[i].Name == "nl.small" {
+		if list.Flavors[i].Name == "gp1.small" {
 			found = &list.Flavors[i]
 			break
 		}
 	}
 	if found == nil {
-		t.Fatal("expected to find flavor with name nl.small")
+		t.Fatal("expected to find flavor with name gp1.small")
 	}
 }
 
 func TestReadNotFound(t *testing.T) {
 	flavors := []apiFlavor{
-		{ID: "flv-1", Name: "nl.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general", Family: "gp", Generation: 1, Status: "active", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0},
+		{ID: "flv-1", Name: "gp1.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general", Family: "gp", Generation: 1, Status: "active", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0},
 	}
 	server := newTestServer(t, flavors)
 	defer server.Close()
@@ -245,8 +245,8 @@ func getFlavorDSSchema(t *testing.T) datasource.SchemaResponse {
 
 func TestTFSDK_ReadFlavorByID(t *testing.T) {
 	flavors := []apiFlavor{
-		{ID: "flv-1", Name: "nl.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general", Family: "gp", Generation: 1, Status: "active", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0},
-		{ID: "flv-2", Name: "nl.medium", VCPUs: 2, RAMMB: 2048, DiskGB: 40, Category: "general", Family: "gp", Generation: 1, Status: "active", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0},
+		{ID: "flv-1", Name: "gp1.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general", Family: "gp", Generation: 1, Status: "active", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0},
+		{ID: "flv-2", Name: "gp1.medium", VCPUs: 2, RAMMB: 2048, DiskGB: 40, Category: "general", Family: "gp", Generation: 1, Status: "active", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0},
 	}
 	server := newTestServer(t, flavors)
 	defer server.Close()
@@ -296,8 +296,8 @@ func TestTFSDK_ReadFlavorByID(t *testing.T) {
 	if state.ID.ValueString() != "flv-1" {
 		t.Errorf("expected ID flv-1, got %s", state.ID.ValueString())
 	}
-	if state.Name.ValueString() != "nl.small" {
-		t.Errorf("expected Name nl.small, got %s", state.Name.ValueString())
+	if state.Name.ValueString() != "gp1.small" {
+		t.Errorf("expected Name gp1.small, got %s", state.Name.ValueString())
 	}
 	if state.VCPUs.ValueInt64() != 1 {
 		t.Errorf("expected VCPUs 1, got %d", state.VCPUs.ValueInt64())
@@ -324,8 +324,8 @@ func TestTFSDK_ReadFlavorByID(t *testing.T) {
 
 func TestTFSDK_ReadFlavorByName(t *testing.T) {
 	flavors := []apiFlavor{
-		{ID: "flv-1", Name: "nl.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general", Family: "gp", Generation: 1, Status: "active", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0},
-		{ID: "flv-2", Name: "nl.medium", VCPUs: 2, RAMMB: 2048, DiskGB: 40, Category: "general", Family: "gp", Generation: 1, Status: "active", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0},
+		{ID: "flv-1", Name: "gp1.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general", Family: "gp", Generation: 1, Status: "active", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0},
+		{ID: "flv-2", Name: "gp1.medium", VCPUs: 2, RAMMB: 2048, DiskGB: 40, Category: "general", Family: "gp", Generation: 1, Status: "active", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0},
 	}
 	server := newTestServer(t, flavors)
 	defer server.Close()
@@ -344,7 +344,7 @@ func TestTFSDK_ReadFlavorByName(t *testing.T) {
 
 	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
 		"id":              tftypes.NewValue(tftypes.String, nil),
-		"name":            tftypes.NewValue(tftypes.String, "nl.medium"),
+		"name":            tftypes.NewValue(tftypes.String, "gp1.medium"),
 		"vcpus":           tftypes.NewValue(tftypes.Number, nil),
 		"ram_mb":          tftypes.NewValue(tftypes.Number, nil),
 		"disk_gb":         tftypes.NewValue(tftypes.Number, nil),
@@ -378,7 +378,7 @@ func TestTFSDK_ReadFlavorByName(t *testing.T) {
 }
 
 func TestTFSDK_ReadFlavorBothIDAndName(t *testing.T) {
-	server := newTestServer(t, []apiFlavor{{ID: "flv-1", Name: "nl.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Family: "gp", Generation: 1, Status: "active", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0}})
+	server := newTestServer(t, []apiFlavor{{ID: "flv-1", Name: "gp1.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Family: "gp", Generation: 1, Status: "active", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0}})
 	defer server.Close()
 
 	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
@@ -395,7 +395,7 @@ func TestTFSDK_ReadFlavorBothIDAndName(t *testing.T) {
 
 	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
 		"id":              tftypes.NewValue(tftypes.String, "flv-1"),
-		"name":            tftypes.NewValue(tftypes.String, "nl.small"),
+		"name":            tftypes.NewValue(tftypes.String, "gp1.small"),
 		"vcpus":           tftypes.NewValue(tftypes.Number, nil),
 		"ram_mb":          tftypes.NewValue(tftypes.Number, nil),
 		"disk_gb":         tftypes.NewValue(tftypes.Number, nil),
@@ -422,7 +422,7 @@ func TestTFSDK_ReadFlavorBothIDAndName(t *testing.T) {
 }
 
 func TestTFSDK_ReadFlavorNotFound(t *testing.T) {
-	server := newTestServer(t, []apiFlavor{{ID: "flv-1", Name: "nl.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Family: "gp", Generation: 1, Status: "active", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0}})
+	server := newTestServer(t, []apiFlavor{{ID: "flv-1", Name: "gp1.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Family: "gp", Generation: 1, Status: "active", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0}})
 	defer server.Close()
 
 	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
@@ -468,7 +468,7 @@ func TestTFSDK_ReadFlavorNotFound(t *testing.T) {
 func TestAPIFlavorSerialization(t *testing.T) {
 	f := apiFlavor{
 		ID:             "flv-1",
-		Name:           "nl.small",
+		Name:           "gp1.small",
 		VCPUs:          1,
 		RAMMB:          1024,
 		DiskGB:         20,
@@ -522,7 +522,7 @@ func TestAPIFlavorSerialization(t *testing.T) {
 
 func TestTFSDK_ReadDeprecatedFlavorWarning(t *testing.T) {
 	flavors := []apiFlavor{
-		{ID: "flv-old", Name: "nl.old", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general", Family: "gp", Generation: 1, Status: "deprecated", SuccessorID: "flv-new", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0},
+		{ID: "flv-old", Name: "test.old", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general", Family: "gp", Generation: 1, Status: "deprecated", SuccessorID: "flv-new", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0},
 	}
 	server := newTestServer(t, flavors)
 	defer server.Close()
@@ -592,7 +592,7 @@ func TestTFSDK_ReadDeprecatedFlavorWarning(t *testing.T) {
 
 func TestTFSDK_ReadRetiredFlavorError(t *testing.T) {
 	flavors := []apiFlavor{
-		{ID: "flv-retired", Name: "nl.retired", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general", Family: "gp", Generation: 1, Status: "retired", SuccessorID: "flv-new", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0},
+		{ID: "flv-retired", Name: "test.retired", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general", Family: "gp", Generation: 1, Status: "retired", SuccessorID: "flv-new", BaseVCPURatio: 4.0, VCPUMultiplier: 1.0},
 	}
 	server := newTestServer(t, flavors)
 	defer server.Close()

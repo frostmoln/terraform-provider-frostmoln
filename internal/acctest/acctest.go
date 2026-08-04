@@ -160,5 +160,5 @@ func TestFlavorName() string {
 	if v := os.Getenv("FROSTMOLN_TEST_FLAVOR_NAME"); v != "" {
 		return v
 	}
-	return "nl.small"
+	return "gp1.small"
 }

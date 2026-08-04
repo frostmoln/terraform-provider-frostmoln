@@ -76,7 +76,7 @@ func TestConfigureWrongType(t *testing.T) {
 // actual JSON (memory/disk), independent of the apiFlavor struct used elsewhere in
 // the tests — a tag regression to ramMb/diskGb would silently zero RAM/disk.
 func TestApiFlavorDecodesBackendKeys(t *testing.T) {
-	const backendJSON = `{"id":"flv-1","name":"nl.small","vcpus":2,"memory":2048,"disk":40,"category":"general"}`
+	const backendJSON = `{"id":"flv-1","name":"gp1.small","vcpus":2,"memory":2048,"disk":40,"category":"general"}`
 	var f apiFlavor
 	if err := json.Unmarshal([]byte(backendJSON), &f); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -108,9 +108,9 @@ func newTestServer(t *testing.T, flavors []apiFlavor) *httptest.Server {
 
 func TestReadAll(t *testing.T) {
 	flavors := []apiFlavor{
-		{ID: "flv-1", Name: "nl.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general"},
-		{ID: "flv-2", Name: "nl.medium", VCPUs: 2, RAMMB: 2048, DiskGB: 40, Category: "general"},
-		{ID: "flv-3", Name: "nl.compute.large", VCPUs: 8, RAMMB: 4096, DiskGB: 80, Category: "compute"},
+		{ID: "flv-1", Name: "gp1.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general"},
+		{ID: "flv-2", Name: "gp1.medium", VCPUs: 2, RAMMB: 2048, DiskGB: 40, Category: "general"},
+		{ID: "flv-3", Name: "co1.large", VCPUs: 8, RAMMB: 4096, DiskGB: 80, Category: "compute"},
 	}
 	server := newTestServer(t, flavors)
 	defer server.Close()
@@ -137,9 +137,9 @@ func TestReadAll(t *testing.T) {
 
 func TestFilterByCategory(t *testing.T) {
 	flavors := []apiFlavor{
-		{ID: "flv-1", Name: "nl.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general"},
-		{ID: "flv-2", Name: "nl.medium", VCPUs: 2, RAMMB: 2048, DiskGB: 40, Category: "general"},
-		{ID: "flv-3", Name: "nl.compute.large", VCPUs: 8, RAMMB: 4096, DiskGB: 80, Category: "compute"},
+		{ID: "flv-1", Name: "gp1.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general"},
+		{ID: "flv-2", Name: "gp1.medium", VCPUs: 2, RAMMB: 2048, DiskGB: 40, Category: "general"},
+		{ID: "flv-3", Name: "co1.large", VCPUs: 8, RAMMB: 4096, DiskGB: 80, Category: "compute"},
 	}
 
 	categoryFilter := "compute"
@@ -153,8 +153,8 @@ func TestFilterByCategory(t *testing.T) {
 	if len(filtered) != 1 {
 		t.Fatalf("expected 1 compute flavor, got %d", len(filtered))
 	}
-	if filtered[0].Name != "nl.compute.large" {
-		t.Errorf("expected name nl.compute.large, got %s", filtered[0].Name)
+	if filtered[0].Name != "co1.large" {
+		t.Errorf("expected name co1.large, got %s", filtered[0].Name)
 	}
 }
 
@@ -193,9 +193,9 @@ func getFlavorsDSSchema(t *testing.T) datasource.SchemaResponse {
 
 func TestTFSDK_ReadAllFlavors(t *testing.T) {
 	flavors := []apiFlavor{
-		{ID: "flv-1", Name: "nl.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general"},
-		{ID: "flv-2", Name: "nl.medium", VCPUs: 2, RAMMB: 2048, DiskGB: 40, Category: "general"},
-		{ID: "flv-3", Name: "nl.compute.large", VCPUs: 8, RAMMB: 4096, DiskGB: 80, Category: "compute"},
+		{ID: "flv-1", Name: "gp1.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general"},
+		{ID: "flv-2", Name: "gp1.medium", VCPUs: 2, RAMMB: 2048, DiskGB: 40, Category: "general"},
+		{ID: "flv-3", Name: "co1.large", VCPUs: 8, RAMMB: 4096, DiskGB: 80, Category: "compute"},
 	}
 	server := newTestServer(t, flavors)
 	defer server.Close()
@@ -242,9 +242,9 @@ func TestTFSDK_ReadAllFlavors(t *testing.T) {
 
 func TestTFSDK_ReadFlavorsFilterByCategory(t *testing.T) {
 	flavors := []apiFlavor{
-		{ID: "flv-1", Name: "nl.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general"},
-		{ID: "flv-2", Name: "nl.medium", VCPUs: 2, RAMMB: 2048, DiskGB: 40, Category: "general"},
-		{ID: "flv-3", Name: "nl.compute.large", VCPUs: 8, RAMMB: 4096, DiskGB: 80, Category: "compute"},
+		{ID: "flv-1", Name: "gp1.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20, Category: "general"},
+		{ID: "flv-2", Name: "gp1.medium", VCPUs: 2, RAMMB: 2048, DiskGB: 40, Category: "general"},
+		{ID: "flv-3", Name: "co1.large", VCPUs: 8, RAMMB: 4096, DiskGB: 80, Category: "compute"},
 	}
 	server := newTestServer(t, flavors)
 	defer server.Close()
@@ -287,15 +287,15 @@ func TestTFSDK_ReadFlavorsFilterByCategory(t *testing.T) {
 	if len(items) != 1 {
 		t.Errorf("expected 1 compute flavor, got %d", len(items))
 	}
-	if len(items) > 0 && items[0].Name.ValueString() != "nl.compute.large" {
-		t.Errorf("expected name nl.compute.large, got %s", items[0].Name.ValueString())
+	if len(items) > 0 && items[0].Name.ValueString() != "co1.large" {
+		t.Errorf("expected name co1.large, got %s", items[0].Name.ValueString())
 	}
 }
 
 func TestAPIFlavorListSerialization(t *testing.T) {
 	list := apiFlavorList{
 		Flavors: []apiFlavor{
-			{ID: "flv-1", Name: "nl.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20},
+			{ID: "flv-1", Name: "gp1.small", VCPUs: 1, RAMMB: 1024, DiskGB: 20},
 		},
 	}
 

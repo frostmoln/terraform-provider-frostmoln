@@ -79,7 +79,7 @@ jobs:
         run: TF_ACC=1 go test -v -timeout 30m -count=1 ./internal/...
         env:
           FROSTMOLN_TEST_IMAGE_NAME: "Ubuntu 24.04"
-          FROSTMOLN_TEST_FLAVOR_NAME: "nl.small"
+          FROSTMOLN_TEST_FLAVOR_NAME: "gp1.small"
 
       - name: Cleanup test user
         if: always()

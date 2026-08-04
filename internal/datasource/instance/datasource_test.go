@@ -112,7 +112,7 @@ func TestReadByID(t *testing.T) {
 			Name:       "web-server-1",
 			Status:     "active",
 			FlavorID:   "flv-1",
-			Flavor:     &apiNestedRef{Name: "nl.small"},
+			Flavor:     &apiNestedRef{Name: "gp1.small"},
 			ImageID:    "img-1",
 			Image:      &apiNestedRef{Name: "Ubuntu 22.04"},
 			Zone:       "sweden-a",
@@ -150,8 +150,8 @@ func TestReadByID(t *testing.T) {
 	if inst.FlavorID != "flv-1" {
 		t.Errorf("expected flavor_id flv-1, got %s", inst.FlavorID)
 	}
-	if inst.Flavor == nil || inst.Flavor.Name != "nl.small" {
-		t.Errorf("expected flavor name nl.small, got %+v", inst.Flavor)
+	if inst.Flavor == nil || inst.Flavor.Name != "gp1.small" {
+		t.Errorf("expected flavor name gp1.small, got %+v", inst.Flavor)
 	}
 	if inst.ImageID != "img-1" {
 		t.Errorf("expected image_id img-1, got %s", inst.ImageID)
@@ -216,7 +216,7 @@ func TestTFSDK_ReadInstanceByID(t *testing.T) {
 			Name:       "web-server-1",
 			Status:     "active",
 			FlavorID:   "flv-1",
-			Flavor:     &apiNestedRef{Name: "nl.small"},
+			Flavor:     &apiNestedRef{Name: "gp1.small"},
 			ImageID:    "img-1",
 			Image:      &apiNestedRef{Name: "Ubuntu 22.04"},
 			Zone:       "sweden-a",
@@ -283,8 +283,8 @@ func TestTFSDK_ReadInstanceByID(t *testing.T) {
 	if state.FlavorID.ValueString() != "flv-1" {
 		t.Errorf("expected FlavorID flv-1, got %s", state.FlavorID.ValueString())
 	}
-	if state.FlavorName.ValueString() != "nl.small" {
-		t.Errorf("expected FlavorName nl.small, got %s", state.FlavorName.ValueString())
+	if state.FlavorName.ValueString() != "gp1.small" {
+		t.Errorf("expected FlavorName gp1.small, got %s", state.FlavorName.ValueString())
 	}
 	if state.PrivateIP.ValueString() != "10.0.1.10" {
 		t.Errorf("expected PrivateIP 10.0.1.10, got %s", state.PrivateIP.ValueString())
@@ -418,7 +418,7 @@ func TestAPIInstanceSerialization(t *testing.T) {
 		Name:       "test-server",
 		Status:     "active",
 		FlavorID:   "flv-1",
-		Flavor:     &apiNestedRef{Name: "nl.small"},
+		Flavor:     &apiNestedRef{Name: "gp1.small"},
 		ImageID:    "img-1",
 		Image:      &apiNestedRef{Name: "Ubuntu 22.04"},
 		Zone:       "sweden-a",
