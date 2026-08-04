@@ -38,7 +38,7 @@ resource "frostmoln_bucket" "example" {
 - `region` (String) The region where the bucket is located.
 - `storage_class` (String) The default storage class for objects in the bucket. One of `STANDARD`, `STANDARD_IA`, `REDUCED_REDUNDANCY`, `GLACIER` — the values are case-sensitive. Defaults server-side to `STANDARD`.
 - `tags` (Map of String) Tags associated with the bucket.
-- `versioning` (String) The versioning state of the bucket (e.g. enabled, suspended).
+- `versioning` (String) The versioning state of the bucket: `enabled` or `suspended`. A bucket starts `disabled`, and S3 versioning cannot be turned back off once enabled — only suspended — so `disabled` is not settable: the server would answer with the unchanged state and the apply would fail on the mismatch.
 
 ### Read-Only
 

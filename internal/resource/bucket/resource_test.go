@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -100,6 +102,46 @@ func TestBucketModelToUpdateRequest(t *testing.T) {
 	}
 	if req.Tags["team"] != "ops" {
 		t.Errorf("expected tag team=ops, got %v", req.Tags)
+	}
+}
+
+// TestBucketModelToUpdateRequestClearsTags pins that config is authoritative on
+// update. The server replaces the bucket's user tags only when the `tags` key
+// is present, so an omitted or empty map has to serialize as `"tags":{}` — with
+// omitempty it vanished, the server kept the old tags, and reading them back
+// against a config that declares none is an inconsistent-result error with no
+// HCL that can fix it. This path was unreachable while every update 404'd.
+func TestBucketModelToUpdateRequestClearsTags(t *testing.T) {
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name string
+		tags types.Map
+	}{
+		{"empty map", types.MapValueMust(types.StringType, map[string]attr.Value{})},
+		{"null map", types.MapNull(types.StringType)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := BucketModel{Tags: tc.tags}
+			req, diags := model.toUpdateRequest(ctx)
+			if diags.HasError() {
+				t.Fatalf("unexpected diagnostics: %v", diags)
+			}
+			if req.Tags == nil {
+				t.Fatal("tags must be non-nil so the key is sent and the server clears them")
+			}
+			if len(req.Tags) != 0 {
+				t.Errorf("expected no tags, got %v", req.Tags)
+			}
+
+			body, err := json.Marshal(req)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if !strings.Contains(string(body), `"tags":{}`) {
+				t.Errorf("expected the request to carry an empty tags object, got %s", body)
+			}
+		})
 	}
 }
 
@@ -625,8 +667,13 @@ func TestBucketResourceUpdate(t *testing.T) {
 		CreatedAt:           "2025-06-01T12:00:00Z",
 	}
 
+	// PUT, not PATCH. storage registers only PUT on /buckets/{name} and does
+	// not enable gin's method-not-allowed handling, so the PATCH this resource
+	// used to send was answered 404 and every bucket update failed. The server
+	// below matches on the method, so a regression to PATCH falls through to
+	// the 404 branch and fails this test.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/buckets/upd-bucket" {
+		if r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-123/buckets/upd-bucket" {
 			_ = json.NewEncoder(w).Encode(bucketResp)
 			return
 		}

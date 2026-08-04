@@ -208,7 +208,8 @@ func (r *egressGatewayResource) Delete(ctx context.Context, req resource.DeleteR
 	// DNS and managed-service connectivity WITHOUT a deliberate act; in
 	// Terraform that act is the plan approval.
 	_, err := r.client.Delete(ctx, r.client.TenantPath(
-		fmt.Sprintf("/egress-gateways/%s?acknowledgeConnectivityLoss=true", state.ID.ValueString())))
+		fmt.Sprintf("/egress-gateways/%s?acknowledgeConnectivityLoss=true", state.ID.ValueString()),
+	))
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to delete egress gateway", err.Error())
 		return

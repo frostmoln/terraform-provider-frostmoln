@@ -3,13 +3,16 @@ package bucket
 import (
 	"context"
 	"fmt"
+	"net/url"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
@@ -65,9 +68,15 @@ func (r *bucketResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				},
 			},
 			"versioning": schema.StringAttribute{
-				Description: "The versioning state of the bucket (e.g. enabled, suspended).",
-				Optional:    true,
-				Computed:    true,
+				Description: "The versioning state of the bucket: `enabled` or `suspended`. A bucket starts " +
+					"`disabled`, and S3 versioning cannot be turned back off once enabled — only suspended — " +
+					"so `disabled` is not settable: the server would answer with the unchanged state and the " +
+					"apply would fail on the mismatch.",
+				Optional: true,
+				Computed: true,
+				Validators: []validator.String{
+					stringvalidator.OneOf("enabled", "suspended"),
+				},
 			},
 			"tags": schema.MapAttribute{
 				Description: "Tags associated with the bucket.",
@@ -151,7 +160,7 @@ func (r *bucketResource) Read(ctx context.Context, req resource.ReadRequest, res
 		return
 	}
 
-	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/buckets/"+state.Name.ValueString()), nil)
+	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/buckets/"+url.PathEscape(state.Name.ValueString())), nil)
 	if err != nil {
 		if client.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
@@ -188,7 +197,11 @@ func (r *bucketResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	apiResp, err := r.client.Patch(ctx, r.client.TenantPath("/buckets/"+plan.Name.ValueString()), apiReq)
+	// PUT, not PATCH: storage registers only PUT on /buckets/{name}
+	// (storage/internal/handler/http/router.go) and does not enable gin's
+	// method-not-allowed handling, so a PATCH here answered 404 and every
+	// bucket update failed.
+	apiResp, err := r.client.Put(ctx, r.client.TenantPath("/buckets/"+url.PathEscape(plan.Name.ValueString())), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to update bucket", err.Error())
 		return
@@ -215,7 +228,7 @@ func (r *bucketResource) Delete(ctx context.Context, req resource.DeleteRequest,
 		return
 	}
 
-	_, err := r.client.Delete(ctx, r.client.TenantPath("/buckets/"+state.Name.ValueString()))
+	_, err := r.client.Delete(ctx, r.client.TenantPath("/buckets/"+url.PathEscape(state.Name.ValueString())))
 	if err != nil {
 		if client.IsNotFound(err) {
 			return

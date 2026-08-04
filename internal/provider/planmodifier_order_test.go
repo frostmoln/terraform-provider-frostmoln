@@ -163,10 +163,12 @@ func walkOptionalComputed(t *testing.T, prefix string, attrs map[string]schema.A
 		switch nested := a.(type) {
 		case schema.SingleNestedAttribute:
 			walkOptionalComputed(t, attrPath, nested.Attributes, fn)
-		case schema.ListNestedAttribute, schema.SetNestedAttribute, schema.MapNestedAttribute:
-			// Their children would be skipped silently, quietly retiring the
-			// invariant for them. The provider has none today.
-			t.Fatalf("%s: nested-collection attribute (%T) is not walked — extend walkOptionalComputed", attrPath, nested)
+		case schema.ListNestedAttribute:
+			walkOptionalComputed(t, attrPath, nested.NestedObject.Attributes, fn)
+		case schema.SetNestedAttribute:
+			walkOptionalComputed(t, attrPath, nested.NestedObject.Attributes, fn)
+		case schema.MapNestedAttribute:
+			walkOptionalComputed(t, attrPath, nested.NestedObject.Attributes, fn)
 		}
 		if a.IsOptional() && a.IsComputed() {
 			fn(attrPath, a)

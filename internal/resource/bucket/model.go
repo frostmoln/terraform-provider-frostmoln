@@ -49,9 +49,14 @@ type apiCreateBucketRequest struct {
 
 // apiUpdateBucketRequest is the API request to update a bucket. On update
 // `versioning` is a string enum (disabled/enabled/suspended).
+// Tags carries no omitempty and is always sent: the server replaces the
+// bucket's user tags only when the key is present, so with omitempty there was
+// no way to express "remove every tag" — `tags = {}` marshalled to nothing, the
+// server kept the old tags, and reading them back against a config that says
+// none is an inconsistent-result error with no HCL that can fix it.
 type apiUpdateBucketRequest struct {
 	Versioning *string           `json:"versioning,omitempty"`
-	Tags       map[string]string `json:"tags,omitempty"`
+	Tags       map[string]string `json:"tags"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -92,11 +97,13 @@ func (m *BucketModel) toUpdateRequest(ctx context.Context) (apiUpdateBucketReque
 		req.Versioning = &v
 	}
 
+	// Always populated, never left nil: config is authoritative on update, so a
+	// removed tags block or an empty map must clear the bucket's tags rather
+	// than silently leave them in place.
 	var diags diag.Diagnostics
-	if !m.Tags.IsNull() {
-		tags := make(map[string]string)
-		diags = m.Tags.ElementsAs(ctx, &tags, false)
-		req.Tags = tags
+	req.Tags = make(map[string]string)
+	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
+		diags = m.Tags.ElementsAs(ctx, &req.Tags, false)
 	}
 
 	return req, diags

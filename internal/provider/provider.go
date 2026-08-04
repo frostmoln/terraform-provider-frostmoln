@@ -44,6 +44,8 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/apache_instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/api_key"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/bucket"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/bucket_cors_configuration"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/bucket_lifecycle_configuration"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_record"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_zone"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/egress_gateway"
@@ -353,6 +355,8 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 	return []func() resource.Resource{
 		ssh_key.NewResource,
 		bucket.NewResource,
+		bucket_cors_configuration.NewResource,
+		bucket_lifecycle_configuration.NewResource,
 		s3_credential.NewResource,
 		vpc.NewResource,
 		subnet.NewResource,
