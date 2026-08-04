@@ -21,6 +21,46 @@ jobs:
       GIT_SSL_NO_VERIFY: "true"
       GIT_CONFIG_GLOBAL: /tmp/.gitconfig-ci
     steps:
+      # `workflow_dispatch` accepts ANY ref: Gitea's dispatch API takes
+      # `ref` as a required parameter and does not restrict it, so a
+      # branch can be dispatched here and its run bodies execute. This
+      # refuses any ref that is not main or a pull-request ref.
+      #
+      # ACCIDENT CONTAINMENT, not an authorization control. Gitea
+      # resolves the workflow definition from the DISPATCHED ref, so
+      # anyone who can push can push a copy without this step, and every
+      # ref that already exists still carries the unguarded file. What it
+      # buys is that a dispatch of the wrong branch gets a loud refusal
+      # instead of a run.
+      #
+      # An ALLOW-LIST on the ref alone, and deliberately NOT a test on
+      # `github.event_name`: an unresolved or changed event value fails
+      # OPEN, and that value has already silently changed meaning once
+      # here (2026-07-31, ~20 PRs auto-merged untested). Every legitimate
+      # trigger lands on one of the three refs below -- push and schedule
+      # on `refs/heads/main`, pull_request on `refs/pull/<n>/head`, both
+      # verified against real runs -- so an empty or unexpected ref falls
+      # to `*)` and refuses. Literal arms, so no metacharacter in the ref
+      # lands in the pattern.
+      #
+      # A failing STEP rather than a job-level `if:`, so a refusal is RED
+      # rather than a silent skip -- Gitea counts a skipped required check
+      # as SATISFIED (ADR-0010). POSIX sh. The ref is deliberately NOT
+      # echoed: stdout is scanned for `::command::` directives.
+      - name: Restrict dispatch to main
+        id: dispatch-guard
+        env:
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          set -eu
+          case "${DISPATCH_REF}" in
+            refs/heads/main|refs/pull/*/head|refs/pull/*/merge) ;;
+            *)
+              echo "::error::refusing to run: ref is neither refs/heads/main nor a pull-request ref"
+              exit 1
+              ;;
+          esac
+
       - uses: actions/checkout@v7
       # Go is baked into the anchor-runner image (GOTOOLCHAIN=auto matches
       # go.mod), so no actions/setup-go. The provider now imports
@@ -82,7 +122,9 @@ jobs:
           FROSTMOLN_TEST_FLAVOR_NAME: "gp1.small"
 
       - name: Cleanup test user
-        if: always()
+        # `always()` alone also runs after the dispatch guard refuses,
+        # which would exercise this step on a rejected ref.
+        if: always() && steps.dispatch-guard.outcome == 'success'
         run: |
           curl -sf -X DELETE "${API_ENDPOINT}/me" \
             -H "Authorization: Bearer ${TEST_BEARER_TOKEN}" \
