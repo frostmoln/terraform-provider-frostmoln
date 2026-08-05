@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.20.0] - 2026-08-05
+
+### 🚀 Features
+
+- Frostmoln_egress_gateway resource (#247)
+- *(bucket)* Expose bucket CORS and lifecycle configuration (#259)
+- *(egress-gateway)* Nat mode, acknowledged removal and a VPC lookup (#263)
+- *(egress-gateway)* Nat mode, acknowledged removal and a VPC lookup (#263)
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.8 (#249)
+- *(deps)* Update module github.com/hashicorp/terraform-plugin-log to v0.11.0 (#250)
+- *(provider)* Retire the dead nl.* flavor names from tests and acceptance config (#253)
+- *(ci)* Restrict workflow_dispatch to refs/heads/main (#257)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.8.3 (#255)
+- *(deps)* Update dependency frostmoln/workflows to v0.8.4 (#261)
+
 ## [0.19.5] - 2026-08-03
 
 ### 🐛 Bug Fixes
