@@ -20,6 +20,7 @@ import (
 	apacheinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/apache_instance"
 	databaseenginesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/database_engines"
 	dnszoneds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/dns_zone"
+	egressgatewayds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/egress_gateway"
 	flavords "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/flavor"
 	flavorsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/flavors"
 	iampolicydocumentds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/iam_policy_document"
@@ -410,6 +411,7 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		vpcds.NewDataSource,
 		subnetds.NewDataSource,
 		dnszoneds.NewDataSource,
+		egressgatewayds.NewDataSource,
 		instanceds.NewDataSource,
 		postgresversionsds.NewDataSource,
 		mysqlversionsds.NewDataSource,

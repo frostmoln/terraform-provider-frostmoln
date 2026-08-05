@@ -1,0 +1,1218 @@
+package egress_gateway
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+)
+
+// --- helpers ---
+
+func gwSchema(t *testing.T) schema.Schema {
+	t.Helper()
+	r := NewResource()
+	resp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
+	return resp.Schema
+}
+
+func gwObjectType() tftypes.Object {
+	return tftypes.Object{
+		AttributeTypes: map[string]tftypes.Type{
+			"id":                            tftypes.String,
+			"vpc_id":                        tftypes.String,
+			"mode":                          tftypes.String,
+			"source_address":                tftypes.String,
+			"status":                        tftypes.String,
+			"origin":                        tftypes.String,
+			"acknowledge_connectivity_loss": tftypes.Bool,
+		},
+	}
+}
+
+// gwValue builds a whole-resource value. A nil string is a null attribute.
+func gwValue(id, vpcID, mode, sourceAddress, status, origin string, ack *bool) tftypes.Value {
+	str := func(s string) tftypes.Value {
+		if s == "" {
+			return tftypes.NewValue(tftypes.String, nil)
+		}
+		return tftypes.NewValue(tftypes.String, s)
+	}
+	ackVal := tftypes.NewValue(tftypes.Bool, nil)
+	if ack != nil {
+		ackVal = tftypes.NewValue(tftypes.Bool, *ack)
+	}
+	return tftypes.NewValue(gwObjectType(), map[string]tftypes.Value{
+		"id":                            str(id),
+		"vpc_id":                        str(vpcID),
+		"mode":                          str(mode),
+		"source_address":                str(sourceAddress),
+		"status":                        str(status),
+		"origin":                        str(origin),
+		"acknowledge_connectivity_loss": ackVal,
+	})
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+// gwPlanUnknownComputed is the shape Terraform really hands Update: every
+// Computed attribute whose config is null is marked UNKNOWN
+// (fwserver.MarkComputedNilsAsUnknown). A code path that returns without
+// resolving them leaves unknowns in state, which the framework rejects.
+func gwPlanUnknownComputed(vpcID, mode string, ack *bool) tftypes.Value {
+	unknown := tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
+	ackVal := tftypes.NewValue(tftypes.Bool, nil)
+	if ack != nil {
+		ackVal = tftypes.NewValue(tftypes.Bool, *ack)
+	}
+	return tftypes.NewValue(gwObjectType(), map[string]tftypes.Value{
+		"id":                            unknown,
+		"vpc_id":                        tftypes.NewValue(tftypes.String, vpcID),
+		"mode":                          tftypes.NewValue(tftypes.String, mode),
+		"source_address":                unknown,
+		"status":                        unknown,
+		"origin":                        unknown,
+		"acknowledge_connectivity_loss": ackVal,
+	})
+}
+
+func configuredResource(t *testing.T, serverURL string) resource.Resource {
+	t.Helper()
+	c := client.NewClient(serverURL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(
+		context.Background(),
+		resource.ConfigureRequest{ProviderData: c},
+		&resource.ConfigureResponse{},
+	)
+	return r
+}
+
+// apiErrorHandler serves one error envelope for every request, and records how
+// many requests it saw.
+func apiErrorHandler(calls *int, status int, code, message string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		*calls++
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]string{"code": code, "message": message},
+		})
+	}
+}
+
+// diagText flattens the error diagnostics so an assertion can match on what the
+// practitioner actually reads.
+func diagText(diags diag.Diagnostics) string {
+	var b strings.Builder
+	for _, d := range diags.Errors() {
+		b.WriteString(d.Summary())
+		b.WriteString("\n")
+		b.WriteString(d.Detail())
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// --- schema ---
+
+func TestEgressGatewayMetadata(t *testing.T) {
+	r := NewResource()
+	resp := &resource.MetadataResponse{}
+	r.Metadata(context.Background(), resource.MetadataRequest{ProviderTypeName: "frostmoln"}, resp)
+	if resp.TypeName != "frostmoln_egress_gateway" {
+		t.Errorf("unexpected type name %s", resp.TypeName)
+	}
+}
+
+func TestEgressGatewayConfigureNilProviderData(t *testing.T) {
+	r := NewResource()
+	resp := &resource.ConfigureResponse{}
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: nil}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Errorf("expected no errors, got %v", resp.Diagnostics)
+	}
+}
+
+func TestEgressGatewayConfigureWrongType(t *testing.T) {
+	r := NewResource()
+	resp := &resource.ConfigureResponse{}
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: true}, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Error("expected error for wrong provider data type")
+	}
+}
+
+// TestEgressGatewayModeAcceptsBothModes pins the enum. `nat` is a REAL mode —
+// the recommended one, and the only one that spends none of the tenant's public
+// IPv4 quota. A validator that accepts only public_ip would make every VPC buy
+// an address, and would turn a per-region capability gap into a permanent
+// configuration error no server-side change can clear.
+func TestEgressGatewayModeAcceptsBothModes(t *testing.T) {
+	s := gwSchema(t)
+	attr, ok := s.Attributes["mode"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("expected mode to be a StringAttribute, got %T", s.Attributes["mode"])
+	}
+	if len(attr.Validators) == 0 {
+		t.Fatal("mode has no validators")
+	}
+
+	for _, tc := range []struct {
+		value string
+		valid bool
+	}{
+		{ModeNAT, true},
+		{ModePublicIP, true},
+		{"none", false}, // "none" is the ABSENCE of the resource, not a mode
+		{"shared", false},
+	} {
+		resp := &validator.StringResponse{}
+		for _, v := range attr.Validators {
+			v.ValidateString(context.Background(), validator.StringRequest{
+				Path:        path.Root("mode"),
+				ConfigValue: types.StringValue(tc.value),
+			}, resp)
+		}
+		if got := !resp.Diagnostics.HasError(); got != tc.valid {
+			t.Errorf("mode %q: accepted=%v, want %v (%v)", tc.value, got, tc.valid, resp.Diagnostics)
+		}
+	}
+}
+
+// TestEgressGatewayModeDoesNotRequireReplace is behavioural, not a %T match on
+// the modifier list: a replacement would DESTROY the gateway and create a new
+// one, dropping the recorded source address and leaving the VPC with no
+// internet, no DNS and no managed-service connectivity in between. The API has
+// PATCH /egress-gateways/{id} precisely so that never happens.
+func TestEgressGatewayModeDoesNotRequireReplace(t *testing.T) {
+	s := gwSchema(t)
+	attr, ok := s.Attributes["mode"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("expected mode to be a StringAttribute, got %T", s.Attributes["mode"])
+	}
+
+	req := planmodifier.StringRequest{
+		Path:        path.Root("mode"),
+		StateValue:  types.StringValue(ModePublicIP),
+		PlanValue:   types.StringValue(ModeNAT),
+		ConfigValue: types.StringValue(ModeNAT),
+	}
+	resp := &planmodifier.StringResponse{PlanValue: req.PlanValue}
+	for _, m := range attr.PlanModifiers {
+		m.PlanModifyString(context.Background(), req, resp)
+	}
+	if resp.RequiresReplace {
+		t.Error("a mode change must be an in-place update, not a replacement")
+	}
+}
+
+func TestEgressGatewaySchemaAttributes(t *testing.T) {
+	s := gwSchema(t)
+	for _, name := range []string{"id", "vpc_id", "mode", "source_address", "status", "origin", "acknowledge_connectivity_loss"} {
+		if _, ok := s.Attributes[name]; !ok {
+			t.Errorf("expected attribute %q in schema", name)
+		}
+	}
+	ack, ok := s.Attributes["acknowledge_connectivity_loss"].(schema.BoolAttribute)
+	if !ok {
+		t.Fatalf("expected acknowledge_connectivity_loss to be a BoolAttribute, got %T", s.Attributes["acknowledge_connectivity_loss"])
+	}
+	if !ack.Optional || ack.Required || ack.Computed {
+		t.Error("acknowledge_connectivity_loss must be Optional-only: a Computed default would let the provider acknowledge on the practitioner's behalf")
+	}
+	// The consequence is not only the internet. Every surface that offers
+	// removal must say so.
+	if !strings.Contains(ack.Description, "DNS") || !strings.Contains(s.Description, "DNS") {
+		t.Error("the schema must state that removal also costs DNS resolution")
+	}
+}
+
+// TestEgressGatewayStatusDescriptionIsNotAVerdict: `status` is OBSERVED, and
+// what the platform observes depends on how the mode is realised — a healthy
+// gateway can report "detached". The description must not tell a practitioner
+// that "detached" proves the platform and the cloud disagree, or that an
+// operator is needed, because acting on that costs a support ticket and, worse,
+// an unnecessary mode change (which re-addresses egress and drops connections).
+func TestEgressGatewayStatusDescriptionIsNotAVerdict(t *testing.T) {
+	s := gwSchema(t)
+	attr, ok := s.Attributes["status"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("expected status to be a StringAttribute, got %T", s.Attributes["status"])
+	}
+	lower := strings.ToLower(attr.Description)
+	for _, verdict := range []string{
+		"needs an operator",
+		"the platform's record and the cloud disagree",
+		"cannot converge",
+	} {
+		if strings.Contains(lower, verdict) {
+			t.Errorf("status must not assert that \"detached\" is drift needing intervention (%q), got:\n%s",
+				verdict, attr.Description)
+		}
+	}
+	if !strings.Contains(lower, "detached") {
+		t.Error("status must still document the \"detached\" value")
+	}
+}
+
+// TestEgressGatewayVPCIDDescriptionNamesTheAcknowledgement: changing vpc_id
+// REPLACES the resource, and the replacement destroys the gateway first — which
+// this provider refuses without `acknowledge_connectivity_loss`. A description
+// that says only "replaces the resource" sends the practitioner into a failed
+// apply.
+func TestEgressGatewayVPCIDDescriptionNamesTheAcknowledgement(t *testing.T) {
+	s := gwSchema(t)
+	attr, ok := s.Attributes["vpc_id"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("expected vpc_id to be a StringAttribute, got %T", s.Attributes["vpc_id"])
+	}
+	if !strings.Contains(attr.Description, "acknowledge_connectivity_loss") {
+		t.Errorf("vpc_id must say the replacement's destroy needs the acknowledgement, got:\n%s", attr.Description)
+	}
+}
+
+// TestEgressGatewaySurfacesCarryNoInternalNames: every string in this package
+// that a practitioner reads ends up on the Terraform Registry, permanently.
+// Internal component names ("NAT shard", "managed-agent") publish platform
+// topology to the whole internet and mean nothing to the reader; the fm CLI and
+// the portal say "not offered in this region yet" and "managed-service
+// connectivity", and this surface matches them.
+func TestEgressGatewaySurfacesCarryNoInternalNames(t *testing.T) {
+	forbidden := []string{"shard", "managed-agent", "neutron", "ovn", "openstack"}
+
+	surfaces := map[string]string{"resource description": gwSchema(t).Description}
+	for name, attr := range gwSchema(t).Attributes {
+		surfaces["attribute "+name] = attr.GetDescription()
+	}
+	for _, code := range []string{
+		errCodeModeUnavailable, errCodeGatewayExists, errCodeGatewayInUse,
+		errCodeLossNotAcked, errCodePoolExhausted,
+	} {
+		var diags diag.Diagnostics
+		addEgressError(&diags, "fallback", &client.APIError{Code: code, Message: "api message", StatusCode: 400})
+		surfaces["diagnostic "+code] = diagText(diags)
+	}
+
+	for where, text := range surfaces {
+		lower := strings.ToLower(text)
+		for _, term := range forbidden {
+			if strings.Contains(lower, term) {
+				t.Errorf("%s names the internal component %q on a customer surface:\n%s", where, term, text)
+			}
+		}
+	}
+}
+
+// --- plan modification ---
+
+// modifyPlan runs the resource's ModifyPlan the way the framework does: the
+// response plan starts as a copy of the proposed plan, and the method rewrites
+// what it needs to.
+func modifyPlan(t *testing.T, planRaw, stateRaw tftypes.Value) EgressGatewayModel {
+	t.Helper()
+	s := gwSchema(t)
+	r, ok := NewResource().(resource.ResourceWithModifyPlan)
+	if !ok {
+		t.Fatal("the resource must implement ModifyPlan: without it Terraform pins the PRIOR values of " +
+			"source_address, status and origin into the plan, and every mode change fails the apply " +
+			"with \"Provider produced inconsistent result after apply\"")
+	}
+
+	resp := &resource.ModifyPlanResponse{Plan: tfsdk.Plan{Schema: s, Raw: planRaw}}
+	r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{
+		Plan:  tfsdk.Plan{Schema: s, Raw: planRaw},
+		State: tfsdk.State{Schema: s, Raw: stateRaw},
+	}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected plan diagnostics: %v", resp.Diagnostics)
+	}
+
+	var planned EgressGatewayModel
+	resp.Plan.Get(context.Background(), &planned)
+	return planned
+}
+
+// TestEgressGatewayModifyPlanModeChangeRecomputesObservedValues is the
+// regression guard for an apply that CANNOT succeed without it.
+//
+// For a Computed-only attribute Terraform's proposed new state carries the
+// PRIOR STATE value (the framework rewrites only null -> unknown), so the plan
+// pins the old source address, status and origin as KNOWN. The PATCH then
+// legitimately returns different ones — the platform re-records the source
+// address on every mode change, sets origin to "explicit" (so an imported
+// "vpc_create" or "legacy" gateway changes), and reports the gateway active —
+// and Terraform core aborts with "Provider produced inconsistent result after
+// apply". No retry clears it; the practitioner is stuck.
+func TestEgressGatewayModifyPlanModeChangeRecomputesObservedValues(t *testing.T) {
+	// Exactly what the framework proposes: prior values, new mode.
+	planRaw := gwValue("gw-1", "vpc-1", ModeNAT, "46.246.117.231", "active", "vpc_create", boolPtr(true))
+	stateRaw := gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "vpc_create", boolPtr(true))
+
+	planned := modifyPlan(t, planRaw, stateRaw)
+
+	for name, v := range map[string]types.String{
+		"source_address": planned.SourceAddress,
+		"status":         planned.Status,
+		"origin":         planned.Origin,
+	} {
+		if !v.IsUnknown() {
+			t.Errorf("%s must be planned as unknown across a mode change (the platform re-records it); got %v", name, v)
+		}
+	}
+	// The id survives a mode change — that is why this is a PATCH and not a
+	// replacement — so it must NOT be thrown away.
+	if planned.ID.ValueString() != "gw-1" {
+		t.Errorf("the gateway id survives a mode change, got %v", planned.ID)
+	}
+}
+
+// TestEgressGatewayModifyPlanReplacementRecomputesObservedValues: a vpc_id
+// change replaces the resource, so nothing observed survives it either.
+func TestEgressGatewayModifyPlanReplacementRecomputesObservedValues(t *testing.T) {
+	planRaw := gwValue("gw-1", "vpc-2", ModePublicIP, "46.246.117.231", "active", "explicit", boolPtr(true))
+	stateRaw := gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit", boolPtr(true))
+
+	planned := modifyPlan(t, planRaw, stateRaw)
+
+	if !planned.SourceAddress.IsUnknown() {
+		t.Errorf("a replacement gets a new address, so source_address must be unknown; got %v", planned.SourceAddress)
+	}
+}
+
+// TestEgressGatewayModifyPlanKeepsNullSourceAddress is the perpetual-diff
+// guard. A Computed attribute that is NULL in state is marked unknown in the
+// proposed plan, and null-versus-unknown is a diff on every single run: `terraform
+// plan -detailed-exitcode` returns 2 forever and any drift-detection gate built
+// on it is broken. Reachable whenever the gateway is detached or its external
+// port carries no IPv4.
+func TestEgressGatewayModifyPlanKeepsNullSourceAddress(t *testing.T) {
+	// What the framework proposes when state.source_address is null: unknown.
+	planRaw := gwPlanUnknownComputed("vpc-1", ModeNAT, nil)
+	stateRaw := gwValue("gw-1", "vpc-1", ModeNAT, "", "detached", "explicit", nil)
+
+	planned := modifyPlan(t, planRaw, stateRaw)
+
+	if !planned.SourceAddress.IsNull() {
+		t.Errorf("with mode unchanged, a null source_address must stay null in the plan (an unknown is a "+
+			"diff on every run); got %v", planned.SourceAddress)
+	}
+	if planned.Status.ValueString() != "detached" || planned.Origin.ValueString() != "explicit" {
+		t.Errorf("with mode unchanged the observed values must be taken from state, got %v / %v",
+			planned.Status, planned.Origin)
+	}
+}
+
+// --- model ---
+
+// TestApplyToModelAbsentSourceAddressIsNull guards the difference between "the
+// address is not known yet" and "the address is the empty string": the API omits
+// sourceAddress while a gateway is detached, and "" is a value a practitioner
+// could interpolate into a firewall rule.
+func TestApplyToModelAbsentSourceAddressIsNull(t *testing.T) {
+	var m EgressGatewayModel
+	applyToModel(&m, &apiEgressGateway{
+		ID: "gw-1", VPCID: "vpc-1", Mode: ModeNAT, Status: "detached", Origin: "legacy",
+	})
+	if !m.SourceAddress.IsNull() {
+		t.Errorf("expected null source_address, got %v", m.SourceAddress)
+	}
+	if m.Status.ValueString() != "detached" || m.Origin.ValueString() != "legacy" {
+		t.Errorf("unexpected observed values: %v / %v", m.Status, m.Origin)
+	}
+}
+
+func TestApplyToModelPresentSourceAddress(t *testing.T) {
+	var m EgressGatewayModel
+	applyToModel(&m, &apiEgressGateway{
+		ID: "gw-1", VPCID: "vpc-1", Mode: ModePublicIP,
+		SourceAddress: "46.246.117.231", Status: "active", Origin: "explicit",
+	})
+	if m.SourceAddress.ValueString() != "46.246.117.231" {
+		t.Errorf("unexpected source_address %v", m.SourceAddress)
+	}
+}
+
+// --- create ---
+
+func TestEgressGatewayCreate(t *testing.T) {
+	var got apiCreateEgressGatewayRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/egress-gateways" {
+			_ = json.NewDecoder(r.Body).Decode(&got)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"gw-1","vpcId":"vpc-1","tenantId":"t-123","mode":"nat",
+				"sourceAddress":"46.246.117.231","status":"active","origin":"explicit"}`))
+			return
+		}
+		http.Error(w, "unexpected", http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	r.Create(context.Background(), resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: s, Raw: gwValue("", "vpc-1", ModeNAT, "", "", "", nil)},
+	}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	if got.VPCID != "vpc-1" || got.Mode != ModeNAT {
+		t.Errorf("unexpected create body %+v", got)
+	}
+
+	var state EgressGatewayModel
+	resp.State.Get(context.Background(), &state)
+	if state.ID.ValueString() != "gw-1" {
+		t.Errorf("expected id gw-1, got %v", state.ID)
+	}
+	if state.SourceAddress.ValueString() != "46.246.117.231" {
+		t.Errorf("unexpected source_address %v", state.SourceAddress)
+	}
+}
+
+// TestEgressGatewayCreateModeUnavailable is the per-region NAT case. The API
+// answers 400, but this is NOT invalid configuration: the same config applies
+// unchanged in a region with a NAT shard, so the diagnostic must say "not
+// offered here yet" and must not read as a permanent input error.
+func TestEgressGatewayCreateModeUnavailable(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusBadRequest,
+		"EGRESS_MODE_UNAVAILABLE", `egress gateway mode "nat" is not available yet; supported modes: public_ip`))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	r.Create(context.Background(), resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: s, Raw: gwValue("", "vpc-1", ModeNAT, "", "", "", nil)},
+	}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error")
+	}
+	text := strings.ToLower(diagText(resp.Diagnostics))
+	if !strings.Contains(text, "not offered in this region yet") {
+		t.Errorf("diagnostic must present this as a regional capability gap, got:\n%s", text)
+	}
+	if !strings.Contains(text, "this is not invalid configuration") {
+		t.Errorf("diagnostic must say the configuration is valid, got:\n%s", text)
+	}
+}
+
+func TestEgressGatewayCreateGatewayExists(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusConflict,
+		"EGRESS_GATEWAY_EXISTS", "VPC vpc-1 already has an egress gateway; change its mode instead of creating another"))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	r.Create(context.Background(), resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: s, Raw: gwValue("", "vpc-1", ModePublicIP, "", "", "", nil)},
+	}, resp)
+
+	text := diagText(resp.Diagnostics)
+	if !strings.Contains(text, "terraform import frostmoln_egress_gateway") {
+		t.Errorf("diagnostic must point at importing the existing gateway, got:\n%s", text)
+	}
+	if !strings.Contains(strings.ToLower(text), "mode") {
+		t.Errorf("diagnostic must point at changing the mode, got:\n%s", text)
+	}
+}
+
+// TestEgressGatewayCreatePoolExhausted pins the one presentation that costs a
+// practitioner a pointless support ticket: EGRESS_POOL_EXHAUSTED is PLATFORM
+// inventory, temporary and retryable — not the tenant's quota, and no amount of
+// quota granted fixes it.
+func TestEgressGatewayCreatePoolExhausted(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusServiceUnavailable,
+		"EGRESS_POOL_EXHAUSTED", "no public IPv4 addresses are currently available in this region; this is a platform capacity limit, not your quota"))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	r.Create(context.Background(), resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: s, Raw: gwValue("", "vpc-1", ModePublicIP, "", "", "", nil)},
+	}, resp)
+
+	text := diagText(resp.Diagnostics)
+	lower := strings.ToLower(text)
+	if !strings.Contains(lower, "temporary") || !strings.Contains(lower, "re-run `terraform apply`") {
+		t.Errorf("diagnostic must present the 503 as retryable, got:\n%s", text)
+	}
+	for _, forbidden := range []string{"request more quota", "increase your quota", "ask for more quota", "raise your quota"} {
+		if strings.Contains(lower, forbidden) {
+			t.Errorf("diagnostic must not send the practitioner to ask for quota (%q), got:\n%s", forbidden, text)
+		}
+	}
+	if !strings.Contains(lower, "not your tenant's quota") {
+		t.Errorf("diagnostic must say this is not a quota limit, got:\n%s", text)
+	}
+}
+
+// --- read ---
+
+func TestEgressGatewayReadUsesVPCFilteredList(t *testing.T) {
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/egress-gateways" {
+			gotQuery = r.URL.RawQuery
+			_, _ = w.Write([]byte(`{"egressGateways":[{"id":"gw-1","vpcId":"vpc-1","mode":"public_ip",
+				"sourceAddress":"46.246.117.231","status":"active","origin":"vpc_create"}],"totalCount":1}`))
+			return
+		}
+		http.Error(w, "unexpected", http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+	raw := gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "vpc_create", boolPtr(true))
+
+	resp := &resource.ReadResponse{State: tfsdk.State{Schema: s, Raw: raw}}
+	r.Read(context.Background(), resource.ReadRequest{State: tfsdk.State{Schema: s, Raw: raw}}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	if gotQuery != "vpcId=vpc-1" {
+		t.Errorf("expected the read to be narrowed to the VPC, got %q", gotQuery)
+	}
+
+	var state EgressGatewayModel
+	resp.State.Get(context.Background(), &state)
+	if state.Origin.ValueString() != "vpc_create" {
+		t.Errorf("unexpected origin %v", state.Origin)
+	}
+	// The acknowledgement is configuration, never returned by the API — a read
+	// must not clear it, or the next destroy would refuse.
+	if !state.AcknowledgeConnectivityLoss.ValueBool() {
+		t.Error("read must preserve acknowledge_connectivity_loss")
+	}
+}
+
+func TestEgressGatewayReadEmptyListRemovesResource(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/tenants/t-123/egress-gateways" {
+			_, _ = w.Write([]byte(`{"egressGateways":[],"totalCount":0}`))
+			return
+		}
+		// The by-id confirmation: this gateway really is gone.
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "egress gateway not found"},
+		})
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+	raw := gwValue("gw-1", "vpc-1", ModePublicIP, "", "active", "explicit", nil)
+
+	resp := &resource.ReadResponse{State: tfsdk.State{Schema: s, Raw: raw}}
+	r.Read(context.Background(), resource.ReadRequest{State: tfsdk.State{Schema: s, Raw: raw}}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	if !resp.State.Raw.IsNull() {
+		t.Error("a VPC with no gateway must be removed from state")
+	}
+}
+
+// TestEgressGatewayReadEmptyListIsConfirmedBeforeRemoval: an empty FILTERED
+// list is not proof the gateway is gone. The API returns the same empty body
+// for a vpcId that is unknown or that this tenant does not own, so a stale
+// vpc_id — or a key scoped to another tenant — would otherwise drop a live,
+// address-spending gateway out of state, and the next apply would create a
+// SECOND one for the same VPC (or fail with EGRESS_GATEWAY_EXISTS).
+func TestEgressGatewayReadEmptyListIsConfirmedBeforeRemoval(t *testing.T) {
+	var byIDCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/tenants/t-123/egress-gateways" {
+			// The filtered list comes back empty — but the gateway is alive.
+			_, _ = w.Write([]byte(`{"egressGateways":[],"totalCount":0}`))
+			return
+		}
+		if r.URL.Path == "/v1/tenants/t-123/egress-gateways/gw-1" {
+			byIDCalls++
+			_, _ = w.Write([]byte(`{"id":"gw-1","vpcId":"vpc-1","mode":"public_ip",
+				"sourceAddress":"46.246.117.231","status":"active","origin":"explicit"}`))
+			return
+		}
+		http.Error(w, "unexpected", http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+	raw := gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit", nil)
+
+	resp := &resource.ReadResponse{State: tfsdk.State{Schema: s, Raw: raw}}
+	r.Read(context.Background(), resource.ReadRequest{State: tfsdk.State{Schema: s, Raw: raw}}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	if byIDCalls != 1 {
+		t.Errorf("an empty filtered list must be confirmed against GET /egress-gateways/{id}; saw %d such calls", byIDCalls)
+	}
+	if resp.State.Raw.IsNull() {
+		t.Fatal("a live gateway was dropped from state on the strength of an empty filtered list")
+	}
+
+	var state EgressGatewayModel
+	resp.State.Get(context.Background(), &state)
+	if state.SourceAddress.ValueString() != "46.246.117.231" {
+		t.Errorf("the confirmed gateway must be written to state, got %+v", state)
+	}
+}
+
+// TestEgressGatewayReadRefusesAnotherVPCsGateway: state binds this resource to
+// one gateway of one VPC. A response naming a different VPC means the lookup
+// resolved something else (a stale vpc_id, a key scoped elsewhere); rebinding
+// state to it would put the NEXT mode change or destroy on another VPC's
+// internet, DNS and managed-service path.
+func TestEgressGatewayReadRefusesAnotherVPCsGateway(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"egressGateways":[{"id":"gw-other","vpcId":"vpc-other","mode":"public_ip",
+			"sourceAddress":"185.9.9.9","status":"active","origin":"explicit"}],"totalCount":1}`))
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+	raw := gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit", nil)
+
+	resp := &resource.ReadResponse{State: tfsdk.State{Schema: s, Raw: raw}}
+	r.Read(context.Background(), resource.ReadRequest{State: tfsdk.State{Schema: s, Raw: raw}}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the read to refuse a response naming a different gateway/VPC")
+	}
+	text := diagText(resp.Diagnostics)
+	for _, id := range []string{"vpc-1", "vpc-other"} {
+		if !strings.Contains(text, id) {
+			t.Errorf("the diagnostic must name both ids (missing %q), got:\n%s", id, text)
+		}
+	}
+
+	var state EgressGatewayModel
+	resp.State.Get(context.Background(), &state)
+	if state.VPCID.ValueString() != "vpc-1" || state.ID.ValueString() != "gw-1" {
+		t.Errorf("state must not be rebound to the other gateway, got %+v", state)
+	}
+}
+
+// TestEgressGatewayReadRefusesResponseWithoutID: an id is what every later
+// request is addressed by, and "/egress-gateways/" with an empty id is cleaned
+// straight back to the COLLECTION path — so a DELETE built from an id-less
+// state row 404s, IsNotFound reads that as "already gone", and the provider
+// forgets a gateway that is still up and still spending an address.
+func TestEgressGatewayReadRefusesResponseWithoutID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"egressGateways":[{"vpcId":"vpc-1","mode":"nat","status":"active",
+			"origin":"explicit"}],"totalCount":1}`))
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+	raw := gwValue("gw-1", "vpc-1", ModeNAT, "", "active", "explicit", nil)
+
+	resp := &resource.ReadResponse{State: tfsdk.State{Schema: s, Raw: raw}}
+	r.Read(context.Background(), resource.ReadRequest{State: tfsdk.State{Schema: s, Raw: raw}}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected a response with no id to be refused, not written to state")
+	}
+	if !strings.Contains(diagText(resp.Diagnostics), "`id`") {
+		t.Errorf("the diagnostic must name the missing field, got:\n%s", diagText(resp.Diagnostics))
+	}
+}
+
+// TestEgressGatewayReadNeverSendsEmptyVPCID is the regression guard for the
+// worst failure this resource can have. `?vpcId=` present-but-empty is a 400 by
+// design; if a state row with no vpc_id (a fresh import by gateway id) made the
+// provider send the parameter empty — or, worse, drop it — the response would be
+// the TENANT-WIDE list, the resource would bind to element [0] (an unrelated
+// VPC's gateway) and the next apply would PATCH or DELETE that VPC's internet,
+// DNS and managed-service path.
+func TestEgressGatewayReadNeverSendsEmptyVPCID(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path+"?"+r.URL.RawQuery)
+		if r.URL.Path == "/v1/tenants/t-123/egress-gateways" {
+			// The tenant-wide list: a DIFFERENT VPC's gateway comes first.
+			_, _ = w.Write([]byte(`{"egressGateways":[{"id":"gw-other","vpcId":"vpc-other",
+				"mode":"public_ip","status":"active","origin":"explicit"}],"totalCount":1}`))
+			return
+		}
+		if r.URL.Path == "/v1/tenants/t-123/egress-gateways/gw-1" {
+			_, _ = w.Write([]byte(`{"id":"gw-1","vpcId":"vpc-1","mode":"nat","status":"active","origin":"explicit"}`))
+			return
+		}
+		http.Error(w, "unexpected", http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+	// Exactly the shape ImportState leaves behind: an id, no vpc_id.
+	raw := gwValue("gw-1", "", "", "", "", "", nil)
+
+	resp := &resource.ReadResponse{State: tfsdk.State{Schema: s, Raw: raw}}
+	r.Read(context.Background(), resource.ReadRequest{State: tfsdk.State{Schema: s, Raw: raw}}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	for _, p := range paths {
+		if strings.HasPrefix(p, "/v1/tenants/t-123/egress-gateways?") {
+			t.Fatalf("the collection was queried without a vpcId filter (%q): that returns the tenant-wide list", p)
+		}
+		if strings.Contains(p, "vpcId=&") || strings.HasSuffix(p, "vpcId=") {
+			t.Fatalf("an empty vpcId was sent (%q)", p)
+		}
+	}
+
+	var state EgressGatewayModel
+	resp.State.Get(context.Background(), &state)
+	if state.VPCID.ValueString() != "vpc-1" {
+		t.Errorf("expected the by-id lookup to bind vpc-1, got %v", state.VPCID)
+	}
+}
+
+func TestEgressGatewayReadByIDNotFoundRemovesResource(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]string{"code": "NOT_FOUND", "message": "egress gateway not found"},
+		})
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+	raw := gwValue("gw-1", "", "", "", "", "", nil)
+
+	resp := &resource.ReadResponse{State: tfsdk.State{Schema: s, Raw: raw}}
+	r.Read(context.Background(), resource.ReadRequest{State: tfsdk.State{Schema: s, Raw: raw}}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	if !resp.State.Raw.IsNull() {
+		t.Error("a 404 on the by-id lookup must remove the resource from state")
+	}
+}
+
+// --- update ---
+
+func TestEgressGatewayUpdateModeRequiresAcknowledgement(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		http.Error(w, "the provider must not reach the API", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+	state := gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit", nil)
+	plan := gwValue("gw-1", "vpc-1", ModeNAT, "46.246.117.231", "active", "explicit", nil)
+
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s, Raw: state}}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: s, Raw: plan},
+		State: tfsdk.State{Schema: s, Raw: state},
+	}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the mode change to be refused without an acknowledgement")
+	}
+	if calls != 0 {
+		t.Errorf("the provider must refuse locally, before any request; saw %d", calls)
+	}
+	text := diagText(resp.Diagnostics)
+	if !strings.Contains(text, "acknowledge_connectivity_loss") || !strings.Contains(text, "DNS") {
+		t.Errorf("diagnostic must name the attribute and the DNS consequence, got:\n%s", text)
+	}
+}
+
+// TestEgressGatewayUpdateModeInPlace feeds Update the plan a mode change really
+// produces: ModifyPlan has already marked source_address, status and origin
+// UNKNOWN, because the PATCH re-records all three. (Feeding it the old address
+// as a known planned value would encode the bug this resource used to have —
+// Terraform core aborts such an apply with "Provider produced inconsistent
+// result after apply".)
+func TestEgressGatewayUpdateModeInPlace(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody apiUpdateEgressGatewayRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_, _ = w.Write([]byte(`{"id":"gw-1","vpcId":"vpc-1","mode":"nat","sourceAddress":"185.1.2.3",
+			"status":"active","origin":"explicit"}`))
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+	state := gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit", boolPtr(true))
+	plan := gwPlanUnknownComputed("vpc-1", ModeNAT, boolPtr(true))
+
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s, Raw: state}}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: s, Raw: plan},
+		State: tfsdk.State{Schema: s, Raw: state},
+	}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	if gotMethod != http.MethodPatch {
+		t.Errorf("a mode change must be a PATCH, got %s", gotMethod)
+	}
+	if gotPath != "/v1/tenants/t-123/egress-gateways/gw-1" {
+		t.Errorf("the PATCH must target the gateway id, got %s", gotPath)
+	}
+	if gotBody.Mode != ModeNAT || !gotBody.AcknowledgeConnectivityLoss {
+		t.Errorf("unexpected PATCH body %+v", gotBody)
+	}
+
+	var got EgressGatewayModel
+	resp.State.Get(context.Background(), &got)
+	if got.SourceAddress.ValueString() != "185.1.2.3" || got.Mode.ValueString() != ModeNAT {
+		t.Errorf("state was not refreshed from the response: %+v", got)
+	}
+}
+
+// TestEgressGatewayUpdateAckOnlyMakesNoRequest: the acknowledgement is intent
+// the API never stores, so setting it must not mutate the gateway — and must
+// not leave unknown values in state either.
+func TestEgressGatewayUpdateAckOnlyMakesNoRequest(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		http.Error(w, "unexpected", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+	state := gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit", nil)
+	plan := gwPlanUnknownComputed("vpc-1", ModePublicIP, boolPtr(true))
+
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s, Raw: state}}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: s, Raw: plan},
+		State: tfsdk.State{Schema: s, Raw: state},
+	}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	if calls != 0 {
+		t.Errorf("expected no API call for an acknowledgement-only change, saw %d", calls)
+	}
+
+	var got EgressGatewayModel
+	resp.State.Get(context.Background(), &got)
+	if !got.AcknowledgeConnectivityLoss.ValueBool() {
+		t.Error("the acknowledgement must be stored")
+	}
+	if got.SourceAddress.ValueString() != "46.246.117.231" || got.ID.ValueString() != "gw-1" {
+		t.Errorf("observed values must be carried over from state, got %+v", got)
+	}
+	// Nothing may stay unknown: the framework rejects an unknown value in the
+	// state a provider returns from Update.
+	for name, v := range map[string]interface{ IsUnknown() bool }{
+		"id": got.ID, "source_address": got.SourceAddress, "status": got.Status, "origin": got.Origin,
+	} {
+		if v.IsUnknown() {
+			t.Errorf("%s was left unknown after an acknowledgement-only update", name)
+		}
+	}
+}
+
+// TestEgressGatewayUpdateRefusesEmptyID: see the Delete counterpart. An id-less
+// state row cannot address anything, so the PATCH would be sent to the
+// collection instead of to this gateway.
+func TestEgressGatewayUpdateRefusesEmptyID(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"gw-1","vpcId":"vpc-1","mode":"nat","status":"active","origin":"explicit"}`))
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+	state := gwValue("", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit", boolPtr(true))
+	plan := gwValue("", "vpc-1", ModeNAT, "46.246.117.231", "active", "explicit", boolPtr(true))
+
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s, Raw: state}}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: s, Raw: plan},
+		State: tfsdk.State{Schema: s, Raw: state},
+	}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an update on an id-less state row to be refused")
+	}
+	if calls != 0 {
+		t.Errorf("no request may be built from an empty id; saw %d", calls)
+	}
+}
+
+func TestEgressGatewayUpdateSurfacesPoolExhausted(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusServiceUnavailable,
+		"EGRESS_POOL_EXHAUSTED", "no public IPv4 addresses are currently available in this region"))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+	state := gwValue("gw-1", "vpc-1", ModeNAT, "", "active", "explicit", boolPtr(true))
+	plan := gwValue("gw-1", "vpc-1", ModePublicIP, "", "active", "explicit", boolPtr(true))
+
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s, Raw: state}}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: s, Raw: plan},
+		State: tfsdk.State{Schema: s, Raw: state},
+	}, resp)
+
+	text := strings.ToLower(diagText(resp.Diagnostics))
+	if !strings.Contains(text, "temporary") {
+		t.Errorf("a 503 during a mode change must read as retryable, got:\n%s", text)
+	}
+}
+
+// --- delete ---
+
+// TestEgressGatewayDeleteWithoutAcknowledgementRefuses: `terraform destroy` is
+// a plan approval, not an acknowledgement — it says nothing about DNS or
+// managed-service connectivity, and a gateway is routinely destroyed as a side
+// effect of tearing down something else.
+func TestEgressGatewayDeleteWithoutAcknowledgementRefuses(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+	raw := gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit", nil)
+
+	resp := &resource.DeleteResponse{State: tfsdk.State{Schema: s, Raw: raw}}
+	r.Delete(context.Background(), resource.DeleteRequest{State: tfsdk.State{Schema: s, Raw: raw}}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the destroy to be refused without an acknowledgement")
+	}
+	if calls != 0 {
+		t.Errorf("no request may be sent when the removal is unacknowledged; saw %d", calls)
+	}
+	text := diagText(resp.Diagnostics)
+	if !strings.Contains(text, "DNS") || !strings.Contains(text, "managed-service") {
+		t.Errorf("the refusal must state the full cost, got:\n%s", text)
+	}
+}
+
+// TestEgressGatewayDeleteSendsAcknowledgementAsQuery also pins the wire form:
+// building "?acknowledgeConnectivityLoss=true" into the path string
+// percent-encodes the "?" into the path segment, and the API then answers as if
+// the acknowledgement had never been sent.
+func TestEgressGatewayDeleteSendsAcknowledgementAsQuery(t *testing.T) {
+	var gotPath, gotAck string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAck = r.URL.Query().Get("acknowledgeConnectivityLoss")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+	raw := gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit", boolPtr(true))
+
+	resp := &resource.DeleteResponse{State: tfsdk.State{Schema: s, Raw: raw}}
+	r.Delete(context.Background(), resource.DeleteRequest{State: tfsdk.State{Schema: s, Raw: raw}}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	if gotPath != "/v1/tenants/t-123/egress-gateways/gw-1" {
+		t.Errorf("unexpected path %q — the query must not be built into it", gotPath)
+	}
+	if gotAck != "true" {
+		t.Errorf("expected acknowledgeConnectivityLoss=true as a query parameter, got %q", gotAck)
+	}
+}
+
+// TestEgressGatewayDeleteRefusesEmptyID pins the failure mode that looks like
+// success. `path.Join` cleans "/v1/tenants/t/egress-gateways/" back to the
+// COLLECTION path, so a DELETE built from an empty id is answered by the
+// collection — and whatever it answers, this resource's IsNotFound branch would
+// read as "the gateway was already gone" and report a clean destroy for a
+// gateway that is still up, still spending an address, and now unmanaged.
+func TestEgressGatewayDeleteRefusesEmptyID(t *testing.T) {
+	var gotPaths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.URL.Path)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+	raw := gwValue("", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit", boolPtr(true))
+
+	resp := &resource.DeleteResponse{State: tfsdk.State{Schema: s, Raw: raw}}
+	r.Delete(context.Background(), resource.DeleteRequest{State: tfsdk.State{Schema: s, Raw: raw}}, resp)
+
+	if len(gotPaths) != 0 {
+		t.Errorf("no request may be built from an empty id (it addresses the collection); sent %v", gotPaths)
+	}
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected a destroy on an id-less state row to be refused, not reported as done")
+	}
+}
+
+// TestEgressGatewayInUseDiagnosticPutsDependsOnOnThePublicIP: the ordering
+// advice has to be the right way round. `depends_on` makes Terraform destroy
+// the DEPENDENT first, so the dependency belongs on the public IPs pointing at
+// the gateway. Written the other way (on the gateway, listing the public IPs)
+// the gateway is destroyed FIRST — this same 409 again — and on create the
+// public IP is associated first, which makes the platform attach an implicit
+// gateway and the intended `mode = "nat"` create then fails with
+// EGRESS_GATEWAY_EXISTS.
+func TestEgressGatewayInUseDiagnosticPutsDependsOnOnThePublicIP(t *testing.T) {
+	var diags diag.Diagnostics
+	addEgressError(&diags, "Failed to delete egress gateway", &client.APIError{
+		Code: errCodeGatewayInUse, Message: "2 public IPs in this VPC depend on the egress gateway", StatusCode: 409,
+	})
+
+	text := diagText(diags)
+	if !strings.Contains(text, "depends_on = [frostmoln_egress_gateway") {
+		t.Errorf("the diagnostic must put depends_on ON the public IPs, pointing at the gateway, got:\n%s", text)
+	}
+	if strings.Contains(text, "depends_on = [frostmoln_public_ip") {
+		t.Errorf("a depends_on from the gateway to the public IPs reverses the destroy order and does not "+
+			"fix this failure, got:\n%s", text)
+	}
+}
+
+func TestEgressGatewayDeleteInUse(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusConflict,
+		"EGRESS_GATEWAY_IN_USE", "2 public IPs in this VPC depend on the egress gateway; release or detach them before removing it"))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+	raw := gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit", boolPtr(true))
+
+	resp := &resource.DeleteResponse{State: tfsdk.State{Schema: s, Raw: raw}}
+	r.Delete(context.Background(), resource.DeleteRequest{State: tfsdk.State{Schema: s, Raw: raw}}, resp)
+
+	text := strings.ToLower(diagText(resp.Diagnostics))
+	if !strings.Contains(text, "public ip") || !strings.Contains(text, "release or disassociate") {
+		t.Errorf("diagnostic must say to release the public IPs first, got:\n%s", text)
+	}
+}
+
+func TestEgressGatewayDeleteNotFoundIsSuccess(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusNotFound, "NOT_FOUND", "egress gateway not found"))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+	raw := gwValue("gw-1", "vpc-1", ModePublicIP, "", "active", "explicit", boolPtr(true))
+
+	resp := &resource.DeleteResponse{State: tfsdk.State{Schema: s, Raw: raw}}
+	r.Delete(context.Background(), resource.DeleteRequest{State: tfsdk.State{Schema: s, Raw: raw}}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Errorf("a gateway already gone is a successful destroy, got %v", resp.Diagnostics)
+	}
+}
+
+// --- import ---
+
+// TestEgressGatewayImportSetsOnlyID: the import id may be the gateway id OR the
+// VPC id (GET /egress-gateways/{id} accepts both). Copying it into vpc_id as
+// well would make the following Read filter the list by a vpcId matching
+// nothing, and silently drop the freshly imported resource.
+func TestEgressGatewayImportSetsOnlyID(t *testing.T) {
+	r := NewResource().(resource.ResourceWithImportState)
+	s := gwSchema(t)
+
+	// The framework hands ImportState a state that is a NULL object of the
+	// schema type, not a zero tfsdk.State — mirror that.
+	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: s, Raw: tftypes.NewValue(gwObjectType(), nil)}}
+	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "gw-1"}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	var state EgressGatewayModel
+	resp.State.Get(context.Background(), &state)
+	if state.ID.ValueString() != "gw-1" {
+		t.Errorf("expected id gw-1, got %v", state.ID)
+	}
+	if !state.VPCID.IsNull() {
+		t.Errorf("vpc_id must be left for Read to resolve, got %v", state.VPCID)
+	}
+	if !state.AcknowledgeConnectivityLoss.IsNull() {
+		t.Error("an imported gateway must not arrive pre-acknowledged for destruction")
+	}
+}
+
+// --- error mapping fallbacks ---
+
+func TestAddEgressErrorFallbacks(t *testing.T) {
+	var diags diag.Diagnostics
+	addEgressError(&diags, "Failed to do the thing", context.Canceled)
+	if len(diags.Errors()) != 1 || diags.Errors()[0].Summary() != "Failed to do the thing" {
+		t.Errorf("a non-API error must fall back to the caller's summary, got %v", diags)
+	}
+
+	var apiDiags diag.Diagnostics
+	addEgressError(&apiDiags, "Failed to do the thing", &client.APIError{
+		Code: "SOMETHING_NEW", Message: "unrecognised", StatusCode: 500,
+	})
+	if len(apiDiags.Errors()) != 1 || !strings.Contains(apiDiags.Errors()[0].Detail(), "SOMETHING_NEW") {
+		t.Errorf("an unmapped code must still surface its code, got %v", apiDiags)
+	}
+}

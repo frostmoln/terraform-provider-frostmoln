@@ -1,7 +1,29 @@
 // Package egress_gateway implements the frostmoln_egress_gateway Terraform resource.
 package egress_gateway
 
-import "github.com/hashicorp/terraform-plugin-framework/types"
+import (
+	"fmt"
+
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+)
+
+// Egress gateway modes, as the network service's enum spells them. Both are in
+// the enum: `nat` is a real product, not a placeholder, and a provider that
+// offers only `public_ip` forces every VPC to spend a public IPv4 it does not
+// need.
+const (
+	// ModeNAT sends the VPC's outbound traffic through the platform's shared
+	// address. Spends NONE of the tenant's public IP quota — the recommended
+	// mode. A PER-REGION capability: a region that does not offer it yet
+	// refuses it with EGRESS_MODE_UNAVAILABLE (see addEgressError).
+	ModeNAT = "nat"
+
+	// ModePublicIP gives the VPC a dedicated, stable source address, and spends
+	// one address from the same pool (and the same quota) customer-facing
+	// public IPs come from.
+	ModePublicIP = "public_ip"
+)
 
 // EgressGatewayModel is the Terraform state model for a VPC's outbound path.
 type EgressGatewayModel struct {
@@ -11,18 +33,30 @@ type EgressGatewayModel struct {
 	SourceAddress types.String `tfsdk:"source_address"`
 	Status        types.String `tfsdk:"status"`
 	Origin        types.String `tfsdk:"origin"`
+
+	// AcknowledgeConnectivityLoss is the practitioner's explicit statement that
+	// they accept what removing — or re-addressing — this gateway costs. It is
+	// config, not a computed value, because the API refuses both operations
+	// without it and Terraform has nowhere else to express intent: `terraform
+	// destroy` and a `mode` change are both plain plan approvals, and neither
+	// tells the practitioner that DNS resolution and managed-service
+	// connectivity go down with the internet path.
+	AcknowledgeConnectivityLoss types.Bool `tfsdk:"acknowledge_connectivity_loss"`
 }
 
 // apiEgressGateway is the API representation.
 //
 // Deliberately not router-shaped: no router id, no gateway info. Those have no
-// meaning under a future shared-NAT mode, and once a field ships in a provider
-// schema it is a compatibility obligation across every practitioner's state.
+// meaning under NAT mode, and once a field ships in a provider schema it is a
+// compatibility obligation across every practitioner's state.
 type apiEgressGateway struct {
-	ID            string `json:"id"`
-	VPCID         string `json:"vpcId"`
-	TenantID      string `json:"tenantId"`
-	Mode          string `json:"mode"`
+	ID       string `json:"id"`
+	VPCID    string `json:"vpcId"`
+	TenantID string `json:"tenantId"`
+	Mode     string `json:"mode"`
+	// SourceAddress is absent while the gateway is detached or the address is
+	// not yet known — which is why it maps to a NULL Terraform value rather
+	// than "" (see applyToModel).
 	SourceAddress string `json:"sourceAddress,omitempty"`
 	Status        string `json:"status"`
 	Origin        string `json:"origin"`
@@ -43,7 +77,113 @@ type apiCreateEgressGatewayRequest struct {
 
 type apiUpdateEgressGatewayRequest struct {
 	Mode string `json:"mode"`
-	// AcknowledgeConnectivityLoss is set by the provider on a mode change: the
-	// plan output IS the practitioner's acknowledgement, shown before apply.
+	// AcknowledgeConnectivityLoss carries the practitioner's acknowledgement
+	// from the resource's attribute of the same name. The provider never
+	// hardcodes it: a mode change re-addresses (public_ip -> nat) or re-attaches
+	// (nat -> public_ip) the VPC's only path off-net, dropping in-flight
+	// connections along with DNS and managed-service reachability, so the intent
+	// has to be stated in the configuration rather than inferred from the fact
+	// that an apply was approved.
 	AcknowledgeConnectivityLoss bool `json:"acknowledgeConnectivityLoss"`
+}
+
+// noIDDetail explains why an identity-less state row is refused rather than
+// used to build a request. It is shared by the Update and Delete guards.
+const noIDDetail = "This resource's state row has no `id`, so there is nothing to address. A request built " +
+	"from it would go to the egress-gateway COLLECTION instead — the empty id is cleaned straight " +
+	"out of the path — and the collection answers as if this gateway did not exist, which the " +
+	"provider would record as \"already gone\" for a gateway that is still up and still spending " +
+	"an address. Nothing has been changed.\n\n" +
+	"Re-import the gateway before retrying:\n\n" +
+	"    terraform import frostmoln_egress_gateway.<name> <vpc id>"
+
+// applyToModel copies an API gateway onto the Terraform model.
+//
+// It refuses two responses rather than writing them to state:
+//
+//   - One with no `id` or no `vpcId`. Both are required by the API contract, so
+//     an empty one means the body was not the object that was asked for. Storing
+//     it is worse than failing: every later request builds its path from the id,
+//     and "/egress-gateways/" with an empty id is cleaned back to the COLLECTION
+//     path, so the DELETE 404s, IsNotFound reads that as "already gone", and the
+//     provider drops a live gateway out of state.
+//   - One that names a DIFFERENT gateway or VPC than the state row already
+//     bound to. Silently re-pointing the row at whatever came back is how a
+//     resource ends up PATCHing or DELETING another VPC's internet path; the two
+//     ids belong in a diagnostic, not in state.
+//
+// The one legitimate id mismatch is the import path: GET /egress-gateways/{id}
+// accepts the VPC's id as well, so a row imported by VPC id holds that id until
+// the first read rebinds it to the gateway's own id.
+//
+// sourceAddress maps to null when absent: the API omits it while the gateway is
+// detached or the address is not yet known, and "" is a value a practitioner
+// could interpolate into a firewall rule.
+func applyToModel(m *EgressGatewayModel, gw *apiEgressGateway) diag.Diagnostics {
+	var diags diag.Diagnostics
+
+	if gw.ID == "" || gw.VPCID == "" {
+		diags.AddError(
+			"Incomplete egress gateway response",
+			fmt.Sprintf("The API returned an egress gateway with no %s. Both are required on this "+
+				"resource, so this response cannot be written to state — a state row without them "+
+				"addresses the whole collection on the next request, and a gateway that is still up "+
+				"would be recorded as gone. Nothing has been changed.",
+				missingIdentityFields(gw)),
+		)
+		return diags
+	}
+
+	// Never rebind. An id that matches the response's vpcId is the import path
+	// (see the doc comment), not a mismatch.
+	if id := m.ID.ValueString(); id != "" && id != gw.ID && id != gw.VPCID {
+		diags.AddError(
+			"Egress gateway identity does not match state",
+			fmt.Sprintf("This resource tracks egress gateway %q, but the API answered with gateway %q "+
+				"(VPC %q). The provider will not re-point the resource at a different gateway: doing so "+
+				"would put a later mode change or destroy on an object nobody asked it to touch. "+
+				"Nothing has been changed.\n\nRemove the resource from state and re-import the gateway "+
+				"you mean to manage.", id, gw.ID, gw.VPCID),
+		)
+	}
+	if vpcID := m.VPCID.ValueString(); vpcID != "" && vpcID != gw.VPCID {
+		diags.AddError(
+			"Egress gateway belongs to a different VPC",
+			fmt.Sprintf("This resource tracks the egress gateway of VPC %q, but the API answered with "+
+				"the gateway of VPC %q. The provider will not re-point the resource at another VPC's "+
+				"outbound path: a later mode change or destroy would then take THAT VPC's internet, DNS "+
+				"and managed-service connectivity down. Nothing has been changed.\n\nCheck that `vpc_id` "+
+				"still names the VPC you mean and that the API key is scoped to its tenant.",
+				vpcID, gw.VPCID),
+		)
+	}
+	if diags.HasError() {
+		return diags
+	}
+
+	m.ID = types.StringValue(gw.ID)
+	m.VPCID = types.StringValue(gw.VPCID)
+	m.Mode = types.StringValue(gw.Mode)
+	m.Status = types.StringValue(gw.Status)
+	m.Origin = types.StringValue(gw.Origin)
+
+	if gw.SourceAddress == "" {
+		m.SourceAddress = types.StringNull()
+		return diags
+	}
+	m.SourceAddress = types.StringValue(gw.SourceAddress)
+	return diags
+}
+
+// missingIdentityFields names which of the two required identity fields the
+// response left empty, so the diagnostic says which one rather than "one of".
+func missingIdentityFields(gw *apiEgressGateway) string {
+	switch {
+	case gw.ID == "" && gw.VPCID == "":
+		return "`id` and no `vpcId`"
+	case gw.ID == "":
+		return "`id`"
+	default:
+		return "`vpcId`"
+	}
 }
