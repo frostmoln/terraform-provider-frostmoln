@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.21.0] - 2026-08-06
+
+### 🚀 Features
+
+- *(egress-gateway)* Public_ip_id, and refuse to silently lose a pinned address (#269)
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.9 (#266)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.9 (#266)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.8.5 (#265)
+
 ## [0.20.0] - 2026-08-05
 
 ### 🚀 Features
