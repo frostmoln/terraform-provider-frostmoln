@@ -39,10 +39,64 @@ resource "frostmoln_egress_gateway" "example" {
 # Note the spelling: Terraform takes the wire value "public_ip". The fm CLI also
 # accepts the hyphenated "public-ip", so a value copied from a CLI command has
 # to be rewritten with the underscore here.
+#
+# With no public_ip_id the platform allocates a public IP for the gateway. It is
+# a real, listed, quota-counted resource of your tenant's and its id is recorded
+# in `public_ip_id` — you simply did not choose which one.
 resource "frostmoln_egress_gateway" "dedicated_address" {
   vpc_id = frostmoln_vpc.partner_facing.id
   mode   = "public_ip"
 }
+
+# Name the address yourself to make it one you MANAGE: the same address survives
+# this gateway being rebuilt and the VPC being recreated, which is what a
+# partner allow-list entry or a DNS record depends on.
+#
+# Changing public_ip_id later moves the VPC onto the other address in place —
+# the gateway is never destroyed and rebuilt — but the address your traffic
+# arrives from does change, so it needs the acknowledgement below just as a mode
+# change does.
+# prevent_destroy because the ADDRESS is what is irreplaceable here. Destroying
+# this resource releases it to a shared regional pool, it is re-issued to
+# whoever asks next, and re-applying allocates a DIFFERENT one — so the partner
+# allow-list entry and the DNS record this whole arrangement exists to keep
+# stable stop matching, permanently. See the frostmoln_public_ip examples.
+resource "frostmoln_public_ip" "egress" {
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "frostmoln_egress_gateway" "chosen_address" {
+  vpc_id       = frostmoln_vpc.dns_published.id
+  mode         = "public_ip"
+  public_ip_id = frostmoln_public_ip.egress.id
+}
+
+# Terraform derives the ordering from that reference: the address is allocated
+# before the gateway that egresses from it, and on teardown the gateway is
+# changed or destroyed BEFORE the address is released.
+#
+# That ordering is correct AND it is why the address needs its own guard. Once
+# the gateway is gone the platform has already handed the address back as an
+# ordinary unattached address, so the release that follows looks — to the
+# platform — like the release of something idle, and it succeeds. The provider
+# refuses it from the recorded attachment instead, and asks for
+# `acknowledge_address_loss = true` on the frostmoln_public_ip before it will
+# give a VPC's egress address up.
+#
+# Look up an address that already exists — one already published in DNS, or
+# already sitting in a partner's allow-list — instead of allocating a new one:
+#
+#   data "frostmoln_public_ip" "published" {
+#     address = "203.0.113.10"
+#   }
+#
+#   resource "frostmoln_egress_gateway" "reuse" {
+#     vpc_id       = frostmoln_vpc.dns_published.id
+#     mode         = "public_ip"
+#     public_ip_id = data.frostmoln_public_ip.published.id
+#   }
 
 # Removing this gateway, or changing its mode, takes the VPC's internet, DNS and
 # managed-service connectivity down, so both are refused unless the intent is
@@ -70,9 +124,10 @@ resource "frostmoln_public_ip" "example" {
 }
 
 # The address outbound traffic appears to come from. Null while the gateway is
-# detached or the address is not yet known.
+# detached or the address is not yet known. This is the value to give a partner
+# for their allow-list.
 output "egress_source_address" {
-  value = frostmoln_egress_gateway.dedicated_address.source_address
+  value = frostmoln_egress_gateway.chosen_address.source_address
 }
 ```
 
@@ -90,17 +145,26 @@ Changing the mode is applied IN PLACE, never as a destroy/create — a replaceme
 
 ### Optional
 
-- `acknowledge_connectivity_loss` (Boolean) Set to true to allow this gateway to be removed, or its `mode` to be changed. Removing this gateway, or changing its mode, takes the VPC's outbound internet path down — and with it platform DNS resolution and managed-service connectivity, which are reached over routes that exist only while the gateway does. Instances in the VPC lose name resolution, not just internet access.
+- `acknowledge_connectivity_loss` (Boolean) Set to true to allow this gateway to be removed, or its `mode` or `public_ip_id` to be changed. Removing this gateway, or changing its mode, takes the VPC's outbound internet path down — and with it platform DNS resolution and managed-service connectivity, which are reached over routes that exist only while the gateway does. Instances in the VPC lose name resolution, not just internet access.
 
-The API refuses both operations without the acknowledgement, so this provider refuses them too — before any request is sent — rather than supplying the flag on the practitioner's behalf. Set it to true and apply, then destroy or change the mode. Leaving it unset (the default) makes `terraform destroy` fail on this resource instead of silently disconnecting the VPC.
+The API refuses the removal and the mode change without the acknowledgement, so this provider refuses them too — before any request is sent — rather than supplying the flag on the practitioner's behalf. It applies the same rule to a `public_ip_id` change, which re-addresses the VPC's egress just as visibly. Set it to true and apply, then destroy or change the mode. Leaving it unset (the default) makes `terraform destroy` fail on this resource instead of silently disconnecting the VPC.
 
 **Remove it from the configuration again once the removal or mode change is done, and do not leave it set on a steady-state resource.** It is ordinary configuration, so a `true` left behind stays in state for the life of the resource and permanently disarms this control: a later `terraform destroy -target`, a module removal, or a `vpc_id` change that forces replacement then disconnects the VPC with nothing in the plan beyond an ordinary "will be destroyed" line.
+- `public_ip_id` (String) Under `mode = "public_ip"`, the public IP (`frostmoln_public_ip`) this VPC's outbound traffic leaves from. Naming one is what makes the address STABLE: it is a resource of your tenant's, so it survives this gateway being rebuilt, the VPC being recreated, and the address being handed to a partner to allow-list or published in DNS.
+
+Omit it and the platform allocates a public IP for the gateway and reports it back here — the address is still a real, listed, quota-counted resource of your tenant's, it is simply one you did not choose. Only "public_ip" gateways have one at all; under "nat" this is null, and setting it with `mode = "nat"` is refused before any request is sent.
+
+Changing it is applied IN PLACE, never as a destroy/create: the platform re-addresses the existing gateway rather than tearing the VPC's only outbound path down and building a new one. It still changes the address the VPC's traffic arrives from, so it requires `acknowledge_connectivity_loss = true` exactly as a `mode` change does.
+
+Because the platform supplies a value when you do not, REMOVING this attribute from the configuration does not release the address or hand the choice back to the platform — Terraform keeps the recorded value and plans no change. To move the gateway to a different address, name the different address.
+
+The public IP must belong to this tenant and must not be attached to anything else. A public IP that is in use by an instance is refused, and so is one already serving another VPC's egress.
 
 ### Read-Only
 
 - `id` (String) The gateway's identifier. It survives a mode change, so it is stable for the life of the gateway. For a gateway with no stored record (`origin` = "legacy") the API answers under the VPC's id instead.
-- `origin` (String) Who asked for the gateway: "explicit" (a client created it directly), "implicit_public_ip" (the platform attached it because a public IP was associated, which requires a gateway), "vpc_create" (it came with the VPC because a mode was chosen at VPC create), or "legacy" — which means NO STORED RECORD EXISTS, so the provenance is UNKNOWN. "legacy" usually means the VPC predates this resource, but the record write is deliberately non-fatal, so a gateway created minutes ago can report it too. Read it as "unknown", never as "old".
-- `source_address` (String) The public IPv4 address outbound traffic appears to come from. Null while the gateway is detached or the address is not yet known. Under "nat" this is a platform address shared with other VPCs; under "public_ip" it is dedicated to this VPC. A `mode` change re-records it, so it plans as "(known after apply)" then and keeps its recorded value otherwise.
+- `origin` (String) Who asked for the gateway: "explicit" (a client created it directly), "explicit_public_ip" (a client created it and named the public IP it egresses from, via `public_ip_id`), "implicit_public_ip" (the platform attached it because a public IP was associated, which requires a gateway), "vpc_create" (it came with the VPC because a mode was chosen at VPC create), or "legacy" — which means NO STORED RECORD EXISTS, so the provenance is UNKNOWN. "legacy" usually means the VPC predates this resource, but the record write is deliberately non-fatal, so a gateway created minutes ago can report it too. Read it as "unknown", never as "old".
+- `source_address` (String) The public IPv4 address outbound traffic appears to come from. Null while the gateway is detached or the address is not yet known. Under "nat" this is a platform address shared with other VPCs; under "public_ip" it is dedicated to this VPC and is the address of the `public_ip_id` public IP. A `mode` or `public_ip_id` change re-records it, so it plans as "(known after apply)" then and keeps its recorded value otherwise.
 - `status` (String) Observed state of the gateway, read from the cloud rather than from stored desired state: "active" or "detached". It is not configurable — Terraform records whatever the platform reports and produces no plan of its own from it. "detached" is not on its own a verdict that something is broken or that an operator is needed: what the platform observes depends on how the mode is realised. Read it as a prompt to check the VPC's outbound path, not as proof that the platform and the cloud disagree.
 
 ## Import

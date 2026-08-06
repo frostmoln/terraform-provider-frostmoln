@@ -25,6 +25,12 @@ const (
 	ModePublicIP = "public_ip"
 )
 
+// OriginExplicitPublicIP is the `origin` the platform records for a gateway
+// whose source address is a public IP the tenant chose, rather than one the
+// platform drew on their behalf. It is documented on the `origin` attribute and
+// named here so the schema text and this package agree on the spelling.
+const OriginExplicitPublicIP = "explicit_public_ip"
+
 // EgressGatewayModel is the Terraform state model for a VPC's outbound path.
 type EgressGatewayModel struct {
 	ID            types.String `tfsdk:"id"`
@@ -33,6 +39,18 @@ type EgressGatewayModel struct {
 	SourceAddress types.String `tfsdk:"source_address"`
 	Status        types.String `tfsdk:"status"`
 	Origin        types.String `tfsdk:"origin"`
+
+	// PublicIPID names the tenant's own public IP that this gateway egresses
+	// from. Optional and Computed: omitted, the platform allocates one and
+	// reports it back, so the address is a real, listed, tenant-owned resource
+	// either way.
+	//
+	// It is NOT a replacement trigger. Re-pointing a gateway at a different
+	// address is applied in place — the platform re-addresses the existing
+	// path — and a RequiresReplace here would instead destroy the VPC's only
+	// outbound path and build a new one, which is the exact outage this
+	// feature exists to prevent.
+	PublicIPID types.String `tfsdk:"public_ip_id"`
 
 	// AcknowledgeConnectivityLoss is the practitioner's explicit statement that
 	// they accept what removing — or re-addressing — this gateway costs. It is
@@ -60,6 +78,12 @@ type apiEgressGateway struct {
 	SourceAddress string `json:"sourceAddress,omitempty"`
 	Status        string `json:"status"`
 	Origin        string `json:"origin"`
+	// PublicIPID is absent under `nat`, and absent under `public_ip` for a
+	// gateway whose address predates public-IP-backed egress (those keep the
+	// platform-drawn address they already have; they are deliberately not
+	// converted behind the tenant's back). Absent maps to a NULL Terraform
+	// value, never "".
+	PublicIPID string `json:"publicIpId,omitempty"`
 }
 
 // apiEgressGatewayList is the filtered-list response. A VPC with no gateway
@@ -73,10 +97,19 @@ type apiEgressGatewayList struct {
 type apiCreateEgressGatewayRequest struct {
 	VPCID string `json:"vpcId"`
 	Mode  string `json:"mode"`
+	// PublicIPID is omitted when the practitioner did not choose an address.
+	// Omitted is NOT the same as empty: the platform reads an absent field as
+	// "allocate one for me" and allocates a real, tenant-owned public IP, so
+	// `mode = "public_ip"` keeps working unchanged for every configuration
+	// written before this attribute existed.
+	PublicIPID string `json:"publicIpId,omitempty"`
 }
 
 type apiUpdateEgressGatewayRequest struct {
 	Mode string `json:"mode"`
+	// PublicIPID is omitted unless the practitioner named an address. See the
+	// create request: omitted means "allocate one", not "detach".
+	PublicIPID string `json:"publicIpId,omitempty"`
 	// AcknowledgeConnectivityLoss carries the practitioner's acknowledgement
 	// from the resource's attribute of the same name. The provider never
 	// hardcodes it: a mode change re-addresses (public_ip -> nat) or re-attaches
@@ -167,11 +200,61 @@ func applyToModel(m *EgressGatewayModel, gw *apiEgressGateway) diag.Diagnostics 
 	m.Status = types.StringValue(gw.Status)
 	m.Origin = types.StringValue(gw.Origin)
 
+	if gw.PublicIPID == "" {
+		m.PublicIPID = types.StringNull()
+	} else {
+		m.PublicIPID = types.StringValue(gw.PublicIPID)
+	}
+
 	if gw.SourceAddress == "" {
 		m.SourceAddress = types.StringNull()
 		return diags
 	}
 	m.SourceAddress = types.StringValue(gw.SourceAddress)
+	return diags
+}
+
+// checkRequestedPublicIP refuses a response that bound a DIFFERENT public IP
+// than the one the practitioner named.
+//
+// Terraform core would catch the divergence too — a known planned value that
+// the apply contradicts is "Provider produced inconsistent result after apply"
+// — but it reports it as a provider bug and says nothing about what is now
+// true in the cloud. The consequence here is specific and worth naming: the
+// VPC is egressing from an address the configuration does not mention, so the
+// address the practitioner published to a partner is not the address their
+// traffic arrives from, and the address they did name may still be attached to
+// something else.
+//
+// requested is the plan value. Null or unknown means the practitioner asked
+// the platform to choose, so anything it chose is by definition correct.
+func checkRequestedPublicIP(requested types.String, gw *apiEgressGateway) diag.Diagnostics {
+	var diags diag.Diagnostics
+
+	if requested.IsNull() || requested.IsUnknown() {
+		return diags
+	}
+	want := requested.ValueString()
+	if want == "" || want == gw.PublicIPID {
+		return diags
+	}
+
+	got := gw.PublicIPID
+	if got == "" {
+		got = "no public IP at all (the platform reported none)"
+	} else {
+		got = fmt.Sprintf("public IP %q", got)
+	}
+	diags.AddError(
+		"Egress gateway was not attached to the requested public IP",
+		fmt.Sprintf("The configuration names public IP %q as this VPC's egress source address, but the "+
+			"platform answered with %s. Terraform has NOT recorded the requested value as if it had "+
+			"been applied.\n\nThe VPC is egressing from an address the configuration does not name: "+
+			"anything you published for a partner to allow-list, or in DNS, may no longer match the "+
+			"address your traffic arrives from. Check the gateway and the public IP "+
+			"(`fm network egress-gateway show` / `fm network public-ip list`), then re-apply.",
+			want, got),
+	)
 	return diags
 }
 

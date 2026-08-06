@@ -35,6 +35,7 @@ import (
 	mysqlversionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/mysql_versions"
 	nginxinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/nginx_instance"
 	postgresversionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/postgres_versions"
+	publicipds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/public_ip"
 	redisinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/redis_instance"
 	regionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/regions"
 	secretds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/secret"
@@ -412,6 +413,7 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		subnetds.NewDataSource,
 		dnszoneds.NewDataSource,
 		egressgatewayds.NewDataSource,
+		publicipds.NewDataSource,
 		instanceds.NewDataSource,
 		postgresversionsds.NewDataSource,
 		mysqlversionsds.NewDataSource,

@@ -4,21 +4,86 @@ page_title: "frostmoln_public_ip Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a public IP in the Frostmoln Cloud Platform.
+  Destroying this resource RELEASES THE ADDRESS, and the address does not come back. It returns to a shared regional pool and is re-issued to whoever asks for one next — possibly another tenant, within minutes. Anything that named it stops matching: a partner's allow-list entry, a DNS record, a firewall rule at the other end.
+  There is no undo and no support request that recovers it, so an address anyone else depends on is worth protecting in the configuration itself with Terraform's own lifecycle { prevent_destroy = true } — see the example below. It fails the PLAN, so a module removal, a terraform destroy -target, or CI running terraform destroy -auto-approve stops before anything is sent. This provider additionally refuses to release an address that is serving a VPC's egress unless acknowledge_address_loss = true — see that attribute.
 ---
 
 # frostmoln_public_ip (Resource)
 
 Manages a public IP in the Frostmoln Cloud Platform.
 
+**Destroying this resource RELEASES THE ADDRESS, and the address does not come back.** It returns to a shared regional pool and is re-issued to whoever asks for one next — possibly another tenant, within minutes. Anything that named it stops matching: a partner's allow-list entry, a DNS record, a firewall rule at the other end.
+
+There is no undo and no support request that recovers it, so an address anyone else depends on is worth protecting in the configuration itself with Terraform's own `lifecycle { prevent_destroy = true }` — see the example below. It fails the PLAN, so a module removal, a `terraform destroy -target`, or CI running `terraform destroy -auto-approve` stops before anything is sent. This provider additionally refuses to release an address that is serving a VPC's egress unless `acknowledge_address_loss = true` — see that attribute.
+
 ## Example Usage
 
 ```terraform
+# A public IP attached to an instance. Destroying this releases the address.
 resource "frostmoln_public_ip" "example" {
   instance_id = frostmoln_instance.example.id
 
   tags = {
     service = "web"
   }
+}
+
+# AN ADDRESS SOMEONE ELSE DEPENDS ON — one in a partner's allow-list, published
+# in DNS, or serving a VPC's egress — is worth protecting in the configuration
+# itself.
+#
+# Destroying this resource RELEASES THE ADDRESS.
+#
+# The address does not come back: it returns to a shared regional pool and is
+# re-issued to whoever asks for one next, possibly another tenant, within
+# minutes. Re-running `terraform apply` does not restore it — it allocates a
+# different one. There is no undo and no support request that recovers it.
+#
+# `prevent_destroy` is Terraform's own guard and the strongest one available,
+# because it fails the PLAN. A module removal, a `terraform destroy -target`, or
+# CI running `terraform destroy -auto-approve` all stop before anything is sent.
+#
+# To retire the address deliberately: remove the lifecycle block, apply, then
+# destroy.
+resource "frostmoln_public_ip" "partner_facing" {
+  tags = {
+    purpose = "partner allow-list"
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+# This address is the VPC's outbound source address, so the whole VPC's traffic
+# arrives from it. See frostmoln_egress_gateway.
+resource "frostmoln_egress_gateway" "partner_facing" {
+  vpc_id       = frostmoln_vpc.example.id
+  mode         = "public_ip"
+  public_ip_id = frostmoln_public_ip.partner_facing.id
+}
+
+# The provider ALSO refuses to release an address that is serving a VPC's egress
+# unless the intent is stated:
+#
+#   acknowledge_address_loss = true
+#
+# That check reads the recorded attachment, so it still fires in the case the
+# platform itself cannot catch: because the gateway above refers to this
+# address, `terraform destroy` destroys the gateway first, the platform hands
+# the address back as an ordinary unattached address, and the release that
+# follows looks — to the platform — like the release of something idle.
+#
+# Add the line, apply it, destroy, and then REMOVE IT AGAIN. It is ordinary
+# configuration, so a `true` left behind disarms the check for the rest of the
+# resource's life. It is not a substitute for `prevent_destroy`, which fails
+# earlier and covers more.
+
+# What is holding the address. Read this, not `instance_id`: an address serving
+# a VPC's egress has no instance and no port, so it looks idle from every other
+# angle. "unknown" means the platform did not say — never read it as "free".
+output "partner_facing_attachment" {
+  value = frostmoln_public_ip.partner_facing.attachment.kind
 }
 ```
 
@@ -27,13 +92,40 @@ resource "frostmoln_public_ip" "example" {
 
 ### Optional
 
+- `acknowledge_address_loss` (Boolean) Set to true to allow this public IP to be released while it is serving a VPC's outbound traffic (`attachment.kind` = "egress_gateway").
+
+**Releasing it loses the address permanently.** It returns to a shared regional pool and is re-issued to whoever asks next, so a partner's allow-list entry or a DNS record naming it stops matching — and cannot be restored by re-creating anything.
+
+The provider refuses that release without this flag, and refuses it BEFORE any request is sent, because the platform cannot refuse it for you on the path a correct configuration produces. When `frostmoln_egress_gateway.public_ip_id` refers to this resource, Terraform destroys the gateway first; the platform then hands the address back as an ordinary unattached address, and the release that follows looks — to the platform — like the release of something idle.
+
+Set it to true and apply, then destroy. Leaving it unset (the default) makes `terraform destroy` fail on this resource instead of silently giving the address away.
+
+**Remove it from the configuration again once the destroy is done, and do not leave it set on a steady-state resource.** It is ordinary configuration, so a `true` left behind stays in state for the life of the resource and permanently disarms this control.
+
+It is not a substitute for `lifecycle { prevent_destroy = true }`, which fails the plan rather than the apply and covers every reason an address can be destroyed, including ones this attribute does not gate.
 - `instance_id` (String) The ID of the instance to associate with. Set to associate, remove to disassociate.
 - `tags` (Map of String) Tags for the public IP.
 
 ### Read-Only
 
 - `address` (String) The allocated IP address.
+- `attachment` (Attributes) What is currently using this address. Never null — an address nothing is using reports `kind = "none"`, so `attachment.kind` can always be read.
+
+Read this, not `instance_id`, to tell whether the address is free. An address serving a VPC's outbound traffic has no instance and no port, so a configuration that infers "unused" from an empty `instance_id` would offer to release the address a whole VPC leaves the platform from — and that release cannot be undone. (see [below for nested schema](#nestedatt--attachment))
 - `created_at` (String) The creation timestamp.
 - `id` (String) The unique identifier of the public IP.
 - `private_ip` (String) The private IP of the associated instance.
 - `status` (String) The status of the public IP.
+
+<a id="nestedatt--attachment"></a>
+### Nested Schema for `attachment`
+
+Read-Only:
+
+- `kind` (String) "none" (allocated, nothing using it — still yours, still counted against quota and still billed), "port" (attached to an instance or load balancer, its inbound address), "egress_gateway" (it is a VPC's outbound source address; see `frostmoln_egress_gateway`), or "unknown".
+
+While it is "egress_gateway" the platform refuses to attach this address to an instance, and this provider refuses to release it without `acknowledge_address_loss = true`.
+
+"unknown" means the platform did not report an attachment for this address. Read it as "not established", never as "free": an address serving a VPC's egress has no port either, so nothing here distinguishes the two. New kinds can appear without a provider upgrade; a kind this provider build does not recognise is passed through unchanged and treated as attached.
+- `resource_id` (String) What holds the address: the network port for "port", the egress gateway for "egress_gateway". Null for "none".
+- `vpc_id` (String) The VPC whose outbound traffic leaves from this address. Set only for "egress_gateway".

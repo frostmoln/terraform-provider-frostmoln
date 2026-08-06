@@ -19,6 +19,26 @@ const (
 	errCodeGatewayInUse    = "EGRESS_GATEWAY_IN_USE"
 	errCodeLossNotAcked    = "EGRESS_GATEWAY_LOSS_NOT_ACKED"
 	errCodePoolExhausted   = "EGRESS_POOL_EXHAUSTED"
+
+	// errCodePublicIPUnavailable (409) means the named public IP exists and
+	// belongs to this tenant, but is not free to become an egress source
+	// address — it is attached to an instance or load balancer, or already
+	// serving another VPC's egress.
+	errCodePublicIPUnavailable = "EGRESS_PUBLIC_IP_UNAVAILABLE"
+
+	// errCodePublicIPNotAllowed (400) has exactly ONE cause: `publicIpId` was
+	// supplied together with `mode: nat`
+	// (network/internal/domain/egress_gateway.go). It is NOT the code for an
+	// address that belongs to another tenant or does not exist — those are 404s.
+	//
+	// ValidateConfig refuses that pair before an apply, so this arrives only
+	// when `mode` could not be judged at validate time: an interpolation the
+	// provider is handed as unknown (a module output, another resource's
+	// attribute) and that resolves to "nat" during the apply. Kept for exactly
+	// that case, and the diagnostic must name the real cause — a message about
+	// tenants would send the practitioner to check their credentials while the
+	// fault is two lines of their own configuration.
+	errCodePublicIPNotAllowed = "EGRESS_PUBLIC_IP_NOT_ALLOWED"
 )
 
 // addEgressError appends the best diagnostic available for err. fallback is the
@@ -89,6 +109,34 @@ func addEgressError(diags *diag.Diagnostics, fallback string, err error) {
 				"once an address frees — re-run `terraform apply`.\n\n"+
 				"Where the region offers it, mode = \"nat\" needs no address at all and is not affected "+
 				"by this limit.\n\n"+
+				"API said: "+apiErr.Message)
+	case errCodePublicIPUnavailable:
+		diags.AddError(
+			"That public IP is not free to be this VPC's egress address",
+			"The address named in `public_ip_id` is yours, but something else is holding it: it is "+
+				"attached to an instance or a load balancer, or it is already the egress address of "+
+				"another VPC. One address serves one thing at a time.\n\n"+
+				"Nothing was changed — this VPC's outbound path is exactly as it was.\n\n"+
+				"Detach the address from whatever holds it (the `frostmoln_public_ip` resource's "+
+				"`instance_id`, or the other VPC's egress gateway) and apply again, or point "+
+				"`public_ip_id` at a public IP that is not in use. Omit the attribute entirely and the "+
+				"platform allocates a fresh address of your tenant's for this gateway.\n\n"+
+				"API said: "+apiErr.Message)
+	case errCodePublicIPNotAllowed:
+		diags.AddError(
+			"public_ip_id cannot be used with mode = \"nat\"",
+			"`mode` resolved to \"nat\" while `public_ip_id` named an address. NAT egresses from a "+
+				"SHARED platform address, so the named address would carry none of this VPC's outbound "+
+				"traffic — the platform refuses the pair rather than dropping the field, because "+
+				"silently ignoring it would leave you giving a partner an address to allow-list that "+
+				"your traffic never arrives from.\n\n"+
+				"Nothing was changed.\n\n"+
+				"This provider normally catches the pair before an apply. It could not here because "+
+				"`mode` came from a value that was not known at validate time — a module output, or "+
+				"another resource's attribute. Check what that expression resolves to: either set "+
+				"`mode = \"public_ip\"` to egress from the named address (it spends one address from "+
+				"your tenant's public IP quota), or remove `public_ip_id` and keep NAT, which spends "+
+				"none.\n\n"+
 				"API said: "+apiErr.Message)
 	case errCodeLossNotAcked:
 		diags.AddError(

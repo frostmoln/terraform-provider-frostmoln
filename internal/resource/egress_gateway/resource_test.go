@@ -40,13 +40,18 @@ func gwObjectType() tftypes.Object {
 			"source_address":                tftypes.String,
 			"status":                        tftypes.String,
 			"origin":                        tftypes.String,
+			"public_ip_id":                  tftypes.String,
 			"acknowledge_connectivity_loss": tftypes.Bool,
 		},
 	}
 }
 
 // gwValue builds a whole-resource value. A nil string is a null attribute.
-func gwValue(id, vpcID, mode, sourceAddress, status, origin string, ack *bool) tftypes.Value {
+//
+// publicIPID is variadic so the many call sites that predate `public_ip_id`
+// keep reading as they did; omitted, the attribute is null, which is the state
+// of every gateway the platform addressed on the tenant's behalf.
+func gwValue(id, vpcID, mode, sourceAddress, status, origin string, ack *bool, publicIPID ...string) tftypes.Value {
 	str := func(s string) tftypes.Value {
 		if s == "" {
 			return tftypes.NewValue(tftypes.String, nil)
@@ -57,6 +62,10 @@ func gwValue(id, vpcID, mode, sourceAddress, status, origin string, ack *bool) t
 	if ack != nil {
 		ackVal = tftypes.NewValue(tftypes.Bool, *ack)
 	}
+	pin := ""
+	if len(publicIPID) > 0 {
+		pin = publicIPID[0]
+	}
 	return tftypes.NewValue(gwObjectType(), map[string]tftypes.Value{
 		"id":                            str(id),
 		"vpc_id":                        str(vpcID),
@@ -64,6 +73,7 @@ func gwValue(id, vpcID, mode, sourceAddress, status, origin string, ack *bool) t
 		"source_address":                str(sourceAddress),
 		"status":                        str(status),
 		"origin":                        str(origin),
+		"public_ip_id":                  str(pin),
 		"acknowledge_connectivity_loss": ackVal,
 	})
 }
@@ -74,11 +84,18 @@ func boolPtr(b bool) *bool { return &b }
 // Computed attribute whose config is null is marked UNKNOWN
 // (fwserver.MarkComputedNilsAsUnknown). A code path that returns without
 // resolving them leaves unknowns in state, which the framework rejects.
-func gwPlanUnknownComputed(vpcID, mode string, ack *bool) tftypes.Value {
+//
+// public_ip_id defaults to unknown for the same reason — it is Computed too —
+// and a variadic argument sets it where the practitioner named an address.
+func gwPlanUnknownComputed(vpcID, mode string, ack *bool, publicIPID ...string) tftypes.Value {
 	unknown := tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
 	ackVal := tftypes.NewValue(tftypes.Bool, nil)
 	if ack != nil {
 		ackVal = tftypes.NewValue(tftypes.Bool, *ack)
+	}
+	pin := unknown
+	if len(publicIPID) > 0 {
+		pin = tftypes.NewValue(tftypes.String, publicIPID[0])
 	}
 	return tftypes.NewValue(gwObjectType(), map[string]tftypes.Value{
 		"id":                            unknown,
@@ -87,6 +104,7 @@ func gwPlanUnknownComputed(vpcID, mode string, ack *bool) tftypes.Value {
 		"source_address":                unknown,
 		"status":                        unknown,
 		"origin":                        unknown,
+		"public_ip_id":                  pin,
 		"acknowledge_connectivity_loss": ackVal,
 	})
 }
@@ -224,7 +242,7 @@ func TestEgressGatewayModeDoesNotRequireReplace(t *testing.T) {
 
 func TestEgressGatewaySchemaAttributes(t *testing.T) {
 	s := gwSchema(t)
-	for _, name := range []string{"id", "vpc_id", "mode", "source_address", "status", "origin", "acknowledge_connectivity_loss"} {
+	for _, name := range []string{"id", "vpc_id", "mode", "source_address", "status", "origin", "public_ip_id", "acknowledge_connectivity_loss"} {
 		if _, ok := s.Attributes[name]; !ok {
 			t.Errorf("expected attribute %q in schema", name)
 		}
@@ -303,6 +321,7 @@ func TestEgressGatewaySurfacesCarryNoInternalNames(t *testing.T) {
 	for _, code := range []string{
 		errCodeModeUnavailable, errCodeGatewayExists, errCodeGatewayInUse,
 		errCodeLossNotAcked, errCodePoolExhausted,
+		errCodePublicIPUnavailable, errCodePublicIPNotAllowed,
 	} {
 		var diags diag.Diagnostics
 		addEgressError(&diags, "fallback", &client.APIError{Code: code, Message: "api message", StatusCode: 400})
@@ -324,7 +343,11 @@ func TestEgressGatewaySurfacesCarryNoInternalNames(t *testing.T) {
 // modifyPlan runs the resource's ModifyPlan the way the framework does: the
 // response plan starts as a copy of the proposed plan, and the method rewrites
 // what it needs to.
-func modifyPlan(t *testing.T, planRaw, stateRaw tftypes.Value) EgressGatewayModel {
+// configRaw defaults to a configuration with nothing set. ModifyPlan reads only
+// `public_ip_id` from the config — it is the one attribute whose planned value
+// depends on whether the practitioner wrote it — so an all-null config is the
+// "practitioner named no address" case every pre-existing test is in.
+func modifyPlan(t *testing.T, planRaw, stateRaw tftypes.Value, configRaw ...tftypes.Value) EgressGatewayModel {
 	t.Helper()
 	s := gwSchema(t)
 	r, ok := NewResource().(resource.ResourceWithModifyPlan)
@@ -334,10 +357,16 @@ func modifyPlan(t *testing.T, planRaw, stateRaw tftypes.Value) EgressGatewayMode
 			"with \"Provider produced inconsistent result after apply\"")
 	}
 
+	cfg := gwValue("", "", "", "", "", "", nil)
+	if len(configRaw) > 0 {
+		cfg = configRaw[0]
+	}
+
 	resp := &resource.ModifyPlanResponse{Plan: tfsdk.Plan{Schema: s, Raw: planRaw}}
 	r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{
-		Plan:  tfsdk.Plan{Schema: s, Raw: planRaw},
-		State: tfsdk.State{Schema: s, Raw: stateRaw},
+		Plan:   tfsdk.Plan{Schema: s, Raw: planRaw},
+		State:  tfsdk.State{Schema: s, Raw: stateRaw},
+		Config: tfsdk.Config{Schema: s, Raw: cfg},
 	}, resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected plan diagnostics: %v", resp.Diagnostics)
@@ -1214,5 +1243,482 @@ func TestAddEgressErrorFallbacks(t *testing.T) {
 	})
 	if len(apiDiags.Errors()) != 1 || !strings.Contains(apiDiags.Errors()[0].Detail(), "SOMETHING_NEW") {
 		t.Errorf("an unmapped code must still surface its code, got %v", apiDiags)
+	}
+}
+
+// --- public_ip_id ---
+
+// TestEgressGatewayPublicIPIDDoesNotRequireReplace is THE regression guard for
+// this attribute.
+//
+// Re-pointing a gateway at another public IP is an in-place update: the
+// platform re-addresses the existing outbound path. A RequiresReplace here
+// would instead destroy the VPC's only path off-net and build a new one — the
+// VPC loses internet, platform DNS resolution and managed-service connectivity
+// in between — which is the exact outage a stable, tenant-chosen egress
+// address exists to prevent. The plan-modifier replay is deliberate: asserting
+// the modifier list "looks right" cannot see an ordering that records a
+// replacement anyway.
+func TestEgressGatewayPublicIPIDDoesNotRequireReplace(t *testing.T) {
+	s := gwSchema(t)
+	attr, ok := s.Attributes["public_ip_id"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("expected public_ip_id to be a StringAttribute, got %T", s.Attributes["public_ip_id"])
+	}
+	if !attr.Optional || !attr.Computed {
+		t.Fatal("public_ip_id must be Optional+Computed: Optional so the practitioner can choose the " +
+			"address, Computed so the id of the one the platform allocates is recorded instead of " +
+			"planning as a permanent diff")
+	}
+
+	// A real value change, with the practitioner's chosen value in config.
+	req := planmodifier.StringRequest{
+		Path:        path.Root("public_ip_id"),
+		State:       tfsdk.State{Schema: s, Raw: gwValue("gw-1", "vpc-1", ModePublicIP, "", "", "", nil, "pip-1")},
+		Plan:        tfsdk.Plan{Schema: s, Raw: gwValue("gw-1", "vpc-1", ModePublicIP, "", "", "", nil, "pip-2")},
+		StateValue:  types.StringValue("pip-1"),
+		PlanValue:   types.StringValue("pip-2"),
+		ConfigValue: types.StringValue("pip-2"),
+	}
+	replace := false
+	for _, m := range attr.PlanModifiers {
+		resp := &planmodifier.StringResponse{PlanValue: req.PlanValue}
+		m.PlanModifyString(context.Background(), req, resp)
+		req.PlanValue = resp.PlanValue
+		replace = replace || resp.RequiresReplace
+	}
+	if replace {
+		t.Error("changing public_ip_id must be an in-place update, never a destroy/create: a replacement " +
+			"takes the VPC's internet, DNS and managed-service connectivity down in between")
+	}
+}
+
+// TestEgressGatewayPublicIPIDOmittedIsPlanStable is the perpetual-diff guard at
+// the attribute level, for both shapes state can be in when the practitioner
+// omitted the attribute:
+//
+//   - a recorded id (the platform allocated an address and reported it), and
+//   - a null (a NAT gateway, or one whose address predates public-IP-backed
+//     egress).
+//
+// The framework marks a null-config Computed attribute unknown, and an unknown
+// facing either of those is a diff on every run: `terraform plan
+// -detailed-exitcode` returns 2 forever and any drift gate built on it breaks.
+func TestEgressGatewayPublicIPIDOmittedIsPlanStable(t *testing.T) {
+	s := gwSchema(t)
+	attr, ok := s.Attributes["public_ip_id"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("expected public_ip_id to be a StringAttribute, got %T", s.Attributes["public_ip_id"])
+	}
+
+	for _, tc := range []struct {
+		name  string
+		state types.String
+	}{
+		{"platform-allocated address recorded in state", types.StringValue("pip-allocated")},
+		{"no address recorded at all", types.StringNull()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := planmodifier.StringRequest{
+				Path:  path.Root("public_ip_id"),
+				State: tfsdk.State{Schema: s, Raw: gwValue("gw-1", "vpc-1", ModePublicIP, "", "", "", nil)},
+				Plan:  tfsdk.Plan{Schema: s, Raw: gwValue("gw-1", "vpc-1", ModePublicIP, "", "", "", nil)},
+				// What the framework hands a Computed attribute whose config is
+				// null: unknown.
+				StateValue:  tc.state,
+				PlanValue:   types.StringUnknown(),
+				ConfigValue: types.StringNull(),
+			}
+			for _, m := range attr.PlanModifiers {
+				resp := &planmodifier.StringResponse{PlanValue: req.PlanValue}
+				m.PlanModifyString(context.Background(), req, resp)
+				req.PlanValue = resp.PlanValue
+			}
+			if !req.PlanValue.Equal(tc.state) {
+				t.Errorf("an omitted public_ip_id must plan as the recorded value (%v), got %v — anything "+
+					"else is a diff on every single run", tc.state, req.PlanValue)
+			}
+		})
+	}
+}
+
+// TestEgressGatewayModifyPlanKeepsOmittedPublicIPID: the resource-level half of
+// the same invariant. With nothing else changing, an omitted public_ip_id must
+// resolve to the state value — including a null.
+func TestEgressGatewayModifyPlanKeepsOmittedPublicIPID(t *testing.T) {
+	planned := modifyPlan(t,
+		gwPlanUnknownComputed("vpc-1", ModePublicIP, nil),
+		gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit_public_ip", nil, "pip-1"))
+
+	if planned.PublicIPID.ValueString() != "pip-1" {
+		t.Errorf("an omitted public_ip_id must keep the recorded value, got %v", planned.PublicIPID)
+	}
+	if planned.SourceAddress.ValueString() != "46.246.117.231" {
+		t.Errorf("nothing changed, so source_address must not be re-planned; got %v", planned.SourceAddress)
+	}
+}
+
+// TestEgressGatewayModifyPlanUnknownPinOnModeSwitch is the "inconsistent result
+// after apply" guard for the switch INTO public_ip mode without naming an
+// address. Both the config and the state hold a null, so UseStateForUnknown
+// alone would pin the plan to null — and the apply then returns the id of the
+// address the platform allocated, which Terraform core rejects outright.
+func TestEgressGatewayModifyPlanUnknownPinOnModeSwitch(t *testing.T) {
+	planned := modifyPlan(t,
+		gwPlanUnknownComputed("vpc-1", ModePublicIP, boolPtr(true)),
+		gwValue("gw-1", "vpc-1", ModeNAT, "185.1.2.3", "active", "explicit", boolPtr(true)))
+
+	if !planned.PublicIPID.IsUnknown() {
+		t.Errorf("switching into public_ip mode without naming an address must plan public_ip_id as "+
+			"unknown — the platform allocates one and reports its id; got %v", planned.PublicIPID)
+	}
+}
+
+// TestEgressGatewayModifyPlanKeepsConfiguredPin: a value the practitioner wrote
+// is their choice and must stay KNOWN in the plan. Overwriting it with unknown
+// would hide the very change being planned — `terraform plan` would render
+// "(known after apply)" for the address the configuration names.
+func TestEgressGatewayModifyPlanKeepsConfiguredPin(t *testing.T) {
+	config := gwValue("", "vpc-1", ModePublicIP, "", "", "", boolPtr(true), "pip-2")
+	planned := modifyPlan(t,
+		gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit_public_ip", boolPtr(true), "pip-2"),
+		gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit_public_ip", boolPtr(true), "pip-1"),
+		config)
+
+	if planned.PublicIPID.ValueString() != "pip-2" {
+		t.Errorf("a configured public_ip_id must stay known in the plan, got %v", planned.PublicIPID)
+	}
+	// The address moves with the pin, so the observed values are re-recorded.
+	for name, v := range map[string]types.String{
+		"source_address": planned.SourceAddress,
+		"status":         planned.Status,
+		"origin":         planned.Origin,
+	} {
+		if !v.IsUnknown() {
+			t.Errorf("%s must be planned as unknown across an address change (the platform re-records "+
+				"it); got %v", name, v)
+		}
+	}
+}
+
+// --- validation ---
+
+// TestEgressGatewayValidateConfigRefusesPinWithNAT: under NAT the VPC leaves
+// through the platform's shared address, so a named public IP would not be the
+// address the traffic arrives from. Accepting the pair would leave a
+// configuration that reads as a promise the platform never made.
+func TestEgressGatewayValidateConfigRefusesPinWithNAT(t *testing.T) {
+	s := gwSchema(t)
+	r, ok := NewResource().(resource.ResourceWithValidateConfig)
+	if !ok {
+		t.Fatal("the resource must implement ValidateConfig so an impossible mode/address pair is " +
+			"reported against the configuration rather than as an apply-time API refusal")
+	}
+
+	for _, tc := range []struct {
+		name      string
+		config    tftypes.Value
+		wantError bool
+	}{
+		{"nat with a chosen address", gwValue("", "vpc-1", ModeNAT, "", "", "", nil, "pip-1"), true},
+		{"public_ip with a chosen address", gwValue("", "vpc-1", ModePublicIP, "", "", "", nil, "pip-1"), false},
+		{"nat with no address", gwValue("", "vpc-1", ModeNAT, "", "", "", nil), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := &resource.ValidateConfigResponse{}
+			r.ValidateConfig(context.Background(), resource.ValidateConfigRequest{
+				Config: tfsdk.Config{Schema: s, Raw: tc.config},
+			}, resp)
+
+			if resp.Diagnostics.HasError() != tc.wantError {
+				t.Fatalf("wantError=%v, got diagnostics: %v", tc.wantError, resp.Diagnostics)
+			}
+			if tc.wantError && !strings.Contains(diagText(resp.Diagnostics), "public_ip") {
+				t.Errorf("the refusal must name the mode that does use the address:\n%s", diagText(resp.Diagnostics))
+			}
+		})
+	}
+}
+
+// --- create with a chosen address ---
+
+func TestEgressGatewayCreateSendsChosenPublicIPID(t *testing.T) {
+	var got apiCreateEgressGatewayRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"gw-1","vpcId":"vpc-1","tenantId":"t-123","mode":"public_ip",
+			"sourceAddress":"46.246.117.231","status":"active","origin":"explicit_public_ip",
+			"publicIpId":"pip-1"}`))
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	r.Create(context.Background(), resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: s, Raw: gwValue("", "vpc-1", ModePublicIP, "", "", "", nil, "pip-1")},
+	}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	if got.PublicIPID != "pip-1" {
+		t.Errorf("the create must carry the chosen address, got %+v", got)
+	}
+
+	var state EgressGatewayModel
+	resp.State.Get(context.Background(), &state)
+	if state.PublicIPID.ValueString() != "pip-1" {
+		t.Errorf("expected public_ip_id pip-1 in state, got %v", state.PublicIPID)
+	}
+	if state.Origin.ValueString() != OriginExplicitPublicIP {
+		t.Errorf("expected origin %q, got %v", OriginExplicitPublicIP, state.Origin)
+	}
+}
+
+// TestEgressGatewayCreateOmitsPublicIPIDWhenNotChosen: an omitted field means
+// "allocate one for me". Sending an empty string instead would be a different
+// request, and it is what would break every configuration written before this
+// attribute existed.
+func TestEgressGatewayCreateOmitsPublicIPIDWhenNotChosen(t *testing.T) {
+	var raw map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&raw)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"gw-1","vpcId":"vpc-1","tenantId":"t-123","mode":"public_ip",
+			"sourceAddress":"46.246.117.231","status":"active","origin":"explicit_public_ip",
+			"publicIpId":"pip-allocated"}`))
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	r.Create(context.Background(), resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: s, Raw: gwValue("", "vpc-1", ModePublicIP, "", "", "", nil)},
+	}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	if _, present := raw["publicIpId"]; present {
+		t.Errorf("publicIpId must be OMITTED when the practitioner chose no address, got body %v", raw)
+	}
+
+	var state EgressGatewayModel
+	resp.State.Get(context.Background(), &state)
+	if state.PublicIPID.ValueString() != "pip-allocated" {
+		t.Errorf("the address the platform allocated must be recorded, got %v", state.PublicIPID)
+	}
+}
+
+// TestEgressGatewayCreateRefusesADifferentPublicIP: if the platform bound an
+// address other than the one named, the VPC is egressing from something the
+// configuration does not mention — so the allow-list entry or DNS record the
+// practitioner published no longer matches their traffic. Core would catch the
+// divergence as a provider bug; this says what is actually true in the cloud.
+func TestEgressGatewayCreateRefusesADifferentPublicIP(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"gw-1","vpcId":"vpc-1","tenantId":"t-123","mode":"public_ip",
+			"sourceAddress":"46.246.117.240","status":"active","origin":"explicit_public_ip",
+			"publicIpId":"pip-somebody-else"}`))
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	r.Create(context.Background(), resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: s, Raw: gwValue("", "vpc-1", ModePublicIP, "", "", "", nil, "pip-1")},
+	}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the mismatch to be refused")
+	}
+	text := diagText(resp.Diagnostics)
+	if !strings.Contains(text, "pip-1") || !strings.Contains(text, "pip-somebody-else") {
+		t.Errorf("the diagnostic must name both the requested and the bound address:\n%s", text)
+	}
+}
+
+// --- update: re-pointing at another address ---
+
+// TestEgressGatewayUpdatePinChangeRequiresAcknowledgement: moving the gateway
+// onto a different address changes what the VPC's traffic arrives as, so it is
+// held to the same rule as a mode change — refused locally, before any request.
+func TestEgressGatewayUpdatePinChangeRequiresAcknowledgement(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+	state := gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit_public_ip", nil, "pip-1")
+	plan := gwPlanUnknownComputed("vpc-1", ModePublicIP, nil, "pip-2")
+
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s, Raw: state}}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: s, Raw: plan},
+		State: tfsdk.State{Schema: s, Raw: state},
+	}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the address change to be refused without the acknowledgement")
+	}
+	if calls != 0 {
+		t.Errorf("nothing may be sent before the acknowledgement is given, saw %d call(s)", calls)
+	}
+	text := diagText(resp.Diagnostics)
+	if !strings.Contains(text, "pip-1") || !strings.Contains(text, "pip-2") {
+		t.Errorf("the refusal must name both addresses:\n%s", text)
+	}
+	if !strings.Contains(text, "acknowledge_connectivity_loss") {
+		t.Errorf("the refusal must name the attribute that allows it:\n%s", text)
+	}
+}
+
+// TestEgressGatewayUpdatePinChangeIsAPatch: the wire-level statement that
+// re-pointing is in place. A PATCH by the gateway's own id is what keeps the
+// VPC's outbound path up across the change.
+func TestEgressGatewayUpdatePinChangeIsAPatch(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody apiUpdateEgressGatewayRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_, _ = w.Write([]byte(`{"id":"gw-1","vpcId":"vpc-1","mode":"public_ip","sourceAddress":"46.246.117.232",
+			"status":"active","origin":"explicit_public_ip","publicIpId":"pip-2"}`))
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+	state := gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit_public_ip", boolPtr(true), "pip-1")
+	plan := gwPlanUnknownComputed("vpc-1", ModePublicIP, boolPtr(true), "pip-2")
+
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s, Raw: state}}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: s, Raw: plan},
+		State: tfsdk.State{Schema: s, Raw: state},
+	}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	if gotMethod != http.MethodPatch {
+		t.Errorf("an address change must be a PATCH, got %s", gotMethod)
+	}
+	if gotPath != "/v1/tenants/t-123/egress-gateways/gw-1" {
+		t.Errorf("the PATCH must target the gateway id, got %s", gotPath)
+	}
+	if gotBody.PublicIPID != "pip-2" || gotBody.Mode != ModePublicIP || !gotBody.AcknowledgeConnectivityLoss {
+		t.Errorf("unexpected PATCH body %+v", gotBody)
+	}
+
+	var got EgressGatewayModel
+	resp.State.Get(context.Background(), &got)
+	if got.PublicIPID.ValueString() != "pip-2" || got.SourceAddress.ValueString() != "46.246.117.232" {
+		t.Errorf("state was not refreshed from the response: %+v", got)
+	}
+}
+
+// TestEgressGatewayUpdateModeSwitchOmitsUnknownPin: switching into public_ip
+// mode without naming an address plans public_ip_id as unknown, and an unknown
+// must never reach the wire — an empty publicIpId is a different request from
+// an absent one.
+func TestEgressGatewayUpdateModeSwitchOmitsUnknownPin(t *testing.T) {
+	var raw map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&raw)
+		_, _ = w.Write([]byte(`{"id":"gw-1","vpcId":"vpc-1","mode":"public_ip","sourceAddress":"46.246.117.231",
+			"status":"active","origin":"explicit_public_ip","publicIpId":"pip-allocated"}`))
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	s := gwSchema(t)
+	state := gwValue("gw-1", "vpc-1", ModeNAT, "185.1.2.3", "active", "explicit", boolPtr(true))
+	plan := gwPlanUnknownComputed("vpc-1", ModePublicIP, boolPtr(true))
+
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s, Raw: state}}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: s, Raw: plan},
+		State: tfsdk.State{Schema: s, Raw: state},
+	}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	if _, present := raw["publicIpId"]; present {
+		t.Errorf("an unresolved public_ip_id must be omitted from the PATCH, got body %v", raw)
+	}
+
+	var got EgressGatewayModel
+	resp.State.Get(context.Background(), &got)
+	if got.PublicIPID.ValueString() != "pip-allocated" {
+		t.Errorf("the allocated address must be recorded, got %v", got.PublicIPID)
+	}
+}
+
+// --- model ---
+
+// TestApplyToModelAbsentPublicIPIDIsNull: the API omits publicIpId under NAT
+// and for a gateway whose address predates public-IP-backed egress. "" is a
+// value a practitioner could interpolate into another resource's id, so absent
+// must map to null.
+func TestApplyToModelAbsentPublicIPIDIsNull(t *testing.T) {
+	var m EgressGatewayModel
+	applyToModel(&m, &apiEgressGateway{
+		ID: "gw-1", VPCID: "vpc-1", Mode: ModeNAT, Status: "active", Origin: "explicit",
+	})
+	if !m.PublicIPID.IsNull() {
+		t.Errorf("an absent publicIpId must map to null, got %v", m.PublicIPID)
+	}
+}
+
+// --- diagnostics ---
+
+// TestAddEgressErrorPublicIPCodes: both new refusals are things the
+// practitioner can act on, and neither reads that way as a raw envelope.
+func TestAddEgressErrorPublicIPCodes(t *testing.T) {
+	for _, tc := range []struct {
+		code string
+		want []string
+	}{
+		{errCodePublicIPUnavailable, []string{"not free", "Nothing was changed"}},
+		// The ONE cause the server has for this code: publicIpId with
+		// mode=nat. A foreign or unknown id is a 404, so a diagnostic that
+		// blamed tenancy would send the practitioner to check their
+		// credentials while the fault is two lines of their own config.
+		{errCodePublicIPNotAllowed, []string{"nat", "public_ip_id", "Nothing was changed"}},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			var diags diag.Diagnostics
+			addEgressError(&diags, "fallback", &client.APIError{Code: tc.code, Message: "api message", StatusCode: 409})
+			text := diagText(diags)
+			if strings.Contains(text, "fallback") {
+				t.Errorf("%s must have its own diagnostic, got the fallback:\n%s", tc.code, text)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(text, want) {
+					t.Errorf("%s diagnostic must contain %q, got:\n%s", tc.code, want, text)
+				}
+			}
+			if strings.Contains(strings.ToLower(text), "different tenant") ||
+				strings.Contains(strings.ToLower(text), "belongs to a different") {
+				t.Errorf("%s must not blame tenancy — a foreign or unknown id is a 404, not this code:\n%s", tc.code, text)
+			}
+			if !strings.Contains(text, "api message") {
+				t.Errorf("%s diagnostic must still quote what the API said:\n%s", tc.code, text)
+			}
+		})
 	}
 }
