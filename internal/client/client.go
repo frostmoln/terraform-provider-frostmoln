@@ -336,9 +336,18 @@ type Operation struct {
 	ResourceType string `json:"resourceType"`
 	ResourceID   string `json:"resourceId,omitempty"`
 	Error        string `json:"error,omitempty"`
-	Progress     int    `json:"progress"`
-	CreatedAt    string `json:"createdAt"`
-	CompletedAt  string `json:"completedAt,omitempty"`
+	// ErrorCode is the machine-readable half of a failure, in servicekit's wire
+	// vocabulary (`quota_exceeded`, `not_found`, …). Empty when provisioning has
+	// no canonical code for it.
+	//
+	// Error's text is customer-facing copy the service is free to reword or
+	// redact (a message naming a resource by UUID is replaced wholesale), so it
+	// is not something to branch on. This is — which is what a typed,
+	// retryable-vs-permanent diagnostic would need.
+	ErrorCode   string `json:"errorCode,omitempty"`
+	Progress    int    `json:"progress"`
+	CreatedAt   string `json:"createdAt"`
+	CompletedAt string `json:"completedAt,omitempty"`
 }
 
 // GetOperation fetches an async provisioning operation by ID.
