@@ -94,6 +94,11 @@ func TestEgressGatewayDataSourceVPCIDRequired(t *testing.T) {
 	}
 }
 
+// TestEgressGatewayDataSourceRead reads a gateway still on the WITHDRAWN "nat"
+// mode on purpose. The mode can no longer be set, but VPCs are still running on
+// it, and a data source that refused or rewrote the value would either break
+// every configuration reading such a VPC or report a mode the platform is not
+// running. The API's value goes to state verbatim.
 func TestEgressGatewayDataSourceRead(t *testing.T) {
 	var gotQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

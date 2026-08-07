@@ -1,37 +1,40 @@
 # A VPC's outbound internet path. A VPC has at most one egress gateway; without
 # one it is an isolated network — no inbound, no outbound, and (because they are
 # reached over the same path) no platform DNS resolution and no managed-service
-# connectivity either.
+# connectivity either. That is how "no connectivity" is expressed: this resource
+# simply not declared. There is no "none" mode.
 #
-# "nat" is the recommended mode: outbound traffic leaves under the platform's
-# shared address and spends NONE of your tenant's public IPv4 quota. It is a
-# per-region capability — a region that does not offer it yet refuses it, and
-# the provider reports that as "not offered in this region yet" rather than as a
-# configuration error.
-resource "frostmoln_egress_gateway" "example" {
-  vpc_id = frostmoln_vpc.example.id
-  mode   = "nat"
-}
-
-# "public_ip" instead gives the VPC a dedicated, stable source address — what a
-# partner needs in order to allow-list you — and spends one address from your
-# tenant's public IP quota.
-#
-# Changing mode is applied IN PLACE (never a destroy/create), so the gateway id
-# survives the change; the platform re-records the source address, which is why
-# it plans as "(known after apply)".
+# "public_ip" is the only mode a configuration can set. The VPC gets its own
+# outbound gateway, and instances in it can still have public IPs of their own.
 #
 # Note the spelling: Terraform takes the wire value "public_ip". The fm CLI also
 # accepts the hyphenated "public-ip", so a value copied from a CLI command has
 # to be rewritten with the underscore here.
 #
-# With no public_ip_id the platform allocates a public IP for the gateway. It is
-# a real, listed, quota-counted resource of your tenant's and its id is recorded
-# in `public_ip_id` — you simply did not choose which one.
-resource "frostmoln_egress_gateway" "dedicated_address" {
-  vpc_id = frostmoln_vpc.partner_facing.id
+# With no public_ip_id the platform draws the gateway an address itself. That
+# address is NOT a public IP of yours — it has no id, it is not in your public
+# IP list, it draws on none of your public IP quota, and nothing pins it, so it
+# may change if the gateway is rebuilt. It is the right default when nothing
+# outside the VPC needs to know what its traffic comes from.
+resource "frostmoln_egress_gateway" "example" {
+  vpc_id = frostmoln_vpc.example.id
   mode   = "public_ip"
 }
+
+# "nat" — outbound traffic leaving under an address shared with other VPCs — has
+# been WITHDRAWN and is refused. A VPC on it could not give any of its instances
+# a public IP, which is why it is gone.
+#
+# A gateway created before the withdrawal still reports mode = "nat" and keeps
+# working, and Terraform reads, refreshes and imports it normally. What is
+# refused is the VALUE IN THE CONFIGURATION, at validate time — so while a
+# resource block still says mode = "nat", `terraform validate`, `plan`,
+# `refresh` and `import` all stop there. To move one off, set mode = "public_ip"
+# with acknowledge_connectivity_loss = true — the change is applied IN PLACE
+# (never a destroy/create), so the gateway id survives it; the platform
+# re-records the source address, which is why it plans as "(known after apply)".
+# Step by step: see the "Moving an egress gateway off the withdrawn nat mode"
+# guide.
 
 # Name the address yourself to make it one you MANAGE: the same address survives
 # this gateway being rebuilt and the VPC being recreated, which is what a
@@ -99,7 +102,7 @@ resource "frostmoln_egress_gateway" "chosen_address" {
 # An associated public IP cannot exist without an egress gateway, so put the
 # dependency on the PUBLIC IP, pointing at the gateway. Terraform then creates
 # the gateway first (associating a public IP into a gateway-less VPC makes the
-# platform attach one implicitly, and a later mode = "nat" gateway would collide
+# platform attach one implicitly, and the explicit gateway would then collide
 # with it) and destroys the public IPs first (the gateway cannot be removed
 # while they still depend on it).
 resource "frostmoln_public_ip" "example" {

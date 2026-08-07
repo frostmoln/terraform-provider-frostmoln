@@ -39,9 +39,10 @@ type apiVPC struct {
 // apiCreateVPCRequest is the API request to create a VPC.
 //
 // It deliberately carries NO `egressGateway` connectivity choice, even though
-// the network service's CreateVPCRequest accepts one ("none" | "nat" |
-// "public_ip") and provisioning does forward it (its network handler binds
-// `egressGateway` and the CreateNetwork activity sets it on the gRPC request).
+// the network service's CreateVPCRequest accepts one ("none" | "public_ip" —
+// "nat" is withdrawn) and provisioning does forward it (its network handler
+// binds `egressGateway` and the CreateNetwork activity sets it on the gRPC
+// request).
 //
 // The choice is omitted here because it would make TWO owners of one object.
 // The gateway is its own resource (`frostmoln_egress_gateway`); a VPC that

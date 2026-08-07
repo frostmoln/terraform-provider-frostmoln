@@ -176,39 +176,87 @@ func TestEgressGatewayConfigureWrongType(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayModeAcceptsBothModes pins the enum. `nat` is a REAL mode —
-// the recommended one, and the only one that spends none of the tenant's public
-// IPv4 quota. A validator that accepts only public_ip would make every VPC buy
-// an address, and would turn a per-region capability gap into a permanent
-// configuration error no server-side change can clear.
-func TestEgressGatewayModeAcceptsBothModes(t *testing.T) {
-	s := gwSchema(t)
-	attr, ok := s.Attributes["mode"].(schema.StringAttribute)
+// validateMode runs every validator on the `mode` attribute over one value, the
+// way the framework does.
+func validateMode(t *testing.T, value types.String) diag.Diagnostics {
+	t.Helper()
+	attr, ok := gwSchema(t).Attributes["mode"].(schema.StringAttribute)
 	if !ok {
-		t.Fatalf("expected mode to be a StringAttribute, got %T", s.Attributes["mode"])
+		t.Fatalf("expected mode to be a StringAttribute, got %T", gwSchema(t).Attributes["mode"])
 	}
 	if len(attr.Validators) == 0 {
 		t.Fatal("mode has no validators")
 	}
+	resp := &validator.StringResponse{}
+	for _, v := range attr.Validators {
+		v.ValidateString(context.Background(), validator.StringRequest{
+			Path:        path.Root("mode"),
+			ConfigValue: value,
+		}, resp)
+	}
+	return resp.Diagnostics
+}
 
+// TestEgressGatewayModeOffersOnlyPublicIP pins the enum a CONFIGURATION may
+// set. `nat` is withdrawn: it egressed through an address shared with other
+// VPCs and could not coexist with public IPs on the VPC's own instances, so the
+// provider must stop offering it — a client that still accepts it sends a
+// request the platform refuses, and does so after the practitioner has written
+// and reviewed a plan.
+func TestEgressGatewayModeOffersOnlyPublicIP(t *testing.T) {
 	for _, tc := range []struct {
 		value string
 		valid bool
 	}{
-		{ModeNAT, true},
 		{ModePublicIP, true},
-		{"none", false}, // "none" is the ABSENCE of the resource, not a mode
-		{"shared", false},
+		{ModeNAT, false},  // WITHDRAWN
+		{"none", false},   // "none" is the ABSENCE of the resource, not a mode
+		{"shared", false}, // never a mode at all
 	} {
-		resp := &validator.StringResponse{}
-		for _, v := range attr.Validators {
-			v.ValidateString(context.Background(), validator.StringRequest{
-				Path:        path.Root("mode"),
-				ConfigValue: types.StringValue(tc.value),
-			}, resp)
+		diags := validateMode(t, types.StringValue(tc.value))
+		if got := !diags.HasError(); got != tc.valid {
+			t.Errorf("mode %q: accepted=%v, want %v (%v)", tc.value, got, tc.valid, diags)
 		}
-		if got := !resp.Diagnostics.HasError(); got != tc.valid {
-			t.Errorf("mode %q: accepted=%v, want %v (%v)", tc.value, got, tc.valid, resp.Diagnostics)
+	}
+}
+
+// TestEgressGatewayModeNATRefusalExplainsTheWithdrawal: `nat` is not a typo. It
+// was a documented, applied mode, so a practitioner meeting this refusal has a
+// configuration that worked yesterday. A bare "value must be one of" reads as
+// "you made that up" and leaves them with no idea what to write instead, or
+// whether the gateway they already have is now broken — so the diagnostic has
+// to say the mode is withdrawn, name what replaces it, and say that an existing
+// NAT gateway still reads.
+func TestEgressGatewayModeNATRefusalExplainsTheWithdrawal(t *testing.T) {
+	diags := validateMode(t, types.StringValue(ModeNAT))
+	if !diags.HasError() {
+		t.Fatal("mode = \"nat\" must be refused: the mode has been withdrawn")
+	}
+	text := diagText(diags)
+	for _, want := range []string{"withdrawn", ModePublicIP, "import"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the withdrawal refusal must mention %q, got:\n%s", want, text)
+		}
+	}
+	// The old validator was stringvalidator.OneOf, whose message is exactly this
+	// and says nothing a practitioner can act on.
+	if strings.Contains(text, "value must be one of") {
+		t.Errorf("the refusal must not be the generic OneOf message:\n%s", text)
+	}
+}
+
+// TestEgressGatewayModeValidatorIgnoresNullAndUnknown: an attribute validator
+// that errored on either would break every configuration whose `mode` comes
+// from a module output or another resource's attribute — a value the provider
+// is handed as unknown at validate time and that is perfectly valid once
+// resolved.
+func TestEgressGatewayModeValidatorIgnoresNullAndUnknown(t *testing.T) {
+	for name, value := range map[string]types.String{
+		"null":    types.StringNull(),
+		"unknown": types.StringUnknown(),
+	} {
+		if diags := validateMode(t, value); diags.HasError() {
+			t.Errorf("a %s mode must not be judged at validate time: %v", name, diags)
 		}
 	}
 }
@@ -485,7 +533,7 @@ func TestEgressGatewayCreate(t *testing.T) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/egress-gateways" {
 			_ = json.NewDecoder(r.Body).Decode(&got)
 			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":"gw-1","vpcId":"vpc-1","tenantId":"t-123","mode":"nat",
+			_, _ = w.Write([]byte(`{"id":"gw-1","vpcId":"vpc-1","tenantId":"t-123","mode":"public_ip",
 				"sourceAddress":"46.246.117.231","status":"active","origin":"explicit"}`))
 			return
 		}
@@ -498,13 +546,13 @@ func TestEgressGatewayCreate(t *testing.T) {
 
 	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
 	r.Create(context.Background(), resource.CreateRequest{
-		Plan: tfsdk.Plan{Schema: s, Raw: gwValue("", "vpc-1", ModeNAT, "", "", "", nil)},
+		Plan: tfsdk.Plan{Schema: s, Raw: gwValue("", "vpc-1", ModePublicIP, "", "", "", nil)},
 	}, resp)
 
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
 	}
-	if got.VPCID != "vpc-1" || got.Mode != ModeNAT {
+	if got.VPCID != "vpc-1" || got.Mode != ModePublicIP {
 		t.Errorf("unexpected create body %+v", got)
 	}
 
@@ -518,14 +566,21 @@ func TestEgressGatewayCreate(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayCreateModeUnavailable is the per-region NAT case. The API
-// answers 400, but this is NOT invalid configuration: the same config applies
-// unchanged in a region with a NAT shard, so the diagnostic must say "not
-// offered here yet" and must not read as a permanent input error.
+// TestEgressGatewayCreateModeUnavailable: EGRESS_MODE_UNAVAILABLE is a 400, so
+// passed through raw it reads as "fix your syntax". It is not — it is the
+// platform declining to provision a mode. `nat` is WITHDRAWN, permanently, so
+// the configuration has to change; the diagnostic must say that and must NOT
+// leave a "not available" reading as "not available yet", because there is no
+// other mode waiting to ship (the API's own message is now "supported modes:
+// public_ip").
+//
+// This provider refuses `nat` at validate time, so the only way to reach the
+// API with it is a `mode` that was unknown then — a module output, another
+// resource's attribute — which is exactly the case this mapping exists for.
 func TestEgressGatewayCreateModeUnavailable(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusBadRequest,
-		"EGRESS_MODE_UNAVAILABLE", `egress gateway mode "nat" is not available yet; supported modes: public_ip`))
+		"EGRESS_MODE_UNAVAILABLE", `egress gateway mode "nat" is not available; supported modes: public_ip`))
 	defer server.Close()
 
 	r := configuredResource(t, server.URL)
@@ -540,11 +595,23 @@ func TestEgressGatewayCreateModeUnavailable(t *testing.T) {
 		t.Fatal("expected an error")
 	}
 	text := strings.ToLower(diagText(resp.Diagnostics))
-	if !strings.Contains(text, "not offered in this region yet") {
-		t.Errorf("diagnostic must present this as a regional capability gap, got:\n%s", text)
+	if !strings.Contains(text, "withdrawn") {
+		t.Errorf("diagnostic must say `nat` is withdrawn, got:\n%s", text)
 	}
-	if !strings.Contains(text, "this is not invalid configuration") {
-		t.Errorf("diagnostic must say the configuration is valid, got:\n%s", text)
+	if !strings.Contains(text, `mode = "public_ip"`) {
+		t.Errorf("diagnostic must name the mode that replaces it, got:\n%s", text)
+	}
+	// The withdrawal is permanent, so the diagnostic must not offer waiting as a
+	// way out. An earlier version told the practitioner any other mode was one
+	// "this region has not shipped yet", which read straight back onto `nat`.
+	for _, forbidden := range []string{"not shipped yet", "not available yet", "yet to ship"} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("diagnostic must not suggest the mode is merely not available YET (%q), got:\n%s",
+				forbidden, text)
+		}
+	}
+	if !strings.Contains(text, "not a syntax error") {
+		t.Errorf("diagnostic must not let a 400 read as invalid syntax, got:\n%s", text)
 	}
 }
 
@@ -642,6 +709,80 @@ func TestEgressGatewayReadUsesVPCFilteredList(t *testing.T) {
 	// must not clear it, or the next destroy would refuse.
 	if !state.AcknowledgeConnectivityLoss.ValueBool() {
 		t.Error("read must preserve acknowledge_connectivity_loss")
+	}
+}
+
+// TestEgressGatewayReadKeepsWithdrawnNATMode is the other half of the
+// withdrawal, and the half that is easy to get wrong.
+//
+// `nat` cannot be SET any more, but VPCs are still on it. A read that refused
+// the value, or "helpfully" normalised it to public_ip, would be far worse than
+// offering the mode: refusing turns every refresh of a live gateway into an
+// error the practitioner cannot clear from their configuration, and rewriting
+// records a mode the platform is not running — after which the next apply would
+// see no drift and never move the VPC, or Terraform would plan a change nobody
+// asked for against the VPC's only outbound path.
+//
+// So: the API's value goes to state verbatim.
+func TestEgressGatewayReadKeepsWithdrawnNATMode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/egress-gateways" {
+			_, _ = w.Write([]byte(`{"egressGateways":[{"id":"gw-1","vpcId":"vpc-1","mode":"nat",
+				"sourceAddress":"46.246.117.240","status":"active","origin":"explicit"}],"totalCount":1}`))
+			return
+		}
+		http.Error(w, "unexpected", http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	sch := gwSchema(t)
+	raw := gwValue("gw-1", "vpc-1", ModeNAT, "46.246.117.240", "active", "explicit", boolPtr(true))
+
+	resp := &resource.ReadResponse{State: tfsdk.State{Schema: sch, Raw: raw}}
+	r.Read(context.Background(), resource.ReadRequest{State: tfsdk.State{Schema: sch, Raw: raw}}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("reading a gateway still on the withdrawn mode must not error: %v", resp.Diagnostics)
+	}
+	if resp.State.Raw.IsNull() {
+		t.Fatal("a gateway still on the withdrawn mode must not be dropped from state")
+	}
+
+	var state EgressGatewayModel
+	resp.State.Get(context.Background(), &state)
+	if got := state.Mode.ValueString(); got != ModeNAT {
+		t.Errorf("the read must record the mode the platform reports verbatim; got %q, want %q", got, ModeNAT)
+	}
+	if got := state.SourceAddress.ValueString(); got != "46.246.117.240" {
+		t.Errorf("unexpected source_address %q", got)
+	}
+}
+
+// TestEgressGatewayModifyPlanWithdrawnNATIsStable: a gateway still on `nat`,
+// with nothing changed, must plan clean. An unknown planted on any observed
+// attribute here is a diff on every single run — `terraform plan
+// -detailed-exitcode` returns 2 forever — for a resource whose only remaining
+// operations are "leave it alone" and "move it off, deliberately".
+func TestEgressGatewayModifyPlanWithdrawnNATIsStable(t *testing.T) {
+	planRaw := gwPlanUnknownComputed("vpc-1", ModeNAT, nil)
+	stateRaw := gwValue("gw-1", "vpc-1", ModeNAT, "46.246.117.240", "active", "explicit", nil)
+
+	planned := modifyPlan(t, planRaw, stateRaw)
+
+	for name, v := range map[string]types.String{
+		"source_address": planned.SourceAddress,
+		"status":         planned.Status,
+		"origin":         planned.Origin,
+		"public_ip_id":   planned.PublicIPID,
+	} {
+		if v.IsUnknown() {
+			t.Errorf("%s must keep its recorded value on an unchanged NAT gateway; an unknown is a diff "+
+				"on every run", name)
+		}
+	}
+	if planned.SourceAddress.ValueString() != "46.246.117.240" {
+		t.Errorf("unexpected planned source_address %v", planned.SourceAddress)
 	}
 }
 
@@ -900,21 +1041,26 @@ func TestEgressGatewayUpdateModeRequiresAcknowledgement(t *testing.T) {
 // as a known planned value would encode the bug this resource used to have —
 // Terraform core aborts such an apply with "Provider produced inconsistent
 // result after apply".)
+//
+// The direction is the only mode change left: OFF the withdrawn `nat` and onto
+// `public_ip`. It must stay an in-place PATCH, because the alternative — a
+// destroy and a create — is an outage on the VPC's only outbound path, and
+// every VPC still on `nat` has to make this exact move.
 func TestEgressGatewayUpdateModeInPlace(t *testing.T) {
 	var gotMethod, gotPath string
 	var gotBody apiUpdateEgressGatewayRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod, gotPath = r.Method, r.URL.Path
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_, _ = w.Write([]byte(`{"id":"gw-1","vpcId":"vpc-1","mode":"nat","sourceAddress":"185.1.2.3",
+		_, _ = w.Write([]byte(`{"id":"gw-1","vpcId":"vpc-1","mode":"public_ip","sourceAddress":"185.1.2.3",
 			"status":"active","origin":"explicit"}`))
 	}))
 	defer server.Close()
 
 	r := configuredResource(t, server.URL)
 	s := gwSchema(t)
-	state := gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit", boolPtr(true))
-	plan := gwPlanUnknownComputed("vpc-1", ModeNAT, boolPtr(true))
+	state := gwValue("gw-1", "vpc-1", ModeNAT, "46.246.117.231", "active", "explicit", boolPtr(true))
+	plan := gwPlanUnknownComputed("vpc-1", ModePublicIP, boolPtr(true))
 
 	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s, Raw: state}}
 	r.Update(context.Background(), resource.UpdateRequest{
@@ -931,13 +1077,13 @@ func TestEgressGatewayUpdateModeInPlace(t *testing.T) {
 	if gotPath != "/v1/tenants/t-123/egress-gateways/gw-1" {
 		t.Errorf("the PATCH must target the gateway id, got %s", gotPath)
 	}
-	if gotBody.Mode != ModeNAT || !gotBody.AcknowledgeConnectivityLoss {
+	if gotBody.Mode != ModePublicIP || !gotBody.AcknowledgeConnectivityLoss {
 		t.Errorf("unexpected PATCH body %+v", gotBody)
 	}
 
 	var got EgressGatewayModel
 	resp.State.Get(context.Background(), &got)
-	if got.SourceAddress.ValueString() != "185.1.2.3" || got.Mode.ValueString() != ModeNAT {
+	if got.SourceAddress.ValueString() != "185.1.2.3" || got.Mode.ValueString() != ModePublicIP {
 		t.Errorf("state was not refreshed from the response: %+v", got)
 	}
 }
@@ -1004,8 +1150,8 @@ func TestEgressGatewayUpdateRefusesEmptyID(t *testing.T) {
 
 	r := configuredResource(t, server.URL)
 	s := gwSchema(t)
-	state := gwValue("", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit", boolPtr(true))
-	plan := gwValue("", "vpc-1", ModeNAT, "46.246.117.231", "active", "explicit", boolPtr(true))
+	state := gwValue("", "vpc-1", ModeNAT, "46.246.117.231", "active", "explicit", boolPtr(true))
+	plan := gwValue("", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit", boolPtr(true))
 
 	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s, Raw: state}}
 	r.Update(context.Background(), resource.UpdateRequest{
@@ -1143,7 +1289,7 @@ func TestEgressGatewayDeleteRefusesEmptyID(t *testing.T) {
 // the gateway. Written the other way (on the gateway, listing the public IPs)
 // the gateway is destroyed FIRST — this same 409 again — and on create the
 // public IP is associated first, which makes the platform attach an implicit
-// gateway and the intended `mode = "nat"` create then fails with
+// gateway and the explicit gateway create then fails with
 // EGRESS_GATEWAY_EXISTS.
 func TestEgressGatewayInUseDiagnosticPutsDependsOnOnThePublicIP(t *testing.T) {
 	var diags diag.Diagnostics
@@ -1175,8 +1321,35 @@ func TestEgressGatewayDeleteInUse(t *testing.T) {
 	r.Delete(context.Background(), resource.DeleteRequest{State: tfsdk.State{Schema: s, Raw: raw}}, resp)
 
 	text := strings.ToLower(diagText(resp.Diagnostics))
-	if !strings.Contains(text, "public ip") || !strings.Contains(text, "release or disassociate") {
-		t.Errorf("diagnostic must say to release the public IPs first, got:\n%s", text)
+	if !strings.Contains(text, "public ip") {
+		t.Errorf("diagnostic must name what depends on the gateway, got:\n%s", text)
+	}
+
+	// DETACH BEFORE RELEASE, in that order, and not merely both present.
+	//
+	// Detaching is free, reversible and keeps the address; releasing is
+	// permanent — the address goes back to a shared pool, and every partner
+	// allow-list entry and DNS record naming it silently stops matching. Someone
+	// reading this has something already blocked and acts on the first remedy
+	// offered, so leading with the irreversible one is unsafe guidance. The
+	// network service orders it the same way (NewEgressGatewayInUseError), as do
+	// the CLI and the customer docs; this client renders that source and was the
+	// one place still leading with "release".
+	detach := strings.Index(text, "detach")
+	release := strings.Index(text, "releas")
+	if detach < 0 {
+		t.Fatalf("diagnostic must offer detaching at all, got:\n%s", text)
+	}
+	if release >= 0 && release < detach {
+		t.Errorf("the diagnostic leads with the IRREVERSIBLE remedy: %q appears before %q, got:\n%s",
+			text[release:min(release+20, len(text))], text[detach:min(detach+20, len(text))], text)
+	}
+
+	// The same code is returned for a holder the tenant CANNOT see or release
+	// (NewEgressGatewayInUseByOtherTenantError, network/internal/domain), so the
+	// text must not send them hunting for an address of their own to release.
+	if !strings.Contains(text, "managed-service") {
+		t.Errorf("diagnostic must cover the holder that is not in the tenant's own listing, got:\n%s", text)
 	}
 }
 
@@ -1267,8 +1440,8 @@ func TestEgressGatewayPublicIPIDDoesNotRequireReplace(t *testing.T) {
 	}
 	if !attr.Optional || !attr.Computed {
 		t.Fatal("public_ip_id must be Optional+Computed: Optional so the practitioner can choose the " +
-			"address, Computed so the id of the one the platform allocates is recorded instead of " +
-			"planning as a permanent diff")
+			"address, Computed so a value the platform reports for one they did not choose is " +
+			"recorded instead of planning as a permanent diff")
 	}
 
 	// A real value change, with the practitioner's chosen value in config.
@@ -1361,8 +1534,10 @@ func TestEgressGatewayModifyPlanKeepsOmittedPublicIPID(t *testing.T) {
 // TestEgressGatewayModifyPlanUnknownPinOnModeSwitch is the "inconsistent result
 // after apply" guard for the switch INTO public_ip mode without naming an
 // address. Both the config and the state hold a null, so UseStateForUnknown
-// alone would pin the plan to null — and the apply then returns the id of the
-// address the platform allocated, which Terraform core rejects outright.
+// alone would pin the plan to null ACROSS AN APPLY THAT RE-ADDRESSES THE
+// GATEWAY, and Terraform core rejects outright any planned value the apply
+// contradicts. The plan must not assert what the platform will report before it
+// has reported it.
 func TestEgressGatewayModifyPlanUnknownPinOnModeSwitch(t *testing.T) {
 	planned := modifyPlan(t,
 		gwPlanUnknownComputed("vpc-1", ModePublicIP, boolPtr(true)),
@@ -1370,7 +1545,8 @@ func TestEgressGatewayModifyPlanUnknownPinOnModeSwitch(t *testing.T) {
 
 	if !planned.PublicIPID.IsUnknown() {
 		t.Errorf("switching into public_ip mode without naming an address must plan public_ip_id as "+
-			"unknown — the platform allocates one and reports its id; got %v", planned.PublicIPID)
+			"unknown — the apply re-addresses the gateway and the plan must not assert the result in "+
+			"advance; got %v", planned.PublicIPID)
 	}
 }
 
@@ -1403,40 +1579,18 @@ func TestEgressGatewayModifyPlanKeepsConfiguredPin(t *testing.T) {
 
 // --- validation ---
 
-// TestEgressGatewayValidateConfigRefusesPinWithNAT: under NAT the VPC leaves
-// through the platform's shared address, so a named public IP would not be the
-// address the traffic arrives from. Accepting the pair would leave a
-// configuration that reads as a promise the platform never made.
-func TestEgressGatewayValidateConfigRefusesPinWithNAT(t *testing.T) {
-	s := gwSchema(t)
-	r, ok := NewResource().(resource.ResourceWithValidateConfig)
-	if !ok {
-		t.Fatal("the resource must implement ValidateConfig so an impossible mode/address pair is " +
-			"reported against the configuration rather than as an apply-time API refusal")
-	}
-
-	for _, tc := range []struct {
-		name      string
-		config    tftypes.Value
-		wantError bool
-	}{
-		{"nat with a chosen address", gwValue("", "vpc-1", ModeNAT, "", "", "", nil, "pip-1"), true},
-		{"public_ip with a chosen address", gwValue("", "vpc-1", ModePublicIP, "", "", "", nil, "pip-1"), false},
-		{"nat with no address", gwValue("", "vpc-1", ModeNAT, "", "", "", nil), false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			resp := &resource.ValidateConfigResponse{}
-			r.ValidateConfig(context.Background(), resource.ValidateConfigRequest{
-				Config: tfsdk.Config{Schema: s, Raw: tc.config},
-			}, resp)
-
-			if resp.Diagnostics.HasError() != tc.wantError {
-				t.Fatalf("wantError=%v, got diagnostics: %v", tc.wantError, resp.Diagnostics)
-			}
-			if tc.wantError && !strings.Contains(diagText(resp.Diagnostics), "public_ip") {
-				t.Errorf("the refusal must name the mode that does use the address:\n%s", diagText(resp.Diagnostics))
-			}
-		})
+// TestEgressGatewayHasNoValidateConfig documents a deliberate removal.
+//
+// The resource used to implement ValidateConfig for ONE case: `public_ip_id`
+// named together with `mode = "nat"`. That pair is unreachable now that `nat`
+// itself is refused, and keeping the check would emit a SECOND diagnostic
+// saying "public_ip_id is only meaningful with public_ip" — which implies the
+// withdrawn mode was otherwise fine, and is the opposite of what the
+// practitioner needs to read.
+func TestEgressGatewayHasNoValidateConfig(t *testing.T) {
+	if _, ok := NewResource().(resource.ResourceWithValidateConfig); ok {
+		t.Error("the pin/mode pair check is subsumed by the `mode` validator; a ValidateConfig that " +
+			"fires on mode = \"nat\" would add a second, misleading diagnostic to the withdrawal refusal")
 	}
 }
 
@@ -1479,17 +1633,21 @@ func TestEgressGatewayCreateSendsChosenPublicIPID(t *testing.T) {
 }
 
 // TestEgressGatewayCreateOmitsPublicIPIDWhenNotChosen: an omitted field means
-// "allocate one for me". Sending an empty string instead would be a different
-// request, and it is what would break every configuration written before this
-// attribute existed.
+// "the platform draws the gateway an address itself". Sending an empty string
+// instead would be a different request, and it is what would break every
+// configuration written before this attribute existed.
+//
+// The scripted response is the real shape for that request (ADR-0114): the
+// address has no id and is not a public IP resource, so the API omits
+// `publicIpId` and the attribute must land NULL — it does NOT come back as an
+// allocation made on the tenant's behalf.
 func TestEgressGatewayCreateOmitsPublicIPIDWhenNotChosen(t *testing.T) {
 	var raw map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&raw)
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"id":"gw-1","vpcId":"vpc-1","tenantId":"t-123","mode":"public_ip",
-			"sourceAddress":"46.246.117.231","status":"active","origin":"explicit_public_ip",
-			"publicIpId":"pip-allocated"}`))
+			"sourceAddress":"46.246.117.231","status":"active","origin":"explicit"}`))
 	}))
 	defer server.Close()
 
@@ -1510,8 +1668,13 @@ func TestEgressGatewayCreateOmitsPublicIPIDWhenNotChosen(t *testing.T) {
 
 	var state EgressGatewayModel
 	resp.State.Get(context.Background(), &state)
-	if state.PublicIPID.ValueString() != "pip-allocated" {
-		t.Errorf("the address the platform allocated must be recorded, got %v", state.PublicIPID)
+	if !state.PublicIPID.IsNull() {
+		t.Errorf("a gateway on a platform-drawn address has no public IP resource, so public_ip_id "+
+			"must be NULL (never \"\", and never an id the platform never reported), got %v",
+			state.PublicIPID)
+	}
+	if state.SourceAddress.ValueString() != "46.246.117.231" {
+		t.Errorf("the gateway still has a source address, got %v", state.SourceAddress)
 	}
 }
 

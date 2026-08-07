@@ -261,7 +261,7 @@ func addressLossWarning(state *PublicIPModel) (summary, detail string) {
 				"instance in the VPC — though that part comes back when the gateway does, and the "+
 				"address does not.\n\nIf you mean to keep the address, change the VPC's egress gateway "+
 				"instead of destroying this (`frostmoln_egress_gateway`): point its `public_ip_id` at "+
-				"another address, or set `mode = \"nat\"`.\n\nIf you really mean to give the address "+
+				"another address.\n\nIf you really mean to give the address "+
 				"up, set `acknowledge_address_loss = true` on this resource and apply that first.",
 				state.ID.ValueString(), state.Address.ValueString(),
 				vpcOrUnknown(state.AttachedVPCID()), irreversible)

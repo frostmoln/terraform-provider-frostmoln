@@ -16,37 +16,40 @@ Manages a VPC's outbound internet path. A VPC has at most one egress gateway; a 
 # A VPC's outbound internet path. A VPC has at most one egress gateway; without
 # one it is an isolated network — no inbound, no outbound, and (because they are
 # reached over the same path) no platform DNS resolution and no managed-service
-# connectivity either.
+# connectivity either. That is how "no connectivity" is expressed: this resource
+# simply not declared. There is no "none" mode.
 #
-# "nat" is the recommended mode: outbound traffic leaves under the platform's
-# shared address and spends NONE of your tenant's public IPv4 quota. It is a
-# per-region capability — a region that does not offer it yet refuses it, and
-# the provider reports that as "not offered in this region yet" rather than as a
-# configuration error.
-resource "frostmoln_egress_gateway" "example" {
-  vpc_id = frostmoln_vpc.example.id
-  mode   = "nat"
-}
-
-# "public_ip" instead gives the VPC a dedicated, stable source address — what a
-# partner needs in order to allow-list you — and spends one address from your
-# tenant's public IP quota.
-#
-# Changing mode is applied IN PLACE (never a destroy/create), so the gateway id
-# survives the change; the platform re-records the source address, which is why
-# it plans as "(known after apply)".
+# "public_ip" is the only mode a configuration can set. The VPC gets its own
+# outbound gateway, and instances in it can still have public IPs of their own.
 #
 # Note the spelling: Terraform takes the wire value "public_ip". The fm CLI also
 # accepts the hyphenated "public-ip", so a value copied from a CLI command has
 # to be rewritten with the underscore here.
 #
-# With no public_ip_id the platform allocates a public IP for the gateway. It is
-# a real, listed, quota-counted resource of your tenant's and its id is recorded
-# in `public_ip_id` — you simply did not choose which one.
-resource "frostmoln_egress_gateway" "dedicated_address" {
-  vpc_id = frostmoln_vpc.partner_facing.id
+# With no public_ip_id the platform draws the gateway an address itself. That
+# address is NOT a public IP of yours — it has no id, it is not in your public
+# IP list, it draws on none of your public IP quota, and nothing pins it, so it
+# may change if the gateway is rebuilt. It is the right default when nothing
+# outside the VPC needs to know what its traffic comes from.
+resource "frostmoln_egress_gateway" "example" {
+  vpc_id = frostmoln_vpc.example.id
   mode   = "public_ip"
 }
+
+# "nat" — outbound traffic leaving under an address shared with other VPCs — has
+# been WITHDRAWN and is refused. A VPC on it could not give any of its instances
+# a public IP, which is why it is gone.
+#
+# A gateway created before the withdrawal still reports mode = "nat" and keeps
+# working, and Terraform reads, refreshes and imports it normally. What is
+# refused is the VALUE IN THE CONFIGURATION, at validate time — so while a
+# resource block still says mode = "nat", `terraform validate`, `plan`,
+# `refresh` and `import` all stop there. To move one off, set mode = "public_ip"
+# with acknowledge_connectivity_loss = true — the change is applied IN PLACE
+# (never a destroy/create), so the gateway id survives it; the platform
+# re-records the source address, which is why it plans as "(known after apply)".
+# Step by step: see the "Moving an egress gateway off the withdrawn nat mode"
+# guide.
 
 # Name the address yourself to make it one you MANAGE: the same address survives
 # this gateway being rebuilt and the VPC being recreated, which is what a
@@ -114,7 +117,7 @@ resource "frostmoln_egress_gateway" "chosen_address" {
 # An associated public IP cannot exist without an egress gateway, so put the
 # dependency on the PUBLIC IP, pointing at the gateway. Terraform then creates
 # the gateway first (associating a public IP into a gateway-less VPC makes the
-# platform attach one implicitly, and a later mode = "nat" gateway would collide
+# platform attach one implicitly, and the explicit gateway would then collide
 # with it) and destroys the public IPs first (the gateway cannot be removed
 # while they still depend on it).
 resource "frostmoln_public_ip" "example" {
@@ -136,7 +139,11 @@ output "egress_source_address" {
 
 ### Required
 
-- `mode` (String) How outbound traffic is addressed. "nat" sends it through the platform's shared address and spends none of your public IP quota — the recommended mode, and a per-region capability (a region that does not offer it yet refuses it, and this provider reports that as "not offered in this region yet" rather than as invalid configuration). "public_ip" gives the VPC a dedicated, stable source address, suitable for giving a partner to allow-list, and spends one address from your tenant's public IP quota. There is no default: connectivity is a stated choice, never one a VPC acquires because a field was omitted.
+- `mode` (String) How outbound traffic is addressed. `"public_ip"` is the only value a configuration can set: the VPC gets its own outbound gateway as its outbound path. Leave `public_ip_id` out and the platform draws the gateway an address of its own — not a public IP of yours, and not pinned; name one and the VPC egresses from an address of your own, which is what a partner allow-list entry or a DNS record needs.
+
+There is no default and no third value. A VPC with NO egress gateway — this resource simply not declared — is an isolated network, and that is how "no connectivity" is expressed: connectivity is a stated choice, never one a VPC acquires because a field was omitted.
+
+`"nat"`, which sent a VPC's outbound traffic through an address shared with other VPCs, is **WITHDRAWN** and is refused. It could not coexist with public IPs on instances in the same VPC, which is why it is gone. A gateway created before the withdrawal still REPORTS `"nat"`, and Terraform reads, refreshes and imports it normally — but not while the CONFIGURATION still says `"nat"`, which is refused at validate time and stops all of those. Set `mode = "public_ip"` (with `acknowledge_connectivity_loss = true`) to move it off, which is applied in place.
 
 Terraform uses the wire spelling `public_ip`. The `fm` CLI additionally accepts the hyphenated `public-ip` and normalises it, so a value copied from a CLI command has to be written with the underscore here.
 
@@ -152,11 +159,15 @@ The API refuses the removal and the mode change without the acknowledgement, so 
 **Remove it from the configuration again once the removal or mode change is done, and do not leave it set on a steady-state resource.** It is ordinary configuration, so a `true` left behind stays in state for the life of the resource and permanently disarms this control: a later `terraform destroy -target`, a module removal, or a `vpc_id` change that forces replacement then disconnects the VPC with nothing in the plan beyond an ordinary "will be destroyed" line.
 - `public_ip_id` (String) Under `mode = "public_ip"`, the public IP (`frostmoln_public_ip`) this VPC's outbound traffic leaves from. Naming one is what makes the address STABLE: it is a resource of your tenant's, so it survives this gateway being rebuilt, the VPC being recreated, and the address being handed to a partner to allow-list or published in DNS.
 
-Omit it and the platform allocates a public IP for the gateway and reports it back here — the address is still a real, listed, quota-counted resource of your tenant's, it is simply one you did not choose. Only "public_ip" gateways have one at all; under "nat" this is null, and setting it with `mode = "nat"` is refused before any request is sent.
+Omit it and the platform draws the gateway an address itself. That address is NOT a public IP of yours: it has no id, it does not appear in your public IP list, it draws on none of your public IP quota, and nothing pins it — it may change if the gateway is rebuilt. It is the right default for a VPC whose source address nobody outside it needs to know, and this attribute stays null there because there is no public IP for the platform to name.
+
+Naming an address is the option you take when something outside the VPC DOES need to know it. The address is then a resource of your tenant's — listed, and counted against your public IP quota like any other — and it is pinned as this gateway's source address.
+
+A gateway left on the WITHDRAWN "nat" mode has no public IP at all, so this reads as null there.
 
 Changing it is applied IN PLACE, never as a destroy/create: the platform re-addresses the existing gateway rather than tearing the VPC's only outbound path down and building a new one. It still changes the address the VPC's traffic arrives from, so it requires `acknowledge_connectivity_loss = true` exactly as a `mode` change does.
 
-Because the platform supplies a value when you do not, REMOVING this attribute from the configuration does not release the address or hand the choice back to the platform — Terraform keeps the recorded value and plans no change. To move the gateway to a different address, name the different address.
+REMOVING this attribute from the configuration does not release the address, and does not hand the gateway back to a platform-drawn one. The attribute is Computed as well as Optional, so an absent value resolves to the id already in state: there is no diff, no request is sent, and the gateway goes on egressing from the address you named. The API reads an absent `publicIpId` the same way — as "keep the address this gateway has" — so there is no way back to a platform-drawn address once one is named. To move the gateway to a different address, name the different address.
 
 The public IP must belong to this tenant and must not be attached to anything else. A public IP that is in use by an instance is refused, and so is one already serving another VPC's egress.
 
@@ -164,7 +175,7 @@ The public IP must belong to this tenant and must not be attached to anything el
 
 - `id` (String) The gateway's identifier. It survives a mode change, so it is stable for the life of the gateway. For a gateway with no stored record (`origin` = "legacy") the API answers under the VPC's id instead.
 - `origin` (String) Who asked for the gateway: "explicit" (a client created it directly), "explicit_public_ip" (a client created it and named the public IP it egresses from, via `public_ip_id`), "implicit_public_ip" (the platform attached it because a public IP was associated, which requires a gateway), "vpc_create" (it came with the VPC because a mode was chosen at VPC create), or "legacy" — which means NO STORED RECORD EXISTS, so the provenance is UNKNOWN. "legacy" usually means the VPC predates this resource, but the record write is deliberately non-fatal, so a gateway created minutes ago can report it too. Read it as "unknown", never as "old".
-- `source_address` (String) The public IPv4 address outbound traffic appears to come from. Null while the gateway is detached or the address is not yet known. Under "nat" this is a platform address shared with other VPCs; under "public_ip" it is dedicated to this VPC and is the address of the `public_ip_id` public IP. A `mode` or `public_ip_id` change re-records it, so it plans as "(known after apply)" then and keeps its recorded value otherwise.
+- `source_address` (String) The public IPv4 address outbound traffic appears to come from. Null while the gateway is detached or the address is not yet known. It is dedicated to this VPC — no other VPC egresses from it — but dedicated is not the same as STABLE. Where `public_ip_id` names an address, this IS that address and it is pinned. Where it does not, this is the address the platform drew for the gateway: nothing pins it, so it may change if the gateway is rebuilt, and it is not an address to publish or hand a partner to allow-list. On a gateway left on the withdrawn "nat" mode it is an address shared with other VPCs. A `mode` or `public_ip_id` change re-records it, so it plans as "(known after apply)" then and keeps its recorded value otherwise.
 - `status` (String) Observed state of the gateway, read from the cloud rather than from stored desired state: "active" or "detached". It is not configurable — Terraform records whatever the platform reports and produces no plan of its own from it. "detached" is not on its own a verdict that something is broken or that an operator is needed: what the platform observes depends on how the mode is realised. Read it as a prompt to check the VPC's outbound path, not as proof that the platform and the cloud disagree.
 
 ## Import

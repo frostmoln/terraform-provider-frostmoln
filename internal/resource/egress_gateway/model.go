@@ -8,20 +8,24 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// Egress gateway modes, as the network service's enum spells them. Both are in
-// the enum: `nat` is a real product, not a placeholder, and a provider that
-// offers only `public_ip` forces every VPC to spend a public IPv4 it does not
-// need.
+// Egress gateway modes, as the network service's enum spells them.
 const (
-	// ModeNAT sends the VPC's outbound traffic through the platform's shared
-	// address. Spends NONE of the tenant's public IP quota — the recommended
-	// mode. A PER-REGION capability: a region that does not offer it yet
-	// refuses it with EGRESS_MODE_UNAVAILABLE (see addEgressError).
+	// ModeNAT is WITHDRAWN. It sent the VPC's outbound traffic through a shared
+	// platform address; the mode is no longer offered and cannot be SET —
+	// `mode` refuses it at validate time (see modeValidator).
+	//
+	// The constant stays because withdrawn is not the same as gone: gateways
+	// created before the withdrawal still report `"nat"`, and the provider must
+	// keep READING them. Refusing the value on the read path would turn a
+	// refresh of a live gateway into an error and a plan into a diff nobody can
+	// apply, so applyToModel records whatever the API reports and never
+	// rewrites it.
 	ModeNAT = "nat"
 
-	// ModePublicIP gives the VPC a dedicated, stable source address, and spends
-	// one address from the same pool (and the same quota) customer-facing
-	// public IPs come from.
+	// ModePublicIP is the only mode a configuration can set. The VPC gets its
+	// own outbound gateway; naming a `public_ip_id`
+	// makes that address one of the tenant's own — stable, and the address to
+	// hand a partner for an allow-list.
 	ModePublicIP = "public_ip"
 )
 
@@ -41,9 +45,19 @@ type EgressGatewayModel struct {
 	Origin        types.String `tfsdk:"origin"`
 
 	// PublicIPID names the tenant's own public IP that this gateway egresses
-	// from. Optional and Computed: omitted, the platform allocates one and
-	// reports it back, so the address is a real, listed, tenant-owned resource
-	// either way.
+	// from. Optional and Computed, and the two cases are NOT the same product:
+	//
+	//   - Named: a real public IP of the tenant's. It has an id, it is listed,
+	//     it draws on their public IP quota, it is metered, and it is PINNED as
+	//     this gateway's source address.
+	//   - Omitted: the platform draws the gateway an address of its own
+	//     (ADR-0114). No id comes back, so this attribute stays NULL. It is not
+	//     a public IP resource of the tenant's in any sense — not listed, not
+	//     quota-drawn, not metered, not on an invoice — and nothing pins it, so
+	//     it may change if the gateway is rebuilt.
+	//
+	// Computed is therefore about the NAMED case (the API echoes the id back),
+	// never about the platform handing back an allocation for the omitted one.
 	//
 	// It is NOT a replacement trigger. Re-pointing a gateway at a different
 	// address is applied in place — the platform re-addresses the existing
@@ -64,9 +78,10 @@ type EgressGatewayModel struct {
 
 // apiEgressGateway is the API representation.
 //
-// Deliberately not router-shaped: no router id, no gateway info. Those have no
-// meaning under NAT mode, and once a field ships in a provider schema it is a
-// compatibility obligation across every practitioner's state.
+// Deliberately not router-shaped: no router id, no gateway info. Once a field
+// ships in a provider schema it is a compatibility obligation across every
+// practitioner's state, and the gateway is addressed by its own id and its
+// VPC's — never by the objects that realise it.
 type apiEgressGateway struct {
 	ID       string `json:"id"`
 	VPCID    string `json:"vpcId"`
@@ -78,11 +93,11 @@ type apiEgressGateway struct {
 	SourceAddress string `json:"sourceAddress,omitempty"`
 	Status        string `json:"status"`
 	Origin        string `json:"origin"`
-	// PublicIPID is absent under `nat`, and absent under `public_ip` for a
-	// gateway whose address predates public-IP-backed egress (those keep the
-	// platform-drawn address they already have; they are deliberately not
-	// converted behind the tenant's back). Absent maps to a NULL Terraform
-	// value, never "".
+	// PublicIPID is present ONLY where the tenant named an address. It is absent
+	// on a withdrawn-`nat` gateway, and absent under `public_ip` for every
+	// gateway running on a platform-drawn address — there is no public IP
+	// resource for the API to name, so it omits the field rather than inventing
+	// one. Absent maps to a NULL Terraform value, never "".
 	PublicIPID string `json:"publicIpId,omitempty"`
 }
 
@@ -99,24 +114,27 @@ type apiCreateEgressGatewayRequest struct {
 	Mode  string `json:"mode"`
 	// PublicIPID is omitted when the practitioner did not choose an address.
 	// Omitted is NOT the same as empty: the platform reads an absent field as
-	// "allocate one for me" and allocates a real, tenant-owned public IP, so
-	// `mode = "public_ip"` keeps working unchanged for every configuration
-	// written before this attribute existed.
+	// "draw the gateway an address yourself", which is what makes
+	// `mode = "public_ip"` keep working unchanged for every configuration
+	// written before this attribute existed. What it does NOT do is create a
+	// public IP for the tenant — that address has no id, is not listed, and is
+	// not pinned (ADR-0114); only a named id buys a tenant-owned, stable one.
 	PublicIPID string `json:"publicIpId,omitempty"`
 }
 
 type apiUpdateEgressGatewayRequest struct {
 	Mode string `json:"mode"`
 	// PublicIPID is omitted unless the practitioner named an address. See the
-	// create request: omitted means "allocate one", not "detach".
+	// create request: omitted means "the platform draws the address", not
+	// "detach".
 	PublicIPID string `json:"publicIpId,omitempty"`
 	// AcknowledgeConnectivityLoss carries the practitioner's acknowledgement
 	// from the resource's attribute of the same name. The provider never
-	// hardcodes it: a mode change re-addresses (public_ip -> nat) or re-attaches
-	// (nat -> public_ip) the VPC's only path off-net, dropping in-flight
-	// connections along with DNS and managed-service reachability, so the intent
-	// has to be stated in the configuration rather than inferred from the fact
-	// that an apply was approved.
+	// hardcodes it: a mode change re-attaches the VPC's only path off-net — the
+	// move a gateway left on the withdrawn `nat` mode has to make — dropping
+	// in-flight connections along with DNS and managed-service reachability, so
+	// the intent has to be stated in the configuration rather than inferred
+	// from the fact that an apply was approved.
 	AcknowledgeConnectivityLoss bool `json:"acknowledgeConnectivityLoss"`
 }
 

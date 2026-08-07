@@ -23,9 +23,10 @@ data "frostmoln_egress_gateway" "production" {
   vpc_id = frostmoln_vpc.production.id
 }
 
-# The address to hand a partner for their allow-list. Under "nat" it is a
-# platform address shared with other VPCs; under "public_ip" it is dedicated to
-# this VPC.
+# The address to hand a partner for their allow-list. Under "public_ip" it is
+# dedicated to this VPC. A gateway created before "nat" was withdrawn still
+# reports that mode, and its address is one shared with other VPCs — not one to
+# publish.
 output "production_egress_address" {
   value = data.frostmoln_egress_gateway.production.source_address
 }
@@ -47,7 +48,7 @@ output "production_egress_origin" {
 ### Read-Only
 
 - `id` (String) The gateway's identifier.
-- `mode` (String) How outbound traffic is addressed: "nat" (the platform's shared address, spending none of your public IP quota) or "public_ip" (a dedicated address, spending one).
+- `mode` (String) How outbound traffic is addressed. "public_ip" — the VPC has its own outbound gateway — is the only mode that can still be created. "nat", which egressed through an address shared with other VPCs, has been WITHDRAWN; a gateway created before the withdrawal still reports it, which is why this data source still reads the value.
 - `origin` (String) Who asked for the gateway: "explicit", "implicit_public_ip", "vpc_create", or "legacy" — which means no stored record exists, so the provenance is UNKNOWN (read it as "unknown", never as "old").
 - `source_address` (String) The public IPv4 address outbound traffic appears to come from. Null while the gateway is detached or the address is not yet known.
 - `status` (String) Observed state, read from the cloud rather than from stored desired state: "active" or "detached". What the platform observes depends on how the mode is realised, so "detached" is a prompt to check the VPC's outbound path rather than proof that anything is wrong.

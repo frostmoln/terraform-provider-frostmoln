@@ -33,8 +33,8 @@ const inUseByEgressGatewayDetail = "The platform refused the change because this
 	"for every instance in the VPC — and the ADDRESS itself would be gone for good: it returns " +
 	"to a shared regional pool and is re-issued to whoever asks for one next.\n\n" +
 	"Change the VPC's egress gateway first (`frostmoln_egress_gateway`): point its " +
-	"`public_ip_id` at a different address, or set `mode = \"nat\"`, which needs no address at " +
-	"all. Terraform sequences that for you when the gateway's `public_ip_id` refers to this " +
+	"`public_ip_id` at a different address, or remove the gateway entirely if the VPC needs no " +
+	"outbound path at all. Terraform sequences that for you when the gateway's `public_ip_id` refers to this " +
 	"resource — the gateway is then changed or destroyed before this address is.\n\n"
 
 // addPublicIPError appends the best diagnostic available for a SYNCHRONOUS

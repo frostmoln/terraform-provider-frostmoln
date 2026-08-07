@@ -70,9 +70,11 @@ func (d *egressGatewayDataSource) Schema(_ context.Context, _ datasource.SchemaR
 				Computed:    true,
 			},
 			"mode": schema.StringAttribute{
-				Description: "How outbound traffic is addressed: \"nat\" (the platform's shared " +
-					"address, spending none of your public IP quota) or \"public_ip\" (a dedicated " +
-					"address, spending one).",
+				Description: "How outbound traffic is addressed. \"public_ip\" — the VPC has its " +
+					"own outbound gateway — is the only mode that can still be created. \"nat\", " +
+					"which egressed through an address shared with other VPCs, has been WITHDRAWN; a " +
+					"gateway created before the withdrawal still reports it, which is why this data " +
+					"source still reads the value.",
 				Computed: true,
 			},
 			"source_address": schema.StringAttribute{

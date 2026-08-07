@@ -8,9 +8,10 @@ data "frostmoln_egress_gateway" "production" {
   vpc_id = frostmoln_vpc.production.id
 }
 
-# The address to hand a partner for their allow-list. Under "nat" it is a
-# platform address shared with other VPCs; under "public_ip" it is dedicated to
-# this VPC.
+# The address to hand a partner for their allow-list. Under "public_ip" it is
+# dedicated to this VPC. A gateway created before "nat" was withdrawn still
+# reports that mode, and its address is one shared with other VPCs — not one to
+# publish.
 output "production_egress_address" {
   value = data.frostmoln_egress_gateway.production.source_address
 }

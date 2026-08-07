@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/url"
 
-	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -19,10 +18,11 @@ import (
 )
 
 var (
-	_ resource.Resource                   = &egressGatewayResource{}
-	_ resource.ResourceWithImportState    = &egressGatewayResource{}
-	_ resource.ResourceWithModifyPlan     = &egressGatewayResource{}
-	_ resource.ResourceWithValidateConfig = &egressGatewayResource{}
+	_ resource.Resource                = &egressGatewayResource{}
+	_ resource.ResourceWithImportState = &egressGatewayResource{}
+	_ resource.ResourceWithModifyPlan  = &egressGatewayResource{}
+
+	_ validator.String = modeValidator{}
 )
 
 type egressGatewayResource struct {
@@ -64,15 +64,24 @@ func (r *egressGatewayResource) Schema(_ context.Context, _ resource.SchemaReque
 				},
 			},
 			"mode": schema.StringAttribute{
-				Description: "How outbound traffic is addressed. \"nat\" sends it through the " +
-					"platform's shared address and spends none of your public IP quota — the " +
-					"recommended mode, and a per-region capability (a region that does not offer it " +
-					"yet refuses it, and this provider reports that as \"not offered in this region " +
-					"yet\" rather than as invalid configuration). \"public_ip\" gives the VPC a " +
-					"dedicated, stable source address, suitable for giving a partner to allow-list, " +
-					"and spends one address from your tenant's public IP quota. There is no default: " +
-					"connectivity is a stated choice, never one a VPC acquires because a field was " +
-					"omitted.\n\n" +
+				Description: "How outbound traffic is addressed. `\"public_ip\"` is the only value " +
+					"a configuration can set: the VPC gets its own outbound gateway as its " +
+					"outbound path. Leave `public_ip_id` out and the platform draws the gateway an " +
+					"address of its own — not a public IP of yours, and not pinned; name one and the " +
+					"VPC egresses from an address of your own, which is what a partner allow-list " +
+					"entry or a DNS record needs.\n\n" +
+					"There is no default and no third value. A VPC with NO egress gateway — this " +
+					"resource simply not declared — is an isolated network, and that is how \"no " +
+					"connectivity\" is expressed: connectivity is a stated choice, never one a VPC " +
+					"acquires because a field was omitted.\n\n" +
+					"`\"nat\"`, which sent a VPC's outbound traffic through an address shared with " +
+					"other VPCs, is **WITHDRAWN** and is refused. It could not coexist with public " +
+					"IPs on instances in the same VPC, which is why it is gone. A gateway created " +
+					"before the withdrawal still REPORTS `\"nat\"`, and Terraform reads, refreshes and " +
+					"imports it normally — but not while the CONFIGURATION still says `\"nat\"`, which " +
+					"is refused at validate time and stops all of those. Set `mode = \"public_ip\"` " +
+					"(with `acknowledge_connectivity_loss = true`) to move it off, which is applied in " +
+					"place.\n\n" +
 					"Terraform uses the wire spelling `public_ip`. The `fm` CLI additionally accepts " +
 					"the hyphenated `public-ip` and normalises it, so a value copied from a CLI " +
 					"command has to be written with the underscore here.\n\n" +
@@ -88,11 +97,13 @@ func (r *egressGatewayResource) Schema(_ context.Context, _ resource.SchemaReque
 				// source address survives and the tenant is not taken off-net
 				// between a destroy and a create.
 				Validators: []validator.String{
-					// Both modes, always. `nat` is refused per-region at runtime,
-					// not here: a client-side validator would turn "this region
-					// has not shipped it yet" into a permanent configuration
-					// error that no server-side change can clear.
-					stringvalidator.OneOf(ModeNAT, ModePublicIP),
+					// One validator, not OneOf(ModePublicIP) plus a withdrawal
+					// check: a config that says `nat` would then collect TWO
+					// diagnostics, and the generic "value must be one of" is the
+					// one that reads like the whole story. It is not — `nat` is
+					// not a typo, it is a mode that existed, and the practitioner
+					// needs to be told that and told what replaces it.
+					modeValidator{},
 				},
 			},
 			"public_ip_id": schema.StringAttribute{
@@ -101,20 +112,30 @@ func (r *egressGatewayResource) Schema(_ context.Context, _ resource.SchemaReque
 					"it is a resource of your tenant's, so it survives this gateway being rebuilt, the " +
 					"VPC being recreated, and the address being handed to a partner to allow-list or " +
 					"published in DNS.\n\n" +
-					"Omit it and the platform allocates a public IP for the gateway and reports it back " +
-					"here — the address is still a real, listed, quota-counted resource of your tenant's, " +
-					"it is simply one you did not choose. Only \"public_ip\" gateways have one at all; " +
-					"under \"nat\" this is null, and setting it with `mode = \"nat\"` is refused before " +
-					"any request is sent.\n\n" +
+					"Omit it and the platform draws the gateway an address itself. That address is NOT a " +
+					"public IP of yours: it has no id, it does not appear in your public IP list, it draws " +
+					"on none of your public IP quota, and nothing pins it — it may change if the gateway is " +
+					"rebuilt. It is the right default for a VPC whose source address nobody outside it " +
+					"needs to know, and this attribute stays null there because there is no public IP for " +
+					"the platform to name.\n\n" +
+					"Naming an address is the option you take when something outside the VPC DOES need to " +
+					"know it. The address is then a resource of your tenant's — listed, and counted " +
+					"against your public IP quota like any other — and it is pinned as this gateway's " +
+					"source address.\n\n" +
+					"A gateway left on the WITHDRAWN \"nat\" mode has no public IP at all, so this reads " +
+					"as null there.\n\n" +
 					"Changing it is applied IN PLACE, never as a destroy/create: the platform " +
 					"re-addresses the existing gateway rather than tearing the VPC's only outbound path " +
 					"down and building a new one. It still changes the address the VPC's traffic arrives " +
 					"from, so it requires `acknowledge_connectivity_loss = true` exactly as a `mode` " +
 					"change does.\n\n" +
-					"Because the platform supplies a value when you do not, REMOVING this attribute from " +
-					"the configuration does not release the address or hand the choice back to the " +
-					"platform — Terraform keeps the recorded value and plans no change. To move the " +
-					"gateway to a different address, name the different address.\n\n" +
+					"REMOVING this attribute from the configuration does not release the address, and does " +
+					"not hand the gateway back to a platform-drawn one. The attribute is Computed as well " +
+					"as Optional, so an absent value resolves to the id already in state: there is no " +
+					"diff, no request is sent, and the gateway goes on egressing from the address you " +
+					"named. The API reads an absent `publicIpId` the same way — as \"keep the address " +
+					"this gateway has\" — so there is no way back to a platform-drawn address once one " +
+					"is named. To move the gateway to a different address, name the different address.\n\n" +
 					"The public IP must belong to this tenant and must not be attached to anything else. " +
 					"A public IP that is in use by an instance is refused, and so is one already serving " +
 					"another VPC's egress.",
@@ -158,11 +179,15 @@ func (r *egressGatewayResource) Schema(_ context.Context, _ resource.SchemaReque
 			},
 			"source_address": schema.StringAttribute{
 				Description: "The public IPv4 address outbound traffic appears to come from. Null " +
-					"while the gateway is detached or the address is not yet known. Under \"nat\" " +
-					"this is a platform address shared with other VPCs; under \"public_ip\" it is " +
-					"dedicated to this VPC and is the address of the `public_ip_id` public IP. A " +
-					"`mode` or `public_ip_id` change re-records it, so it plans as \"(known " +
-					"after apply)\" then and keeps its recorded value otherwise.",
+					"while the gateway is detached or the address is not yet known. It is dedicated to " +
+					"this VPC — no other VPC egresses from it — but dedicated is not the same as " +
+					"STABLE. Where `public_ip_id` names an address, this IS that address and it is " +
+					"pinned. Where it does not, this is the address the platform drew for the gateway: " +
+					"nothing pins it, so it may change if the gateway is rebuilt, and it is not an " +
+					"address to publish or hand a partner to allow-list. On a gateway left on the " +
+					"withdrawn \"nat\" mode it is an address shared with other VPCs. A `mode` or " +
+					"`public_ip_id` change re-records it, so it plans as \"(known after apply)\" then " +
+					"and keeps its recorded value otherwise.",
 				Computed: true,
 			},
 			"status": schema.StringAttribute{
@@ -204,45 +229,77 @@ func (r *egressGatewayResource) Configure(_ context.Context, req resource.Config
 	r.client = c
 }
 
-// ValidateConfig refuses `public_ip_id` together with `mode = "nat"`.
+// modeValidator accepts the one mode a configuration may set, and refuses the
+// WITHDRAWN one by name.
 //
-// The two are not merely redundant: under NAT the VPC leaves through the
-// platform's shared address and the named public IP is not used for egress at
-// all. Accepting the pair would leave a configuration that reads as "this VPC
-// egresses from this address" while the traffic arrives from somewhere else
-// entirely — the same false promise this attribute exists to end. It is caught
-// at validate time, so it is reported against the configuration rather than as
-// an apply-time API refusal.
+// It exists instead of stringvalidator.OneOf(ModePublicIP) for the `nat` case
+// alone. OneOf renders "value must be one of: [\"public_ip\"]", which reads as
+// "you made that up" — and `nat` was a real, documented, applied mode, so the
+// practitioner reading it has a working configuration that has just stopped
+// validating and no idea why. The diagnostic has to say the mode is withdrawn,
+// say what replaces it, and say that the gateway they already have still reads.
 //
-// A `mode` that is null or unknown (an interpolation not yet resolved) is not
-// judged here: validation runs before any value is known, and a guess would
-// turn a valid configuration into a permanent error.
-func (r *egressGatewayResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
-	var config EgressGatewayModel
-	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
-	if resp.Diagnostics.HasError() {
+// It also subsumes the `public_ip_id` + `mode = "nat"` pair check this resource
+// used to run in ValidateConfig: the pair is unreachable once `nat` itself is
+// refused, and a second diagnostic saying "public_ip_id is only meaningful with
+// public_ip" would imply the mode was otherwise fine.
+//
+// A null or unknown value is not judged — the framework does not call a
+// validator for either, and an unknown `mode` (a module output, another
+// resource's attribute) that resolves to `nat` during the apply is refused by
+// the API instead (see errCodeModeUnavailable).
+type modeValidator struct{}
+
+func (modeValidator) Description(_ context.Context) string {
+	return fmt.Sprintf("value must be %q (%q is withdrawn and cannot be set)", ModePublicIP, ModeNAT)
+}
+
+func (v modeValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (modeValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
 		return
 	}
 
-	if config.PublicIPID.IsNull() || config.PublicIPID.IsUnknown() {
+	switch req.ConfigValue.ValueString() {
+	case ModePublicIP:
 		return
+	case ModeNAT:
+		resp.Diagnostics.AddAttributeError(
+			req.Path,
+			"Egress gateway mode \"nat\" has been withdrawn",
+			"`mode = \"nat\"` sent this VPC's outbound traffic through an address shared with other "+
+				"VPCs. The mode is no longer offered and cannot be set: a VPC on it could not give any "+
+				"of its instances a public IP, because the platform needs the VPC's own gateway to "+
+				"attach one.\n\nUse `mode = \"public_ip\"`, which gives the VPC its own outbound "+
+				"gateway. Name a `public_ip_id` to egress from an address of your own — the one to give "+
+				"a partner for an allow-list or publish in DNS — or leave it out and the platform picks "+
+				"the address.\n\nA VPC that should have NO outbound path at all does not need a "+
+				"different mode: remove this resource entirely (which requires "+
+				"`acknowledge_connectivity_loss = true`), and the VPC is an isolated network.\n\n"+
+				"The GATEWAY you already have is not affected by this refusal: a gateway still on "+
+				"\"nat\" keeps working, and Terraform reads, refreshes and imports it normally — the "+
+				"provider records whatever mode the platform reports and never rewrites it. What is "+
+				"refused is the VALUE IN YOUR CONFIGURATION. This is an attribute validator, so it runs "+
+				"wherever Terraform validates the configuration — `terraform validate` and `plan`, and "+
+				"the validation `refresh` and `import` do first: while `mode = \"nat\"` is still written "+
+				"in the configuration, every one of them stops here. They read the gateway again as soon "+
+				"as `mode` is no longer \"nat\" in the configuration.\n\n"+
+				"To move it off, set `mode = \"public_ip\"` together with "+
+				"`acknowledge_connectivity_loss = true` — the change is applied in place, and it "+
+				"re-addresses the VPC's egress.",
+		)
+	default:
+		resp.Diagnostics.AddAttributeError(
+			req.Path,
+			"Invalid egress gateway mode",
+			fmt.Sprintf("`mode` must be %q. Got %q.\n\n\"none\" is not a mode: a VPC with no outbound "+
+				"path is this resource NOT DECLARED, not a gateway carrying a special value.",
+				ModePublicIP, req.ConfigValue.ValueString()),
+		)
 	}
-	if config.Mode.IsNull() || config.Mode.IsUnknown() {
-		return
-	}
-	if config.Mode.ValueString() != ModeNAT {
-		return
-	}
-
-	resp.Diagnostics.AddAttributeError(
-		path.Root("public_ip_id"),
-		"public_ip_id is only meaningful with mode = \"public_ip\"",
-		"`mode = \"nat\"` sends this VPC's outbound traffic through the platform's shared address, so "+
-			"the public IP named here would NOT be the address the traffic arrives from — it would stay "+
-			"unattached while the configuration read as though the VPC egressed from it.\n\n"+
-			"Either set `mode = \"public_ip\"` to egress from that address (it spends one address from "+
-			"your tenant's public IP quota), or remove `public_ip_id` and keep NAT, which spends none.",
-	)
 }
 
 // ModifyPlan resolves the three attributes the platform recomputes —
@@ -268,14 +325,18 @@ func (r *egressGatewayResource) ValidateConfig(ctx context.Context, req resource
 // So: unknown when the apply will re-address the gateway, and the state value
 // (UseStateForUnknown semantics, nulls included) when it will not.
 //
-// `public_ip_id` is Optional+Computed and needs the same treatment for one case
+// `public_ip_id` is Optional+Computed and gets the same treatment for one case
 // its UseStateForUnknown modifier CANNOT cover. Switching mode from "nat" to
 // "public_ip" without naming an address leaves a null config against a null
-// state, so the modifier pins the plan to null — and the apply then returns the
-// id of the address the platform allocated, which core rejects as "Provider
-// produced inconsistent result after apply". A configured value is never
-// touched here: it is the practitioner's choice, and overwriting it with
-// unknown would hide the very change being planned.
+// state, so the modifier would pin the plan to null ACROSS AN APPLY THAT
+// RE-ADDRESSES THE GATEWAY — and core rejects any planned value the apply
+// contradicts as "Provider produced inconsistent result after apply". Under
+// ADR-0114 an unnamed gateway runs on a platform-drawn address and the API
+// reports no `publicIpId` for it at all, so null is what comes back today; the
+// unknown is what stops the plan asserting that in advance, and keeps this
+// attribute consistent with the three observed values above. A configured value
+// is never touched here: it is the practitioner's choice, and overwriting it
+// with unknown would hide the very change being planned.
 func (r *egressGatewayResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	// A create marks every null Computed attribute unknown already, and a
 	// destroy plan has no attributes to resolve.
@@ -351,7 +412,8 @@ func (r *egressGatewayResource) Create(ctx context.Context, req resource.CreateR
 		VPCID: plan.VPCID.ValueString(),
 		Mode:  plan.Mode.ValueString(),
 		// Omitted unless the practitioner named one — the platform reads the
-		// absent field as "allocate one for me".
+		// absent field as "draw the gateway an address yourself", which
+		// creates no public IP resource for the tenant.
 		PublicIPID: configuredPublicIPID(plan.PublicIPID),
 	})
 	if err != nil {
@@ -376,9 +438,14 @@ func (r *egressGatewayResource) Create(ctx context.Context, req resource.CreateR
 }
 
 // configuredPublicIPID returns the id to put on the wire, or "" to omit the
-// field. Unknown and null both mean "the practitioner did not choose", which
-// the platform answers by allocating an address of the tenant's own — never by
-// detaching one.
+// field. Unknown and null both mean "the practitioner did not choose".
+//
+// The platform answers an omitted field by drawing the gateway an address of
+// its OWN (ADR-0114) — not by creating a public IP for the tenant, and never by
+// detaching one. On create that is the platform-drawn address: no id comes back,
+// no identity row, no quota, no metering, and nothing pins it. On update it is
+// read as "keep the address this gateway has", so an omitted field cannot
+// unpin a named one either.
 func configuredPublicIPID(v types.String) string {
 	if v.IsNull() || v.IsUnknown() {
 		return ""
@@ -515,9 +582,9 @@ func (r *egressGatewayResource) Update(ctx context.Context, req resource.UpdateR
 	}
 
 	// Refuse locally, before any request. The API requires the acknowledgement
-	// for BOTH directions (public_ip -> nat returns the address to the pool;
-	// nat -> public_ip re-attaches an external gateway) and it is not ceremony:
-	// either way the VPC's egress source changes, in-flight connections drop,
+	// for a mode change — the one that remains is moving a gateway off the
+	// withdrawn `nat` mode, which re-attaches an external gateway — and it is
+	// not ceremony: the VPC's egress source changes, in-flight connections drop,
 	// and the platform routes are rebuilt.
 	//
 	// A public_ip_id change is held to the same rule even where the API would
@@ -541,8 +608,8 @@ func (r *egressGatewayResource) Update(ctx context.Context, req resource.UpdateR
 		r.client.TenantPath("/egress-gateways/"+url.PathEscape(state.ID.ValueString())),
 		apiUpdateEgressGatewayRequest{
 			Mode: plan.Mode.ValueString(),
-			// Omitted when the practitioner named no address: the platform then
-			// allocates one for a "public_ip" gateway, and ignores it for "nat".
+			// Omitted when the practitioner named no address, which the API
+			// reads as "keep the address this gateway has" — never as "detach".
 			PublicIPID:                  configuredPublicIPID(plan.PublicIPID),
 			AcknowledgeConnectivityLoss: true,
 		})
@@ -609,8 +676,9 @@ func egressChangeAckDetail(modeChanged bool, plan, state *EgressGatewayModel) st
 }
 
 // quotedOrNone renders a possibly-null id for a diagnostic. A gateway that had
-// no recorded public IP is a real starting point (a legacy address, or NAT), so
-// it is named as such rather than printed as `""`.
+// no recorded public IP is a real starting point (a legacy address, or one still
+// on the withdrawn `nat` mode), so it is named as such rather than printed as
+// `""`.
 func quotedOrNone(v types.String) string {
 	if v.IsNull() || v.ValueString() == "" {
 		return "no recorded public IP"

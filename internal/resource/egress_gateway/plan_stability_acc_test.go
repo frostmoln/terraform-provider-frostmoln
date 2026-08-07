@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -42,6 +43,19 @@ type egressAPI struct {
 	publicIPID string
 	mode       string
 	address    string
+
+	// reportsUnnamedPublicIP makes the scripted platform answer with a
+	// publicIpId the CONFIGURATION never named — the `implicit_public_ip`
+	// shape, where the gateway exists because a public IP was associated with an
+	// instance and the platform attached one to carry it.
+	//
+	// Off (the default) is what an unnamed `mode = "public_ip"` create really
+	// does: the platform draws the gateway an address of its own and reports NO
+	// publicIpId, because there is no public IP resource to name (ADR-0114). The
+	// two settings are the two halves of the Optional+Computed trap — a NULL in
+	// state facing an unknown in the plan, and a known value in state the
+	// configuration never mentions — and both have to stay plan-stable.
+	reportsUnnamedPublicIP bool
 
 	// patchBodies records every PATCH body, so a test can assert what went on
 	// the wire without a second mock.
@@ -100,11 +114,13 @@ func (a *egressAPI) handler() http.Handler {
 			a.mode, _ = body["mode"].(string)
 			a.publicIPID, _ = body["publicIpId"].(string)
 			a.address = addressFor(a.publicIPID)
-			// An omitted publicIpId under public_ip means "allocate one for
-			// me", and the platform reports the id of what it allocated. That
-			// is the case a Computed attribute gets wrong most easily.
-			if a.publicIPID == "" && a.mode == "public_ip" {
-				a.publicIPID = "pip-allocated"
+			// An omitted publicIpId under public_ip means "the platform draws
+			// the address itself", and it reports NO publicIpId back — the
+			// address is not a public IP resource, so there is nothing to name.
+			// The opt-in below is the other real shape: a gateway the platform
+			// attached around an address the configuration never mentioned.
+			if a.publicIPID == "" && a.mode == "public_ip" && a.reportsUnnamedPublicIP {
+				a.publicIPID = "pip-implicit"
 				a.address = addressFor(a.publicIPID)
 			}
 			_ = json.NewEncoder(w).Encode(a.gateway())
@@ -170,11 +186,11 @@ func startEgressAPI(t *testing.T) *egressAPI {
 // proof for the case the plan calls out: `mode = "public_ip"` with no
 // `public_ip_id`.
 //
-// The platform allocates an address and reports its id, so the value in state
-// is one the configuration never mentions. That is precisely the shape that
-// produces either "Provider produced inconsistent result after apply" (if the
-// planned value was pinned known and wrong) or a diff on every subsequent run
-// (if a null in state is left facing an unknown in the plan).
+// The platform draws the gateway an address of its own and reports NO
+// publicIpId (ADR-0114) — no id, no public IP resource — so an Optional+Computed
+// attribute ends up holding a NULL in state. Null-versus-unknown is a diff on
+// every single run, and it is the failure mode that survives a careless
+// UseStateForUnknown.
 //
 // Every apply step here is followed by terraform-plugin-testing's own
 // refresh-and-plan, which fails the step on a non-empty plan — so the third
@@ -200,11 +216,11 @@ resource "frostmoln_egress_gateway" "test" {
 			{
 				Config: config,
 				Check: resource.ComposeAggregateTestCheckFunc(
-					// The platform's choice landed in state, even though the
-					// configuration never named it.
-					resource.TestCheckResourceAttr("frostmoln_egress_gateway.test", "public_ip_id", "pip-allocated"),
-					resource.TestCheckResourceAttr("frostmoln_egress_gateway.test", "source_address", "198.51.100.22"),
-					resource.TestCheckResourceAttr("frostmoln_egress_gateway.test", "origin", "explicit_public_ip"),
+					// No public IP resource exists, so the attribute is NULL —
+					// not "" — and the gateway still has a source address.
+					resource.TestCheckNoResourceAttr("frostmoln_egress_gateway.test", "public_ip_id"),
+					resource.TestCheckResourceAttr("frostmoln_egress_gateway.test", "source_address", "198.51.100.1"),
+					resource.TestCheckResourceAttr("frostmoln_egress_gateway.test", "origin", "explicit"),
 				),
 			},
 			{
@@ -222,13 +238,55 @@ resource "frostmoln_egress_gateway" "test" {
 	})
 }
 
-// TestAccEgressGatewayNATOmittedPublicIPIDStaysNull is the other half of the
-// perpetual-diff proof: under NAT the platform reports no public IP at all, so
-// state holds a NULL for an Optional+Computed attribute. Null-versus-unknown is
-// a diff on every run, and it is the failure mode that survives a careless
-// UseStateForUnknown.
-func TestAccEgressGatewayNATOmittedPublicIPIDStaysNull(t *testing.T) {
-	startEgressAPI(t)
+// TestAccEgressGatewayUnnamedPublicIPIDIsPlanStable is the other half of the
+// perpetual-diff proof: the platform answers with a public IP id the
+// CONFIGURATION never named, so an Optional+Computed attribute holds a known
+// value with nothing in the config to match it against. Pinned known and wrong,
+// that is "Provider produced inconsistent result after apply"; re-planned as
+// unknown on every run, it is a permanent diff.
+//
+// It is a real shape, not a hypothetical: a gateway the platform attached
+// because a public IP was associated with an instance in the VPC reports that
+// address (`origin` = "implicit_public_ip"), and importing it leaves exactly
+// this state against a configuration that names no address. An UNNAMED create
+// does NOT produce it — that path gets a platform-drawn address with no id at
+// all, which is the test above.
+func TestAccEgressGatewayUnnamedPublicIPIDIsPlanStable(t *testing.T) {
+	api := startEgressAPI(t)
+	api.reportsUnnamedPublicIP = true
+
+	const config = `
+resource "frostmoln_egress_gateway" "test" {
+  vpc_id                        = "vpc-1"
+  mode                          = "public_ip"
+  acknowledge_connectivity_loss = true
+}
+`
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: acctest.TestAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.TestCheckResourceAttr(
+					"frostmoln_egress_gateway.test", "public_ip_id", "pip-implicit"),
+			},
+			{
+				Config:   config,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+// TestAccEgressGatewayRefusesWithdrawnNATMode is the end-to-end half of the
+// withdrawal: real Terraform, real validation, no request reaching the API.
+//
+// PlanOnly, and the API is asserted untouched — the refusal has to happen in
+// the provider, not as an apply-time rejection after the practitioner has
+// approved a plan.
+func TestAccEgressGatewayRefusesWithdrawnNATMode(t *testing.T) {
+	api := startEgressAPI(t)
 
 	const config = `
 resource "frostmoln_egress_gateway" "test" {
@@ -242,16 +300,18 @@ resource "frostmoln_egress_gateway" "test" {
 		ProtoV6ProviderFactories: acctest.TestAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: config,
-				Check: resource.TestCheckNoResourceAttr(
-					"frostmoln_egress_gateway.test", "public_ip_id"),
-			},
-			{
-				Config:   config,
-				PlanOnly: true,
+				Config:      config,
+				PlanOnly:    true,
+				ExpectError: regexp.MustCompile(`(?s)"nat" has been withdrawn.*public_ip`),
 			},
 		},
 	})
+
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.mode != "" {
+		t.Errorf("the withdrawn mode must be refused before any request is sent; the API recorded mode %q", api.mode)
+	}
 }
 
 // TestAccEgressGatewayPublicIPIDChangeIsInPlace is the destroy/recreate proof.
