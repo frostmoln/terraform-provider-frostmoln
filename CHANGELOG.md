@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.0] - 2026-08-07
+
+### 🚀 Features
+
+- *(image)* Add the frostmoln_image resource (#277)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.8.6 (#275)
+- *(egress)* Stop offering the withdrawn NAT egress mode (ADR-0114) (#279)
+
 ## [0.22.1] - 2026-08-07
 
 ### 🐛 Bug Fixes
