@@ -220,5 +220,5 @@ provider "frostmoln" {
 | Snapshots | `/v1/tenants/{t}/snapshots` | Immutable after create |
 | Instances | `/v1/tenants/{t}/instances` | Async, resize via actions |
 | API Keys | `/v1/api-keys` | Key only on create |
-| Images | `/v1/images` | Read-only, public |
+| Images | `/v1/images` | Reads public; writes (BYOI custom images) need the `custom-images` entitlement. NOT tenant-scoped — compute serves no `/v1/tenants/{t}/images` routes. Create → upload to object storage → import → poll |
 | Flavors | `/v1/flavors` | Read-only, public |

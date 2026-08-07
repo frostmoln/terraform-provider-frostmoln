@@ -53,6 +53,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/egress_gateway"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/iam_policy"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/iam_policy_attachment"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/image"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/instance_port_security_groups"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/kubernetes_cluster"
@@ -376,6 +377,7 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		volume.NewResource,
 		volume_attachment.NewResource,
 		snapshot.NewResource,
+		image.NewResource,
 		instance.NewResource,
 		instance_port_security_groups.NewResource,
 		kubernetes_cluster.NewResource,

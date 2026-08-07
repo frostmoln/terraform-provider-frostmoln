@@ -32,6 +32,7 @@ var mustReplaceOnRealChange = map[string][]string{
 	"frostmoln_api_key":               {"expires_at"},
 	"frostmoln_apache_instance":       {"php_enabled", "php_version"},
 	"frostmoln_bucket":                {"region", "storage_class"},
+	"frostmoln_image":                 {"container_format"},
 	"frostmoln_instance":              {"zone"},
 	"frostmoln_kubernetes_cluster":    {"version", "control_plane_tier", "region", "scheme", "addons", "initial_node_pool.name"},
 	"frostmoln_kubernetes_node_pool":  {"name"},
