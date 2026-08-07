@@ -460,7 +460,7 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 	tagsChanged := !plan.Tags.Equal(state.Tags)
 
 	if nameChanged || tagsChanged {
-		updateReq := plan.toUpdateRequest(ctx, &resp.Diagnostics)
+		updateReq := plan.toUpdateRequest(ctx, tagsChanged, &resp.Diagnostics)
 		if resp.Diagnostics.HasError() {
 			return
 		}

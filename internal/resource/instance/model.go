@@ -100,9 +100,18 @@ type apiCreateInstanceRequest struct {
 // OpenStack []string "tags"); sending the map as "metadata" makes tags persist.
 // Security groups are NOT in this body — they change via the dedicated
 // PUT /instances/{id}/security-groups subresource (see setSecurityGroups).
+//
+// Tags is a *map, not a map: the backend keys tag replacement on the metadata
+// key being PRESENT, so an absent key means "leave tags alone" while `{}` means
+// "clear every tag". `omitempty` on a plain map drops an empty map too, which
+// made removing the last tag (or the whole tags block) a no-op on the wire —
+// fromAPI then read the still-present tags back and Terraform raised
+// "Provider produced inconsistent result after apply" on a diff that never
+// converged. On a pointer, `omitempty` keys on nil only, so an intentional empty
+// map still reaches the wire as {"metadata":{}}.
 type apiUpdateInstanceRequest struct {
-	Name *string           `json:"name,omitempty"`
-	Tags map[string]string `json:"metadata,omitempty"`
+	Name *string            `json:"name,omitempty"`
+	Tags *map[string]string `json:"metadata,omitempty"`
 }
 
 // apiResizeInstanceRequest is the body for POST /instances/{id}/resize.
@@ -197,7 +206,15 @@ func (m *InstanceModel) toCreateRequest(ctx context.Context, diags *diag.Diagnos
 }
 
 // toUpdateRequest converts the Terraform model to an API update request.
-func (m *InstanceModel) toUpdateRequest(ctx context.Context, diags *diag.Diagnostics) apiUpdateInstanceRequest {
+//
+// tagsChanged reports whether the planned tags differ from state (the Update
+// method's own check). metadata is emitted only when they changed, and then
+// ALWAYS as a non-nil map — including for a null/unknown tags attribute, which
+// is how "the practitioner deleted the whole tags block" reaches this function.
+// Both "no tags left" spellings therefore serialize as {"metadata":{}}, the only
+// body the backend treats as "clear every tag"; when tags did not change the key
+// is absent and the backend leaves them untouched.
+func (m *InstanceModel) toUpdateRequest(ctx context.Context, tagsChanged bool, diags *diag.Diagnostics) apiUpdateInstanceRequest {
 	req := apiUpdateInstanceRequest{}
 
 	if !m.Name.IsNull() && !m.Name.IsUnknown() {
@@ -205,10 +222,12 @@ func (m *InstanceModel) toUpdateRequest(ctx context.Context, diags *diag.Diagnos
 		req.Name = &name
 	}
 
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
+	if tagsChanged {
 		tags := make(map[string]string)
-		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		req.Tags = tags
+		if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
+			diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
+		}
+		req.Tags = &tags
 	}
 
 	return req

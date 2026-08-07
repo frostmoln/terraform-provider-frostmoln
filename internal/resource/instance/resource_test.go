@@ -242,7 +242,7 @@ func TestInstanceModelToUpdateRequest(t *testing.T) {
 		Tags:           tags,
 	}
 
-	req := model.toUpdateRequest(ctx, &diags)
+	req := model.toUpdateRequest(ctx, true, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
@@ -252,8 +252,81 @@ func TestInstanceModelToUpdateRequest(t *testing.T) {
 	}
 	// Security groups are not updatable via the API (no backend field) — the
 	// update request carries only name + tags (as metadata).
-	if req.Tags["env"] != "prod" {
+	if req.Tags == nil || (*req.Tags)["env"] != "prod" {
 		t.Errorf("expected tag env=prod, got %v", req.Tags)
+	}
+}
+
+// The compute backend keys tag replacement on the metadata key being PRESENT, so
+// the wire body — not just the Go value — decides whether tags are cleared. With
+// `map[string]string` + omitempty an empty map vanished from the body, the
+// backend skipped the write, fromAPI read the still-present tags back, and
+// Terraform failed with "inconsistent result after apply" on a diff that never
+// converged. Assert the serialized JSON, since that is the contract.
+func TestInstanceUpdateRequestMetadataSerialization(t *testing.T) {
+	ctx := context.Background()
+
+	emptyTags, d := types.MapValueFrom(ctx, types.StringType, map[string]string{})
+	if d.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", d.Errors())
+	}
+	oneTag, d := types.MapValueFrom(ctx, types.StringType, map[string]string{"env": "prod"})
+	if d.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", d.Errors())
+	}
+
+	cases := []struct {
+		name        string
+		tags        types.Map
+		tagsChanged bool
+		want        string
+	}{
+		{
+			// Practitioner removed the last tag: {} must reach the wire.
+			name:        "emptied tag map sends an explicit empty metadata object",
+			tags:        emptyTags,
+			tagsChanged: true,
+			want:        `{"metadata":{}}`,
+		},
+		{
+			// Practitioner deleted the whole tags block: null is the same intent.
+			name:        "null tag map with a tag change sends an explicit empty metadata object",
+			tags:        types.MapNull(types.StringType),
+			tagsChanged: true,
+			want:        `{"metadata":{}}`,
+		},
+		{
+			// Name-only update: metadata absent means "leave tags alone".
+			name:        "unchanged tags omit metadata entirely",
+			tags:        oneTag,
+			tagsChanged: false,
+			want:        `{}`,
+		},
+		{
+			name:        "changed tags send the map",
+			tags:        oneTag,
+			tagsChanged: true,
+			want:        `{"metadata":{"env":"prod"}}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diags := diag.Diagnostics{}
+			model := InstanceModel{Tags: tc.tags}
+			req := model.toUpdateRequest(ctx, tc.tagsChanged, &diags)
+			if diags.HasError() {
+				t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+			}
+
+			body, err := json.Marshal(req)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if string(body) != tc.want {
+				t.Errorf("got %s, want %s", body, tc.want)
+			}
+		})
 	}
 }
 
@@ -2261,7 +2334,7 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			// Tags are sent under "metadata" (apiUpdateInstanceRequest.Tags maps
 			// to json "metadata", matching the compute update contract).
-			if req.Tags["env"] != "prod" {
+			if req.Tags == nil || (*req.Tags)["env"] != "prod" {
 				t.Errorf("expected tag env=prod (metadata), got %v", req.Tags)
 			}
 			_ = json.NewEncoder(w).Encode(apiInstance{
