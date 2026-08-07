@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.1] - 2026-08-07
+
+### 🐛 Bug Fixes
+
+- *(instance)* Let an emptied tags block actually clear the instance's tags (#281)
+
 ## [0.23.0] - 2026-08-07
 
 ### 🚀 Features
