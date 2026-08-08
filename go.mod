@@ -9,7 +9,7 @@ require (
 	github.com/hashicorp/terraform-plugin-go v0.31.0
 	github.com/hashicorp/terraform-plugin-log v0.11.0
 	github.com/hashicorp/terraform-plugin-testing v1.16.0
-	go.frostmoln.internal/oidc v0.3.10
+	go.frostmoln.internal/oidc v0.3.11
 	gopkg.in/yaml.v3 v3.0.1
 )
 
