@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -24,7 +25,7 @@ func TestPoolToCreateRequestNoPersistence(t *testing.T) {
 		ProxyProtocol: types.StringValue("v2"),
 		ListenerID:    types.StringValue("l-1"),
 	}
-	req := m.toCreateRequest()
+	req := m.toCreateRequest(context.Background(), &diag.Diagnostics{})
 	if req.Name != "p1" || req.Protocol != "http" || req.LBAlgorithm != "round_robin" {
 		t.Errorf("unexpected req: %+v", req)
 	}
@@ -51,7 +52,7 @@ func TestPoolToCreateRequestWithPersistence(t *testing.T) {
 			PersistenceGranularity: types.StringValue("255.255.255.0"),
 		},
 	}
-	req := m.toCreateRequest()
+	req := m.toCreateRequest(context.Background(), &diag.Diagnostics{})
 	if req.SessionPersistence == nil {
 		t.Fatal("expected session persistence")
 	}
@@ -68,7 +69,7 @@ func TestPoolToUpdateRequest(t *testing.T) {
 		Name:        types.StringValue("renamed"),
 		LBAlgorithm: types.StringValue("least_connections"),
 	}
-	req := m.toUpdateRequest()
+	req := m.toUpdateRequest(context.Background(), types.MapNull(types.StringType), &diag.Diagnostics{})
 	if req.Name == nil || *req.Name != "renamed" {
 		t.Error("expected name in update")
 	}
@@ -166,6 +167,12 @@ func TestPoolConfigureWrongType(t *testing.T) {
 
 func buildPoolState(t *testing.T, model PoolModel) tfsdk.State {
 	t.Helper()
+	// A zero-value types.Map carries no element type, which the framework
+	// rejects when set into a schema-typed plan/state. Normalise it to a typed
+	// null so fixtures that do not care about tags stay as they were.
+	if model.Tags.ElementType(context.Background()) == nil {
+		model.Tags = types.MapNull(types.StringType)
+	}
 	r := NewResource()
 	var schemaResp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
@@ -178,6 +185,12 @@ func buildPoolState(t *testing.T, model PoolModel) tfsdk.State {
 
 func buildPoolPlan(t *testing.T, model PoolModel) tfsdk.Plan {
 	t.Helper()
+	// A zero-value types.Map carries no element type, which the framework
+	// rejects when set into a schema-typed plan/state. Normalise it to a typed
+	// null so fixtures that do not care about tags stay as they were.
+	if model.Tags.ElementType(context.Background()) == nil {
+		model.Tags = types.MapNull(types.StringType)
+	}
 	r := NewResource()
 	var schemaResp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)

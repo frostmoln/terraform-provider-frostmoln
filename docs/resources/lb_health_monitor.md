@@ -26,6 +26,12 @@ resource "frostmoln_lb_health_monitor" "backend" {
   url_path         = "/healthz"
   http_method      = "GET"
   expected_codes   = "200"
+
+  # The monitor's OWN tags — separate from its pool's and the load balancer's.
+  # Removing this block removes every tag from the monitor.
+  tags = {
+    env = "prod"
+  }
 }
 ```
 
@@ -44,6 +50,7 @@ resource "frostmoln_lb_health_monitor" "backend" {
 - `expected_codes` (String) The HTTP status codes considered healthy (http/https monitors), e.g. "200" or "200-299".
 - `http_method` (String) The HTTP method used for the health check (http/https monitors).
 - `max_retries` (Number) The number of successful checks before a member is marked healthy.
+- `tags` (Map of String) Key-value tags for the health monitor. These are the monitor's own tags, separate from its pool's and the load balancer's.
 - `timeout` (Number) The time in seconds to wait for a health check response.
 - `url_path` (String) The HTTP path to probe (http/https monitors).
 

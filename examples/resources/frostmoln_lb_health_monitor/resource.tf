@@ -11,4 +11,10 @@ resource "frostmoln_lb_health_monitor" "backend" {
   url_path         = "/healthz"
   http_method      = "GET"
   expected_codes   = "200"
+
+  # The monitor's OWN tags — separate from its pool's and the load balancer's.
+  # Removing this block removes every tag from the monitor.
+  tags = {
+    env = "prod"
+  }
 }

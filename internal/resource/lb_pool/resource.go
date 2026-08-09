@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
@@ -116,6 +117,11 @@ func (r *poolResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 					},
 				},
 			},
+			"tags": schema.MapAttribute{
+				Description: "Key-value tags for the pool. These are the pool's own tags, separate from the load balancer's.",
+				ElementType: types.StringType,
+				Optional:    true,
+			},
 			"created_at": schema.StringAttribute{
 				Description: "The creation timestamp.",
 				Computed:    true,
@@ -154,7 +160,10 @@ func (r *poolResource) Create(ctx context.Context, req resource.CreateRequest, r
 	}
 
 	lbID := plan.LoadBalancerID.ValueString()
-	createReq := plan.toCreateRequest()
+	createReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath(fmt.Sprintf("/load-balancers/%s/pools", lbID)), createReq)
 	if err != nil {
@@ -245,18 +254,50 @@ func (r *poolResource) Update(ctx context.Context, req resource.UpdateRequest, r
 
 	lbID := state.LoadBalancerID.ValueString()
 	poolID := state.ID.ValueString()
-	updateReq := plan.toUpdateRequest()
+	poolPath := r.client.TenantPath(fmt.Sprintf("/load-balancers/%s/pools/%s", lbID, poolID))
+	updateReq := plan.toUpdateRequest(ctx, state.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
-	apiResp, err := r.client.Put(ctx, r.client.TenantPath(fmt.Sprintf("/load-balancers/%s/pools/%s", lbID, poolID)), updateReq)
+	apiResp, err := r.client.Put(ctx, poolPath, updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Update Pool", err.Error())
 		return
 	}
 
-	pool, err := client.ParseResponse[apiPool](apiResp)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to Parse Pool Response", err.Error())
-		return
+	// Like create, a pool UPDATE routes through provisioning → 202 + an
+	// Operation envelope, never the updated pool. Parsing that envelope as a
+	// pool yields a zero-valued object, which would blank every attribute in
+	// state; poll the operation and re-read instead. A non-202 body is parsed
+	// directly for a sync backend.
+	var pool *apiPool
+	if apiResp.IsAccepted() {
+		op, opErr := client.ParseResponse[client.Operation](apiResp)
+		if opErr != nil {
+			resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
+			return
+		}
+		if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute); waitErr != nil {
+			resp.Diagnostics.AddError("Pool Update Failed", waitErr.Error())
+			return
+		}
+		readResp, readErr := r.client.Get(ctx, poolPath, nil)
+		if readErr != nil {
+			resp.Diagnostics.AddError("Failed to Read Pool After Update", readErr.Error())
+			return
+		}
+		pool, err = client.ParseResponse[apiPool](readResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to Parse Pool Response", err.Error())
+			return
+		}
+	} else {
+		pool, err = client.ParseResponse[apiPool](apiResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to Parse Pool Response", err.Error())
+			return
+		}
 	}
 
 	plan.fromAPI(ctx, pool, &resp.Diagnostics)

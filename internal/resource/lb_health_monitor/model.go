@@ -2,6 +2,9 @@
 package lb_health_monitor
 
 import (
+	"context"
+
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -19,48 +22,58 @@ type HealthMonitorModel struct {
 	URLPath        types.String `tfsdk:"url_path"`
 	HTTPMethod     types.String `tfsdk:"http_method"`
 	ExpectedCodes  types.String `tfsdk:"expected_codes"`
+	Tags           types.Map    `tfsdk:"tags"`
 	CreatedAt      types.String `tfsdk:"created_at"`
 	UpdatedAt      types.String `tfsdk:"updated_at"`
 }
 
 // apiHealthMonitor is the API representation of a health monitor.
 type apiHealthMonitor struct {
-	ID            string `json:"id"`
-	PoolID        string `json:"poolId"`
-	Type          string `json:"type"`
-	Delay         int    `json:"delay"`
-	Timeout       int    `json:"timeout"`
-	MaxRetries    int    `json:"maxRetries"`
-	HTTPMethod    string `json:"httpMethod,omitempty"`
-	URLPath       string `json:"urlPath,omitempty"`
-	ExpectedCodes string `json:"expectedCodes,omitempty"`
-	CreatedAt     string `json:"createdAt"`
-	UpdatedAt     string `json:"updatedAt,omitempty"`
+	ID            string            `json:"id"`
+	PoolID        string            `json:"poolId"`
+	Type          string            `json:"type"`
+	Delay         int               `json:"delay"`
+	Timeout       int               `json:"timeout"`
+	MaxRetries    int               `json:"maxRetries"`
+	HTTPMethod    string            `json:"httpMethod,omitempty"`
+	URLPath       string            `json:"urlPath,omitempty"`
+	ExpectedCodes string            `json:"expectedCodes,omitempty"`
+	Tags          map[string]string `json:"tags,omitempty"`
+	CreatedAt     string            `json:"createdAt"`
+	UpdatedAt     string            `json:"updatedAt,omitempty"`
 }
 
 // apiCreateHealthMonitorRequest is the API request to create a health monitor.
 type apiCreateHealthMonitorRequest struct {
-	Type          string `json:"type"`
-	Delay         int    `json:"delay,omitempty"`
-	Timeout       int    `json:"timeout,omitempty"`
-	MaxRetries    int    `json:"maxRetries,omitempty"`
-	HTTPMethod    string `json:"httpMethod,omitempty"`
-	URLPath       string `json:"urlPath,omitempty"`
-	ExpectedCodes string `json:"expectedCodes,omitempty"`
+	Type          string            `json:"type"`
+	Delay         int               `json:"delay,omitempty"`
+	Timeout       int               `json:"timeout,omitempty"`
+	MaxRetries    int               `json:"maxRetries,omitempty"`
+	HTTPMethod    string            `json:"httpMethod,omitempty"`
+	URLPath       string            `json:"urlPath,omitempty"`
+	ExpectedCodes string            `json:"expectedCodes,omitempty"`
+	Tags          map[string]string `json:"tags,omitempty"`
 }
 
 // apiUpdateHealthMonitorRequest is the API request to update a health monitor.
+//
+// ClearTags carries the same absent-vs-empty contract as the pool's: the write
+// is served by provisioning and forwarded to network over gRPC, where an empty
+// map is indistinguishable from an absent one, so only the explicit flag
+// empties the set. Sending both is a 400.
 type apiUpdateHealthMonitorRequest struct {
-	Delay         *int    `json:"delay,omitempty"`
-	Timeout       *int    `json:"timeout,omitempty"`
-	MaxRetries    *int    `json:"maxRetries,omitempty"`
-	HTTPMethod    *string `json:"httpMethod,omitempty"`
-	URLPath       *string `json:"urlPath,omitempty"`
-	ExpectedCodes *string `json:"expectedCodes,omitempty"`
+	Delay         *int              `json:"delay,omitempty"`
+	Timeout       *int              `json:"timeout,omitempty"`
+	MaxRetries    *int              `json:"maxRetries,omitempty"`
+	HTTPMethod    *string           `json:"httpMethod,omitempty"`
+	URLPath       *string           `json:"urlPath,omitempty"`
+	ExpectedCodes *string           `json:"expectedCodes,omitempty"`
+	Tags          map[string]string `json:"tags,omitempty"`
+	ClearTags     bool              `json:"clearTags,omitempty"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
-func (m *HealthMonitorModel) toCreateRequest() apiCreateHealthMonitorRequest {
+func (m *HealthMonitorModel) toCreateRequest(ctx context.Context, diags *diag.Diagnostics) apiCreateHealthMonitorRequest {
 	req := apiCreateHealthMonitorRequest{
 		Type:       m.Type.ValueString(),
 		Delay:      int(m.Delay.ValueInt64()),
@@ -77,12 +90,22 @@ func (m *HealthMonitorModel) toCreateRequest() apiCreateHealthMonitorRequest {
 	if !m.ExpectedCodes.IsNull() && !m.ExpectedCodes.IsUnknown() {
 		req.ExpectedCodes = m.ExpectedCodes.ValueString()
 	}
+	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
+		tags := make(map[string]string)
+		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
+		req.Tags = tags
+	}
 
 	return req
 }
 
 // toUpdateRequest converts the Terraform model to an API update request.
-func (m *HealthMonitorModel) toUpdateRequest() apiUpdateHealthMonitorRequest {
+//
+// prior is the tag set currently in state; a null/empty plan over a non-empty
+// prior means the config dropped the `tags` block, which must go out as an
+// explicit clearTags rather than as an omission the backend reads as "leave
+// them alone". See apiUpdateHealthMonitorRequest.
+func (m *HealthMonitorModel) toUpdateRequest(ctx context.Context, prior types.Map, diags *diag.Diagnostics) apiUpdateHealthMonitorRequest {
 	req := apiUpdateHealthMonitorRequest{}
 
 	if !m.Delay.IsNull() && !m.Delay.IsUnknown() {
@@ -109,13 +132,24 @@ func (m *HealthMonitorModel) toUpdateRequest() apiUpdateHealthMonitorRequest {
 		v := m.ExpectedCodes.ValueString()
 		req.ExpectedCodes = &v
 	}
+	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
+		tags := make(map[string]string)
+		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
+		if len(tags) > 0 {
+			req.Tags = tags
+		} else if len(prior.Elements()) > 0 {
+			req.ClearTags = true
+		}
+	} else if m.Tags.IsNull() && len(prior.Elements()) > 0 {
+		req.ClearTags = true
+	}
 
 	return req
 }
 
 // fromAPI populates the Terraform model from an API response. lbID is preserved
 // from state/plan since the health monitor object does not carry it.
-func (m *HealthMonitorModel) fromAPI(lbID string, hm *apiHealthMonitor) {
+func (m *HealthMonitorModel) fromAPI(ctx context.Context, lbID string, hm *apiHealthMonitor, diags *diag.Diagnostics) {
 	m.ID = types.StringValue(hm.ID)
 	m.LoadBalancerID = types.StringValue(lbID)
 	m.PoolID = types.StringValue(hm.PoolID)
@@ -147,5 +181,15 @@ func (m *HealthMonitorModel) fromAPI(lbID string, hm *apiHealthMonitor) {
 		m.UpdatedAt = types.StringValue(hm.UpdatedAt)
 	} else {
 		m.UpdatedAt = types.StringNull()
+	}
+
+	// An untagged monitor reads back as null, not as an empty map, so a config
+	// with no `tags` block does not diff forever.
+	if len(hm.Tags) > 0 {
+		tagsMap, d := types.MapValueFrom(ctx, types.StringType, hm.Tags)
+		diags.Append(d...)
+		m.Tags = tagsMap
+	} else {
+		m.Tags = types.MapNull(types.StringType)
 	}
 }

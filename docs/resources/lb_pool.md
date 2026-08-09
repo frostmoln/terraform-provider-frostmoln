@@ -32,6 +32,13 @@ resource "frostmoln_lb_pool" "backend" {
     cookie_name         = "SESSIONID"
     persistence_timeout = 3600
   }
+
+  # The pool's OWN tags. The load balancer's tags are separate and are not
+  # inherited; removing this block removes every tag from the pool.
+  tags = {
+    env   = "prod"
+    owner = "team-a"
+  }
 }
 ```
 
@@ -50,6 +57,7 @@ resource "frostmoln_lb_pool" "backend" {
 - `listener_id` (String) The ID of the listener this pool is attached to. Changing this forces a new resource.
 - `proxy_protocol` (String) The PROXY protocol version sent to backend members: none (default), v1, or v2.
 - `session_persistence` (Attributes) Session persistence configuration for the pool. Omit for no persistence. (see [below for nested schema](#nestedatt--session_persistence))
+- `tags` (Map of String) Key-value tags for the pool. These are the pool's own tags, separate from the load balancer's.
 
 ### Read-Only
 

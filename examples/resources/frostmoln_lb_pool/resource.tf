@@ -17,4 +17,11 @@ resource "frostmoln_lb_pool" "backend" {
     cookie_name         = "SESSIONID"
     persistence_timeout = 3600
   }
+
+  # The pool's OWN tags. The load balancer's tags are separate and are not
+  # inherited; removing this block removes every tag from the pool.
+  tags = {
+    env   = "prod"
+    owner = "team-a"
+  }
 }

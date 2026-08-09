@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
@@ -101,6 +102,11 @@ func (r *healthMonitorResource) Schema(_ context.Context, _ resource.SchemaReque
 				Description: "The HTTP status codes considered healthy (http/https monitors), e.g. \"200\" or \"200-299\".",
 				Optional:    true,
 			},
+			"tags": schema.MapAttribute{
+				Description: "Key-value tags for the health monitor. These are the monitor's own tags, separate from its pool's and the load balancer's.",
+				ElementType: types.StringType,
+				Optional:    true,
+			},
 			"created_at": schema.StringAttribute{
 				Description: "The creation timestamp.",
 				Computed:    true,
@@ -145,7 +151,10 @@ func (r *healthMonitorResource) Create(ctx context.Context, req resource.CreateR
 
 	lbID := plan.LoadBalancerID.ValueString()
 	poolID := plan.PoolID.ValueString()
-	createReq := plan.toCreateRequest()
+	createReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	apiResp, err := r.client.Post(ctx, r.monitorPath(lbID, poolID), createReq)
 	if err != nil {
@@ -186,7 +195,7 @@ func (r *healthMonitorResource) Create(ctx context.Context, req resource.CreateR
 		}
 	}
 
-	plan.fromAPI(lbID, hm)
+	plan.fromAPI(ctx, lbID, hm, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -216,7 +225,7 @@ func (r *healthMonitorResource) Read(ctx context.Context, req resource.ReadReque
 		return
 	}
 
-	state.fromAPI(lbID, hm)
+	state.fromAPI(ctx, lbID, hm, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -231,7 +240,10 @@ func (r *healthMonitorResource) Update(ctx context.Context, req resource.UpdateR
 
 	lbID := state.LoadBalancerID.ValueString()
 	poolID := state.PoolID.ValueString()
-	updateReq := plan.toUpdateRequest()
+	updateReq := plan.toUpdateRequest(ctx, state.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	apiResp, err := r.client.Put(ctx, r.monitorPath(lbID, poolID), updateReq)
 	if err != nil {
@@ -239,13 +251,40 @@ func (r *healthMonitorResource) Update(ctx context.Context, req resource.UpdateR
 		return
 	}
 
-	hm, err := client.ParseResponse[apiHealthMonitor](apiResp)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to Parse Health Monitor Response", err.Error())
-		return
+	// Like create, a health-monitor UPDATE routes through provisioning → 202 +
+	// an Operation envelope, never the updated monitor. Parsing that envelope as
+	// a monitor yields a zero-valued object, which would blank every attribute
+	// in state; poll the operation and re-read instead.
+	var hm *apiHealthMonitor
+	if apiResp.IsAccepted() {
+		op, opErr := client.ParseResponse[client.Operation](apiResp)
+		if opErr != nil {
+			resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
+			return
+		}
+		if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute); waitErr != nil {
+			resp.Diagnostics.AddError("Health Monitor Update Failed", waitErr.Error())
+			return
+		}
+		readResp, readErr := r.client.Get(ctx, r.monitorPath(lbID, poolID), nil)
+		if readErr != nil {
+			resp.Diagnostics.AddError("Failed to Read Health Monitor After Update", readErr.Error())
+			return
+		}
+		hm, err = client.ParseResponse[apiHealthMonitor](readResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to Parse Health Monitor Response", err.Error())
+			return
+		}
+	} else {
+		hm, err = client.ParseResponse[apiHealthMonitor](apiResp)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to Parse Health Monitor Response", err.Error())
+			return
+		}
 	}
 
-	plan.fromAPI(lbID, hm)
+	plan.fromAPI(ctx, lbID, hm, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 

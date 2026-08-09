@@ -71,7 +71,7 @@ func TestPoolToCreateRequestSessionPersistence(t *testing.T) {
 			PersistenceTimeout: types.Int64Value(60),
 		},
 	}
-	req := m.toCreateRequest()
+	req := m.toCreateRequest(context.Background(), &diag.Diagnostics{})
 	if req.SessionPersistence == nil {
 		t.Fatalf("expected session_persistence in create request")
 	}
@@ -85,13 +85,13 @@ func TestPoolToCreateRequestSessionPersistence(t *testing.T) {
 		t.Errorf("expected 60, got %d", req.SessionPersistence.PersistenceTimeout)
 	}
 
-	up := m.toUpdateRequest()
+	up := m.toUpdateRequest(context.Background(), types.MapNull(types.StringType), &diag.Diagnostics{})
 	if up.SessionPersistence == nil || up.SessionPersistence.Type != "APP_COOKIE" {
 		t.Errorf("expected session_persistence in update request")
 	}
 
 	empty := &PoolModel{Name: types.StringValue("x"), Protocol: types.StringValue("tcp"), LBAlgorithm: types.StringValue("round_robin")}
-	if empty.toCreateRequest().SessionPersistence != nil {
+	if empty.toCreateRequest(context.Background(), &diag.Diagnostics{}).SessionPersistence != nil {
 		t.Errorf("expected nil session_persistence when unset")
 	}
 }
@@ -152,6 +152,7 @@ func emptyPool(ctx context.Context, schemaResp resource.SchemaResponse) tftypes.
 		"lb_algorithm":        tftypes.NewValue(tftypes.String, nil),
 		"proxy_protocol":      tftypes.NewValue(tftypes.String, nil),
 		"session_persistence": tftypes.NewValue(spType, nil),
+		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"created_at":          tftypes.NewValue(tftypes.String, nil),
 		"updated_at":          tftypes.NewValue(tftypes.String, nil),
 	})

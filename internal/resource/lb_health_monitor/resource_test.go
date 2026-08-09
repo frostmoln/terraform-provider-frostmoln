@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -26,7 +27,7 @@ func TestHealthMonitorModelFromAPI(t *testing.T) {
 	}
 
 	var model HealthMonitorModel
-	model.fromAPI("lb-1", hm)
+	model.fromAPI(context.Background(), "lb-1", hm, &diag.Diagnostics{})
 	if model.ID.ValueString() != "hm-1" {
 		t.Errorf("expected ID hm-1, got %s", model.ID.ValueString())
 	}
@@ -56,7 +57,7 @@ func TestHealthMonitorToUpdateRequestExpectedCodes(t *testing.T) {
 		MaxRetries:    types.Int64Value(3),
 		ExpectedCodes: types.StringValue("200,202"),
 	}
-	req := m.toUpdateRequest()
+	req := m.toUpdateRequest(context.Background(), types.MapNull(types.StringType), &diag.Diagnostics{})
 	if req.ExpectedCodes == nil {
 		t.Fatalf("expected ExpectedCodes in update request, got nil")
 	}
@@ -66,7 +67,7 @@ func TestHealthMonitorToUpdateRequestExpectedCodes(t *testing.T) {
 
 	// Null expected_codes should be omitted.
 	empty := &HealthMonitorModel{ExpectedCodes: types.StringNull()}
-	if empty.toUpdateRequest().ExpectedCodes != nil {
+	if empty.toUpdateRequest(context.Background(), types.MapNull(types.StringType), &diag.Diagnostics{}).ExpectedCodes != nil {
 		t.Errorf("expected nil ExpectedCodes when unset")
 	}
 }
@@ -123,6 +124,7 @@ func emptyHM(ctx context.Context, schemaResp resource.SchemaResponse) tftypes.Va
 		"url_path":         tftypes.NewValue(tftypes.String, nil),
 		"http_method":      tftypes.NewValue(tftypes.String, nil),
 		"expected_codes":   tftypes.NewValue(tftypes.String, nil),
+		"tags":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"created_at":       tftypes.NewValue(tftypes.String, nil),
 		"updated_at":       tftypes.NewValue(tftypes.String, nil),
 	})

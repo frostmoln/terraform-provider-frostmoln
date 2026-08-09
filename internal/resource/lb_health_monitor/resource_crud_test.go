@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -26,7 +27,7 @@ func TestHealthMonitorToCreateRequest(t *testing.T) {
 		URLPath:       types.StringValue("/healthz"),
 		ExpectedCodes: types.StringValue("200-299"),
 	}
-	req := m.toCreateRequest()
+	req := m.toCreateRequest(context.Background(), &diag.Diagnostics{})
 	if req.Type != "http" || req.Delay != 5 || req.Timeout != 3 || req.MaxRetries != 3 {
 		t.Errorf("unexpected req: %+v", req)
 	}
@@ -45,7 +46,7 @@ func TestHealthMonitorToCreateRequestTCP(t *testing.T) {
 		URLPath:       types.StringNull(),
 		ExpectedCodes: types.StringNull(),
 	}
-	req := m.toCreateRequest()
+	req := m.toCreateRequest(context.Background(), &diag.Diagnostics{})
 	if req.HTTPMethod != "" || req.URLPath != "" || req.ExpectedCodes != "" {
 		t.Errorf("expected empty http fields for tcp monitor, got %+v", req)
 	}
@@ -60,7 +61,7 @@ func TestHealthMonitorToUpdateRequest(t *testing.T) {
 		URLPath:       types.StringValue("/ping"),
 		ExpectedCodes: types.StringValue("200"),
 	}
-	req := m.toUpdateRequest()
+	req := m.toUpdateRequest(context.Background(), types.MapNull(types.StringType), &diag.Diagnostics{})
 	if req.Delay == nil || *req.Delay != 7 {
 		t.Error("expected delay in update")
 	}
@@ -83,7 +84,7 @@ func TestHealthMonitorFromAPINulls(t *testing.T) {
 		CreatedAt:  "2025-01-01T00:00:00Z",
 	}
 	var m HealthMonitorModel
-	m.fromAPI("lb-1", hm)
+	m.fromAPI(context.Background(), "lb-1", hm, &diag.Diagnostics{})
 	if !m.HTTPMethod.IsNull() || !m.URLPath.IsNull() || !m.ExpectedCodes.IsNull() {
 		t.Error("expected null http fields")
 	}
@@ -134,6 +135,12 @@ func TestHealthMonitorConfigureWrongType(t *testing.T) {
 
 func buildHMState(t *testing.T, model HealthMonitorModel) tfsdk.State {
 	t.Helper()
+	// A zero-value types.Map carries no element type, which the framework
+	// rejects when set into a schema-typed plan/state. Normalise it to a typed
+	// null so fixtures that do not care about tags stay as they were.
+	if model.Tags.ElementType(context.Background()) == nil {
+		model.Tags = types.MapNull(types.StringType)
+	}
 	r := NewResource()
 	var schemaResp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
@@ -146,6 +153,12 @@ func buildHMState(t *testing.T, model HealthMonitorModel) tfsdk.State {
 
 func buildHMPlan(t *testing.T, model HealthMonitorModel) tfsdk.Plan {
 	t.Helper()
+	// A zero-value types.Map carries no element type, which the framework
+	// rejects when set into a schema-typed plan/state. Normalise it to a typed
+	// null so fixtures that do not care about tags stay as they were.
+	if model.Tags.ElementType(context.Background()) == nil {
+		model.Tags = types.MapNull(types.StringType)
+	}
 	r := NewResource()
 	var schemaResp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
