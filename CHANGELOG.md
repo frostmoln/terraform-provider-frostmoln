@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.24.0] - 2026-08-09
+
+### 🚀 Features
+
+- *(lb)* Give lb_pool and lb_health_monitor a tags attribute (#287)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(gateway)* Stop documenting a mode and a name nobody ever used (#289)
+- *(gateway)* Stop shipping a mode and a name that no longer exist (#291)
+
 ## [0.23.2] - 2026-08-09
 
 ### 🐛 Bug Fixes
