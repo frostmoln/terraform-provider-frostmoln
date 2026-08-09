@@ -39,8 +39,8 @@ type apiVPC struct {
 // apiCreateVPCRequest is the API request to create a VPC.
 //
 // It deliberately carries NO `gateway` connectivity choice, even though
-// the network service's CreateVPCRequest accepts one ("none" | "public_ip" —
-// "nat" is withdrawn) and provisioning does forward it (its network handler
+// the network service's CreateVPCRequest accepts one ("none" | "public_ip")
+// and provisioning does forward it (its network handler
 // binds `gateway` and the CreateNetwork activity sets it on the gRPC
 // request).
 //

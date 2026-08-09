@@ -27,17 +27,6 @@ const (
 	errCodePublicIPUnavailable = "GATEWAY_PUBLIC_IP_UNAVAILABLE"
 
 	// errCodePublicIPNotAllowed (400) has exactly ONE cause: `publicIpId` was
-	// supplied together with the WITHDRAWN `mode: nat`
-	// (network/internal/domain/gateway.go). It is NOT the code for an
-	// address that belongs to another tenant or does not exist — those are 404s.
-	//
-	// `mode` refuses "nat" at validate time, so this arrives only when the value
-	// could not be judged there: an interpolation the provider is handed as
-	// unknown (a module output, another resource's attribute) that resolves to
-	// "nat" during the apply. Kept for exactly that case, and the diagnostic
-	// must name the real cause — a message about tenants would send the
-	// practitioner to check their credentials while the fault is two lines of
-	// their own configuration.
 	errCodePublicIPNotAllowed = "GATEWAY_PUBLIC_IP_NOT_ALLOWED"
 )
 
@@ -49,15 +38,6 @@ const (
 // are routinely mis-presented by clients that pass the raw envelope through:
 //
 //   - GATEWAY_MODE_UNAVAILABLE is a 400, which reads as "fix your syntax". It is
-//     not: `nat` was a real, documented, applied mode, and it has been WITHDRAWN
-//     permanently. The configuration has to change — waiting does not make it
-//     apply — and the diagnostic has to say so, because "not available" on its
-//     own reads as "not available yet".
-//   - GATEWAY_POOL_EXHAUSTED is a 503 platform inventory limit, TEMPORARY and
-//     worth retrying. Presented as a quota error it sends the practitioner to
-//     support to ask for something support cannot grant.
-//   - GATEWAY_EXISTS means the object exists and Terraform does not know
-//     about it — an import, not a second create.
 func addGatewayError(diags *diag.Diagnostics, fallback string, err error) {
 	var apiErr *client.APIError
 	if !errors.As(err, &apiErr) {

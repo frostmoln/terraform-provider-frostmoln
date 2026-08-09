@@ -57,35 +57,6 @@ func TestExampleDoesNotPreArmTheDestroyGate(t *testing.T) {
 	}
 }
 
-// TestExampleDoesNotOfferTheWithdrawnNATMode: the example is the snippet
-// practitioners copy, so a live `mode = "nat"` in it hands them a
-// configuration that fails validation on their first plan — and, worse, one
-// that reads like the recommended shape. The withdrawal must still be TAUGHT
-// (a reader arriving with a nat gateway needs to know it is withdrawn, not
-// broken), so it may appear only in a comment.
-func TestExampleDoesNotOfferTheWithdrawnNATMode(t *testing.T) {
-	example := readExample(t)
-
-	for i, line := range strings.Split(example, "\n") {
-		code, _, _ := strings.Cut(line, "#")
-		if strings.Contains(code, `"nat"`) {
-			t.Errorf("example line %d offers the withdrawn mode in live configuration: %s",
-				i+1, strings.TrimSpace(line))
-		}
-	}
-
-	if !strings.Contains(example, `"nat"`) {
-		t.Error("the example must still explain (as a comment) that \"nat\" is withdrawn: a reader with " +
-			"an existing NAT gateway otherwise learns it from a failed plan")
-	}
-	if !strings.Contains(strings.ToLower(example), "withdrawn") {
-		t.Error("the example must name the withdrawal explicitly")
-	}
-	if !strings.Contains(example, `mode   = "public_ip"`) {
-		t.Error("the example must show the mode that IS offered")
-	}
-}
-
 // TestExampleCarriesNoInternalNames: the example renders onto the public
 // Terraform Registry. Internal component names publish platform topology and
 // mean nothing to a customer.

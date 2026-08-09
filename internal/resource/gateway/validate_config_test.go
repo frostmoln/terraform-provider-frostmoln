@@ -93,35 +93,29 @@ func gatewayDiagsHaveError(diags []*tfprotov6.Diagnostic) bool {
 	return false
 }
 
-// TestEgressGatewayValidateResourceConfigRefusesNAT is the falsifier for the
-// withdrawal wording. `mode = "nat"` must fail the validate RPC itself — which
-// is what makes "while it is still in the configuration, validate/plan/refresh/
-// import all stop here" true, and what made the old "they all still read it"
-// false.
-func TestEgressGatewayValidateResourceConfigRefusesNAT(t *testing.T) {
+// TestGatewayValidateResourceConfigRefusesAnUnknownMode drives the real
+// ValidateResourceConfig RPC, not the validator in isolation. That distinction
+// is the point: it is what makes "validate, plan, refresh and import all stop
+// here" true rather than assumed, and a unit test on the validator alone cannot
+// establish it.
+func TestGatewayValidateResourceConfigRefusesAnUnknownMode(t *testing.T) {
 	t.Parallel()
 
-	diags := validateEgressGatewayConfig(t, "nat")
+	diags := validateEgressGatewayConfig(t, "not-a-mode")
 	if !gatewayDiagsHaveError(diags) {
-		t.Fatal("mode = \"nat\" must be refused by ValidateResourceConfig; if it is not, " +
+		t.Fatal("an unknown mode must be refused by ValidateResourceConfig; if it is not, " +
 			"the schema's claim about when the refusal fires is wrong")
 	}
 
-	text := gatewayDiagText(diags)
-	if !strings.Contains(strings.ToLower(text), "withdrawn") {
-		t.Errorf("the refusal must name the withdrawal, got:\n%s", text)
-	}
-	// The refusal must not repeat the claim it replaced. "all still read it" told
-	// the practitioner to leave `mode = "nat"` where it was.
-	for _, forbidden := range []string{"all still read it", "Only setting the value is refused"} {
-		if strings.Contains(text, forbidden) {
-			t.Errorf("the refusal still claims %q, which this very RPC contradicts:\n%s", forbidden, text)
-		}
+	// The message has to name the one valid value. A refusal that only says
+	// "invalid" leaves the practitioner guessing.
+	if text := gatewayDiagText(diags); !strings.Contains(text, "public_ip") {
+		t.Errorf("the refusal must name the accepted mode, got:\n%s", text)
 	}
 }
 
 // TestEgressGatewayValidateResourceConfigAcceptsPublicIP is the other half: the
-// refusal must be specific to the withdrawn value, not a resource that fails
+// refusal must be specific to the bad value, not a resource that fails
 // validation for everyone.
 func TestEgressGatewayValidateResourceConfigAcceptsPublicIP(t *testing.T) {
 	t.Parallel()

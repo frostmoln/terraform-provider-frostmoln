@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -277,41 +276,6 @@ resource "frostmoln_gateway" "test" {
 			},
 		},
 	})
-}
-
-// TestAccEgressGatewayRefusesWithdrawnNATMode is the end-to-end half of the
-// withdrawal: real Terraform, real validation, no request reaching the API.
-//
-// PlanOnly, and the API is asserted untouched — the refusal has to happen in
-// the provider, not as an apply-time rejection after the practitioner has
-// approved a plan.
-func TestAccEgressGatewayRefusesWithdrawnNATMode(t *testing.T) {
-	api := startGatewayAPI(t)
-
-	const config = `
-resource "frostmoln_gateway" "test" {
-  vpc_id                        = "vpc-1"
-  mode                          = "nat"
-  acknowledge_connectivity_loss = true
-}
-`
-
-	resource.Test(t, resource.TestCase{
-		ProtoV6ProviderFactories: acctest.TestAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config:      config,
-				PlanOnly:    true,
-				ExpectError: regexp.MustCompile(`(?s)"nat" has been withdrawn.*public_ip`),
-			},
-		},
-	})
-
-	api.mu.Lock()
-	defer api.mu.Unlock()
-	if api.mode != "" {
-		t.Errorf("the withdrawn mode must be refused before any request is sent; the API recorded mode %q", api.mode)
-	}
 }
 
 // TestAccEgressGatewayPublicIPIDChangeIsInPlace is the destroy/recreate proof.

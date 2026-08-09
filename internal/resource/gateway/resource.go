@@ -251,7 +251,7 @@ func (r *gatewayResource) Configure(_ context.Context, req resource.ConfigureReq
 type modeValidator struct{}
 
 func (modeValidator) Description(_ context.Context) string {
-	return fmt.Sprintf("value must be %q (%q is withdrawn and cannot be set)", ModePublicIP, ModeNAT)
+	return fmt.Sprintf("value must be %q", ModePublicIP)
 }
 
 func (v modeValidator) MarkdownDescription(ctx context.Context) string {
@@ -263,35 +263,7 @@ func (modeValidator) ValidateString(_ context.Context, req validator.StringReque
 		return
 	}
 
-	switch req.ConfigValue.ValueString() {
-	case ModePublicIP:
-		return
-	case ModeNAT:
-		resp.Diagnostics.AddAttributeError(
-			req.Path,
-			"Gateway mode \"nat\" has been withdrawn",
-			"`mode = \"nat\"` sent this VPC's outbound traffic through an address shared with other "+
-				"VPCs. The mode is no longer offered and cannot be set: a VPC on it could not give any "+
-				"of its instances a public IP, because the platform needs the VPC's own gateway to "+
-				"attach one.\n\nUse `mode = \"public_ip\"`, which gives the VPC its own outbound "+
-				"gateway. Name a `public_ip_id` to egress from an address of your own — the one to give "+
-				"a partner for an allow-list or publish in DNS — or leave it out and the platform picks "+
-				"the address.\n\nA VPC that should have NO outbound path at all does not need a "+
-				"different mode: remove this resource entirely (which requires "+
-				"`acknowledge_connectivity_loss = true`), and the VPC is an isolated network.\n\n"+
-				"The GATEWAY you already have is not affected by this refusal: a gateway still on "+
-				"\"nat\" keeps working, and Terraform reads, refreshes and imports it normally — the "+
-				"provider records whatever mode the platform reports and never rewrites it. What is "+
-				"refused is the VALUE IN YOUR CONFIGURATION. This is an attribute validator, so it runs "+
-				"wherever Terraform validates the configuration — `terraform validate` and `plan`, and "+
-				"the validation `refresh` and `import` do first: while `mode = \"nat\"` is still written "+
-				"in the configuration, every one of them stops here. They read the gateway again as soon "+
-				"as `mode` is no longer \"nat\" in the configuration.\n\n"+
-				"To move it off, set `mode = \"public_ip\"` together with "+
-				"`acknowledge_connectivity_loss = true` — the change is applied in place, and it "+
-				"re-addresses the VPC's outbound path.",
-		)
-	default:
+	if req.ConfigValue.ValueString() != ModePublicIP {
 		resp.Diagnostics.AddAttributeError(
 			req.Path,
 			"Invalid gateway mode",

@@ -21,6 +21,12 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
 
+// otherMode is any value that is NOT ModePublicIP. Several tests below drive
+// ModifyPlan across a mode CHANGE, which needs two distinct values — not a
+// second real mode. The provider stores whatever the API reports, so the plan
+// logic under test does not care what the other value spells.
+const otherMode = "some-other-mode"
+
 // --- helpers ---
 
 func gwSchema(t *testing.T) schema.Schema {
@@ -209,7 +215,6 @@ func TestEgressGatewayModeOffersOnlyPublicIP(t *testing.T) {
 		valid bool
 	}{
 		{ModePublicIP, true},
-		{ModeNAT, false},  // WITHDRAWN
 		{"none", false},   // "none" is the ABSENCE of the resource, not a mode
 		{"shared", false}, // never a mode at all
 	} {
@@ -217,31 +222,6 @@ func TestEgressGatewayModeOffersOnlyPublicIP(t *testing.T) {
 		if got := !diags.HasError(); got != tc.valid {
 			t.Errorf("mode %q: accepted=%v, want %v (%v)", tc.value, got, tc.valid, diags)
 		}
-	}
-}
-
-// TestEgressGatewayModeNATRefusalExplainsTheWithdrawal: `nat` is not a typo. It
-// was a documented, applied mode, so a practitioner meeting this refusal has a
-// configuration that worked yesterday. A bare "value must be one of" reads as
-// "you made that up" and leaves them with no idea what to write instead, or
-// whether the gateway they already have is now broken — so the diagnostic has
-// to say the mode is withdrawn, name what replaces it, and say that an existing
-// NAT gateway still reads.
-func TestEgressGatewayModeNATRefusalExplainsTheWithdrawal(t *testing.T) {
-	diags := validateMode(t, types.StringValue(ModeNAT))
-	if !diags.HasError() {
-		t.Fatal("mode = \"nat\" must be refused: the mode has been withdrawn")
-	}
-	text := diagText(diags)
-	for _, want := range []string{"withdrawn", ModePublicIP, "import"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("the withdrawal refusal must mention %q, got:\n%s", want, text)
-		}
-	}
-	// The old validator was stringvalidator.OneOf, whose message is exactly this
-	// and says nothing a practitioner can act on.
-	if strings.Contains(text, "value must be one of") {
-		t.Errorf("the refusal must not be the generic OneOf message:\n%s", text)
 	}
 }
 
@@ -276,8 +256,8 @@ func TestEgressGatewayModeDoesNotRequireReplace(t *testing.T) {
 	req := planmodifier.StringRequest{
 		Path:        path.Root("mode"),
 		StateValue:  types.StringValue(ModePublicIP),
-		PlanValue:   types.StringValue(ModeNAT),
-		ConfigValue: types.StringValue(ModeNAT),
+		PlanValue:   types.StringValue(otherMode),
+		ConfigValue: types.StringValue(otherMode),
 	}
 	resp := &planmodifier.StringResponse{PlanValue: req.PlanValue}
 	for _, m := range attr.PlanModifiers {
@@ -438,7 +418,7 @@ func modifyPlan(t *testing.T, planRaw, stateRaw tftypes.Value, configRaw ...tfty
 // apply". No retry clears it; the practitioner is stuck.
 func TestEgressGatewayModifyPlanModeChangeRecomputesObservedValues(t *testing.T) {
 	// Exactly what the framework proposes: prior values, new mode.
-	planRaw := gwValue("gw-1", "vpc-1", ModeNAT, "46.246.117.231", "active", "vpc_create", boolPtr(true))
+	planRaw := gwValue("gw-1", "vpc-1", otherMode, "46.246.117.231", "active", "vpc_create", boolPtr(true))
 	stateRaw := gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "vpc_create", boolPtr(true))
 
 	planned := modifyPlan(t, planRaw, stateRaw)
@@ -480,8 +460,8 @@ func TestEgressGatewayModifyPlanReplacementRecomputesObservedValues(t *testing.T
 // port carries no IPv4.
 func TestEgressGatewayModifyPlanKeepsNullSourceAddress(t *testing.T) {
 	// What the framework proposes when state.source_address is null: unknown.
-	planRaw := gwPlanUnknownComputed("vpc-1", ModeNAT, nil)
-	stateRaw := gwValue("gw-1", "vpc-1", ModeNAT, "", "detached", "explicit", nil)
+	planRaw := gwPlanUnknownComputed("vpc-1", otherMode, nil)
+	stateRaw := gwValue("gw-1", "vpc-1", otherMode, "", "detached", "explicit", nil)
 
 	planned := modifyPlan(t, planRaw, stateRaw)
 
@@ -504,7 +484,7 @@ func TestEgressGatewayModifyPlanKeepsNullSourceAddress(t *testing.T) {
 func TestApplyToModelAbsentSourceAddressIsNull(t *testing.T) {
 	var m GatewayModel
 	applyToModel(&m, &apiGateway{
-		ID: "gw-1", VPCID: "vpc-1", Mode: ModeNAT, Status: "detached", Origin: "legacy",
+		ID: "gw-1", VPCID: "vpc-1", Mode: otherMode, Status: "detached", Origin: "legacy",
 	})
 	if !m.SourceAddress.IsNull() {
 		t.Errorf("expected null source_address, got %v", m.SourceAddress)
@@ -588,7 +568,7 @@ func TestEgressGatewayCreateModeUnavailable(t *testing.T) {
 
 	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
 	r.Create(context.Background(), resource.CreateRequest{
-		Plan: tfsdk.Plan{Schema: s, Raw: gwValue("", "vpc-1", ModeNAT, "", "", "", nil)},
+		Plan: tfsdk.Plan{Schema: s, Raw: gwValue("", "vpc-1", otherMode, "", "", "", nil)},
 	}, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -712,61 +692,14 @@ func TestEgressGatewayReadUsesVPCFilteredList(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayReadKeepsWithdrawnNATMode is the other half of the
-// withdrawal, and the half that is easy to get wrong.
-//
-// `nat` cannot be SET any more, but VPCs are still on it. A read that refused
-// the value, or "helpfully" normalised it to public_ip, would be far worse than
-// offering the mode: refusing turns every refresh of a live gateway into an
-// error the practitioner cannot clear from their configuration, and rewriting
-// records a mode the platform is not running — after which the next apply would
-// see no drift and never move the VPC, or Terraform would plan a change nobody
-// asked for against the VPC's only outbound path.
-//
-// So: the API's value goes to state verbatim.
-func TestEgressGatewayReadKeepsWithdrawnNATMode(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/gateways" {
-			_, _ = w.Write([]byte(`{"gateways":[{"id":"gw-1","vpcId":"vpc-1","mode":"nat",
-				"sourceAddress":"46.246.117.240","status":"active","origin":"explicit"}],"totalCount":1}`))
-			return
-		}
-		http.Error(w, "unexpected", http.StatusNotFound)
-	}))
-	defer server.Close()
-
-	r := configuredResource(t, server.URL)
-	sch := gwSchema(t)
-	raw := gwValue("gw-1", "vpc-1", ModeNAT, "46.246.117.240", "active", "explicit", boolPtr(true))
-
-	resp := &resource.ReadResponse{State: tfsdk.State{Schema: sch, Raw: raw}}
-	r.Read(context.Background(), resource.ReadRequest{State: tfsdk.State{Schema: sch, Raw: raw}}, resp)
-
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("reading a gateway still on the withdrawn mode must not error: %v", resp.Diagnostics)
-	}
-	if resp.State.Raw.IsNull() {
-		t.Fatal("a gateway still on the withdrawn mode must not be dropped from state")
-	}
-
-	var state GatewayModel
-	resp.State.Get(context.Background(), &state)
-	if got := state.Mode.ValueString(); got != ModeNAT {
-		t.Errorf("the read must record the mode the platform reports verbatim; got %q, want %q", got, ModeNAT)
-	}
-	if got := state.SourceAddress.ValueString(); got != "46.246.117.240" {
-		t.Errorf("unexpected source_address %q", got)
-	}
-}
-
 // TestEgressGatewayModifyPlanWithdrawnNATIsStable: a gateway still on `nat`,
 // with nothing changed, must plan clean. An unknown planted on any observed
 // attribute here is a diff on every single run — `terraform plan
 // -detailed-exitcode` returns 2 forever — for a resource whose only remaining
 // operations are "leave it alone" and "move it off, deliberately".
 func TestEgressGatewayModifyPlanWithdrawnNATIsStable(t *testing.T) {
-	planRaw := gwPlanUnknownComputed("vpc-1", ModeNAT, nil)
-	stateRaw := gwValue("gw-1", "vpc-1", ModeNAT, "46.246.117.240", "active", "explicit", nil)
+	planRaw := gwPlanUnknownComputed("vpc-1", otherMode, nil)
+	stateRaw := gwValue("gw-1", "vpc-1", otherMode, "46.246.117.240", "active", "explicit", nil)
 
 	planned := modifyPlan(t, planRaw, stateRaw)
 
@@ -913,7 +846,7 @@ func TestEgressGatewayReadRefusesResponseWithoutID(t *testing.T) {
 
 	r := configuredResource(t, server.URL)
 	s := gwSchema(t)
-	raw := gwValue("gw-1", "vpc-1", ModeNAT, "", "active", "explicit", nil)
+	raw := gwValue("gw-1", "vpc-1", otherMode, "", "active", "explicit", nil)
 
 	resp := &resource.ReadResponse{State: tfsdk.State{Schema: s, Raw: raw}}
 	r.Read(context.Background(), resource.ReadRequest{State: tfsdk.State{Schema: s, Raw: raw}}, resp)
@@ -1015,7 +948,7 @@ func TestEgressGatewayUpdateModeRequiresAcknowledgement(t *testing.T) {
 	r := configuredResource(t, server.URL)
 	s := gwSchema(t)
 	state := gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit", nil)
-	plan := gwValue("gw-1", "vpc-1", ModeNAT, "46.246.117.231", "active", "explicit", nil)
+	plan := gwValue("gw-1", "vpc-1", otherMode, "46.246.117.231", "active", "explicit", nil)
 
 	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s, Raw: state}}
 	r.Update(context.Background(), resource.UpdateRequest{
@@ -1059,7 +992,7 @@ func TestEgressGatewayUpdateModeInPlace(t *testing.T) {
 
 	r := configuredResource(t, server.URL)
 	s := gwSchema(t)
-	state := gwValue("gw-1", "vpc-1", ModeNAT, "46.246.117.231", "active", "explicit", boolPtr(true))
+	state := gwValue("gw-1", "vpc-1", otherMode, "46.246.117.231", "active", "explicit", boolPtr(true))
 	plan := gwPlanUnknownComputed("vpc-1", ModePublicIP, boolPtr(true))
 
 	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s, Raw: state}}
@@ -1150,7 +1083,7 @@ func TestEgressGatewayUpdateRefusesEmptyID(t *testing.T) {
 
 	r := configuredResource(t, server.URL)
 	s := gwSchema(t)
-	state := gwValue("", "vpc-1", ModeNAT, "46.246.117.231", "active", "explicit", boolPtr(true))
+	state := gwValue("", "vpc-1", otherMode, "46.246.117.231", "active", "explicit", boolPtr(true))
 	plan := gwValue("", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit", boolPtr(true))
 
 	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s, Raw: state}}
@@ -1175,7 +1108,7 @@ func TestEgressGatewayUpdateSurfacesPoolExhausted(t *testing.T) {
 
 	r := configuredResource(t, server.URL)
 	s := gwSchema(t)
-	state := gwValue("gw-1", "vpc-1", ModeNAT, "", "active", "explicit", boolPtr(true))
+	state := gwValue("gw-1", "vpc-1", otherMode, "", "active", "explicit", boolPtr(true))
 	plan := gwValue("gw-1", "vpc-1", ModePublicIP, "", "active", "explicit", boolPtr(true))
 
 	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s, Raw: state}}
@@ -1541,7 +1474,7 @@ func TestEgressGatewayModifyPlanKeepsOmittedPublicIPID(t *testing.T) {
 func TestEgressGatewayModifyPlanUnknownPinOnModeSwitch(t *testing.T) {
 	planned := modifyPlan(t,
 		gwPlanUnknownComputed("vpc-1", ModePublicIP, boolPtr(true)),
-		gwValue("gw-1", "vpc-1", ModeNAT, "185.1.2.3", "active", "explicit", boolPtr(true)))
+		gwValue("gw-1", "vpc-1", otherMode, "185.1.2.3", "active", "explicit", boolPtr(true)))
 
 	if !planned.PublicIPID.IsUnknown() {
 		t.Errorf("switching into public_ip mode without naming an address must plan public_ip_id as "+
@@ -1808,7 +1741,7 @@ func TestEgressGatewayUpdateModeSwitchOmitsUnknownPin(t *testing.T) {
 
 	r := configuredResource(t, server.URL)
 	s := gwSchema(t)
-	state := gwValue("gw-1", "vpc-1", ModeNAT, "185.1.2.3", "active", "explicit", boolPtr(true))
+	state := gwValue("gw-1", "vpc-1", otherMode, "185.1.2.3", "active", "explicit", boolPtr(true))
 	plan := gwPlanUnknownComputed("vpc-1", ModePublicIP, boolPtr(true))
 
 	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s, Raw: state}}
@@ -1840,7 +1773,7 @@ func TestEgressGatewayUpdateModeSwitchOmitsUnknownPin(t *testing.T) {
 func TestApplyToModelAbsentPublicIPIDIsNull(t *testing.T) {
 	var m GatewayModel
 	applyToModel(&m, &apiGateway{
-		ID: "gw-1", VPCID: "vpc-1", Mode: ModeNAT, Status: "active", Origin: "explicit",
+		ID: "gw-1", VPCID: "vpc-1", Mode: otherMode, Status: "active", Origin: "explicit",
 	})
 	if !m.PublicIPID.IsNull() {
 		t.Errorf("an absent publicIpId must map to null, got %v", m.PublicIPID)

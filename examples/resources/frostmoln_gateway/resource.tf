@@ -21,34 +21,6 @@ resource "frostmoln_gateway" "example" {
   mode   = "public_ip"
 }
 
-# "nat" — outbound traffic leaving under an address shared with other VPCs — has
-# been WITHDRAWN and is refused. A VPC on it could not give any of its instances
-# a public IP, which is why it is gone.
-#
-# A gateway created before the withdrawal still reports mode = "nat" and keeps
-# working, and Terraform reads, refreshes and imports it normally. What is
-# refused is the VALUE IN THE CONFIGURATION, at validate time — so while a
-# resource block still says mode = "nat", `terraform validate`, `plan`,
-# `refresh` and `import` all stop there. To move one off, set mode = "public_ip"
-# with acknowledge_connectivity_loss = true — the change is applied IN PLACE
-# (never a destroy/create), so the gateway id survives it; the platform
-# re-records the source address, which is why it plans as "(known after apply)".
-# Step by step: see the "Moving a gateway off the withdrawn nat mode"
-# guide.
-
-# Name the address yourself to make it one you MANAGE: the same address survives
-# this gateway being rebuilt and the VPC being recreated, which is what a
-# partner allow-list entry or a DNS record depends on.
-#
-# Changing public_ip_id later moves the VPC onto the other address in place —
-# the gateway is never destroyed and rebuilt — but the address your traffic
-# arrives from does change, so it needs the acknowledgement below just as a mode
-# change does.
-# prevent_destroy because the ADDRESS is what is irreplaceable here. Destroying
-# this resource releases it to a shared regional pool, it is re-issued to
-# whoever asks next, and re-applying allocates a DIFFERENT one — so the partner
-# allow-list entry and the DNS record this whole arrangement exists to keep
-# stable stop matching, permanently. See the frostmoln_public_ip examples.
 resource "frostmoln_public_ip" "egress" {
   lifecycle {
     prevent_destroy = true

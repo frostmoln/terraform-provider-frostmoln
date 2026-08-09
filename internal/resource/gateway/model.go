@@ -10,18 +10,6 @@ import (
 
 // Gateway modes, as the network service's enum spells them.
 const (
-	// ModeNAT is WITHDRAWN. It sent the VPC's outbound traffic through a shared
-	// platform address; the mode is no longer offered and cannot be SET —
-	// `mode` refuses it at validate time (see modeValidator).
-	//
-	// The constant stays because withdrawn is not the same as gone: gateways
-	// created before the withdrawal still report `"nat"`, and the provider must
-	// keep READING them. Refusing the value on the read path would turn a
-	// refresh of a live gateway into an error and a plan into a diff nobody can
-	// apply, so applyToModel records whatever the API reports and never
-	// rewrites it.
-	ModeNAT = "nat"
-
 	// ModePublicIP is the only mode a configuration can set. The VPC gets its
 	// own outbound gateway; naming a `public_ip_id`
 	// makes that address one of the tenant's own — stable, and the address to
