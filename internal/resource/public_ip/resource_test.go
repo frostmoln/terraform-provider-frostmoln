@@ -1985,7 +1985,7 @@ func TestPublicIPAttachmentFromAPI(t *testing.T) {
 	}
 
 	if !m.IsGatewayBound() {
-		t.Error("an egress_gateway attachment must be recognised as gateway-bound")
+		t.Error("a gateway attachment must be recognised as gateway-bound")
 	}
 	if m.AttachedVPCID() != "vpc-1" {
 		t.Errorf("expected vpc-1, got %q", m.AttachedVPCID())
@@ -2197,12 +2197,12 @@ func TestPublicIPModifyPlanRecomputesOnAssociationChange(t *testing.T) {
 	})
 }
 
-// TestPublicIPDeleteInUseByEgressGateway: the platform's SYNCHRONOUS 409 — the
+// TestPublicIPDeleteInUseByGateway: the platform's SYNCHRONOUS 409 — the
 // case it can still see, because this resource was destroyed on its own with
 // the gateway left up. Unreadable as a raw envelope, since the address looks
 // unused from every other angle. The acknowledgement is set here so the request
 // is actually sent; the local gate has its own test.
-func TestPublicIPDeleteInUseByEgressGateway(t *testing.T) {
+func TestPublicIPDeleteInUseByGateway(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -2264,7 +2264,7 @@ func TestPublicIPSchemaExposesAttachment(t *testing.T) {
 	}
 	kind := att.Attributes["kind"].GetDescription()
 	if !strings.Contains(kind, AttachmentKindGateway) {
-		t.Errorf("kind must document the egress_gateway value, got:\n%s", kind)
+		t.Errorf("kind must document the gateway value, got:\n%s", kind)
 	}
 }
 
@@ -2277,7 +2277,7 @@ func TestPublicIPSchemaExposesAttachment(t *testing.T) {
 // `frostmoln_gateway.public_ip_id` makes the gateway depend on this
 // resource, so `terraform destroy` destroys the gateway FIRST; the platform
 // hands the address back as an ordinary unattached address
-// (`network/internal/service/impl/egress_gateway_public_ip.go`
+// (`network/internal/service/impl/gateway_public_ip.go`
 // releasePinnedAddress clears the gateway binding), and the DELETE that follows
 // is — from its side — the release of something idle. It succeeds. The address
 // returns to a shared pool and is re-issued to whoever asks next; a partner's

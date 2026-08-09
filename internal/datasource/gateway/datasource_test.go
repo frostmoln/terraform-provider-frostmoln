@@ -61,7 +61,7 @@ func configuredDataSource(t *testing.T, serverURL string) datasource.DataSource 
 	return d
 }
 
-func TestEgressGatewayDataSourceMetadata(t *testing.T) {
+func TestGatewayDataSourceMetadata(t *testing.T) {
 	d := NewDataSource()
 	resp := &datasource.MetadataResponse{}
 	d.Metadata(context.Background(), datasource.MetadataRequest{ProviderTypeName: "frostmoln"}, resp)
@@ -70,7 +70,7 @@ func TestEgressGatewayDataSourceMetadata(t *testing.T) {
 	}
 }
 
-func TestEgressGatewayDataSourceConfigureWrongType(t *testing.T) {
+func TestGatewayDataSourceConfigureWrongType(t *testing.T) {
 	d := NewDataSource()
 	resp := &datasource.ConfigureResponse{}
 	d.(datasource.DataSourceWithConfigure).Configure(context.Background(),
@@ -80,10 +80,10 @@ func TestEgressGatewayDataSourceConfigureWrongType(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayDataSourceVPCIDRequired: the lookup is only ever asked for
+// TestGatewayDataSourceVPCIDRequired: the lookup is only ever asked for
 // one VPC. An Optional vpc_id would make the unfiltered, tenant-wide list
 // reachable, and the caller takes element [0].
-func TestEgressGatewayDataSourceVPCIDRequired(t *testing.T) {
+func TestGatewayDataSourceVPCIDRequired(t *testing.T) {
 	s := dsSchema(t)
 	attr, ok := s.Attributes["vpc_id"].(schema.StringAttribute)
 	if !ok {
@@ -94,16 +94,15 @@ func TestEgressGatewayDataSourceVPCIDRequired(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayDataSourceRead reads a gateway still on the WITHDRAWN "nat"
-// mode on purpose. The mode can no longer be set, but VPCs are still running on
-// it, and a data source that refused or rewrote the value would either break
-// every configuration reading such a VPC or report a mode the platform is not
-// running. The API's value goes to state verbatim.
-func TestEgressGatewayDataSourceRead(t *testing.T) {
+// TestGatewayDataSourceRead reads a gateway whose mode this provider cannot
+// SET, on purpose. A data source that refused or rewrote an unrecognised value
+// would either break every configuration reading such a VPC or report a mode
+// the platform is not running. The API's value goes to state verbatim.
+func TestGatewayDataSourceRead(t *testing.T) {
 	var gotQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.RawQuery
-		_, _ = w.Write([]byte(`{"gateways":[{"id":"gw-1","vpcId":"vpc-1","mode":"nat",
+		_, _ = w.Write([]byte(`{"gateways":[{"id":"gw-1","vpcId":"vpc-1","mode":"some-other-mode",
 			"sourceAddress":"46.246.117.231","status":"active","origin":"vpc_create"}],"totalCount":1}`))
 	}))
 	defer server.Close()
@@ -125,7 +124,7 @@ func TestEgressGatewayDataSourceRead(t *testing.T) {
 
 	var state gatewayModel
 	resp.State.Get(context.Background(), &state)
-	if state.ID.ValueString() != "gw-1" || state.Mode.ValueString() != "nat" {
+	if state.ID.ValueString() != "gw-1" || state.Mode.ValueString() != "some-other-mode" {
 		t.Errorf("unexpected state %+v", state)
 	}
 	if state.SourceAddress.ValueString() != "46.246.117.231" {
@@ -133,7 +132,7 @@ func TestEgressGatewayDataSourceRead(t *testing.T) {
 	}
 }
 
-func TestEgressGatewayDataSourceReadDetachedSourceAddressIsNull(t *testing.T) {
+func TestGatewayDataSourceReadDetachedSourceAddressIsNull(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"gateways":[{"id":"gw-1","vpcId":"vpc-1","mode":"public_ip",
 			"status":"detached","origin":"legacy"}],"totalCount":1}`))
@@ -158,12 +157,12 @@ func TestEgressGatewayDataSourceReadDetachedSourceAddressIsNull(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayDataSourceRefusesEmptyVPCID is the guard that matters. An
+// TestGatewayDataSourceRefusesEmptyVPCID is the guard that matters. An
 // interpolation resolving to "" must never reach the API: `?vpcId=` is a 400 by
 // design, and dropping the parameter would return the TENANT-WIDE list, from
 // which element [0] is some unrelated VPC's gateway — an address a practitioner
 // would then put in an allow-list.
-func TestEgressGatewayDataSourceRefusesEmptyVPCID(t *testing.T) {
+func TestGatewayDataSourceRefusesEmptyVPCID(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
@@ -188,7 +187,7 @@ func TestEgressGatewayDataSourceRefusesEmptyVPCID(t *testing.T) {
 	}
 }
 
-func TestEgressGatewayDataSourceNoGateway(t *testing.T) {
+func TestGatewayDataSourceNoGateway(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"gateways":[],"totalCount":0}`))
 	}))
@@ -213,7 +212,7 @@ func TestEgressGatewayDataSourceNoGateway(t *testing.T) {
 	}
 }
 
-func TestEgressGatewayDataSourceAPIError(t *testing.T) {
+func TestGatewayDataSourceAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":{"code":"INTERNAL","message":"boom"}}`))

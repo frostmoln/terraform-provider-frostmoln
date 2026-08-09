@@ -81,9 +81,9 @@ type apiGateway struct {
 	SourceAddress string `json:"sourceAddress,omitempty"`
 	Status        string `json:"status"`
 	Origin        string `json:"origin"`
-	// PublicIPID is present ONLY where the tenant named an address. It is absent
-	// on a withdrawn-`nat` gateway, and absent under `public_ip` for every
-	// gateway running on a platform-drawn address — there is no public IP
+	// PublicIPID is present ONLY where the tenant named an address. It is
+	// absent for every gateway running on a platform-drawn address — there is
+	// no public IP
 	// resource for the API to name, so it omits the field rather than inventing
 	// one. Absent maps to a NULL Terraform value, never "".
 	PublicIPID string `json:"publicIpId,omitempty"`
@@ -118,9 +118,9 @@ type apiUpdateGatewayRequest struct {
 	PublicIPID string `json:"publicIpId,omitempty"`
 	// AcknowledgeConnectivityLoss carries the practitioner's acknowledgement
 	// from the resource's attribute of the same name. The provider never
-	// hardcodes it: a mode change re-attaches the VPC's only path off-net — the
-	// move a gateway left on the withdrawn `nat` mode has to make — dropping
-	// in-flight connections along with DNS and managed-service reachability, so
+	// hardcodes it: a mode change re-attaches the VPC's only path off-net,
+	// dropping in-flight connections along with DNS and managed-service
+	// reachability, so
 	// the intent has to be stated in the configuration rather than inferred
 	// from the fact that an apply was approved.
 	AcknowledgeConnectivityLoss bool `json:"acknowledgeConnectivityLoss"`

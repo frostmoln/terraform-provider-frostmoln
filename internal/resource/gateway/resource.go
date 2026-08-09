@@ -74,14 +74,6 @@ func (r *gatewayResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 					"resource simply not declared — is an isolated network, and that is how \"no " +
 					"connectivity\" is expressed: connectivity is a stated choice, never one a VPC " +
 					"acquires because a field was omitted.\n\n" +
-					"`\"nat\"`, which sent a VPC's outbound traffic through an address shared with " +
-					"other VPCs, is **WITHDRAWN** and is refused. It could not coexist with public " +
-					"IPs on instances in the same VPC, which is why it is gone. A gateway created " +
-					"before the withdrawal still REPORTS `\"nat\"`, and Terraform reads, refreshes and " +
-					"imports it normally — but not while the CONFIGURATION still says `\"nat\"`, which " +
-					"is refused at validate time and stops all of those. Set `mode = \"public_ip\"` " +
-					"(with `acknowledge_connectivity_loss = true`) to move it off, which is applied in " +
-					"place.\n\n" +
 					"Terraform uses the wire spelling `public_ip`. The `fm` CLI additionally accepts " +
 					"the hyphenated `public-ip` and normalises it, so a value copied from a CLI " +
 					"command has to be written with the underscore here.\n\n" +
@@ -97,12 +89,11 @@ func (r *gatewayResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				// source address survives and the tenant is not taken off-net
 				// between a destroy and a create.
 				Validators: []validator.String{
-					// One validator, not OneOf(ModePublicIP) plus a withdrawal
-					// check: a config that says `nat` would then collect TWO
-					// diagnostics, and the generic "value must be one of" is the
-					// one that reads like the whole story. It is not — `nat` is
-					// not a typo, it is a mode that existed, and the practitioner
-					// needs to be told that and told what replaces it.
+					// Not OneOf(ModePublicIP): it renders "value must be one of:
+					// [\"public_ip\"]", which answers the wrong question. The
+					// mistake this catches is reaching for a mode to mean "no
+					// outbound path", and the fix for that is to not declare the
+					// resource — which the generic message never says.
 					modeValidator{},
 				},
 			},
@@ -122,8 +113,6 @@ func (r *gatewayResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 					"know it. The address is then a resource of your tenant's — listed, and counted " +
 					"against your public IP quota like any other — and it is pinned as this gateway's " +
 					"source address.\n\n" +
-					"A gateway left on the WITHDRAWN \"nat\" mode has no public IP at all, so this reads " +
-					"as null there.\n\n" +
 					"Changing it is applied IN PLACE, never as a destroy/create: the platform " +
 					"re-addresses the existing gateway rather than tearing the VPC's only outbound path " +
 					"down and building a new one. It still changes the address the VPC's traffic arrives " +
@@ -184,8 +173,7 @@ func (r *gatewayResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 					"STABLE. Where `public_ip_id` names an address, this IS that address and it is " +
 					"pinned. Where it does not, this is the address the platform drew for the gateway: " +
 					"nothing pins it, so it may change if the gateway is rebuilt, and it is not an " +
-					"address to publish or hand a partner to allow-list. On a gateway left on the " +
-					"withdrawn \"nat\" mode it is an address shared with other VPCs. A `mode` or " +
+					"address to publish or hand a partner to allow-list. A `mode` or " +
 					"`public_ip_id` change re-records it, so it plans as \"(known after apply)\" then " +
 					"and keeps its recorded value otherwise.",
 				Computed: true,
@@ -229,25 +217,18 @@ func (r *gatewayResource) Configure(_ context.Context, req resource.ConfigureReq
 	r.client = c
 }
 
-// modeValidator accepts the one mode a configuration may set, and refuses the
-// WITHDRAWN one by name.
+// modeValidator accepts the one mode a configuration may set.
 //
-// It exists instead of stringvalidator.OneOf(ModePublicIP) for the `nat` case
-// alone. OneOf renders "value must be one of: [\"public_ip\"]", which reads as
-// "you made that up" — and `nat` was a real, documented, applied mode, so the
-// practitioner reading it has a working configuration that has just stopped
-// validating and no idea why. The diagnostic has to say the mode is withdrawn,
-// say what replaces it, and say that the gateway they already have still reads.
-//
-// It also subsumes the `public_ip_id` + `mode = "nat"` pair check this resource
-// used to run in ValidateConfig: the pair is unreachable once `nat` itself is
-// refused, and a second diagnostic saying "public_ip_id is only meaningful with
-// public_ip" would imply the mode was otherwise fine.
+// It exists instead of stringvalidator.OneOf(ModePublicIP) because OneOf
+// renders "value must be one of: [\"public_ip\"]" — true, and useless for the
+// mistake actually being made. A practitioner who sets some other mode is
+// nearly always reaching for a way to say "this VPC has NO outbound path", and
+// the answer to that is to not declare the resource at all. A list of one
+// permitted value never says so.
 //
 // A null or unknown value is not judged — the framework does not call a
 // validator for either, and an unknown `mode` (a module output, another
-// resource's attribute) that resolves to `nat` during the apply is refused by
-// the API instead (see errCodeModeUnavailable).
+// resource's attribute) is judged by the API during the apply.
 type modeValidator struct{}
 
 func (modeValidator) Description(_ context.Context) string {
@@ -298,9 +279,9 @@ func (modeValidator) ValidateString(_ context.Context, req validator.StringReque
 // (UseStateForUnknown semantics, nulls included) when it will not.
 //
 // `public_ip_id` is Optional+Computed and gets the same treatment for one case
-// its UseStateForUnknown modifier CANNOT cover. Switching mode from "nat" to
-// "public_ip" without naming an address leaves a null config against a null
-// state, so the modifier would pin the plan to null ACROSS AN APPLY THAT
+// its UseStateForUnknown modifier CANNOT cover. A mode change that names no
+// address leaves a null config against a null state, so the modifier would pin
+// the plan to null ACROSS AN APPLY THAT
 // RE-ADDRESSES THE GATEWAY — and core rejects any planned value the apply
 // contradicts as "Provider produced inconsistent result after apply". Under
 // ADR-0114 an unnamed gateway runs on a platform-drawn address and the API
@@ -554,10 +535,8 @@ func (r *gatewayResource) Update(ctx context.Context, req resource.UpdateRequest
 	}
 
 	// Refuse locally, before any request. The API requires the acknowledgement
-	// for a mode change — the one that remains is moving a gateway off the
-	// withdrawn `nat` mode, which re-attaches an external gateway — and it is
-	// not ceremony: the VPC's outbound source changes, in-flight connections drop,
-	// and the platform routes are rebuilt.
+	// for a mode change, and it is not ceremony: the VPC's outbound source
+	// changes, in-flight connections drop, and the platform routes are rebuilt.
 	//
 	// A public_ip_id change is held to the same rule even where the API would
 	// take it without one. Re-pointing the gateway is applied in place, but the
@@ -647,10 +626,9 @@ func gatewayChangeAckDetail(modeChanged bool, plan, state *GatewayModel) string 
 		quotedOrNone(state.PublicIPID), plan.PublicIPID.ValueString())
 }
 
-// quotedOrNone renders a possibly-null id for a diagnostic. A gateway that had
-// no recorded public IP is a real starting point (a legacy address, or one still
-// on the withdrawn `nat` mode), so it is named as such rather than printed as
-// `""`.
+// quotedOrNone renders a possibly-null id for a diagnostic. A gateway with no
+// recorded public IP is a real starting point — it runs on a platform-drawn
+// address — so it is named as such rather than printed as `""`.
 func quotedOrNone(v types.String) string {
 	if v.IsNull() || v.ValueString() == "" {
 		return "no recorded public IP"

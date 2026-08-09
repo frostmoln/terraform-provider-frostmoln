@@ -155,7 +155,7 @@ func diagText(diags diag.Diagnostics) string {
 
 // --- schema ---
 
-func TestEgressGatewayMetadata(t *testing.T) {
+func TestGatewayMetadata(t *testing.T) {
 	r := NewResource()
 	resp := &resource.MetadataResponse{}
 	r.Metadata(context.Background(), resource.MetadataRequest{ProviderTypeName: "frostmoln"}, resp)
@@ -164,7 +164,7 @@ func TestEgressGatewayMetadata(t *testing.T) {
 	}
 }
 
-func TestEgressGatewayConfigureNilProviderData(t *testing.T) {
+func TestGatewayConfigureNilProviderData(t *testing.T) {
 	r := NewResource()
 	resp := &resource.ConfigureResponse{}
 	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: nil}, resp)
@@ -173,7 +173,7 @@ func TestEgressGatewayConfigureNilProviderData(t *testing.T) {
 	}
 }
 
-func TestEgressGatewayConfigureWrongType(t *testing.T) {
+func TestGatewayConfigureWrongType(t *testing.T) {
 	r := NewResource()
 	resp := &resource.ConfigureResponse{}
 	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: true}, resp)
@@ -203,13 +203,11 @@ func validateMode(t *testing.T, value types.String) diag.Diagnostics {
 	return resp.Diagnostics
 }
 
-// TestEgressGatewayModeOffersOnlyPublicIP pins the enum a CONFIGURATION may
-// set. `nat` is withdrawn: it egressed through an address shared with other
-// VPCs and could not coexist with public IPs on the VPC's own instances, so the
-// provider must stop offering it — a client that still accepts it sends a
-// request the platform refuses, and does so after the practitioner has written
-// and reviewed a plan.
-func TestEgressGatewayModeOffersOnlyPublicIP(t *testing.T) {
+// TestGatewayModeOffersOnlyPublicIP pins the enum a CONFIGURATION may set.
+// `public_ip` is the only one. A client that accepts anything else sends a
+// request the platform refuses, and does so only AFTER the practitioner has
+// written and reviewed a plan — the refusal has to land at validate time.
+func TestGatewayModeOffersOnlyPublicIP(t *testing.T) {
 	for _, tc := range []struct {
 		value string
 		valid bool
@@ -225,12 +223,12 @@ func TestEgressGatewayModeOffersOnlyPublicIP(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayModeValidatorIgnoresNullAndUnknown: an attribute validator
+// TestGatewayModeValidatorIgnoresNullAndUnknown: an attribute validator
 // that errored on either would break every configuration whose `mode` comes
 // from a module output or another resource's attribute — a value the provider
 // is handed as unknown at validate time and that is perfectly valid once
 // resolved.
-func TestEgressGatewayModeValidatorIgnoresNullAndUnknown(t *testing.T) {
+func TestGatewayModeValidatorIgnoresNullAndUnknown(t *testing.T) {
 	for name, value := range map[string]types.String{
 		"null":    types.StringNull(),
 		"unknown": types.StringUnknown(),
@@ -241,12 +239,12 @@ func TestEgressGatewayModeValidatorIgnoresNullAndUnknown(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayModeDoesNotRequireReplace is behavioural, not a %T match on
+// TestGatewayModeDoesNotRequireReplace is behavioural, not a %T match on
 // the modifier list: a replacement would DESTROY the gateway and create a new
 // one, dropping the recorded source address and leaving the VPC with no
 // internet, no DNS and no managed-service connectivity in between. The API has
 // PATCH /gateways/{id} precisely so that never happens.
-func TestEgressGatewayModeDoesNotRequireReplace(t *testing.T) {
+func TestGatewayModeDoesNotRequireReplace(t *testing.T) {
 	s := gwSchema(t)
 	attr, ok := s.Attributes["mode"].(schema.StringAttribute)
 	if !ok {
@@ -268,7 +266,7 @@ func TestEgressGatewayModeDoesNotRequireReplace(t *testing.T) {
 	}
 }
 
-func TestEgressGatewaySchemaAttributes(t *testing.T) {
+func TestGatewaySchemaAttributes(t *testing.T) {
 	s := gwSchema(t)
 	for _, name := range []string{"id", "vpc_id", "mode", "source_address", "status", "origin", "public_ip_id", "acknowledge_connectivity_loss"} {
 		if _, ok := s.Attributes[name]; !ok {
@@ -289,13 +287,13 @@ func TestEgressGatewaySchemaAttributes(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayStatusDescriptionIsNotAVerdict: `status` is OBSERVED, and
+// TestGatewayStatusDescriptionIsNotAVerdict: `status` is OBSERVED, and
 // what the platform observes depends on how the mode is realised — a healthy
 // gateway can report "detached". The description must not tell a practitioner
 // that "detached" proves the platform and the cloud disagree, or that an
 // operator is needed, because acting on that costs a support ticket and, worse,
 // an unnecessary mode change (which re-addresses egress and drops connections).
-func TestEgressGatewayStatusDescriptionIsNotAVerdict(t *testing.T) {
+func TestGatewayStatusDescriptionIsNotAVerdict(t *testing.T) {
 	s := gwSchema(t)
 	attr, ok := s.Attributes["status"].(schema.StringAttribute)
 	if !ok {
@@ -317,12 +315,12 @@ func TestEgressGatewayStatusDescriptionIsNotAVerdict(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayVPCIDDescriptionNamesTheAcknowledgement: changing vpc_id
+// TestGatewayVPCIDDescriptionNamesTheAcknowledgement: changing vpc_id
 // REPLACES the resource, and the replacement destroys the gateway first — which
 // this provider refuses without `acknowledge_connectivity_loss`. A description
 // that says only "replaces the resource" sends the practitioner into a failed
 // apply.
-func TestEgressGatewayVPCIDDescriptionNamesTheAcknowledgement(t *testing.T) {
+func TestGatewayVPCIDDescriptionNamesTheAcknowledgement(t *testing.T) {
 	s := gwSchema(t)
 	attr, ok := s.Attributes["vpc_id"].(schema.StringAttribute)
 	if !ok {
@@ -333,13 +331,13 @@ func TestEgressGatewayVPCIDDescriptionNamesTheAcknowledgement(t *testing.T) {
 	}
 }
 
-// TestEgressGatewaySurfacesCarryNoInternalNames: every string in this package
+// TestGatewaySurfacesCarryNoInternalNames: every string in this package
 // that a practitioner reads ends up on the Terraform Registry, permanently.
 // Internal component names ("NAT shard", "managed-agent") publish platform
 // topology to the whole internet and mean nothing to the reader; the fm CLI and
 // the portal say "not offered in this region yet" and "managed-service
 // connectivity", and this surface matches them.
-func TestEgressGatewaySurfacesCarryNoInternalNames(t *testing.T) {
+func TestGatewaySurfacesCarryNoInternalNames(t *testing.T) {
 	forbidden := []string{"shard", "managed-agent", "neutron", "ovn", "openstack"}
 
 	surfaces := map[string]string{"resource description": gwSchema(t).Description}
@@ -347,9 +345,9 @@ func TestEgressGatewaySurfacesCarryNoInternalNames(t *testing.T) {
 		surfaces["attribute "+name] = attr.GetDescription()
 	}
 	for _, code := range []string{
-		errCodeModeUnavailable, errCodeGatewayExists, errCodeGatewayInUse,
+		errCodeGatewayExists, errCodeGatewayInUse,
 		errCodeLossNotAcked, errCodePoolExhausted,
-		errCodePublicIPUnavailable, errCodePublicIPNotAllowed,
+		errCodePublicIPUnavailable,
 	} {
 		var diags diag.Diagnostics
 		addGatewayError(&diags, "fallback", &client.APIError{Code: code, Message: "api message", StatusCode: 400})
@@ -405,7 +403,7 @@ func modifyPlan(t *testing.T, planRaw, stateRaw tftypes.Value, configRaw ...tfty
 	return planned
 }
 
-// TestEgressGatewayModifyPlanModeChangeRecomputesObservedValues is the
+// TestGatewayModifyPlanModeChangeRecomputesObservedValues is the
 // regression guard for an apply that CANNOT succeed without it.
 //
 // For a Computed-only attribute Terraform's proposed new state carries the
@@ -416,7 +414,7 @@ func modifyPlan(t *testing.T, planRaw, stateRaw tftypes.Value, configRaw ...tfty
 // "vpc_create" or "legacy" gateway changes), and reports the gateway active —
 // and Terraform core aborts with "Provider produced inconsistent result after
 // apply". No retry clears it; the practitioner is stuck.
-func TestEgressGatewayModifyPlanModeChangeRecomputesObservedValues(t *testing.T) {
+func TestGatewayModifyPlanModeChangeRecomputesObservedValues(t *testing.T) {
 	// Exactly what the framework proposes: prior values, new mode.
 	planRaw := gwValue("gw-1", "vpc-1", otherMode, "46.246.117.231", "active", "vpc_create", boolPtr(true))
 	stateRaw := gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "vpc_create", boolPtr(true))
@@ -439,9 +437,9 @@ func TestEgressGatewayModifyPlanModeChangeRecomputesObservedValues(t *testing.T)
 	}
 }
 
-// TestEgressGatewayModifyPlanReplacementRecomputesObservedValues: a vpc_id
+// TestGatewayModifyPlanReplacementRecomputesObservedValues: a vpc_id
 // change replaces the resource, so nothing observed survives it either.
-func TestEgressGatewayModifyPlanReplacementRecomputesObservedValues(t *testing.T) {
+func TestGatewayModifyPlanReplacementRecomputesObservedValues(t *testing.T) {
 	planRaw := gwValue("gw-1", "vpc-2", ModePublicIP, "46.246.117.231", "active", "explicit", boolPtr(true))
 	stateRaw := gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit", boolPtr(true))
 
@@ -452,13 +450,13 @@ func TestEgressGatewayModifyPlanReplacementRecomputesObservedValues(t *testing.T
 	}
 }
 
-// TestEgressGatewayModifyPlanKeepsNullSourceAddress is the perpetual-diff
+// TestGatewayModifyPlanKeepsNullSourceAddress is the perpetual-diff
 // guard. A Computed attribute that is NULL in state is marked unknown in the
 // proposed plan, and null-versus-unknown is a diff on every single run: `terraform
 // plan -detailed-exitcode` returns 2 forever and any drift-detection gate built
 // on it is broken. Reachable whenever the gateway is detached or its external
 // port carries no IPv4.
-func TestEgressGatewayModifyPlanKeepsNullSourceAddress(t *testing.T) {
+func TestGatewayModifyPlanKeepsNullSourceAddress(t *testing.T) {
 	// What the framework proposes when state.source_address is null: unknown.
 	planRaw := gwPlanUnknownComputed("vpc-1", otherMode, nil)
 	stateRaw := gwValue("gw-1", "vpc-1", otherMode, "", "detached", "explicit", nil)
@@ -507,7 +505,7 @@ func TestApplyToModelPresentSourceAddress(t *testing.T) {
 
 // --- create ---
 
-func TestEgressGatewayCreate(t *testing.T) {
+func TestGatewayCreate(t *testing.T) {
 	var got apiCreateGatewayRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/gateways" {
@@ -546,56 +544,7 @@ func TestEgressGatewayCreate(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayCreateModeUnavailable: GATEWAY_MODE_UNAVAILABLE is a 400, so
-// passed through raw it reads as "fix your syntax". It is not — it is the
-// platform declining to provision a mode. `nat` is WITHDRAWN, permanently, so
-// the configuration has to change; the diagnostic must say that and must NOT
-// leave a "not available" reading as "not available yet", because there is no
-// other mode waiting to ship (the API's own message is now "supported modes:
-// public_ip").
-//
-// This provider refuses `nat` at validate time, so the only way to reach the
-// API with it is a `mode` that was unknown then — a module output, another
-// resource's attribute — which is exactly the case this mapping exists for.
-func TestEgressGatewayCreateModeUnavailable(t *testing.T) {
-	calls := 0
-	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusBadRequest,
-		"GATEWAY_MODE_UNAVAILABLE", `gateway mode "nat" is not available; supported modes: public_ip`))
-	defer server.Close()
-
-	r := configuredResource(t, server.URL)
-	s := gwSchema(t)
-
-	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
-	r.Create(context.Background(), resource.CreateRequest{
-		Plan: tfsdk.Plan{Schema: s, Raw: gwValue("", "vpc-1", otherMode, "", "", "", nil)},
-	}, resp)
-
-	if !resp.Diagnostics.HasError() {
-		t.Fatal("expected an error")
-	}
-	text := strings.ToLower(diagText(resp.Diagnostics))
-	if !strings.Contains(text, "withdrawn") {
-		t.Errorf("diagnostic must say `nat` is withdrawn, got:\n%s", text)
-	}
-	if !strings.Contains(text, `mode = "public_ip"`) {
-		t.Errorf("diagnostic must name the mode that replaces it, got:\n%s", text)
-	}
-	// The withdrawal is permanent, so the diagnostic must not offer waiting as a
-	// way out. An earlier version told the practitioner any other mode was one
-	// "this region has not shipped yet", which read straight back onto `nat`.
-	for _, forbidden := range []string{"not shipped yet", "not available yet", "yet to ship"} {
-		if strings.Contains(text, forbidden) {
-			t.Errorf("diagnostic must not suggest the mode is merely not available YET (%q), got:\n%s",
-				forbidden, text)
-		}
-	}
-	if !strings.Contains(text, "not a syntax error") {
-		t.Errorf("diagnostic must not let a 400 read as invalid syntax, got:\n%s", text)
-	}
-}
-
-func TestEgressGatewayCreateGatewayExists(t *testing.T) {
+func TestGatewayCreateGatewayExists(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusConflict,
 		"GATEWAY_EXISTS", "VPC vpc-1 already has a gateway; change its mode instead of creating another"))
@@ -618,11 +567,11 @@ func TestEgressGatewayCreateGatewayExists(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayCreatePoolExhausted pins the one presentation that costs a
+// TestGatewayCreatePoolExhausted pins the one presentation that costs a
 // practitioner a pointless support ticket: GATEWAY_POOL_EXHAUSTED is PLATFORM
 // inventory, temporary and retryable — not the tenant's quota, and no amount of
 // quota granted fixes it.
-func TestEgressGatewayCreatePoolExhausted(t *testing.T) {
+func TestGatewayCreatePoolExhausted(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusServiceUnavailable,
 		"GATEWAY_POOL_EXHAUSTED", "no public IPv4 addresses are currently available in this region; this is a platform capacity limit, not your quota"))
@@ -653,7 +602,7 @@ func TestEgressGatewayCreatePoolExhausted(t *testing.T) {
 
 // --- read ---
 
-func TestEgressGatewayReadUsesVPCFilteredList(t *testing.T) {
+func TestGatewayReadUsesVPCFilteredList(t *testing.T) {
 	var gotQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/gateways" {
@@ -692,12 +641,12 @@ func TestEgressGatewayReadUsesVPCFilteredList(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayModifyPlanWithdrawnNATIsStable: a gateway still on `nat`,
-// with nothing changed, must plan clean. An unknown planted on any observed
-// attribute here is a diff on every single run — `terraform plan
-// -detailed-exitcode` returns 2 forever — for a resource whose only remaining
-// operations are "leave it alone" and "move it off, deliberately".
-func TestEgressGatewayModifyPlanWithdrawnNATIsStable(t *testing.T) {
+// TestGatewayModifyPlanUnrecognisedModeIsStable: a gateway whose recorded mode
+// is not one this provider can set — imported, or created by another client —
+// must still plan clean when nothing changed. An unknown planted on any
+// observed attribute here is a diff on every single run, so `terraform plan
+// -detailed-exitcode` would return 2 forever.
+func TestGatewayModifyPlanUnrecognisedModeIsStable(t *testing.T) {
 	planRaw := gwPlanUnknownComputed("vpc-1", otherMode, nil)
 	stateRaw := gwValue("gw-1", "vpc-1", otherMode, "46.246.117.240", "active", "explicit", nil)
 
@@ -719,7 +668,7 @@ func TestEgressGatewayModifyPlanWithdrawnNATIsStable(t *testing.T) {
 	}
 }
 
-func TestEgressGatewayReadEmptyListRemovesResource(t *testing.T) {
+func TestGatewayReadEmptyListRemovesResource(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/tenants/t-123/gateways" {
 			_, _ = w.Write([]byte(`{"gateways":[],"totalCount":0}`))
@@ -748,13 +697,13 @@ func TestEgressGatewayReadEmptyListRemovesResource(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayReadEmptyListIsConfirmedBeforeRemoval: an empty FILTERED
+// TestGatewayReadEmptyListIsConfirmedBeforeRemoval: an empty FILTERED
 // list is not proof the gateway is gone. The API returns the same empty body
 // for a vpcId that is unknown or that this tenant does not own, so a stale
 // vpc_id — or a key scoped to another tenant — would otherwise drop a live,
 // address-spending gateway out of state, and the next apply would create a
 // SECOND one for the same VPC (or fail with GATEWAY_EXISTS).
-func TestEgressGatewayReadEmptyListIsConfirmedBeforeRemoval(t *testing.T) {
+func TestGatewayReadEmptyListIsConfirmedBeforeRemoval(t *testing.T) {
 	var byIDCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/tenants/t-123/gateways" {
@@ -796,12 +745,12 @@ func TestEgressGatewayReadEmptyListIsConfirmedBeforeRemoval(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayReadRefusesAnotherVPCsGateway: state binds this resource to
+// TestGatewayReadRefusesAnotherVPCsGateway: state binds this resource to
 // one gateway of one VPC. A response naming a different VPC means the lookup
 // resolved something else (a stale vpc_id, a key scoped elsewhere); rebinding
 // state to it would put the NEXT mode change or destroy on another VPC's
 // internet, DNS and managed-service path.
-func TestEgressGatewayReadRefusesAnotherVPCsGateway(t *testing.T) {
+func TestGatewayReadRefusesAnotherVPCsGateway(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"gateways":[{"id":"gw-other","vpcId":"vpc-other","mode":"public_ip",
 			"sourceAddress":"185.9.9.9","status":"active","origin":"explicit"}],"totalCount":1}`))
@@ -832,12 +781,12 @@ func TestEgressGatewayReadRefusesAnotherVPCsGateway(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayReadRefusesResponseWithoutID: an id is what every later
+// TestGatewayReadRefusesResponseWithoutID: an id is what every later
 // request is addressed by, and "/gateways/" with an empty id is cleaned
 // straight back to the COLLECTION path — so a DELETE built from an id-less
 // state row 404s, IsNotFound reads that as "already gone", and the provider
 // forgets a gateway that is still up and still spending an address.
-func TestEgressGatewayReadRefusesResponseWithoutID(t *testing.T) {
+func TestGatewayReadRefusesResponseWithoutID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"gateways":[{"vpcId":"vpc-1","mode":"nat","status":"active",
 			"origin":"explicit"}],"totalCount":1}`))
@@ -859,14 +808,14 @@ func TestEgressGatewayReadRefusesResponseWithoutID(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayReadNeverSendsEmptyVPCID is the regression guard for the
+// TestGatewayReadNeverSendsEmptyVPCID is the regression guard for the
 // worst failure this resource can have. `?vpcId=` present-but-empty is a 400 by
 // design; if a state row with no vpc_id (a fresh import by gateway id) made the
 // provider send the parameter empty — or, worse, drop it — the response would be
 // the TENANT-WIDE list, the resource would bind to element [0] (an unrelated
 // VPC's gateway) and the next apply would PATCH or DELETE that VPC's internet,
 // DNS and managed-service path.
-func TestEgressGatewayReadNeverSendsEmptyVPCID(t *testing.T) {
+func TestGatewayReadNeverSendsEmptyVPCID(t *testing.T) {
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path+"?"+r.URL.RawQuery)
@@ -911,7 +860,7 @@ func TestEgressGatewayReadNeverSendsEmptyVPCID(t *testing.T) {
 	}
 }
 
-func TestEgressGatewayReadByIDNotFoundRemovesResource(t *testing.T) {
+func TestGatewayReadByIDNotFoundRemovesResource(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -937,7 +886,7 @@ func TestEgressGatewayReadByIDNotFoundRemovesResource(t *testing.T) {
 
 // --- update ---
 
-func TestEgressGatewayUpdateModeRequiresAcknowledgement(t *testing.T) {
+func TestGatewayUpdateModeRequiresAcknowledgement(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
@@ -968,18 +917,16 @@ func TestEgressGatewayUpdateModeRequiresAcknowledgement(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayUpdateModeInPlace feeds Update the plan a mode change really
+// TestGatewayUpdateModeInPlace feeds Update the plan a mode change really
 // produces: ModifyPlan has already marked source_address, status and origin
 // UNKNOWN, because the PATCH re-records all three. (Feeding it the old address
 // as a known planned value would encode the bug this resource used to have —
 // Terraform core aborts such an apply with "Provider produced inconsistent
 // result after apply".)
 //
-// The direction is the only mode change left: OFF the withdrawn `nat` and onto
-// `public_ip`. It must stay an in-place PATCH, because the alternative — a
-// destroy and a create — is an outage on the VPC's only outbound path, and
-// every VPC still on `nat` has to make this exact move.
-func TestEgressGatewayUpdateModeInPlace(t *testing.T) {
+// A mode change must stay an in-place PATCH, because the alternative — a
+// destroy and a create — is an outage on the VPC's only outbound path.
+func TestGatewayUpdateModeInPlace(t *testing.T) {
 	var gotMethod, gotPath string
 	var gotBody apiUpdateGatewayRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1021,10 +968,10 @@ func TestEgressGatewayUpdateModeInPlace(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayUpdateAckOnlyMakesNoRequest: the acknowledgement is intent
+// TestGatewayUpdateAckOnlyMakesNoRequest: the acknowledgement is intent
 // the API never stores, so setting it must not mutate the gateway — and must
 // not leave unknown values in state either.
-func TestEgressGatewayUpdateAckOnlyMakesNoRequest(t *testing.T) {
+func TestGatewayUpdateAckOnlyMakesNoRequest(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
@@ -1069,10 +1016,10 @@ func TestEgressGatewayUpdateAckOnlyMakesNoRequest(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayUpdateRefusesEmptyID: see the Delete counterpart. An id-less
+// TestGatewayUpdateRefusesEmptyID: see the Delete counterpart. An id-less
 // state row cannot address anything, so the PATCH would be sent to the
 // collection instead of to this gateway.
-func TestEgressGatewayUpdateRefusesEmptyID(t *testing.T) {
+func TestGatewayUpdateRefusesEmptyID(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
@@ -1100,7 +1047,7 @@ func TestEgressGatewayUpdateRefusesEmptyID(t *testing.T) {
 	}
 }
 
-func TestEgressGatewayUpdateSurfacesPoolExhausted(t *testing.T) {
+func TestGatewayUpdateSurfacesPoolExhausted(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusServiceUnavailable,
 		"GATEWAY_POOL_EXHAUSTED", "no public IPv4 addresses are currently available in this region"))
@@ -1125,11 +1072,11 @@ func TestEgressGatewayUpdateSurfacesPoolExhausted(t *testing.T) {
 
 // --- delete ---
 
-// TestEgressGatewayDeleteWithoutAcknowledgementRefuses: `terraform destroy` is
+// TestGatewayDeleteWithoutAcknowledgementRefuses: `terraform destroy` is
 // a plan approval, not an acknowledgement — it says nothing about DNS or
 // managed-service connectivity, and a gateway is routinely destroyed as a side
 // effect of tearing down something else.
-func TestEgressGatewayDeleteWithoutAcknowledgementRefuses(t *testing.T) {
+func TestGatewayDeleteWithoutAcknowledgementRefuses(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
@@ -1156,11 +1103,11 @@ func TestEgressGatewayDeleteWithoutAcknowledgementRefuses(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayDeleteSendsAcknowledgementAsQuery also pins the wire form:
+// TestGatewayDeleteSendsAcknowledgementAsQuery also pins the wire form:
 // building "?acknowledgeConnectivityLoss=true" into the path string
 // percent-encodes the "?" into the path segment, and the API then answers as if
 // the acknowledgement had never been sent.
-func TestEgressGatewayDeleteSendsAcknowledgementAsQuery(t *testing.T) {
+func TestGatewayDeleteSendsAcknowledgementAsQuery(t *testing.T) {
 	var gotPath, gotAck string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -1187,13 +1134,13 @@ func TestEgressGatewayDeleteSendsAcknowledgementAsQuery(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayDeleteRefusesEmptyID pins the failure mode that looks like
+// TestGatewayDeleteRefusesEmptyID pins the failure mode that looks like
 // success. `path.Join` cleans "/v1/tenants/t/gateways/" back to the
 // COLLECTION path, so a DELETE built from an empty id is answered by the
 // collection — and whatever it answers, this resource's IsNotFound branch would
 // read as "the gateway was already gone" and report a clean destroy for a
 // gateway that is still up, still spending an address, and now unmanaged.
-func TestEgressGatewayDeleteRefusesEmptyID(t *testing.T) {
+func TestGatewayDeleteRefusesEmptyID(t *testing.T) {
 	var gotPaths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPaths = append(gotPaths, r.URL.Path)
@@ -1216,7 +1163,7 @@ func TestEgressGatewayDeleteRefusesEmptyID(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayInUseDiagnosticPutsDependsOnOnThePublicIP: the ordering
+// TestGatewayInUseDiagnosticPutsDependsOnOnThePublicIP: the ordering
 // advice has to be the right way round. `depends_on` makes Terraform destroy
 // the DEPENDENT first, so the dependency belongs on the public IPs pointing at
 // the gateway. Written the other way (on the gateway, listing the public IPs)
@@ -1224,7 +1171,7 @@ func TestEgressGatewayDeleteRefusesEmptyID(t *testing.T) {
 // public IP is associated first, which makes the platform attach an implicit
 // gateway and the explicit gateway create then fails with
 // GATEWAY_EXISTS.
-func TestEgressGatewayInUseDiagnosticPutsDependsOnOnThePublicIP(t *testing.T) {
+func TestGatewayInUseDiagnosticPutsDependsOnOnThePublicIP(t *testing.T) {
 	var diags diag.Diagnostics
 	addGatewayError(&diags, "Failed to delete gateway", &client.APIError{
 		Code: errCodeGatewayInUse, Message: "2 public IPs in this VPC depend on the gateway", StatusCode: 409,
@@ -1240,7 +1187,7 @@ func TestEgressGatewayInUseDiagnosticPutsDependsOnOnThePublicIP(t *testing.T) {
 	}
 }
 
-func TestEgressGatewayDeleteInUse(t *testing.T) {
+func TestGatewayDeleteInUse(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusConflict,
 		"GATEWAY_IN_USE", "2 public IPs in this VPC depend on the gateway; release or detach them before removing it"))
@@ -1265,7 +1212,7 @@ func TestEgressGatewayDeleteInUse(t *testing.T) {
 	// allow-list entry and DNS record naming it silently stops matching. Someone
 	// reading this has something already blocked and acts on the first remedy
 	// offered, so leading with the irreversible one is unsafe guidance. The
-	// network service orders it the same way (NewEgressGatewayInUseError), as do
+	// network service orders it the same way (NewGatewayInUseError), as do
 	// the CLI and the customer docs; this client renders that source and was the
 	// one place still leading with "release".
 	detach := strings.Index(text, "detach")
@@ -1279,14 +1226,14 @@ func TestEgressGatewayDeleteInUse(t *testing.T) {
 	}
 
 	// The same code is returned for a holder the tenant CANNOT see or release
-	// (NewEgressGatewayInUseByOtherTenantError, network/internal/domain), so the
+	// (NewGatewayInUseByOtherTenantError, network/internal/domain), so the
 	// text must not send them hunting for an address of their own to release.
 	if !strings.Contains(text, "managed-service") {
 		t.Errorf("diagnostic must cover the holder that is not in the tenant's own listing, got:\n%s", text)
 	}
 }
 
-func TestEgressGatewayDeleteNotFoundIsSuccess(t *testing.T) {
+func TestGatewayDeleteNotFoundIsSuccess(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusNotFound, "NOT_FOUND", "gateway not found"))
 	defer server.Close()
@@ -1305,11 +1252,11 @@ func TestEgressGatewayDeleteNotFoundIsSuccess(t *testing.T) {
 
 // --- import ---
 
-// TestEgressGatewayImportSetsOnlyID: the import id may be the gateway id OR the
+// TestGatewayImportSetsOnlyID: the import id may be the gateway id OR the
 // VPC id (GET /gateways/{id} accepts both). Copying it into vpc_id as
 // well would make the following Read filter the list by a vpcId matching
 // nothing, and silently drop the freshly imported resource.
-func TestEgressGatewayImportSetsOnlyID(t *testing.T) {
+func TestGatewayImportSetsOnlyID(t *testing.T) {
 	r := NewResource().(resource.ResourceWithImportState)
 	s := gwSchema(t)
 
@@ -1354,7 +1301,7 @@ func TestAddEgressErrorFallbacks(t *testing.T) {
 
 // --- public_ip_id ---
 
-// TestEgressGatewayPublicIPIDDoesNotRequireReplace is THE regression guard for
+// TestGatewayPublicIPIDDoesNotRequireReplace is THE regression guard for
 // this attribute.
 //
 // Re-pointing a gateway at another public IP is an in-place update: the
@@ -1365,7 +1312,7 @@ func TestAddEgressErrorFallbacks(t *testing.T) {
 // address exists to prevent. The plan-modifier replay is deliberate: asserting
 // the modifier list "looks right" cannot see an ordering that records a
 // replacement anyway.
-func TestEgressGatewayPublicIPIDDoesNotRequireReplace(t *testing.T) {
+func TestGatewayPublicIPIDDoesNotRequireReplace(t *testing.T) {
 	s := gwSchema(t)
 	attr, ok := s.Attributes["public_ip_id"].(schema.StringAttribute)
 	if !ok {
@@ -1399,7 +1346,7 @@ func TestEgressGatewayPublicIPIDDoesNotRequireReplace(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayPublicIPIDOmittedIsPlanStable is the perpetual-diff guard at
+// TestGatewayPublicIPIDOmittedIsPlanStable is the perpetual-diff guard at
 // the attribute level, for both shapes state can be in when the practitioner
 // omitted the attribute:
 //
@@ -1410,7 +1357,7 @@ func TestEgressGatewayPublicIPIDDoesNotRequireReplace(t *testing.T) {
 // The framework marks a null-config Computed attribute unknown, and an unknown
 // facing either of those is a diff on every run: `terraform plan
 // -detailed-exitcode` returns 2 forever and any drift gate built on it breaks.
-func TestEgressGatewayPublicIPIDOmittedIsPlanStable(t *testing.T) {
+func TestGatewayPublicIPIDOmittedIsPlanStable(t *testing.T) {
 	s := gwSchema(t)
 	attr, ok := s.Attributes["public_ip_id"].(schema.StringAttribute)
 	if !ok {
@@ -1448,10 +1395,10 @@ func TestEgressGatewayPublicIPIDOmittedIsPlanStable(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayModifyPlanKeepsOmittedPublicIPID: the resource-level half of
+// TestGatewayModifyPlanKeepsOmittedPublicIPID: the resource-level half of
 // the same invariant. With nothing else changing, an omitted public_ip_id must
 // resolve to the state value — including a null.
-func TestEgressGatewayModifyPlanKeepsOmittedPublicIPID(t *testing.T) {
+func TestGatewayModifyPlanKeepsOmittedPublicIPID(t *testing.T) {
 	planned := modifyPlan(t,
 		gwPlanUnknownComputed("vpc-1", ModePublicIP, nil),
 		gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit_public_ip", nil, "pip-1"))
@@ -1464,14 +1411,14 @@ func TestEgressGatewayModifyPlanKeepsOmittedPublicIPID(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayModifyPlanUnknownPinOnModeSwitch is the "inconsistent result
+// TestGatewayModifyPlanUnknownPinOnModeSwitch is the "inconsistent result
 // after apply" guard for the switch INTO public_ip mode without naming an
 // address. Both the config and the state hold a null, so UseStateForUnknown
 // alone would pin the plan to null ACROSS AN APPLY THAT RE-ADDRESSES THE
 // GATEWAY, and Terraform core rejects outright any planned value the apply
 // contradicts. The plan must not assert what the platform will report before it
 // has reported it.
-func TestEgressGatewayModifyPlanUnknownPinOnModeSwitch(t *testing.T) {
+func TestGatewayModifyPlanUnknownPinOnModeSwitch(t *testing.T) {
 	planned := modifyPlan(t,
 		gwPlanUnknownComputed("vpc-1", ModePublicIP, boolPtr(true)),
 		gwValue("gw-1", "vpc-1", otherMode, "185.1.2.3", "active", "explicit", boolPtr(true)))
@@ -1483,11 +1430,11 @@ func TestEgressGatewayModifyPlanUnknownPinOnModeSwitch(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayModifyPlanKeepsConfiguredPin: a value the practitioner wrote
+// TestGatewayModifyPlanKeepsConfiguredPin: a value the practitioner wrote
 // is their choice and must stay KNOWN in the plan. Overwriting it with unknown
 // would hide the very change being planned — `terraform plan` would render
 // "(known after apply)" for the address the configuration names.
-func TestEgressGatewayModifyPlanKeepsConfiguredPin(t *testing.T) {
+func TestGatewayModifyPlanKeepsConfiguredPin(t *testing.T) {
 	config := gwValue("", "vpc-1", ModePublicIP, "", "", "", boolPtr(true), "pip-2")
 	planned := modifyPlan(t,
 		gwValue("gw-1", "vpc-1", ModePublicIP, "46.246.117.231", "active", "explicit_public_ip", boolPtr(true), "pip-2"),
@@ -1512,24 +1459,24 @@ func TestEgressGatewayModifyPlanKeepsConfiguredPin(t *testing.T) {
 
 // --- validation ---
 
-// TestEgressGatewayHasNoValidateConfig documents a deliberate removal.
+// TestGatewayHasNoValidateConfig documents a deliberate removal.
 //
 // The resource used to implement ValidateConfig for ONE case: `public_ip_id`
-// named together with `mode = "nat"`. That pair is unreachable now that `nat`
-// itself is refused, and keeping the check would emit a SECOND diagnostic
-// saying "public_ip_id is only meaningful with public_ip" — which implies the
-// withdrawn mode was otherwise fine, and is the opposite of what the
-// practitioner needs to read.
-func TestEgressGatewayHasNoValidateConfig(t *testing.T) {
+// named together with a mode that does not take one. That pair is unreachable
+// now that `public_ip` is the only accepted mode, and keeping the check would
+// emit a SECOND diagnostic saying "public_ip_id is only meaningful with
+// public_ip" — which implies the rejected mode was otherwise fine, and is the
+// opposite of what the practitioner needs to read.
+func TestGatewayHasNoValidateConfig(t *testing.T) {
 	if _, ok := NewResource().(resource.ResourceWithValidateConfig); ok {
 		t.Error("the pin/mode pair check is subsumed by the `mode` validator; a ValidateConfig that " +
-			"fires on mode = \"nat\" would add a second, misleading diagnostic to the withdrawal refusal")
+			"fired on the pair would add a second, misleading diagnostic to the mode refusal")
 	}
 }
 
 // --- create with a chosen address ---
 
-func TestEgressGatewayCreateSendsChosenPublicIPID(t *testing.T) {
+func TestGatewayCreateSendsChosenPublicIPID(t *testing.T) {
 	var got apiCreateGatewayRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&got)
@@ -1565,7 +1512,7 @@ func TestEgressGatewayCreateSendsChosenPublicIPID(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayCreateOmitsPublicIPIDWhenNotChosen: an omitted field means
+// TestGatewayCreateOmitsPublicIPIDWhenNotChosen: an omitted field means
 // "the platform draws the gateway an address itself". Sending an empty string
 // instead would be a different request, and it is what would break every
 // configuration written before this attribute existed.
@@ -1574,7 +1521,7 @@ func TestEgressGatewayCreateSendsChosenPublicIPID(t *testing.T) {
 // address has no id and is not a public IP resource, so the API omits
 // `publicIpId` and the attribute must land NULL — it does NOT come back as an
 // allocation made on the tenant's behalf.
-func TestEgressGatewayCreateOmitsPublicIPIDWhenNotChosen(t *testing.T) {
+func TestGatewayCreateOmitsPublicIPIDWhenNotChosen(t *testing.T) {
 	var raw map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&raw)
@@ -1611,12 +1558,12 @@ func TestEgressGatewayCreateOmitsPublicIPIDWhenNotChosen(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayCreateRefusesADifferentPublicIP: if the platform bound an
+// TestGatewayCreateRefusesADifferentPublicIP: if the platform bound an
 // address other than the one named, the VPC is egressing from something the
 // configuration does not mention — so the allow-list entry or DNS record the
 // practitioner published no longer matches their traffic. Core would catch the
 // divergence as a provider bug; this says what is actually true in the cloud.
-func TestEgressGatewayCreateRefusesADifferentPublicIP(t *testing.T) {
+func TestGatewayCreateRefusesADifferentPublicIP(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"id":"gw-1","vpcId":"vpc-1","tenantId":"t-123","mode":"public_ip",
@@ -1644,10 +1591,10 @@ func TestEgressGatewayCreateRefusesADifferentPublicIP(t *testing.T) {
 
 // --- update: re-pointing at another address ---
 
-// TestEgressGatewayUpdatePinChangeRequiresAcknowledgement: moving the gateway
+// TestGatewayUpdatePinChangeRequiresAcknowledgement: moving the gateway
 // onto a different address changes what the VPC's traffic arrives as, so it is
 // held to the same rule as a mode change — refused locally, before any request.
-func TestEgressGatewayUpdatePinChangeRequiresAcknowledgement(t *testing.T) {
+func TestGatewayUpdatePinChangeRequiresAcknowledgement(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
@@ -1681,10 +1628,10 @@ func TestEgressGatewayUpdatePinChangeRequiresAcknowledgement(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayUpdatePinChangeIsAPatch: the wire-level statement that
+// TestGatewayUpdatePinChangeIsAPatch: the wire-level statement that
 // re-pointing is in place. A PATCH by the gateway's own id is what keeps the
 // VPC's outbound path up across the change.
-func TestEgressGatewayUpdatePinChangeIsAPatch(t *testing.T) {
+func TestGatewayUpdatePinChangeIsAPatch(t *testing.T) {
 	var gotMethod, gotPath string
 	var gotBody apiUpdateGatewayRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1726,11 +1673,11 @@ func TestEgressGatewayUpdatePinChangeIsAPatch(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayUpdateModeSwitchOmitsUnknownPin: switching into public_ip
+// TestGatewayUpdateModeSwitchOmitsUnknownPin: switching into public_ip
 // mode without naming an address plans public_ip_id as unknown, and an unknown
 // must never reach the wire — an empty publicIpId is a different request from
 // an absent one.
-func TestEgressGatewayUpdateModeSwitchOmitsUnknownPin(t *testing.T) {
+func TestGatewayUpdateModeSwitchOmitsUnknownPin(t *testing.T) {
 	var raw map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&raw)
@@ -1790,11 +1737,6 @@ func TestAddEgressErrorPublicIPCodes(t *testing.T) {
 		want []string
 	}{
 		{errCodePublicIPUnavailable, []string{"not free", "Nothing was changed"}},
-		// The ONE cause the server has for this code: publicIpId with
-		// mode=nat. A foreign or unknown id is a 404, so a diagnostic that
-		// blamed tenancy would send the practitioner to check their
-		// credentials while the fault is two lines of their own config.
-		{errCodePublicIPNotAllowed, []string{"nat", "public_ip_id", "Nothing was changed"}},
 	} {
 		t.Run(tc.code, func(t *testing.T) {
 			var diags diag.Diagnostics

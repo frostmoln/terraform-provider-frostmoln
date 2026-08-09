@@ -20,13 +20,11 @@ import (
 // says nothing about WHEN the refusal fires — and the wording is a claim about
 // exactly that.
 //
-// The claim the schema and the diagnostic now make is: the gateway is
-// unaffected, but while `mode = "nat"` is still written in the configuration
-// none of those commands get past validation. That is only worth asserting
-// against the real RPC: the previous text said `plan`, `refresh` and `import`
-// "all still read it", which reads as "leave the configuration alone and
-// everything but apply keeps working", and no direct-validator test could
-// contradict it.
+// The claim the schema and the diagnostic make is: while an unaccepted `mode`
+// is written in the configuration, none of those commands get past validation
+// — the gateway itself is unaffected. That is only worth asserting against the
+// real RPC, because it is a claim about WHICH COMMANDS stop, and no
+// direct-validator test can reach that.
 
 // gatewayConfig builds a resource config with every attribute null except
 // vpc_id and mode, taken from the resource's own schema so the shape cannot
@@ -60,7 +58,7 @@ func gatewayConfig(t *testing.T, mode string) *tfprotov6.DynamicValue {
 	return &dv
 }
 
-func validateEgressGatewayConfig(t *testing.T, mode string) []*tfprotov6.Diagnostic {
+func validateGatewayConfig(t *testing.T, mode string) []*tfprotov6.Diagnostic {
 	t.Helper()
 	server := providerserver.NewProtocol6(provider.New("test")())()
 	resp, err := server.ValidateResourceConfig(context.Background(), &tfprotov6.ValidateResourceConfigRequest{
@@ -101,7 +99,7 @@ func gatewayDiagsHaveError(diags []*tfprotov6.Diagnostic) bool {
 func TestGatewayValidateResourceConfigRefusesAnUnknownMode(t *testing.T) {
 	t.Parallel()
 
-	diags := validateEgressGatewayConfig(t, "not-a-mode")
+	diags := validateGatewayConfig(t, "not-a-mode")
 	if !gatewayDiagsHaveError(diags) {
 		t.Fatal("an unknown mode must be refused by ValidateResourceConfig; if it is not, " +
 			"the schema's claim about when the refusal fires is wrong")
@@ -114,13 +112,13 @@ func TestGatewayValidateResourceConfigRefusesAnUnknownMode(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayValidateResourceConfigAcceptsPublicIP is the other half: the
+// TestGatewayValidateResourceConfigAcceptsPublicIP is the other half: the
 // refusal must be specific to the bad value, not a resource that fails
 // validation for everyone.
-func TestEgressGatewayValidateResourceConfigAcceptsPublicIP(t *testing.T) {
+func TestGatewayValidateResourceConfigAcceptsPublicIP(t *testing.T) {
 	t.Parallel()
 
-	diags := validateEgressGatewayConfig(t, "public_ip")
+	diags := validateGatewayConfig(t, "public_ip")
 	if gatewayDiagsHaveError(diags) {
 		t.Errorf("mode = \"public_ip\" must validate cleanly, got:\n%s", gatewayDiagText(diags))
 	}

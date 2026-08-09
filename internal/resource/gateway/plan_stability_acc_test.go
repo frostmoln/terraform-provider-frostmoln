@@ -27,7 +27,7 @@ import (
 // Frostmoln at all: the API is an httptest server in-process, so they are
 // reproducible offline and deterministic. Run them with:
 //
-//	TF_ACC=1 go test ./internal/resource/gateway/ -run TestAccEgressGateway
+//	TF_ACC=1 go test ./internal/resource/gateway/ -run TestAccGateway
 //
 // terraform-plugin-testing runs a refresh-and-plan after every apply step and
 // FAILS the step on a non-empty plan unless ExpectNonEmptyPlan is set. That
@@ -181,7 +181,7 @@ func startGatewayAPI(t *testing.T) *gatewayAPI {
 	return api
 }
 
-// TestAccEgressGatewayOmittedPublicIPIDIsPlanStable is the perpetual-diff
+// TestAccGatewayOmittedPublicIPIDIsPlanStable is the perpetual-diff
 // proof for the case the plan calls out: `mode = "public_ip"` with no
 // `public_ip_id`.
 //
@@ -195,7 +195,7 @@ func startGatewayAPI(t *testing.T) *gatewayAPI {
 // refresh-and-plan, which fails the step on a non-empty plan — so the third
 // step, a no-op re-apply of the identical configuration, asserts stability
 // across a full second cycle rather than just once.
-func TestAccEgressGatewayOmittedPublicIPIDIsPlanStable(t *testing.T) {
+func TestAccGatewayOmittedPublicIPIDIsPlanStable(t *testing.T) {
 	startGatewayAPI(t)
 
 	// The acknowledgement is present only so the harness can tear the gateway
@@ -237,7 +237,7 @@ resource "frostmoln_gateway" "test" {
 	})
 }
 
-// TestAccEgressGatewayUnnamedPublicIPIDIsPlanStable is the other half of the
+// TestAccGatewayUnnamedPublicIPIDIsPlanStable is the other half of the
 // perpetual-diff proof: the platform answers with a public IP id the
 // CONFIGURATION never named, so an Optional+Computed attribute holds a known
 // value with nothing in the config to match it against. Pinned known and wrong,
@@ -250,7 +250,7 @@ resource "frostmoln_gateway" "test" {
 // this state against a configuration that names no address. An UNNAMED create
 // does NOT produce it — that path gets a platform-drawn address with no id at
 // all, which is the test above.
-func TestAccEgressGatewayUnnamedPublicIPIDIsPlanStable(t *testing.T) {
+func TestAccGatewayUnnamedPublicIPIDIsPlanStable(t *testing.T) {
 	api := startGatewayAPI(t)
 	api.reportsUnnamedPublicIP = true
 
@@ -278,7 +278,7 @@ resource "frostmoln_gateway" "test" {
 	})
 }
 
-// TestAccEgressGatewayPublicIPIDChangeIsInPlace is the destroy/recreate proof.
+// TestAccGatewayPublicIPIDChangeIsInPlace is the destroy/recreate proof.
 //
 // A RequiresReplace on this attribute would destroy the VPC's only outbound
 // path and build a new one — taking internet, platform DNS resolution and
@@ -290,7 +290,7 @@ resource "frostmoln_gateway" "test" {
 //     CreateBeforeDelete (plancheck.ExpectResourceAction);
 //   - the API must have seen a PATCH and NO DELETE at all (the scripted server
 //     counts them), which no plan-level assertion can fake.
-func TestAccEgressGatewayPublicIPIDChangeIsInPlace(t *testing.T) {
+func TestAccGatewayPublicIPIDChangeIsInPlace(t *testing.T) {
 	api := startGatewayAPI(t)
 
 	withPin := func(pip string) string {

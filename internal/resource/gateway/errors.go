@@ -14,11 +14,10 @@ import (
 // configuration, change nothing and retry, or import something that already
 // exists.
 const (
-	errCodeModeUnavailable = "GATEWAY_MODE_UNAVAILABLE"
-	errCodeGatewayExists   = "GATEWAY_EXISTS"
-	errCodeGatewayInUse    = "GATEWAY_IN_USE"
-	errCodeLossNotAcked    = "GATEWAY_LOSS_NOT_ACKED"
-	errCodePoolExhausted   = "GATEWAY_POOL_EXHAUSTED"
+	errCodeGatewayExists = "GATEWAY_EXISTS"
+	errCodeGatewayInUse  = "GATEWAY_IN_USE"
+	errCodeLossNotAcked  = "GATEWAY_LOSS_NOT_ACKED"
+	errCodePoolExhausted = "GATEWAY_POOL_EXHAUSTED"
 
 	// errCodePublicIPUnavailable (409) means the named public IP exists and
 	// belongs to this tenant, but is not free to become an outbound source
@@ -26,18 +25,20 @@ const (
 	// serving another VPC's outbound path.
 	errCodePublicIPUnavailable = "GATEWAY_PUBLIC_IP_UNAVAILABLE"
 
-	// errCodePublicIPNotAllowed (400) has exactly ONE cause: `publicIpId` was
-	errCodePublicIPNotAllowed = "GATEWAY_PUBLIC_IP_NOT_ALLOWED"
+	// GATEWAY_MODE_UNAVAILABLE and GATEWAY_PUBLIC_IP_NOT_ALLOWED were mapped
+	// here until ADR-0114. Both existed only to explain the withdrawn `nat`
+	// mode, and network no longer defines either — the codes it can emit are
+	// exactly the ones above plus the two acknowledgement codes. A branch for a
+	// code the server cannot send is untestable against reality, and the prose
+	// it carried described a mode no customer ever used.
 )
 
 // addGatewayError appends the best diagnostic available for err. fallback is the
 // summary used for an error the gateway surface does not define (transport
 // failures, auth, a code added after this build).
 //
-// The mapping is deliberately not a formatting flourish. Three of these codes
-// are routinely mis-presented by clients that pass the raw envelope through:
-//
-//   - GATEWAY_MODE_UNAVAILABLE is a 400, which reads as "fix your syntax". It is
+// The mapping is deliberately not a formatting flourish. These codes are
+// routinely mis-presented by clients that pass the raw envelope through:
 func addGatewayError(diags *diag.Diagnostics, fallback string, err error) {
 	var apiErr *client.APIError
 	if !errors.As(err, &apiErr) {
@@ -46,22 +47,6 @@ func addGatewayError(diags *diag.Diagnostics, fallback string, err error) {
 	}
 
 	switch apiErr.Code {
-	case errCodeModeUnavailable:
-		diags.AddError(
-			"Gateway mode is not available",
-			"The platform declined to provision the mode named — this is a product statement, not a "+
-				"syntax error.\n\n"+
-				"If it is `nat`: that mode has been WITHDRAWN and will not come back. It sent the VPC's "+
-				"outbound traffic through an address shared with other VPCs, and a VPC on it could not "+
-				"give any of its instances a public IP. Use mode = \"public_ip\", which gives the VPC "+
-				"its own outbound gateway — name a `public_ip_id` to egress from a public IP of your "+
-				"own, or leave it out and the gateway gets an address the platform draws for it. This "+
-				"provider refuses `nat` before any request is sent, so reaching this diagnostic means "+
-				"`mode` came from an expression that was not known at validate time.\n\n"+
-				"`public_ip` is the only mode there is. Nothing else is a mode waiting to be shipped, "+
-				"and a VPC that should have NO outbound path at all is this resource NOT DECLARED "+
-				"rather than a different value.\n\n"+
-				"API said: "+apiErr.Message)
 	case errCodeGatewayExists:
 		diags.AddError(
 			"VPC already has a gateway",
@@ -128,21 +113,6 @@ func addGatewayError(diags *diag.Diagnostics, fallback string, err error) {
 				"public IP of yours — it has no id, it is not in your public IP list, and nothing pins "+
 				"it, so it can change if the gateway is rebuilt. Take it when nothing outside the VPC "+
 				"needs to know the source address; name a `public_ip_id` when something does.\n\n"+
-				"API said: "+apiErr.Message)
-	case errCodePublicIPNotAllowed:
-		diags.AddError(
-			"public_ip_id cannot be used with the withdrawn mode = \"nat\"",
-			"`mode` resolved to \"nat\" while `public_ip_id` named an address. That mode egresses from "+
-				"an address SHARED with other VPCs, so the named address would carry none of this VPC's "+
-				"outbound traffic — the platform refuses the pair rather than dropping the field, because "+
-				"silently ignoring it would leave you giving a partner an address to allow-list that "+
-				"your traffic never arrives from.\n\n"+
-				"Nothing was changed.\n\n"+
-				"This provider refuses \"nat\" before an apply. It could not here because `mode` came "+
-				"from a value that was not known at validate time — a module output, or another "+
-				"resource's attribute. Check what that expression resolves to and set "+
-				"`mode = \"public_ip\"`: \"nat\" has been withdrawn, so it is not a mode to fall back "+
-				"to by dropping `public_ip_id`.\n\n"+
 				"API said: "+apiErr.Message)
 	case errCodeLossNotAcked:
 		diags.AddError(
