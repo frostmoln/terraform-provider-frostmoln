@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.2] - 2026-08-09
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.11 (#283)
+
+### 🚜 Refactor
+
+- *(gateway)* Rename frostmoln_egress_gateway to frostmoln_gateway (#285)
+
 ## [0.23.1] - 2026-08-07
 
 ### 🐛 Bug Fixes
