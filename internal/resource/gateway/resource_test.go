@@ -1,4 +1,4 @@
-package egress_gateway
+package gateway
 
 import (
 	"context"
@@ -153,7 +153,7 @@ func TestEgressGatewayMetadata(t *testing.T) {
 	r := NewResource()
 	resp := &resource.MetadataResponse{}
 	r.Metadata(context.Background(), resource.MetadataRequest{ProviderTypeName: "frostmoln"}, resp)
-	if resp.TypeName != "frostmoln_egress_gateway" {
+	if resp.TypeName != "frostmoln_gateway" {
 		t.Errorf("unexpected type name %s", resp.TypeName)
 	}
 }
@@ -265,7 +265,7 @@ func TestEgressGatewayModeValidatorIgnoresNullAndUnknown(t *testing.T) {
 // the modifier list: a replacement would DESTROY the gateway and create a new
 // one, dropping the recorded source address and leaving the VPC with no
 // internet, no DNS and no managed-service connectivity in between. The API has
-// PATCH /egress-gateways/{id} precisely so that never happens.
+// PATCH /gateways/{id} precisely so that never happens.
 func TestEgressGatewayModeDoesNotRequireReplace(t *testing.T) {
 	s := gwSchema(t)
 	attr, ok := s.Attributes["mode"].(schema.StringAttribute)
@@ -372,7 +372,7 @@ func TestEgressGatewaySurfacesCarryNoInternalNames(t *testing.T) {
 		errCodePublicIPUnavailable, errCodePublicIPNotAllowed,
 	} {
 		var diags diag.Diagnostics
-		addEgressError(&diags, "fallback", &client.APIError{Code: code, Message: "api message", StatusCode: 400})
+		addGatewayError(&diags, "fallback", &client.APIError{Code: code, Message: "api message", StatusCode: 400})
 		surfaces["diagnostic "+code] = diagText(diags)
 	}
 
@@ -395,7 +395,7 @@ func TestEgressGatewaySurfacesCarryNoInternalNames(t *testing.T) {
 // `public_ip_id` from the config — it is the one attribute whose planned value
 // depends on whether the practitioner wrote it — so an all-null config is the
 // "practitioner named no address" case every pre-existing test is in.
-func modifyPlan(t *testing.T, planRaw, stateRaw tftypes.Value, configRaw ...tftypes.Value) EgressGatewayModel {
+func modifyPlan(t *testing.T, planRaw, stateRaw tftypes.Value, configRaw ...tftypes.Value) GatewayModel {
 	t.Helper()
 	s := gwSchema(t)
 	r, ok := NewResource().(resource.ResourceWithModifyPlan)
@@ -420,7 +420,7 @@ func modifyPlan(t *testing.T, planRaw, stateRaw tftypes.Value, configRaw ...tfty
 		t.Fatalf("unexpected plan diagnostics: %v", resp.Diagnostics)
 	}
 
-	var planned EgressGatewayModel
+	var planned GatewayModel
 	resp.Plan.Get(context.Background(), &planned)
 	return planned
 }
@@ -502,8 +502,8 @@ func TestEgressGatewayModifyPlanKeepsNullSourceAddress(t *testing.T) {
 // sourceAddress while a gateway is detached, and "" is a value a practitioner
 // could interpolate into a firewall rule.
 func TestApplyToModelAbsentSourceAddressIsNull(t *testing.T) {
-	var m EgressGatewayModel
-	applyToModel(&m, &apiEgressGateway{
+	var m GatewayModel
+	applyToModel(&m, &apiGateway{
 		ID: "gw-1", VPCID: "vpc-1", Mode: ModeNAT, Status: "detached", Origin: "legacy",
 	})
 	if !m.SourceAddress.IsNull() {
@@ -515,8 +515,8 @@ func TestApplyToModelAbsentSourceAddressIsNull(t *testing.T) {
 }
 
 func TestApplyToModelPresentSourceAddress(t *testing.T) {
-	var m EgressGatewayModel
-	applyToModel(&m, &apiEgressGateway{
+	var m GatewayModel
+	applyToModel(&m, &apiGateway{
 		ID: "gw-1", VPCID: "vpc-1", Mode: ModePublicIP,
 		SourceAddress: "46.246.117.231", Status: "active", Origin: "explicit",
 	})
@@ -528,9 +528,9 @@ func TestApplyToModelPresentSourceAddress(t *testing.T) {
 // --- create ---
 
 func TestEgressGatewayCreate(t *testing.T) {
-	var got apiCreateEgressGatewayRequest
+	var got apiCreateGatewayRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/egress-gateways" {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/gateways" {
 			_ = json.NewDecoder(r.Body).Decode(&got)
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":"gw-1","vpcId":"vpc-1","tenantId":"t-123","mode":"public_ip",
@@ -556,7 +556,7 @@ func TestEgressGatewayCreate(t *testing.T) {
 		t.Errorf("unexpected create body %+v", got)
 	}
 
-	var state EgressGatewayModel
+	var state GatewayModel
 	resp.State.Get(context.Background(), &state)
 	if state.ID.ValueString() != "gw-1" {
 		t.Errorf("expected id gw-1, got %v", state.ID)
@@ -566,7 +566,7 @@ func TestEgressGatewayCreate(t *testing.T) {
 	}
 }
 
-// TestEgressGatewayCreateModeUnavailable: EGRESS_MODE_UNAVAILABLE is a 400, so
+// TestEgressGatewayCreateModeUnavailable: GATEWAY_MODE_UNAVAILABLE is a 400, so
 // passed through raw it reads as "fix your syntax". It is not — it is the
 // platform declining to provision a mode. `nat` is WITHDRAWN, permanently, so
 // the configuration has to change; the diagnostic must say that and must NOT
@@ -580,7 +580,7 @@ func TestEgressGatewayCreate(t *testing.T) {
 func TestEgressGatewayCreateModeUnavailable(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusBadRequest,
-		"EGRESS_MODE_UNAVAILABLE", `egress gateway mode "nat" is not available; supported modes: public_ip`))
+		"GATEWAY_MODE_UNAVAILABLE", `gateway mode "nat" is not available; supported modes: public_ip`))
 	defer server.Close()
 
 	r := configuredResource(t, server.URL)
@@ -618,7 +618,7 @@ func TestEgressGatewayCreateModeUnavailable(t *testing.T) {
 func TestEgressGatewayCreateGatewayExists(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusConflict,
-		"EGRESS_GATEWAY_EXISTS", "VPC vpc-1 already has an egress gateway; change its mode instead of creating another"))
+		"GATEWAY_EXISTS", "VPC vpc-1 already has a gateway; change its mode instead of creating another"))
 	defer server.Close()
 
 	r := configuredResource(t, server.URL)
@@ -630,7 +630,7 @@ func TestEgressGatewayCreateGatewayExists(t *testing.T) {
 	}, resp)
 
 	text := diagText(resp.Diagnostics)
-	if !strings.Contains(text, "terraform import frostmoln_egress_gateway") {
+	if !strings.Contains(text, "terraform import frostmoln_gateway") {
 		t.Errorf("diagnostic must point at importing the existing gateway, got:\n%s", text)
 	}
 	if !strings.Contains(strings.ToLower(text), "mode") {
@@ -639,13 +639,13 @@ func TestEgressGatewayCreateGatewayExists(t *testing.T) {
 }
 
 // TestEgressGatewayCreatePoolExhausted pins the one presentation that costs a
-// practitioner a pointless support ticket: EGRESS_POOL_EXHAUSTED is PLATFORM
+// practitioner a pointless support ticket: GATEWAY_POOL_EXHAUSTED is PLATFORM
 // inventory, temporary and retryable — not the tenant's quota, and no amount of
 // quota granted fixes it.
 func TestEgressGatewayCreatePoolExhausted(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusServiceUnavailable,
-		"EGRESS_POOL_EXHAUSTED", "no public IPv4 addresses are currently available in this region; this is a platform capacity limit, not your quota"))
+		"GATEWAY_POOL_EXHAUSTED", "no public IPv4 addresses are currently available in this region; this is a platform capacity limit, not your quota"))
 	defer server.Close()
 
 	r := configuredResource(t, server.URL)
@@ -676,9 +676,9 @@ func TestEgressGatewayCreatePoolExhausted(t *testing.T) {
 func TestEgressGatewayReadUsesVPCFilteredList(t *testing.T) {
 	var gotQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/egress-gateways" {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/gateways" {
 			gotQuery = r.URL.RawQuery
-			_, _ = w.Write([]byte(`{"egressGateways":[{"id":"gw-1","vpcId":"vpc-1","mode":"public_ip",
+			_, _ = w.Write([]byte(`{"gateways":[{"id":"gw-1","vpcId":"vpc-1","mode":"public_ip",
 				"sourceAddress":"46.246.117.231","status":"active","origin":"vpc_create"}],"totalCount":1}`))
 			return
 		}
@@ -700,7 +700,7 @@ func TestEgressGatewayReadUsesVPCFilteredList(t *testing.T) {
 		t.Errorf("expected the read to be narrowed to the VPC, got %q", gotQuery)
 	}
 
-	var state EgressGatewayModel
+	var state GatewayModel
 	resp.State.Get(context.Background(), &state)
 	if state.Origin.ValueString() != "vpc_create" {
 		t.Errorf("unexpected origin %v", state.Origin)
@@ -726,8 +726,8 @@ func TestEgressGatewayReadUsesVPCFilteredList(t *testing.T) {
 // So: the API's value goes to state verbatim.
 func TestEgressGatewayReadKeepsWithdrawnNATMode(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/egress-gateways" {
-			_, _ = w.Write([]byte(`{"egressGateways":[{"id":"gw-1","vpcId":"vpc-1","mode":"nat",
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/gateways" {
+			_, _ = w.Write([]byte(`{"gateways":[{"id":"gw-1","vpcId":"vpc-1","mode":"nat",
 				"sourceAddress":"46.246.117.240","status":"active","origin":"explicit"}],"totalCount":1}`))
 			return
 		}
@@ -749,7 +749,7 @@ func TestEgressGatewayReadKeepsWithdrawnNATMode(t *testing.T) {
 		t.Fatal("a gateway still on the withdrawn mode must not be dropped from state")
 	}
 
-	var state EgressGatewayModel
+	var state GatewayModel
 	resp.State.Get(context.Background(), &state)
 	if got := state.Mode.ValueString(); got != ModeNAT {
 		t.Errorf("the read must record the mode the platform reports verbatim; got %q, want %q", got, ModeNAT)
@@ -788,14 +788,14 @@ func TestEgressGatewayModifyPlanWithdrawnNATIsStable(t *testing.T) {
 
 func TestEgressGatewayReadEmptyListRemovesResource(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/tenants/t-123/egress-gateways" {
-			_, _ = w.Write([]byte(`{"egressGateways":[],"totalCount":0}`))
+		if r.URL.Path == "/v1/tenants/t-123/gateways" {
+			_, _ = w.Write([]byte(`{"gateways":[],"totalCount":0}`))
 			return
 		}
 		// The by-id confirmation: this gateway really is gone.
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "egress gateway not found"},
+			"error": map[string]string{"code": "NOT_FOUND", "message": "gateway not found"},
 		})
 	}))
 	defer server.Close()
@@ -820,16 +820,16 @@ func TestEgressGatewayReadEmptyListRemovesResource(t *testing.T) {
 // for a vpcId that is unknown or that this tenant does not own, so a stale
 // vpc_id — or a key scoped to another tenant — would otherwise drop a live,
 // address-spending gateway out of state, and the next apply would create a
-// SECOND one for the same VPC (or fail with EGRESS_GATEWAY_EXISTS).
+// SECOND one for the same VPC (or fail with GATEWAY_EXISTS).
 func TestEgressGatewayReadEmptyListIsConfirmedBeforeRemoval(t *testing.T) {
 	var byIDCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/tenants/t-123/egress-gateways" {
+		if r.URL.Path == "/v1/tenants/t-123/gateways" {
 			// The filtered list comes back empty — but the gateway is alive.
-			_, _ = w.Write([]byte(`{"egressGateways":[],"totalCount":0}`))
+			_, _ = w.Write([]byte(`{"gateways":[],"totalCount":0}`))
 			return
 		}
-		if r.URL.Path == "/v1/tenants/t-123/egress-gateways/gw-1" {
+		if r.URL.Path == "/v1/tenants/t-123/gateways/gw-1" {
 			byIDCalls++
 			_, _ = w.Write([]byte(`{"id":"gw-1","vpcId":"vpc-1","mode":"public_ip",
 				"sourceAddress":"46.246.117.231","status":"active","origin":"explicit"}`))
@@ -850,13 +850,13 @@ func TestEgressGatewayReadEmptyListIsConfirmedBeforeRemoval(t *testing.T) {
 		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
 	}
 	if byIDCalls != 1 {
-		t.Errorf("an empty filtered list must be confirmed against GET /egress-gateways/{id}; saw %d such calls", byIDCalls)
+		t.Errorf("an empty filtered list must be confirmed against GET /gateways/{id}; saw %d such calls", byIDCalls)
 	}
 	if resp.State.Raw.IsNull() {
 		t.Fatal("a live gateway was dropped from state on the strength of an empty filtered list")
 	}
 
-	var state EgressGatewayModel
+	var state GatewayModel
 	resp.State.Get(context.Background(), &state)
 	if state.SourceAddress.ValueString() != "46.246.117.231" {
 		t.Errorf("the confirmed gateway must be written to state, got %+v", state)
@@ -870,7 +870,7 @@ func TestEgressGatewayReadEmptyListIsConfirmedBeforeRemoval(t *testing.T) {
 // internet, DNS and managed-service path.
 func TestEgressGatewayReadRefusesAnotherVPCsGateway(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"egressGateways":[{"id":"gw-other","vpcId":"vpc-other","mode":"public_ip",
+		_, _ = w.Write([]byte(`{"gateways":[{"id":"gw-other","vpcId":"vpc-other","mode":"public_ip",
 			"sourceAddress":"185.9.9.9","status":"active","origin":"explicit"}],"totalCount":1}`))
 	}))
 	defer server.Close()
@@ -892,7 +892,7 @@ func TestEgressGatewayReadRefusesAnotherVPCsGateway(t *testing.T) {
 		}
 	}
 
-	var state EgressGatewayModel
+	var state GatewayModel
 	resp.State.Get(context.Background(), &state)
 	if state.VPCID.ValueString() != "vpc-1" || state.ID.ValueString() != "gw-1" {
 		t.Errorf("state must not be rebound to the other gateway, got %+v", state)
@@ -900,13 +900,13 @@ func TestEgressGatewayReadRefusesAnotherVPCsGateway(t *testing.T) {
 }
 
 // TestEgressGatewayReadRefusesResponseWithoutID: an id is what every later
-// request is addressed by, and "/egress-gateways/" with an empty id is cleaned
+// request is addressed by, and "/gateways/" with an empty id is cleaned
 // straight back to the COLLECTION path — so a DELETE built from an id-less
 // state row 404s, IsNotFound reads that as "already gone", and the provider
 // forgets a gateway that is still up and still spending an address.
 func TestEgressGatewayReadRefusesResponseWithoutID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"egressGateways":[{"vpcId":"vpc-1","mode":"nat","status":"active",
+		_, _ = w.Write([]byte(`{"gateways":[{"vpcId":"vpc-1","mode":"nat","status":"active",
 			"origin":"explicit"}],"totalCount":1}`))
 	}))
 	defer server.Close()
@@ -937,13 +937,13 @@ func TestEgressGatewayReadNeverSendsEmptyVPCID(t *testing.T) {
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path+"?"+r.URL.RawQuery)
-		if r.URL.Path == "/v1/tenants/t-123/egress-gateways" {
+		if r.URL.Path == "/v1/tenants/t-123/gateways" {
 			// The tenant-wide list: a DIFFERENT VPC's gateway comes first.
-			_, _ = w.Write([]byte(`{"egressGateways":[{"id":"gw-other","vpcId":"vpc-other",
+			_, _ = w.Write([]byte(`{"gateways":[{"id":"gw-other","vpcId":"vpc-other",
 				"mode":"public_ip","status":"active","origin":"explicit"}],"totalCount":1}`))
 			return
 		}
-		if r.URL.Path == "/v1/tenants/t-123/egress-gateways/gw-1" {
+		if r.URL.Path == "/v1/tenants/t-123/gateways/gw-1" {
 			_, _ = w.Write([]byte(`{"id":"gw-1","vpcId":"vpc-1","mode":"nat","status":"active","origin":"explicit"}`))
 			return
 		}
@@ -963,7 +963,7 @@ func TestEgressGatewayReadNeverSendsEmptyVPCID(t *testing.T) {
 		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
 	}
 	for _, p := range paths {
-		if strings.HasPrefix(p, "/v1/tenants/t-123/egress-gateways?") {
+		if strings.HasPrefix(p, "/v1/tenants/t-123/gateways?") {
 			t.Fatalf("the collection was queried without a vpcId filter (%q): that returns the tenant-wide list", p)
 		}
 		if strings.Contains(p, "vpcId=&") || strings.HasSuffix(p, "vpcId=") {
@@ -971,7 +971,7 @@ func TestEgressGatewayReadNeverSendsEmptyVPCID(t *testing.T) {
 		}
 	}
 
-	var state EgressGatewayModel
+	var state GatewayModel
 	resp.State.Get(context.Background(), &state)
 	if state.VPCID.ValueString() != "vpc-1" {
 		t.Errorf("expected the by-id lookup to bind vpc-1, got %v", state.VPCID)
@@ -982,7 +982,7 @@ func TestEgressGatewayReadByIDNotFoundRemovesResource(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "egress gateway not found"},
+			"error": map[string]string{"code": "NOT_FOUND", "message": "gateway not found"},
 		})
 	}))
 	defer server.Close()
@@ -1048,7 +1048,7 @@ func TestEgressGatewayUpdateModeRequiresAcknowledgement(t *testing.T) {
 // every VPC still on `nat` has to make this exact move.
 func TestEgressGatewayUpdateModeInPlace(t *testing.T) {
 	var gotMethod, gotPath string
-	var gotBody apiUpdateEgressGatewayRequest
+	var gotBody apiUpdateGatewayRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod, gotPath = r.Method, r.URL.Path
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
@@ -1074,14 +1074,14 @@ func TestEgressGatewayUpdateModeInPlace(t *testing.T) {
 	if gotMethod != http.MethodPatch {
 		t.Errorf("a mode change must be a PATCH, got %s", gotMethod)
 	}
-	if gotPath != "/v1/tenants/t-123/egress-gateways/gw-1" {
+	if gotPath != "/v1/tenants/t-123/gateways/gw-1" {
 		t.Errorf("the PATCH must target the gateway id, got %s", gotPath)
 	}
 	if gotBody.Mode != ModePublicIP || !gotBody.AcknowledgeConnectivityLoss {
 		t.Errorf("unexpected PATCH body %+v", gotBody)
 	}
 
-	var got EgressGatewayModel
+	var got GatewayModel
 	resp.State.Get(context.Background(), &got)
 	if got.SourceAddress.ValueString() != "185.1.2.3" || got.Mode.ValueString() != ModePublicIP {
 		t.Errorf("state was not refreshed from the response: %+v", got)
@@ -1117,7 +1117,7 @@ func TestEgressGatewayUpdateAckOnlyMakesNoRequest(t *testing.T) {
 		t.Errorf("expected no API call for an acknowledgement-only change, saw %d", calls)
 	}
 
-	var got EgressGatewayModel
+	var got GatewayModel
 	resp.State.Get(context.Background(), &got)
 	if !got.AcknowledgeConnectivityLoss.ValueBool() {
 		t.Error("the acknowledgement must be stored")
@@ -1170,7 +1170,7 @@ func TestEgressGatewayUpdateRefusesEmptyID(t *testing.T) {
 func TestEgressGatewayUpdateSurfacesPoolExhausted(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusServiceUnavailable,
-		"EGRESS_POOL_EXHAUSTED", "no public IPv4 addresses are currently available in this region"))
+		"GATEWAY_POOL_EXHAUSTED", "no public IPv4 addresses are currently available in this region"))
 	defer server.Close()
 
 	r := configuredResource(t, server.URL)
@@ -1246,7 +1246,7 @@ func TestEgressGatewayDeleteSendsAcknowledgementAsQuery(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
 	}
-	if gotPath != "/v1/tenants/t-123/egress-gateways/gw-1" {
+	if gotPath != "/v1/tenants/t-123/gateways/gw-1" {
 		t.Errorf("unexpected path %q — the query must not be built into it", gotPath)
 	}
 	if gotAck != "true" {
@@ -1255,7 +1255,7 @@ func TestEgressGatewayDeleteSendsAcknowledgementAsQuery(t *testing.T) {
 }
 
 // TestEgressGatewayDeleteRefusesEmptyID pins the failure mode that looks like
-// success. `path.Join` cleans "/v1/tenants/t/egress-gateways/" back to the
+// success. `path.Join` cleans "/v1/tenants/t/gateways/" back to the
 // COLLECTION path, so a DELETE built from an empty id is answered by the
 // collection — and whatever it answers, this resource's IsNotFound branch would
 // read as "the gateway was already gone" and report a clean destroy for a
@@ -1290,15 +1290,15 @@ func TestEgressGatewayDeleteRefusesEmptyID(t *testing.T) {
 // the gateway is destroyed FIRST — this same 409 again — and on create the
 // public IP is associated first, which makes the platform attach an implicit
 // gateway and the explicit gateway create then fails with
-// EGRESS_GATEWAY_EXISTS.
+// GATEWAY_EXISTS.
 func TestEgressGatewayInUseDiagnosticPutsDependsOnOnThePublicIP(t *testing.T) {
 	var diags diag.Diagnostics
-	addEgressError(&diags, "Failed to delete egress gateway", &client.APIError{
-		Code: errCodeGatewayInUse, Message: "2 public IPs in this VPC depend on the egress gateway", StatusCode: 409,
+	addGatewayError(&diags, "Failed to delete gateway", &client.APIError{
+		Code: errCodeGatewayInUse, Message: "2 public IPs in this VPC depend on the gateway", StatusCode: 409,
 	})
 
 	text := diagText(diags)
-	if !strings.Contains(text, "depends_on = [frostmoln_egress_gateway") {
+	if !strings.Contains(text, "depends_on = [frostmoln_gateway") {
 		t.Errorf("the diagnostic must put depends_on ON the public IPs, pointing at the gateway, got:\n%s", text)
 	}
 	if strings.Contains(text, "depends_on = [frostmoln_public_ip") {
@@ -1310,7 +1310,7 @@ func TestEgressGatewayInUseDiagnosticPutsDependsOnOnThePublicIP(t *testing.T) {
 func TestEgressGatewayDeleteInUse(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusConflict,
-		"EGRESS_GATEWAY_IN_USE", "2 public IPs in this VPC depend on the egress gateway; release or detach them before removing it"))
+		"GATEWAY_IN_USE", "2 public IPs in this VPC depend on the gateway; release or detach them before removing it"))
 	defer server.Close()
 
 	r := configuredResource(t, server.URL)
@@ -1355,7 +1355,7 @@ func TestEgressGatewayDeleteInUse(t *testing.T) {
 
 func TestEgressGatewayDeleteNotFoundIsSuccess(t *testing.T) {
 	calls := 0
-	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusNotFound, "NOT_FOUND", "egress gateway not found"))
+	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusNotFound, "NOT_FOUND", "gateway not found"))
 	defer server.Close()
 
 	r := configuredResource(t, server.URL)
@@ -1373,7 +1373,7 @@ func TestEgressGatewayDeleteNotFoundIsSuccess(t *testing.T) {
 // --- import ---
 
 // TestEgressGatewayImportSetsOnlyID: the import id may be the gateway id OR the
-// VPC id (GET /egress-gateways/{id} accepts both). Copying it into vpc_id as
+// VPC id (GET /gateways/{id} accepts both). Copying it into vpc_id as
 // well would make the following Read filter the list by a vpcId matching
 // nothing, and silently drop the freshly imported resource.
 func TestEgressGatewayImportSetsOnlyID(t *testing.T) {
@@ -1388,7 +1388,7 @@ func TestEgressGatewayImportSetsOnlyID(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
 	}
-	var state EgressGatewayModel
+	var state GatewayModel
 	resp.State.Get(context.Background(), &state)
 	if state.ID.ValueString() != "gw-1" {
 		t.Errorf("expected id gw-1, got %v", state.ID)
@@ -1405,13 +1405,13 @@ func TestEgressGatewayImportSetsOnlyID(t *testing.T) {
 
 func TestAddEgressErrorFallbacks(t *testing.T) {
 	var diags diag.Diagnostics
-	addEgressError(&diags, "Failed to do the thing", context.Canceled)
+	addGatewayError(&diags, "Failed to do the thing", context.Canceled)
 	if len(diags.Errors()) != 1 || diags.Errors()[0].Summary() != "Failed to do the thing" {
 		t.Errorf("a non-API error must fall back to the caller's summary, got %v", diags)
 	}
 
 	var apiDiags diag.Diagnostics
-	addEgressError(&apiDiags, "Failed to do the thing", &client.APIError{
+	addGatewayError(&apiDiags, "Failed to do the thing", &client.APIError{
 		Code: "SOMETHING_NEW", Message: "unrecognised", StatusCode: 500,
 	})
 	if len(apiDiags.Errors()) != 1 || !strings.Contains(apiDiags.Errors()[0].Detail(), "SOMETHING_NEW") {
@@ -1597,7 +1597,7 @@ func TestEgressGatewayHasNoValidateConfig(t *testing.T) {
 // --- create with a chosen address ---
 
 func TestEgressGatewayCreateSendsChosenPublicIPID(t *testing.T) {
-	var got apiCreateEgressGatewayRequest
+	var got apiCreateGatewayRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&got)
 		w.WriteHeader(http.StatusCreated)
@@ -1622,7 +1622,7 @@ func TestEgressGatewayCreateSendsChosenPublicIPID(t *testing.T) {
 		t.Errorf("the create must carry the chosen address, got %+v", got)
 	}
 
-	var state EgressGatewayModel
+	var state GatewayModel
 	resp.State.Get(context.Background(), &state)
 	if state.PublicIPID.ValueString() != "pip-1" {
 		t.Errorf("expected public_ip_id pip-1 in state, got %v", state.PublicIPID)
@@ -1666,7 +1666,7 @@ func TestEgressGatewayCreateOmitsPublicIPIDWhenNotChosen(t *testing.T) {
 		t.Errorf("publicIpId must be OMITTED when the practitioner chose no address, got body %v", raw)
 	}
 
-	var state EgressGatewayModel
+	var state GatewayModel
 	resp.State.Get(context.Background(), &state)
 	if !state.PublicIPID.IsNull() {
 		t.Errorf("a gateway on a platform-drawn address has no public IP resource, so public_ip_id "+
@@ -1753,7 +1753,7 @@ func TestEgressGatewayUpdatePinChangeRequiresAcknowledgement(t *testing.T) {
 // VPC's outbound path up across the change.
 func TestEgressGatewayUpdatePinChangeIsAPatch(t *testing.T) {
 	var gotMethod, gotPath string
-	var gotBody apiUpdateEgressGatewayRequest
+	var gotBody apiUpdateGatewayRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod, gotPath = r.Method, r.URL.Path
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
@@ -1779,14 +1779,14 @@ func TestEgressGatewayUpdatePinChangeIsAPatch(t *testing.T) {
 	if gotMethod != http.MethodPatch {
 		t.Errorf("an address change must be a PATCH, got %s", gotMethod)
 	}
-	if gotPath != "/v1/tenants/t-123/egress-gateways/gw-1" {
+	if gotPath != "/v1/tenants/t-123/gateways/gw-1" {
 		t.Errorf("the PATCH must target the gateway id, got %s", gotPath)
 	}
 	if gotBody.PublicIPID != "pip-2" || gotBody.Mode != ModePublicIP || !gotBody.AcknowledgeConnectivityLoss {
 		t.Errorf("unexpected PATCH body %+v", gotBody)
 	}
 
-	var got EgressGatewayModel
+	var got GatewayModel
 	resp.State.Get(context.Background(), &got)
 	if got.PublicIPID.ValueString() != "pip-2" || got.SourceAddress.ValueString() != "46.246.117.232" {
 		t.Errorf("state was not refreshed from the response: %+v", got)
@@ -1824,7 +1824,7 @@ func TestEgressGatewayUpdateModeSwitchOmitsUnknownPin(t *testing.T) {
 		t.Errorf("an unresolved public_ip_id must be omitted from the PATCH, got body %v", raw)
 	}
 
-	var got EgressGatewayModel
+	var got GatewayModel
 	resp.State.Get(context.Background(), &got)
 	if got.PublicIPID.ValueString() != "pip-allocated" {
 		t.Errorf("the allocated address must be recorded, got %v", got.PublicIPID)
@@ -1838,8 +1838,8 @@ func TestEgressGatewayUpdateModeSwitchOmitsUnknownPin(t *testing.T) {
 // value a practitioner could interpolate into another resource's id, so absent
 // must map to null.
 func TestApplyToModelAbsentPublicIPIDIsNull(t *testing.T) {
-	var m EgressGatewayModel
-	applyToModel(&m, &apiEgressGateway{
+	var m GatewayModel
+	applyToModel(&m, &apiGateway{
 		ID: "gw-1", VPCID: "vpc-1", Mode: ModeNAT, Status: "active", Origin: "explicit",
 	})
 	if !m.PublicIPID.IsNull() {
@@ -1865,7 +1865,7 @@ func TestAddEgressErrorPublicIPCodes(t *testing.T) {
 	} {
 		t.Run(tc.code, func(t *testing.T) {
 			var diags diag.Diagnostics
-			addEgressError(&diags, "fallback", &client.APIError{Code: tc.code, Message: "api message", StatusCode: 409})
+			addGatewayError(&diags, "fallback", &client.APIError{Code: tc.code, Message: "api message", StatusCode: 409})
 			text := diagText(diags)
 			if strings.Contains(text, "fallback") {
 				t.Errorf("%s must have its own diagnostic, got the fallback:\n%s", tc.code, text)

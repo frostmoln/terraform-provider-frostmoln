@@ -3,13 +3,13 @@
 page_title: "frostmoln_public_ip Data Source - Frostmoln"
 subcategory: ""
 description: |-
-  Look up one of your tenant's public IPs by ID or by address, without managing it. Looking one up BY ADDRESS is what lets a configuration name an address that already exists — one already published in DNS or sitting in a partner's allow-list — and hand it to frostmoln_egress_gateway.public_ip_id so a VPC egresses from it, without importing the address into Terraform's management.
+  Look up one of your tenant's public IPs by ID or by address, without managing it. Looking one up BY ADDRESS is what lets a configuration name an address that already exists — one already published in DNS or sitting in a partner's allow-list — and hand it to frostmoln_gateway.public_ip_id so a VPC egresses from it, without importing the address into Terraform's management.
   Reading a public IP does not attach it to anything, and this data source never allocates one.
 ---
 
 # frostmoln_public_ip (Data Source)
 
-Look up one of your tenant's public IPs by ID or by address, without managing it. Looking one up BY ADDRESS is what lets a configuration name an address that already exists — one already published in DNS or sitting in a partner's allow-list — and hand it to `frostmoln_egress_gateway.public_ip_id` so a VPC egresses from it, without importing the address into Terraform's management.
+Look up one of your tenant's public IPs by ID or by address, without managing it. Looking one up BY ADDRESS is what lets a configuration name an address that already exists — one already published in DNS or sitting in a partner's allow-list — and hand it to `frostmoln_gateway.public_ip_id` so a VPC egresses from it, without importing the address into Terraform's management.
 
 Reading a public IP does not attach it to anything, and this data source never allocates one.
 
@@ -27,7 +27,7 @@ data "frostmoln_public_ip" "published" {
   address = "203.0.113.10"
 }
 
-resource "frostmoln_egress_gateway" "partner_facing" {
+resource "frostmoln_gateway" "partner_facing" {
   vpc_id       = frostmoln_vpc.example.id
   mode         = "public_ip"
   public_ip_id = data.frostmoln_public_ip.published.id
@@ -44,7 +44,7 @@ data "frostmoln_public_ip" "by_id" {
 #
 #   "none"           allocated, nothing using it
 #   "port"           attached to an instance or load balancer
-#   "egress_gateway" it is a VPC's outbound source address
+#   "gateway" it is a VPC's outbound source address
 output "published_address_is_used_for" {
   value = data.frostmoln_public_ip.published.attachment.kind
 }
@@ -71,8 +71,8 @@ output "published_address_is_used_for" {
 
 Read-Only:
 
-- `kind` (String) "none" (allocated, nothing using it), "port" (attached to an instance or load balancer), "egress_gateway" (it is a VPC's outbound source address) or "unknown". An address that is already "port" or "egress_gateway" cannot be given to another egress gateway.
+- `kind` (String) "none" (allocated, nothing using it), "port" (attached to an instance or load balancer), "gateway" (it is a VPC's outbound source address) or "unknown". An address that is already "port" or "gateway" cannot be given to another gateway.
 
-"unknown" means the platform did not report an attachment for this address. Read it as "not established", never as "free": an address serving a VPC's egress has no port either, so nothing here tells the two apart. New kinds can appear without a provider upgrade and are passed through unchanged.
-- `resource_id` (String) What holds the address: the network port for "port", the egress gateway for "egress_gateway". Null for "none".
-- `vpc_id` (String) The VPC whose outbound traffic leaves from this address. Set only for "egress_gateway".
+"unknown" means the platform did not report an attachment for this address. Read it as "not established", never as "free": an address serving a VPC's outbound path has no port either, so nothing here tells the two apart. New kinds can appear without a provider upgrade and are passed through unchanged.
+- `resource_id` (String) What holds the address: the network port for "port", the gateway for "gateway". Null for "none".
+- `vpc_id` (String) The VPC whose outbound traffic leaves from this address. Set only for "gateway".

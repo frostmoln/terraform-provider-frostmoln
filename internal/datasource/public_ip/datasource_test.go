@@ -132,7 +132,7 @@ func TestAttachmentShapeMatchesTheResource(t *testing.T) {
 
 // TestPublicIPDataSourceLookupByAddress is the point of this data source: a
 // configuration can name an address that already exists — one already in a
-// partner's allow-list or published in DNS — and hand it to an egress gateway
+// partner's allow-list or published in DNS — and hand it to a gateway
 // without importing it into Terraform's management.
 func TestPublicIPDataSourceLookupByAddress(t *testing.T) {
 	var gotPath, gotQuery string
@@ -140,7 +140,7 @@ func TestPublicIPDataSourceLookupByAddress(t *testing.T) {
 		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
 		_, _ = w.Write([]byte(`{"publicIps":[{"id":"pip-1","publicIpAddress":"203.0.113.10",
 			"status":"in_use","createdAt":"2026-01-01T00:00:00Z",
-			"attachment":{"kind":"egress_gateway","resourceId":"gw-1","vpcId":"vpc-1"}}],"totalCount":1}`))
+			"attachment":{"kind":"gateway","resourceId":"gw-1","vpcId":"vpc-1"}}],"totalCount":1}`))
 	}))
 	defer server.Close()
 
@@ -161,8 +161,8 @@ func TestPublicIPDataSourceLookupByAddress(t *testing.T) {
 		t.Errorf("expected pip-1, got %v", state.ID)
 	}
 	kind := state.Attachment.Attributes()["kind"].(types.String).ValueString()
-	if kind != "egress_gateway" {
-		t.Errorf("the egress attachment must be surfaced, got kind %q", kind)
+	if kind != "gateway" {
+		t.Errorf("the gateway attachment must be surfaced, got kind %q", kind)
 	}
 	if state.Attachment.Attributes()["vpc_id"].(types.String).ValueString() != "vpc-1" {
 		t.Errorf("the attached VPC must be surfaced, got %v", state.Attachment)
@@ -172,7 +172,7 @@ func TestPublicIPDataSourceLookupByAddress(t *testing.T) {
 // TestPublicIPDataSourceRechecksTheAddress: the filter is the server's, but the
 // promise is an EXACT address. A server that widened or ignored the filter must
 // not resolve this to a NEIGHBOURING address — the practitioner would publish
-// it, or pin a VPC's egress to it.
+// it, or pin a VPC's outbound path to it.
 func TestPublicIPDataSourceRechecksTheAddress(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"publicIps":[{"id":"pip-9","publicIpAddress":"203.0.113.99",
@@ -241,8 +241,8 @@ func TestPublicIPDataSourceLookupByID(t *testing.T) {
 // rule, and it is a safety rule rather than a cosmetic one.
 //
 // No attachment object AND no port is not evidence that the address is free:
-// an address serving a VPC's egress has no port either. A platform rolled back
-// below the version that reports attachments still has egress-attached
+// an address serving a VPC's outbound path has no port either. A platform rolled back
+// below the version that reports attachments still has gateway-attached
 // addresses and answers for them exactly like this. Reporting "none" would tell
 // a practitioner an address is idle at the one moment giving it away cannot be
 // undone.

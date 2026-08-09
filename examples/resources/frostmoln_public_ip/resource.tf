@@ -8,7 +8,7 @@ resource "frostmoln_public_ip" "example" {
 }
 
 # AN ADDRESS SOMEONE ELSE DEPENDS ON — one in a partner's allow-list, published
-# in DNS, or serving a VPC's egress — is worth protecting in the configuration
+# in DNS, or serving a VPC's outbound path — is worth protecting in the configuration
 # itself.
 #
 # Destroying this resource RELEASES THE ADDRESS.
@@ -35,14 +35,14 @@ resource "frostmoln_public_ip" "partner_facing" {
 }
 
 # This address is the VPC's outbound source address, so the whole VPC's traffic
-# arrives from it. See frostmoln_egress_gateway.
-resource "frostmoln_egress_gateway" "partner_facing" {
+# arrives from it. See frostmoln_gateway.
+resource "frostmoln_gateway" "partner_facing" {
   vpc_id       = frostmoln_vpc.example.id
   mode         = "public_ip"
   public_ip_id = frostmoln_public_ip.partner_facing.id
 }
 
-# The provider ALSO refuses to release an address that is serving a VPC's egress
+# The provider ALSO refuses to release an address that is serving a VPC's outbound path
 # unless the intent is stated:
 #
 #   acknowledge_address_loss = true
@@ -59,7 +59,7 @@ resource "frostmoln_egress_gateway" "partner_facing" {
 # earlier and covers more.
 
 # What is holding the address. Read this, not `instance_id`: an address serving
-# a VPC's egress has no instance and no port, so it looks idle from every other
+# a VPC's outbound path has no instance and no port, so it looks idle from every other
 # angle. "unknown" means the platform did not say — never read it as "free".
 output "partner_facing_attachment" {
   value = frostmoln_public_ip.partner_facing.attachment.kind

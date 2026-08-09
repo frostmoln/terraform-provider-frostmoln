@@ -50,7 +50,7 @@ func TestExampleShowsPreventDestroy(t *testing.T) {
 }
 
 // TestExampleDoesNotPreArmTheAddressLossGate is a security regression guard, and
-// the same one the egress gateway's example carries.
+// the same one the gateway's example carries.
 //
 // `acknowledge_address_loss` is ORDINARY CONFIGURATION, so a `true` in the
 // example is sticky: everyone who copies it carries a permanently disarmed gate

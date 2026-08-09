@@ -1,5 +1,5 @@
-// Package egress_gateway implements the frostmoln_egress_gateway Terraform resource.
-package egress_gateway
+// Package gateway implements the frostmoln_gateway Terraform resource.
+package gateway
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// Egress gateway modes, as the network service's enum spells them.
+// Gateway modes, as the network service's enum spells them.
 const (
 	// ModeNAT is WITHDRAWN. It sent the VPC's outbound traffic through a shared
 	// platform address; the mode is no longer offered and cannot be SET —
@@ -35,8 +35,8 @@ const (
 // named here so the schema text and this package agree on the spelling.
 const OriginExplicitPublicIP = "explicit_public_ip"
 
-// EgressGatewayModel is the Terraform state model for a VPC's outbound path.
-type EgressGatewayModel struct {
+// GatewayModel is the Terraform state model for a VPC's outbound path.
+type GatewayModel struct {
 	ID            types.String `tfsdk:"id"`
 	VPCID         types.String `tfsdk:"vpc_id"`
 	Mode          types.String `tfsdk:"mode"`
@@ -76,13 +76,13 @@ type EgressGatewayModel struct {
 	AcknowledgeConnectivityLoss types.Bool `tfsdk:"acknowledge_connectivity_loss"`
 }
 
-// apiEgressGateway is the API representation.
+// apiGateway is the API representation.
 //
 // Deliberately not router-shaped: no router id, no gateway info. Once a field
 // ships in a provider schema it is a compatibility obligation across every
 // practitioner's state, and the gateway is addressed by its own id and its
 // VPC's — never by the objects that realise it.
-type apiEgressGateway struct {
+type apiGateway struct {
 	ID       string `json:"id"`
 	VPCID    string `json:"vpcId"`
 	TenantID string `json:"tenantId"`
@@ -101,15 +101,15 @@ type apiEgressGateway struct {
 	PublicIPID string `json:"publicIpId,omitempty"`
 }
 
-// apiEgressGatewayList is the filtered-list response. A VPC with no gateway
+// apiGatewayList is the filtered-list response. A VPC with no gateway
 // returns an empty list rather than 404, which is what lets Read treat "gone"
 // as "removed from state" without conflating it with a transport error.
-type apiEgressGatewayList struct {
-	EgressGateways []apiEgressGateway `json:"egressGateways"`
-	TotalCount     int                `json:"totalCount"`
+type apiGatewayList struct {
+	Gateways   []apiGateway `json:"gateways"`
+	TotalCount int          `json:"totalCount"`
 }
 
-type apiCreateEgressGatewayRequest struct {
+type apiCreateGatewayRequest struct {
 	VPCID string `json:"vpcId"`
 	Mode  string `json:"mode"`
 	// PublicIPID is omitted when the practitioner did not choose an address.
@@ -122,7 +122,7 @@ type apiCreateEgressGatewayRequest struct {
 	PublicIPID string `json:"publicIpId,omitempty"`
 }
 
-type apiUpdateEgressGatewayRequest struct {
+type apiUpdateGatewayRequest struct {
 	Mode string `json:"mode"`
 	// PublicIPID is omitted unless the practitioner named an address. See the
 	// create request: omitted means "the platform draws the address", not
@@ -141,12 +141,12 @@ type apiUpdateEgressGatewayRequest struct {
 // noIDDetail explains why an identity-less state row is refused rather than
 // used to build a request. It is shared by the Update and Delete guards.
 const noIDDetail = "This resource's state row has no `id`, so there is nothing to address. A request built " +
-	"from it would go to the egress-gateway COLLECTION instead — the empty id is cleaned straight " +
+	"from it would go to the gateway COLLECTION instead — the empty id is cleaned straight " +
 	"out of the path — and the collection answers as if this gateway did not exist, which the " +
 	"provider would record as \"already gone\" for a gateway that is still up and still spending " +
 	"an address. Nothing has been changed.\n\n" +
 	"Re-import the gateway before retrying:\n\n" +
-	"    terraform import frostmoln_egress_gateway.<name> <vpc id>"
+	"    terraform import frostmoln_gateway.<name> <vpc id>"
 
 // applyToModel copies an API gateway onto the Terraform model.
 //
@@ -155,7 +155,7 @@ const noIDDetail = "This resource's state row has no `id`, so there is nothing t
 //   - One with no `id` or no `vpcId`. Both are required by the API contract, so
 //     an empty one means the body was not the object that was asked for. Storing
 //     it is worse than failing: every later request builds its path from the id,
-//     and "/egress-gateways/" with an empty id is cleaned back to the COLLECTION
+//     and "/gateways/" with an empty id is cleaned back to the COLLECTION
 //     path, so the DELETE 404s, IsNotFound reads that as "already gone", and the
 //     provider drops a live gateway out of state.
 //   - One that names a DIFFERENT gateway or VPC than the state row already
@@ -163,20 +163,20 @@ const noIDDetail = "This resource's state row has no `id`, so there is nothing t
 //     resource ends up PATCHing or DELETING another VPC's internet path; the two
 //     ids belong in a diagnostic, not in state.
 //
-// The one legitimate id mismatch is the import path: GET /egress-gateways/{id}
+// The one legitimate id mismatch is the import path: GET /gateways/{id}
 // accepts the VPC's id as well, so a row imported by VPC id holds that id until
 // the first read rebinds it to the gateway's own id.
 //
 // sourceAddress maps to null when absent: the API omits it while the gateway is
 // detached or the address is not yet known, and "" is a value a practitioner
 // could interpolate into a firewall rule.
-func applyToModel(m *EgressGatewayModel, gw *apiEgressGateway) diag.Diagnostics {
+func applyToModel(m *GatewayModel, gw *apiGateway) diag.Diagnostics {
 	var diags diag.Diagnostics
 
 	if gw.ID == "" || gw.VPCID == "" {
 		diags.AddError(
-			"Incomplete egress gateway response",
-			fmt.Sprintf("The API returned an egress gateway with no %s. Both are required on this "+
+			"Incomplete gateway response",
+			fmt.Sprintf("The API returned a gateway with no %s. Both are required on this "+
 				"resource, so this response cannot be written to state — a state row without them "+
 				"addresses the whole collection on the next request, and a gateway that is still up "+
 				"would be recorded as gone. Nothing has been changed.",
@@ -189,8 +189,8 @@ func applyToModel(m *EgressGatewayModel, gw *apiEgressGateway) diag.Diagnostics 
 	// (see the doc comment), not a mismatch.
 	if id := m.ID.ValueString(); id != "" && id != gw.ID && id != gw.VPCID {
 		diags.AddError(
-			"Egress gateway identity does not match state",
-			fmt.Sprintf("This resource tracks egress gateway %q, but the API answered with gateway %q "+
+			"Gateway identity does not match state",
+			fmt.Sprintf("This resource tracks gateway %q, but the API answered with gateway %q "+
 				"(VPC %q). The provider will not re-point the resource at a different gateway: doing so "+
 				"would put a later mode change or destroy on an object nobody asked it to touch. "+
 				"Nothing has been changed.\n\nRemove the resource from state and re-import the gateway "+
@@ -199,8 +199,8 @@ func applyToModel(m *EgressGatewayModel, gw *apiEgressGateway) diag.Diagnostics 
 	}
 	if vpcID := m.VPCID.ValueString(); vpcID != "" && vpcID != gw.VPCID {
 		diags.AddError(
-			"Egress gateway belongs to a different VPC",
-			fmt.Sprintf("This resource tracks the egress gateway of VPC %q, but the API answered with "+
+			"Gateway belongs to a different VPC",
+			fmt.Sprintf("This resource tracks the gateway of VPC %q, but the API answered with "+
 				"the gateway of VPC %q. The provider will not re-point the resource at another VPC's "+
 				"outbound path: a later mode change or destroy would then take THAT VPC's internet, DNS "+
 				"and managed-service connectivity down. Nothing has been changed.\n\nCheck that `vpc_id` "+
@@ -246,7 +246,7 @@ func applyToModel(m *EgressGatewayModel, gw *apiEgressGateway) diag.Diagnostics 
 //
 // requested is the plan value. Null or unknown means the practitioner asked
 // the platform to choose, so anything it chose is by definition correct.
-func checkRequestedPublicIP(requested types.String, gw *apiEgressGateway) diag.Diagnostics {
+func checkRequestedPublicIP(requested types.String, gw *apiGateway) diag.Diagnostics {
 	var diags diag.Diagnostics
 
 	if requested.IsNull() || requested.IsUnknown() {
@@ -264,13 +264,13 @@ func checkRequestedPublicIP(requested types.String, gw *apiEgressGateway) diag.D
 		got = fmt.Sprintf("public IP %q", got)
 	}
 	diags.AddError(
-		"Egress gateway was not attached to the requested public IP",
-		fmt.Sprintf("The configuration names public IP %q as this VPC's egress source address, but the "+
+		"Gateway was not attached to the requested public IP",
+		fmt.Sprintf("The configuration names public IP %q as this VPC's outbound source address, but the "+
 			"platform answered with %s. Terraform has NOT recorded the requested value as if it had "+
 			"been applied.\n\nThe VPC is egressing from an address the configuration does not name: "+
 			"anything you published for a partner to allow-list, or in DNS, may no longer match the "+
 			"address your traffic arrives from. Check the gateway and the public IP "+
-			"(`fm network egress-gateway show` / `fm network public-ip list`), then re-apply.",
+			"(`fm network gateway show` / `fm network public-ip list`), then re-apply.",
 			want, got),
 	)
 	return diags
@@ -278,7 +278,7 @@ func checkRequestedPublicIP(requested types.String, gw *apiEgressGateway) diag.D
 
 // missingIdentityFields names which of the two required identity fields the
 // response left empty, so the diagnostic says which one rather than "one of".
-func missingIdentityFields(gw *apiEgressGateway) string {
+func missingIdentityFields(gw *apiGateway) string {
 	switch {
 	case gw.ID == "" && gw.VPCID == "":
 		return "`id` and no `vpcId`"

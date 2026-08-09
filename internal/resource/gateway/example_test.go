@@ -1,4 +1,4 @@
-package egress_gateway
+package gateway
 
 import (
 	"os"
@@ -8,10 +8,10 @@ import (
 )
 
 // exampleHCL is the shipped example for this resource. It is not decoration:
-// tfplugindocs renders it verbatim into docs/resources/egress_gateway.md and
+// tfplugindocs renders it verbatim into docs/resources/gateway.md and
 // from there onto the Terraform Registry, so it is the snippet practitioners
 // copy into their own configurations.
-const exampleHCL = "../../../examples/resources/frostmoln_egress_gateway/resource.tf"
+const exampleHCL = "../../../examples/resources/frostmoln_gateway/resource.tf"
 
 func readExample(t *testing.T) string {
 	t.Helper()
@@ -31,7 +31,7 @@ func readExample(t *testing.T) string {
 // takes the VPC's internet, DNS and managed-service connectivity down with
 // nothing in the plan beyond an ordinary "will be destroyed" line — and, with
 // out-of-band drift, Update would PATCH the mode back on Terraform's own
-// initiative, re-addressing egress and dropping in-flight connections.
+// initiative, re-addressing the VPC's outbound path and dropping in-flight connections.
 //
 // The attribute must therefore appear in the example only as commented
 // guidance: set it, apply, do the thing, remove it again.
@@ -99,18 +99,18 @@ func TestExampleCarriesNoInternalNames(t *testing.T) {
 }
 
 // TestExampleOrdersPublicIPsAfterTheGateway pins the dependency direction the
-// EGRESS_GATEWAY_IN_USE diagnostic also teaches: the `depends_on` belongs on
+// GATEWAY_IN_USE diagnostic also teaches: the `depends_on` belongs on
 // the public IP, pointing at the gateway. Terraform creates the gateway first
 // (an association into a gateway-less VPC makes the platform attach an implicit
 // one, which then collides with an explicit `nat` gateway) and destroys the
 // public IPs first (the gateway cannot be removed while they depend on it).
 func TestExampleOrdersPublicIPsAfterTheGateway(t *testing.T) {
 	example := readExample(t)
-	if !strings.Contains(example, "depends_on = [frostmoln_egress_gateway") {
+	if !strings.Contains(example, "depends_on = [frostmoln_gateway") {
 		t.Error("the example must show depends_on on the public IP, pointing at the gateway")
 	}
 	if strings.Contains(example, "depends_on = [frostmoln_public_ip") {
 		t.Error("a depends_on from the gateway to the public IPs reverses both the create and the destroy " +
-			"order, and leaves the destroy failing with EGRESS_GATEWAY_IN_USE")
+			"order, and leaves the destroy failing with GATEWAY_IN_USE")
 	}
 }

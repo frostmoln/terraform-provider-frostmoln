@@ -1,5 +1,5 @@
-// Package egress_gateway implements the frostmoln_egress_gateway Terraform data source.
-package egress_gateway
+// Package gateway implements the frostmoln_gateway Terraform data source.
+package gateway
 
 import (
 	"context"
@@ -15,18 +15,18 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
 
-var _ datasource.DataSource = &egressGatewayDataSource{}
+var _ datasource.DataSource = &gatewayDataSource{}
 
-// NewDataSource returns a new frostmoln_egress_gateway data source factory.
+// NewDataSource returns a new frostmoln_gateway data source factory.
 func NewDataSource() datasource.DataSource {
-	return &egressGatewayDataSource{}
+	return &gatewayDataSource{}
 }
 
-type egressGatewayDataSource struct {
+type gatewayDataSource struct {
 	client *client.Client
 }
 
-type egressGatewayModel struct {
+type gatewayModel struct {
 	ID            types.String `tfsdk:"id"`
 	VPCID         types.String `tfsdk:"vpc_id"`
 	Mode          types.String `tfsdk:"mode"`
@@ -35,7 +35,7 @@ type egressGatewayModel struct {
 	Origin        types.String `tfsdk:"origin"`
 }
 
-type apiEgressGateway struct {
+type apiGateway struct {
 	ID            string `json:"id"`
 	VPCID         string `json:"vpcId"`
 	Mode          string `json:"mode"`
@@ -44,24 +44,24 @@ type apiEgressGateway struct {
 	Origin        string `json:"origin"`
 }
 
-type apiEgressGatewayList struct {
-	EgressGateways []apiEgressGateway `json:"egressGateways"`
-	TotalCount     int                `json:"totalCount"`
+type apiGatewayList struct {
+	Gateways   []apiGateway `json:"gateways"`
+	TotalCount int          `json:"totalCount"`
 }
 
-func (d *egressGatewayDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_egress_gateway"
+func (d *gatewayDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_gateway"
 }
 
-func (d *egressGatewayDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *gatewayDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Look up a VPC's egress gateway — its outbound internet path — without " +
+		Description: "Look up a VPC's gateway — its outbound internet path — without " +
 			"managing it. Useful for reading the source address of a gateway created " +
 			"elsewhere (chosen at VPC create, or attached by the platform when a public IP " +
 			"was associated) so it can be fed to a partner allow-list.",
 		Attributes: map[string]schema.Attribute{
 			"vpc_id": schema.StringAttribute{
-				Description: "The VPC whose egress gateway to look up. Required, and never empty: " +
+				Description: "The VPC whose gateway to look up. Required, and never empty: " +
 					"the lookup is only ever asked for one specific VPC.",
 				Required: true,
 			},
@@ -99,7 +99,7 @@ func (d *egressGatewayDataSource) Schema(_ context.Context, _ datasource.SchemaR
 	}
 }
 
-func (d *egressGatewayDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+func (d *gatewayDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -114,8 +114,8 @@ func (d *egressGatewayDataSource) Configure(_ context.Context, req datasource.Co
 	d.client = c
 }
 
-func (d *egressGatewayDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	var state egressGatewayModel
+func (d *gatewayDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var state gatewayModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -134,7 +134,7 @@ func (d *egressGatewayDataSource) Read(ctx context.Context, req datasource.ReadR
 		resp.Diagnostics.AddAttributeError(
 			path.Root("vpc_id"),
 			"Empty vpc_id",
-			"vpc_id resolved to an empty string. It must name the VPC whose egress gateway you want: "+
+			"vpc_id resolved to an empty string. It must name the VPC whose gateway you want: "+
 				"an empty value would otherwise widen the lookup to every gateway in the tenant and "+
 				"return an unrelated VPC's.",
 		)
@@ -144,34 +144,34 @@ func (d *egressGatewayDataSource) Read(ctx context.Context, req datasource.ReadR
 	q := url.Values{}
 	q.Set("vpcId", vpcID)
 
-	apiResp, err := d.client.Get(ctx, d.client.TenantPath("/egress-gateways"), q)
+	apiResp, err := d.client.Get(ctx, d.client.TenantPath("/gateways"), q)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to read egress gateway", err.Error())
+		resp.Diagnostics.AddError("Failed to read gateway", err.Error())
 		return
 	}
 
-	var list apiEgressGatewayList
+	var list apiGatewayList
 	if err := json.Unmarshal(apiResp.Body, &list); err != nil {
-		resp.Diagnostics.AddError("Failed to parse egress gateway response", err.Error())
+		resp.Diagnostics.AddError("Failed to parse gateway response", err.Error())
 		return
 	}
 
-	if len(list.EgressGateways) == 0 {
+	if len(list.Gateways) == 0 {
 		// An empty result is never a 404 here, and it covers two cases that
 		// cannot be told apart from the response: the VPC has no gateway (it is
 		// an isolated network), or the id names no VPC this tenant owns. Say
 		// both, rather than asserting the first.
 		resp.Diagnostics.AddError(
-			"No egress gateway for this VPC",
-			fmt.Sprintf("VPC %q has no egress gateway — it is an isolated network with no outbound "+
+			"No gateway for this VPC",
+			fmt.Sprintf("VPC %q has no gateway — it is an isolated network with no outbound "+
 				"internet path, no platform DNS resolution and no managed-service connectivity. "+
 				"(The same empty result is returned for a VPC id this tenant does not own, so check "+
-				"the id too.) Use the `frostmoln_egress_gateway` resource to give it one.", vpcID),
+				"the id too.) Use the `frostmoln_gateway` resource to give it one.", vpcID),
 		)
 		return
 	}
 
-	gw := list.EgressGateways[0]
+	gw := list.Gateways[0]
 	state.ID = types.StringValue(gw.ID)
 	state.VPCID = types.StringValue(gw.VPCID)
 	state.Mode = types.StringValue(gw.Mode)

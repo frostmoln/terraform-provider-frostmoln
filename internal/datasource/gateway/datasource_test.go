@@ -1,4 +1,4 @@
-package egress_gateway
+package gateway
 
 import (
 	"context"
@@ -65,7 +65,7 @@ func TestEgressGatewayDataSourceMetadata(t *testing.T) {
 	d := NewDataSource()
 	resp := &datasource.MetadataResponse{}
 	d.Metadata(context.Background(), datasource.MetadataRequest{ProviderTypeName: "frostmoln"}, resp)
-	if resp.TypeName != "frostmoln_egress_gateway" {
+	if resp.TypeName != "frostmoln_gateway" {
 		t.Errorf("unexpected type name %s", resp.TypeName)
 	}
 }
@@ -103,7 +103,7 @@ func TestEgressGatewayDataSourceRead(t *testing.T) {
 	var gotQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.RawQuery
-		_, _ = w.Write([]byte(`{"egressGateways":[{"id":"gw-1","vpcId":"vpc-1","mode":"nat",
+		_, _ = w.Write([]byte(`{"gateways":[{"id":"gw-1","vpcId":"vpc-1","mode":"nat",
 			"sourceAddress":"46.246.117.231","status":"active","origin":"vpc_create"}],"totalCount":1}`))
 	}))
 	defer server.Close()
@@ -123,7 +123,7 @@ func TestEgressGatewayDataSourceRead(t *testing.T) {
 		t.Errorf("expected the lookup to be narrowed to the VPC, got %q", gotQuery)
 	}
 
-	var state egressGatewayModel
+	var state gatewayModel
 	resp.State.Get(context.Background(), &state)
 	if state.ID.ValueString() != "gw-1" || state.Mode.ValueString() != "nat" {
 		t.Errorf("unexpected state %+v", state)
@@ -135,7 +135,7 @@ func TestEgressGatewayDataSourceRead(t *testing.T) {
 
 func TestEgressGatewayDataSourceReadDetachedSourceAddressIsNull(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"egressGateways":[{"id":"gw-1","vpcId":"vpc-1","mode":"public_ip",
+		_, _ = w.Write([]byte(`{"gateways":[{"id":"gw-1","vpcId":"vpc-1","mode":"public_ip",
 			"status":"detached","origin":"legacy"}],"totalCount":1}`))
 	}))
 	defer server.Close()
@@ -151,7 +151,7 @@ func TestEgressGatewayDataSourceReadDetachedSourceAddressIsNull(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
 	}
-	var state egressGatewayModel
+	var state gatewayModel
 	resp.State.Get(context.Background(), &state)
 	if !state.SourceAddress.IsNull() {
 		t.Errorf("a detached gateway has no source address; expected null, got %v", state.SourceAddress)
@@ -167,7 +167,7 @@ func TestEgressGatewayDataSourceRefusesEmptyVPCID(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
-		_, _ = w.Write([]byte(`{"egressGateways":[{"id":"gw-other","vpcId":"vpc-other","mode":"public_ip",
+		_, _ = w.Write([]byte(`{"gateways":[{"id":"gw-other","vpcId":"vpc-other","mode":"public_ip",
 			"status":"active","origin":"explicit"}],"totalCount":1}`))
 	}))
 	defer server.Close()
@@ -190,7 +190,7 @@ func TestEgressGatewayDataSourceRefusesEmptyVPCID(t *testing.T) {
 
 func TestEgressGatewayDataSourceNoGateway(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"egressGateways":[],"totalCount":0}`))
+		_, _ = w.Write([]byte(`{"gateways":[],"totalCount":0}`))
 	}))
 	defer server.Close()
 

@@ -1,4 +1,4 @@
-package egress_gateway_test
+package gateway_test
 
 import (
 	"encoding/json"
@@ -28,16 +28,16 @@ import (
 // Frostmoln at all: the API is an httptest server in-process, so they are
 // reproducible offline and deterministic. Run them with:
 //
-//	TF_ACC=1 go test ./internal/resource/egress_gateway/ -run TestAccEgressGateway
+//	TF_ACC=1 go test ./internal/resource/gateway/ -run TestAccEgressGateway
 //
 // terraform-plugin-testing runs a refresh-and-plan after every apply step and
 // FAILS the step on a non-empty plan unless ExpectNonEmptyPlan is set. That
 // built-in check is the perpetual-diff assertion; the explicit plancheck below
 // is the destroy/recreate assertion.
 
-// egressAPI is a scripted egress-gateway API: one VPC, one gateway, and
+// gatewayAPI is a scripted gateway API: one VPC, one gateway, and
 // whatever public IP the gateway was last told to use.
-type egressAPI struct {
+type gatewayAPI struct {
 	mu sync.Mutex
 
 	publicIPID string
@@ -65,7 +65,7 @@ type egressAPI struct {
 	deletes int
 }
 
-func (a *egressAPI) gateway() map[string]any {
+func (a *gatewayAPI) gateway() map[string]any {
 	gw := map[string]any{
 		"id":       "gw-1",
 		"vpcId":    "vpc-1",
@@ -97,7 +97,7 @@ func addressFor(publicIPID string) string {
 	}
 }
 
-func (a *egressAPI) handler() http.Handler {
+func (a *gatewayAPI) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
 		defer a.mu.Unlock()
@@ -108,7 +108,7 @@ func (a *egressAPI) handler() http.Handler {
 		case r.URL.Path == "/v1/me":
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "u-1", "tenantId": "t-1"})
 
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/egress-gateways":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/gateways":
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			a.mode, _ = body["mode"].(string)
@@ -125,7 +125,7 @@ func (a *egressAPI) handler() http.Handler {
 			}
 			_ = json.NewEncoder(w).Encode(a.gateway())
 
-		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/v1/tenants/t-1/egress-gateways/"):
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/v1/tenants/t-1/gateways/"):
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			a.patchBodies = append(a.patchBodies, body)
@@ -139,21 +139,21 @@ func (a *egressAPI) handler() http.Handler {
 			a.address = addressFor(a.publicIPID)
 			_ = json.NewEncoder(w).Encode(a.gateway())
 
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/tenants/t-1/egress-gateways/"):
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/tenants/t-1/gateways/"):
 			a.deletes++
 			a.mode, a.publicIPID, a.address = "", "", ""
 			w.WriteHeader(http.StatusNoContent)
 
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/egress-gateways":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/gateways":
 			if a.mode == "" {
-				_ = json.NewEncoder(w).Encode(map[string]any{"egressGateways": []any{}, "totalCount": 0})
+				_ = json.NewEncoder(w).Encode(map[string]any{"gateways": []any{}, "totalCount": 0})
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"egressGateways": []any{a.gateway()}, "totalCount": 1,
+				"gateways": []any{a.gateway()}, "totalCount": 1,
 			})
 
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/tenants/t-1/egress-gateways/"):
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/tenants/t-1/gateways/"):
 			if a.mode == "" {
 				w.WriteHeader(http.StatusNotFound)
 				_ = json.NewEncoder(w).Encode(map[string]any{
@@ -172,9 +172,9 @@ func (a *egressAPI) handler() http.Handler {
 	})
 }
 
-func startEgressAPI(t *testing.T) *egressAPI {
+func startGatewayAPI(t *testing.T) *gatewayAPI {
 	t.Helper()
-	api := &egressAPI{}
+	api := &gatewayAPI{}
 	srv := httptest.NewServer(api.handler())
 	t.Cleanup(srv.Close)
 	t.Setenv("FROSTMOLN_API_ENDPOINT", srv.URL)
@@ -197,13 +197,13 @@ func startEgressAPI(t *testing.T) *egressAPI {
 // step, a no-op re-apply of the identical configuration, asserts stability
 // across a full second cycle rather than just once.
 func TestAccEgressGatewayOmittedPublicIPIDIsPlanStable(t *testing.T) {
-	startEgressAPI(t)
+	startGatewayAPI(t)
 
 	// The acknowledgement is present only so the harness can tear the gateway
 	// down at the end of the test; it is Optional-only and plays no part in
 	// how `public_ip_id` is planned.
 	const config = `
-resource "frostmoln_egress_gateway" "test" {
+resource "frostmoln_gateway" "test" {
   vpc_id                        = "vpc-1"
   mode                          = "public_ip"
   acknowledge_connectivity_loss = true
@@ -218,9 +218,9 @@ resource "frostmoln_egress_gateway" "test" {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					// No public IP resource exists, so the attribute is NULL —
 					// not "" — and the gateway still has a source address.
-					resource.TestCheckNoResourceAttr("frostmoln_egress_gateway.test", "public_ip_id"),
-					resource.TestCheckResourceAttr("frostmoln_egress_gateway.test", "source_address", "198.51.100.1"),
-					resource.TestCheckResourceAttr("frostmoln_egress_gateway.test", "origin", "explicit"),
+					resource.TestCheckNoResourceAttr("frostmoln_gateway.test", "public_ip_id"),
+					resource.TestCheckResourceAttr("frostmoln_gateway.test", "source_address", "198.51.100.1"),
+					resource.TestCheckResourceAttr("frostmoln_gateway.test", "origin", "explicit"),
 				),
 			},
 			{
@@ -252,11 +252,11 @@ resource "frostmoln_egress_gateway" "test" {
 // does NOT produce it — that path gets a platform-drawn address with no id at
 // all, which is the test above.
 func TestAccEgressGatewayUnnamedPublicIPIDIsPlanStable(t *testing.T) {
-	api := startEgressAPI(t)
+	api := startGatewayAPI(t)
 	api.reportsUnnamedPublicIP = true
 
 	const config = `
-resource "frostmoln_egress_gateway" "test" {
+resource "frostmoln_gateway" "test" {
   vpc_id                        = "vpc-1"
   mode                          = "public_ip"
   acknowledge_connectivity_loss = true
@@ -269,7 +269,7 @@ resource "frostmoln_egress_gateway" "test" {
 			{
 				Config: config,
 				Check: resource.TestCheckResourceAttr(
-					"frostmoln_egress_gateway.test", "public_ip_id", "pip-implicit"),
+					"frostmoln_gateway.test", "public_ip_id", "pip-implicit"),
 			},
 			{
 				Config:   config,
@@ -286,10 +286,10 @@ resource "frostmoln_egress_gateway" "test" {
 // the provider, not as an apply-time rejection after the practitioner has
 // approved a plan.
 func TestAccEgressGatewayRefusesWithdrawnNATMode(t *testing.T) {
-	api := startEgressAPI(t)
+	api := startGatewayAPI(t)
 
 	const config = `
-resource "frostmoln_egress_gateway" "test" {
+resource "frostmoln_gateway" "test" {
   vpc_id                        = "vpc-1"
   mode                          = "nat"
   acknowledge_connectivity_loss = true
@@ -319,7 +319,7 @@ resource "frostmoln_egress_gateway" "test" {
 // A RequiresReplace on this attribute would destroy the VPC's only outbound
 // path and build a new one — taking internet, platform DNS resolution and
 // managed-service connectivity down in between, which is the outage a stable
-// egress address exists to avoid. Two independent assertions, because either
+// gateway source address exists to avoid. Two independent assertions, because either
 // alone can be satisfied by accident:
 //
 //   - the plan itself must contain an Update and NOT a DeleteBeforeCreate or
@@ -327,11 +327,11 @@ resource "frostmoln_egress_gateway" "test" {
 //   - the API must have seen a PATCH and NO DELETE at all (the scripted server
 //     counts them), which no plan-level assertion can fake.
 func TestAccEgressGatewayPublicIPIDChangeIsInPlace(t *testing.T) {
-	api := startEgressAPI(t)
+	api := startGatewayAPI(t)
 
 	withPin := func(pip string) string {
 		return `
-resource "frostmoln_egress_gateway" "test" {
+resource "frostmoln_gateway" "test" {
   vpc_id                        = "vpc-1"
   mode                          = "public_ip"
   public_ip_id                  = "` + pip + `"
@@ -346,8 +346,8 @@ resource "frostmoln_egress_gateway" "test" {
 			{
 				Config: withPin("pip-1"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("frostmoln_egress_gateway.test", "public_ip_id", "pip-1"),
-					resource.TestCheckResourceAttr("frostmoln_egress_gateway.test", "source_address", "198.51.100.11"),
+					resource.TestCheckResourceAttr("frostmoln_gateway.test", "public_ip_id", "pip-1"),
+					resource.TestCheckResourceAttr("frostmoln_gateway.test", "source_address", "198.51.100.11"),
 				),
 			},
 			{
@@ -355,14 +355,14 @@ resource "frostmoln_egress_gateway" "test" {
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction(
-							"frostmoln_egress_gateway.test", plancheck.ResourceActionUpdate),
+							"frostmoln_gateway.test", plancheck.ResourceActionUpdate),
 					},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("frostmoln_egress_gateway.test", "public_ip_id", "pip-2"),
+					resource.TestCheckResourceAttr("frostmoln_gateway.test", "public_ip_id", "pip-2"),
 					// The address really moved, so the re-plan that follows is a
 					// meaningful stability check and not a no-op.
-					resource.TestCheckResourceAttr("frostmoln_egress_gateway.test", "source_address", "198.51.100.22"),
+					resource.TestCheckResourceAttr("frostmoln_gateway.test", "source_address", "198.51.100.22"),
 					// Asserted HERE and not after resource.Test returns: the
 					// harness destroys the gateway when the case ends, so a
 					// count read afterwards always shows one DELETE and would
@@ -376,7 +376,7 @@ resource "frostmoln_egress_gateway" "test" {
 
 // checkAppliedInPlace asserts, from the API side, that the address change was
 // applied to the existing gateway rather than by replacing it.
-func (a *egressAPI) checkAppliedInPlace(wantPin string) resource.TestCheckFunc {
+func (a *gatewayAPI) checkAppliedInPlace(wantPin string) resource.TestCheckFunc {
 	return func(*terraform.State) error {
 		a.mu.Lock()
 		defer a.mu.Unlock()

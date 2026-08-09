@@ -1,15 +1,15 @@
 ---
-page_title: "Moving an egress gateway off the withdrawn nat mode"
+page_title: "Moving a gateway off the withdrawn nat mode"
 subcategory: "Guides"
 description: |-
-  Upgrade guide: mode = "nat" on frostmoln_egress_gateway has been withdrawn.
+  Upgrade guide: mode = "nat" on frostmoln_gateway has been withdrawn.
   How to move an existing gateway to mode = "public_ip" in place, in three
   applies, without leaving the acknowledgement flag behind.
 ---
 
-# Moving an egress gateway off the withdrawn `nat` mode
+# Moving a gateway off the withdrawn `nat` mode
 
-`mode = "nat"` on `frostmoln_egress_gateway` has been **withdrawn**. It sent a
+`mode = "nat"` on `frostmoln_gateway` has been **withdrawn**. It sent a
 VPC's outbound traffic through an address shared with other VPCs, and a VPC on
 it could not give any of its instances a public IP — the platform needs the
 VPC's own gateway to attach one. It is not coming back, and there is no third
@@ -29,7 +29,7 @@ do first. While a resource block still says `mode = "nat"`, all of them stop
 with:
 
 ```
-Error: Egress gateway mode "nat" has been withdrawn
+Error: Gateway mode "nat" has been withdrawn
 ```
 
 So the fix is a configuration edit, and everything reads normally again as soon
@@ -38,7 +38,7 @@ as `mode` is no longer `"nat"` in the configuration.
 ## The move, in two applies
 
 The change is applied **in place**. The gateway is never destroyed and rebuilt,
-so its `id` survives — but it does re-address the VPC's egress and drop
+so its `id` survives — but it does re-address the VPC's outbound path and drop
 connections in flight, which is why it needs an explicit acknowledgement.
 
 ### 1. Change the mode and acknowledge, in one edit
@@ -52,7 +52,7 @@ carrying `mode = "nat"` does not validate.
 the destroy reads the flag out of state rather than the plan.)
 
 ```terraform
-resource "frostmoln_egress_gateway" "example" {
+resource "frostmoln_gateway" "example" {
   vpc_id = frostmoln_vpc.example.id
   mode   = "public_ip"
 
@@ -77,7 +77,7 @@ to it, plan for that before this apply — see *Choosing the address* below.
 ### 2. Remove the acknowledgement again
 
 ```terraform
-resource "frostmoln_egress_gateway" "example" {
+resource "frostmoln_gateway" "example" {
   vpc_id = frostmoln_vpc.example.id
   mode   = "public_ip"
 }
@@ -116,7 +116,7 @@ resource "frostmoln_public_ip" "egress" {
   }
 }
 
-resource "frostmoln_egress_gateway" "example" {
+resource "frostmoln_gateway" "example" {
   vpc_id       = frostmoln_vpc.example.id
   mode         = "public_ip"
   public_ip_id = frostmoln_public_ip.egress.id
@@ -134,8 +134,8 @@ elsewhere, name the different address.
 
 ## If instances in the VPC have public IPs
 
-An associated public IP cannot exist without an egress gateway, so a destroy
-ordered the wrong way round fails with `EGRESS_GATEWAY_IN_USE`. That is a
+An associated public IP cannot exist without a gateway, so a destroy
+ordered the wrong way round fails with `GATEWAY_IN_USE`. That is a
 destroy-ordering concern, not an upgrade one — the mode change itself is an
 in-place PATCH and does not touch them. Put the dependency on the **public
 IPs**, pointing at the gateway:
@@ -144,7 +144,7 @@ IPs**, pointing at the gateway:
 resource "frostmoln_public_ip" "example" {
   instance_id = frostmoln_instance.example.id
 
-  depends_on = [frostmoln_egress_gateway.example]
+  depends_on = [frostmoln_gateway.example]
 }
 ```
 
@@ -153,12 +153,12 @@ resource "frostmoln_public_ip" "example" {
 The provider refuses `"nat"` at validate time only when it can see the value. A
 `mode` fed by a module output or another resource's attribute is unknown then,
 and the refusal arrives from the API during the apply instead, as
-`EGRESS_MODE_UNAVAILABLE`. Nothing is changed when it does. Fix the expression
+`GATEWAY_MODE_UNAVAILABLE`. Nothing is changed when it does. Fix the expression
 that produces the value — there is no mode to fall back to.
 
 ## If the VPC should have no outbound path at all
 
-There is no mode for that, and there never was. A VPC with **no** egress gateway
+There is no mode for that, and there never was. A VPC with **no** gateway
 — this resource simply not declared — is an isolated network. Removing the
 resource requires `acknowledge_connectivity_loss = true` in the configuration
 first, exactly as the mode change does.

@@ -48,7 +48,7 @@ func (r *publicIPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"`lifecycle { prevent_destroy = true }` — see the example below. It fails the PLAN, so a " +
 			"module removal, a `terraform destroy -target`, or CI running `terraform destroy " +
 			"-auto-approve` stops before anything is sent. This provider additionally refuses to " +
-			"release an address that is serving a VPC's egress unless `acknowledge_address_loss = " +
+			"release an address that is serving a VPC's outbound path unless `acknowledge_address_loss = " +
 			"true` — see that attribute.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -83,14 +83,14 @@ func (r *publicIPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			},
 			"acknowledge_address_loss": schema.BoolAttribute{
 				Description: "Set to true to allow this public IP to be released while it is serving a " +
-					"VPC's outbound traffic (`attachment.kind` = \"egress_gateway\").\n\n" +
+					"VPC's outbound traffic (`attachment.kind` = \"gateway\").\n\n" +
 					"**Releasing it loses the address permanently.** It returns to a shared regional " +
 					"pool and is re-issued to whoever asks next, so a partner's allow-list entry or a " +
 					"DNS record naming it stops matching — and cannot be restored by re-creating " +
 					"anything.\n\n" +
 					"The provider refuses that release without this flag, and refuses it BEFORE any " +
 					"request is sent, because the platform cannot refuse it for you on the path a " +
-					"correct configuration produces. When `frostmoln_egress_gateway.public_ip_id` " +
+					"correct configuration produces. When `frostmoln_gateway.public_ip_id` " +
 					"refers to this resource, Terraform destroys the gateway first; the platform then " +
 					"hands the address back as an ordinary unattached address, and the release that " +
 					"follows looks — to the platform — like the release of something idle.\n\n" +
@@ -118,15 +118,15 @@ func (r *publicIPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					"kind": schema.StringAttribute{
 						Description: "\"none\" (allocated, nothing using it — still yours, still " +
 							"counted against quota and still billed), \"port\" (attached to an " +
-							"instance or load balancer, its inbound address), \"egress_gateway\" " +
-							"(it is a VPC's outbound source address; see `frostmoln_egress_gateway`), " +
+							"instance or load balancer, its inbound address), \"gateway\" " +
+							"(it is a VPC's outbound source address; see `frostmoln_gateway`), " +
 							"or \"unknown\".\n\n" +
-							"While it is \"egress_gateway\" the platform refuses to attach this address " +
+							"While it is \"gateway\" the platform refuses to attach this address " +
 							"to an instance, and this provider refuses to release it without " +
 							"`acknowledge_address_loss = true`.\n\n" +
 							"\"unknown\" means the platform did not report an attachment for this " +
 							"address. Read it as \"not established\", never as \"free\": an address " +
-							"serving a VPC's egress has no port either, so nothing here distinguishes " +
+							"serving a VPC's outbound path has no port either, so nothing here distinguishes " +
 							"the two. New kinds can appear without a provider upgrade; a kind this " +
 							"provider build does not recognise is passed through unchanged and treated " +
 							"as attached.",
@@ -134,12 +134,12 @@ func (r *publicIPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					},
 					"resource_id": schema.StringAttribute{
 						Description: "What holds the address: the network port for \"port\", the " +
-							"egress gateway for \"egress_gateway\". Null for \"none\".",
+							"gateway for \"gateway\". Null for \"none\".",
 						Computed: true,
 					},
 					"vpc_id": schema.StringAttribute{
 						Description: "The VPC whose outbound traffic leaves from this address. Set " +
-							"only for \"egress_gateway\".",
+							"only for \"gateway\".",
 						Computed: true,
 					},
 				},
@@ -183,7 +183,7 @@ func (r *publicIPResource) Configure(_ context.Context, req resource.ConfigureRe
 // planned for an address something is holding. Nothing else in the plan says
 // so: `terraform plan` renders one ordinary "will be destroyed" line, and the
 // attribute that would give it away — `instance_id` — is empty precisely
-// BECAUSE the address is an egress source rather than an instance's. The
+// BECAUSE the address is an outbound source rather than an instance's. The
 // practitioner reads "an unused address goes away" and approves an apply that
 // takes a whole VPC's outbound path with it, and gives the address itself away
 // for good.
@@ -241,7 +241,7 @@ func (r *publicIPResource) ModifyPlan(ctx context.Context, req resource.ModifyPl
 // the Delete refusal so the two cannot drift apart.
 //
 // Two shapes, because an unrecognised attachment kind is a different statement
-// from an egress binding and must not be described as one — a diagnostic that
+// from an gateway binding and must not be described as one — a diagnostic that
 // asserts a VPC is affected when the provider does not actually know that sends
 // the practitioner to check the wrong thing.
 func addressLossWarning(state *PublicIPModel) (summary, detail string) {
@@ -253,14 +253,14 @@ func addressLossWarning(state *PublicIPModel) (summary, detail string) {
 		"The plan shows nothing else about this — the address has no instance attached precisely " +
 		"BECAUSE it is not an instance's address."
 
-	if state.IsEgressBound() {
+	if state.IsGatewayBound() {
 		return "This public IP is a VPC's outbound source address",
 			fmt.Sprintf("Public IP %s (%s) is not idle: it is the address VPC %s's outbound traffic "+
 				"leaves the platform from. %s\n\nDestroying it also takes that VPC's internet path "+
 				"down, and with it platform DNS resolution and managed-service connectivity for every "+
 				"instance in the VPC — though that part comes back when the gateway does, and the "+
-				"address does not.\n\nIf you mean to keep the address, change the VPC's egress gateway "+
-				"instead of destroying this (`frostmoln_egress_gateway`): point its `public_ip_id` at "+
+				"address does not.\n\nIf you mean to keep the address, change the VPC's gateway "+
+				"instead of destroying this (`frostmoln_gateway`): point its `public_ip_id` at "+
 				"another address.\n\nIf you really mean to give the address "+
 				"up, set `acknowledge_address_loss = true` on this resource and apply that first.",
 				state.ID.ValueString(), state.Address.ValueString(),
@@ -277,7 +277,7 @@ func addressLossWarning(state *PublicIPModel) (summary, detail string) {
 }
 
 // vpcOrUnknown keeps the destroy warning readable when the platform reported an
-// egress attachment without naming the VPC.
+// gateway attachment without naming the VPC.
 func vpcOrUnknown(vpcID string) string {
 	if vpcID == "" {
 		return "(id not reported)"
@@ -551,15 +551,15 @@ func (r *publicIPResource) Delete(ctx context.Context, req resource.DeleteReques
 	// it.
 	//
 	// This is the only thing standing between a correct configuration and the
-	// permanent loss of a pinned egress address, because the platform's own
-	// refusal cannot fire on that path. `frostmoln_egress_gateway.public_ip_id`
+	// permanent loss of a pinned gateway source address, because the platform's own
+	// refusal cannot fire on that path. `frostmoln_gateway.public_ip_id`
 	// makes the gateway depend on this resource, so `terraform destroy` destroys
 	// the gateway FIRST; the platform then hands the address back as an ordinary
 	// unattached address and the DELETE that follows is, from its side, the
 	// release of something idle. It succeeds, and the address is gone.
 	//
 	// The state read here is the PRE-APPLY state — Terraform does not re-read a
-	// resource between the two destroys — so it still records the egress
+	// resource between the two destroys — so it still records the gateway
 	// binding that the gateway's destroy has just undone. That is precisely the
 	// knowledge the platform no longer has at this moment, and the reason the
 	// gate belongs here rather than being left to the API.

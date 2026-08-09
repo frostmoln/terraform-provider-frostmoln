@@ -83,7 +83,7 @@ func (d *publicIPDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 		Description: "Look up one of your tenant's public IPs by ID or by address, without managing " +
 			"it. Looking one up BY ADDRESS is what lets a configuration name an address that " +
 			"already exists — one already published in DNS or sitting in a partner's allow-list " +
-			"— and hand it to `frostmoln_egress_gateway.public_ip_id` so a VPC egresses from it, " +
+			"— and hand it to `frostmoln_gateway.public_ip_id` so a VPC egresses from it, " +
 			"without importing the address into Terraform's management.\n\n" +
 			"Reading a public IP does not attach it to anything, and this data source never " +
 			"allocates one.",
@@ -119,24 +119,24 @@ func (d *publicIPDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 				Attributes: map[string]schema.Attribute{
 					"kind": schema.StringAttribute{
 						Description: "\"none\" (allocated, nothing using it), \"port\" (attached to an " +
-							"instance or load balancer), \"egress_gateway\" (it is a VPC's outbound " +
+							"instance or load balancer), \"gateway\" (it is a VPC's outbound " +
 							"source address) or \"unknown\". An address that is already \"port\" or " +
-							"\"egress_gateway\" cannot be given to another egress gateway.\n\n" +
+							"\"gateway\" cannot be given to another gateway.\n\n" +
 							"\"unknown\" means the platform did not report an attachment for this " +
 							"address. Read it as \"not established\", never as \"free\": an address " +
-							"serving a VPC's egress has no port either, so nothing here tells the two " +
+							"serving a VPC's outbound path has no port either, so nothing here tells the two " +
 							"apart. New kinds can appear without a provider upgrade and are passed " +
 							"through unchanged.",
 						Computed: true,
 					},
 					"resource_id": schema.StringAttribute{
-						Description: "What holds the address: the network port for \"port\", the egress " +
-							"gateway for \"egress_gateway\". Null for \"none\".",
+						Description: "What holds the address: the network port for \"port\", the " +
+							"gateway for \"gateway\". Null for \"none\".",
 						Computed: true,
 					},
 					"vpc_id": schema.StringAttribute{
 						Description: "The VPC whose outbound traffic leaves from this address. Set only " +
-							"for \"egress_gateway\".",
+							"for \"gateway\".",
 						Computed: true,
 					},
 				},
@@ -180,7 +180,7 @@ func (d *publicIPDataSource) Read(ctx context.Context, req datasource.ReadReques
 	// are typically interpolated, and an interpolation that resolves to "" would
 	// otherwise become `?publicIpAddress=` — a filter the API ignores, leaving
 	// the tenant-wide list from which a caller takes an arbitrary element and
-	// feeds an unrelated address into an allow-list or an egress gateway.
+	// feeds an unrelated address into an allow-list or a gateway.
 	idSet := !state.ID.IsNull() && !state.ID.IsUnknown() && state.ID.ValueString() != ""
 	addressSet := !state.Address.IsNull() && !state.Address.IsUnknown() && state.Address.ValueString() != ""
 
@@ -248,7 +248,7 @@ func (d *publicIPDataSource) Read(ctx context.Context, req datasource.ReadReques
 	// Re-check the address in the client. The filter is the server's, but what
 	// this data source promises is an EXACT address, and a server that widened
 	// or ignored the filter would otherwise resolve to a neighbouring address
-	// that a practitioner then publishes or pins a VPC's egress to.
+	// that a practitioner then publishes or pins a VPC's outbound path to.
 	var matches []apiPublicIP
 	for _, pip := range list.PublicIPs {
 		if pip.Address == address {
@@ -307,7 +307,7 @@ func (d *publicIPDataSource) setState(ctx context.Context, state *publicIPModel,
 //
 // A response with no `attachment` is one that does not report attachments, and
 // only ONE inference is drawn from it: a non-empty `portId` is positive
-// evidence of a port. No port is NOT evidence of no attachment (an egress
+// evidence of a port. No port is NOT evidence of no attachment (a gateway
 // source address never has one), so that becomes "unknown", never "none".
 // Reading it as "none" would tell a practitioner an address is free at the one
 // moment giving it away cannot be undone.

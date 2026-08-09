@@ -1,4 +1,4 @@
-package egress_gateway
+package gateway
 
 import (
 	"context"
@@ -18,29 +18,29 @@ import (
 )
 
 var (
-	_ resource.Resource                = &egressGatewayResource{}
-	_ resource.ResourceWithImportState = &egressGatewayResource{}
-	_ resource.ResourceWithModifyPlan  = &egressGatewayResource{}
+	_ resource.Resource                = &gatewayResource{}
+	_ resource.ResourceWithImportState = &gatewayResource{}
+	_ resource.ResourceWithModifyPlan  = &gatewayResource{}
 
 	_ validator.String = modeValidator{}
 )
 
-type egressGatewayResource struct {
+type gatewayResource struct {
 	client *client.Client
 }
 
-// NewResource returns a new egress gateway resource.
+// NewResource returns a new gateway resource.
 func NewResource() resource.Resource {
-	return &egressGatewayResource{}
+	return &gatewayResource{}
 }
 
-func (r *egressGatewayResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_egress_gateway"
+func (r *gatewayResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_gateway"
 }
 
-func (r *egressGatewayResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *gatewayResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a VPC's outbound internet path. A VPC has at most one egress " +
+		Description: "Manages a VPC's outbound internet path. A VPC has at most one " +
 			"gateway; a VPC without one is an isolated network with no inbound and no " +
 			"outbound connectivity. " + connectivityLossWarning,
 		Attributes: map[string]schema.Attribute{
@@ -70,7 +70,7 @@ func (r *egressGatewayResource) Schema(_ context.Context, _ resource.SchemaReque
 					"address of its own — not a public IP of yours, and not pinned; name one and the " +
 					"VPC egresses from an address of your own, which is what a partner allow-list " +
 					"entry or a DNS record needs.\n\n" +
-					"There is no default and no third value. A VPC with NO egress gateway — this " +
+					"There is no default and no third value. A VPC with NO gateway — this " +
 					"resource simply not declared — is an isolated network, and that is how \"no " +
 					"connectivity\" is expressed: connectivity is a stated choice, never one a VPC " +
 					"acquires because a field was omitted.\n\n" +
@@ -88,7 +88,7 @@ func (r *egressGatewayResource) Schema(_ context.Context, _ resource.SchemaReque
 					"Changing the mode is applied IN PLACE, never as a destroy/create — a " +
 					"replacement would drop the recorded source address and leave the VPC with no " +
 					"internet, no DNS and no managed-service connectivity in between. It still " +
-					"re-addresses the VPC's egress and drops in-flight connections, so it requires " +
+					"re-addresses the VPC's outbound path and drops in-flight connections, so it requires " +
 					"`acknowledge_connectivity_loss = true`, and `source_address` is planned as " +
 					"\"(known after apply)\" because the platform re-records it.",
 				Required: true,
@@ -138,7 +138,7 @@ func (r *egressGatewayResource) Schema(_ context.Context, _ resource.SchemaReque
 					"is named. To move the gateway to a different address, name the different address.\n\n" +
 					"The public IP must belong to this tenant and must not be attached to anything else. " +
 					"A public IP that is in use by an instance is refused, and so is one already serving " +
-					"another VPC's egress.",
+					"another VPC's outbound path.",
 				Optional: true,
 				Computed: true,
 				// UseStateForUnknown ONLY. No RequiresReplace: re-pointing the
@@ -164,7 +164,7 @@ func (r *egressGatewayResource) Schema(_ context.Context, _ resource.SchemaReque
 					"without the acknowledgement, so this provider refuses them too — before any " +
 					"request is sent — rather than supplying the flag on the practitioner's behalf. It " +
 					"applies the same rule to a `public_ip_id` change, which re-addresses the VPC's " +
-					"egress just as visibly. " +
+					"outbound path just as visibly. " +
 					"Set it to true and apply, then destroy or change the mode. Leaving it unset " +
 					"(the default) makes `terraform destroy` fail on this resource instead of " +
 					"silently disconnecting the VPC.\n\n" +
@@ -217,7 +217,7 @@ func (r *egressGatewayResource) Schema(_ context.Context, _ resource.SchemaReque
 	}
 }
 
-func (r *egressGatewayResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+func (r *gatewayResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -269,7 +269,7 @@ func (modeValidator) ValidateString(_ context.Context, req validator.StringReque
 	case ModeNAT:
 		resp.Diagnostics.AddAttributeError(
 			req.Path,
-			"Egress gateway mode \"nat\" has been withdrawn",
+			"Gateway mode \"nat\" has been withdrawn",
 			"`mode = \"nat\"` sent this VPC's outbound traffic through an address shared with other "+
 				"VPCs. The mode is no longer offered and cannot be set: a VPC on it could not give any "+
 				"of its instances a public IP, because the platform needs the VPC's own gateway to "+
@@ -289,12 +289,12 @@ func (modeValidator) ValidateString(_ context.Context, req validator.StringReque
 				"as `mode` is no longer \"nat\" in the configuration.\n\n"+
 				"To move it off, set `mode = \"public_ip\"` together with "+
 				"`acknowledge_connectivity_loss = true` — the change is applied in place, and it "+
-				"re-addresses the VPC's egress.",
+				"re-addresses the VPC's outbound path.",
 		)
 	default:
 		resp.Diagnostics.AddAttributeError(
 			req.Path,
-			"Invalid egress gateway mode",
+			"Invalid gateway mode",
 			fmt.Sprintf("`mode` must be %q. Got %q.\n\n\"none\" is not a mode: a VPC with no outbound "+
 				"path is this resource NOT DECLARED, not a gateway carrying a special value.",
 				ModePublicIP, req.ConfigValue.ValueString()),
@@ -337,14 +337,14 @@ func (modeValidator) ValidateString(_ context.Context, req validator.StringReque
 // attribute consistent with the three observed values above. A configured value
 // is never touched here: it is the practitioner's choice, and overwriting it
 // with unknown would hide the very change being planned.
-func (r *egressGatewayResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+func (r *gatewayResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	// A create marks every null Computed attribute unknown already, and a
 	// destroy plan has no attributes to resolve.
 	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
 		return
 	}
 
-	var plan, state, config EgressGatewayModel
+	var plan, state, config GatewayModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
@@ -401,14 +401,14 @@ func (r *egressGatewayResource) ModifyPlan(ctx context.Context, req resource.Mod
 	}
 }
 
-func (r *egressGatewayResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan EgressGatewayModel
+func (r *gatewayResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan GatewayModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/egress-gateways"), apiCreateEgressGatewayRequest{
+	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/gateways"), apiCreateGatewayRequest{
 		VPCID: plan.VPCID.ValueString(),
 		Mode:  plan.Mode.ValueString(),
 		// Omitted unless the practitioner named one — the platform reads the
@@ -417,13 +417,13 @@ func (r *egressGatewayResource) Create(ctx context.Context, req resource.CreateR
 		PublicIPID: configuredPublicIPID(plan.PublicIPID),
 	})
 	if err != nil {
-		addEgressError(&resp.Diagnostics, "Failed to create egress gateway", err)
+		addGatewayError(&resp.Diagnostics, "Failed to create gateway", err)
 		return
 	}
 
-	var gw apiEgressGateway
+	var gw apiGateway
 	if err := json.Unmarshal(apiResp.Body, &gw); err != nil {
-		resp.Diagnostics.AddError("Failed to parse egress gateway response", err.Error())
+		resp.Diagnostics.AddError("Failed to parse gateway response", err.Error())
 		return
 	}
 
@@ -453,8 +453,8 @@ func configuredPublicIPID(v types.String) string {
 	return v.ValueString()
 }
 
-func (r *egressGatewayResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	var state EgressGatewayModel
+func (r *gatewayResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var state GatewayModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -462,7 +462,7 @@ func (r *egressGatewayResource) Read(ctx context.Context, req resource.ReadReque
 
 	gw, found, err := r.lookup(ctx, state.VPCID.ValueString(), state.ID.ValueString())
 	if err != nil {
-		addEgressError(&resp.Diagnostics, "Failed to read egress gateway", err)
+		addGatewayError(&resp.Diagnostics, "Failed to read gateway", err)
 		return
 	}
 	if !found {
@@ -493,10 +493,10 @@ func (r *egressGatewayResource) Read(ctx context.Context, req resource.ReadReque
 // path. A state row with no vpc_id (a fresh import by gateway id) therefore
 // resolves by id instead, which the API accepts as either the gateway id or the
 // VPC id.
-func (r *egressGatewayResource) lookup(ctx context.Context, vpcID, id string) (*apiEgressGateway, bool, error) {
+func (r *gatewayResource) lookup(ctx context.Context, vpcID, id string) (*apiGateway, bool, error) {
 	if vpcID == "" {
 		if id == "" {
-			return nil, false, fmt.Errorf("egress gateway state has neither vpc_id nor id; import it with `terraform import frostmoln_egress_gateway.<name> <vpc id>`")
+			return nil, false, fmt.Errorf("gateway state has neither vpc_id nor id; import it with `terraform import frostmoln_gateway.<name> <vpc id>`")
 		}
 		return r.getByID(ctx, id)
 	}
@@ -504,23 +504,23 @@ func (r *egressGatewayResource) lookup(ctx context.Context, vpcID, id string) (*
 	q := url.Values{}
 	q.Set("vpcId", vpcID)
 
-	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/egress-gateways"), q)
+	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/gateways"), q)
 	if err != nil {
 		return nil, false, err
 	}
 
-	var list apiEgressGatewayList
+	var list apiGatewayList
 	if err := json.Unmarshal(apiResp.Body, &list); err != nil {
-		return nil, false, fmt.Errorf("failed to parse egress gateway response: %w", err)
+		return nil, false, fmt.Errorf("failed to parse gateway response: %w", err)
 	}
-	if len(list.EgressGateways) == 0 {
+	if len(list.Gateways) == 0 {
 		// An empty filtered list is NOT proof that the gateway is gone. The API
 		// documents the same empty body for a vpcId that is unknown or that this
 		// tenant does not own, so a stale vpc_id — or a key scoped to another
 		// tenant — would otherwise drop a live, address-spending gateway out of
 		// state, and the next apply would create a SECOND one for the same VPC.
 		//
-		// GET /egress-gateways/{id} tells the two apart: it 404s only when the
+		// GET /gateways/{id} tells the two apart: it 404s only when the
 		// object really is not there. It accepts the gateway id or the VPC id,
 		// so whichever this state row has works.
 		confirmID := id
@@ -529,14 +529,14 @@ func (r *egressGatewayResource) lookup(ctx context.Context, vpcID, id string) (*
 		}
 		return r.getByID(ctx, confirmID)
 	}
-	return &list.EgressGateways[0], true, nil
+	return &list.Gateways[0], true, nil
 }
 
-// getByID resolves a gateway from GET /egress-gateways/{id}, which accepts the
+// getByID resolves a gateway from GET /gateways/{id}, which accepts the
 // gateway id OR the VPC id. Used on the import path, where only one id is known
 // and which of the two it is has not been established yet.
-func (r *egressGatewayResource) getByID(ctx context.Context, id string) (*apiEgressGateway, bool, error) {
-	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/egress-gateways/"+url.PathEscape(id)), nil)
+func (r *gatewayResource) getByID(ctx context.Context, id string) (*apiGateway, bool, error) {
+	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/gateways/"+url.PathEscape(id)), nil)
 	if err != nil {
 		if client.IsNotFound(err) {
 			return nil, false, nil
@@ -544,15 +544,15 @@ func (r *egressGatewayResource) getByID(ctx context.Context, id string) (*apiEgr
 		return nil, false, err
 	}
 
-	var gw apiEgressGateway
+	var gw apiGateway
 	if err := json.Unmarshal(apiResp.Body, &gw); err != nil {
-		return nil, false, fmt.Errorf("failed to parse egress gateway response: %w", err)
+		return nil, false, fmt.Errorf("failed to parse gateway response: %w", err)
 	}
 	return &gw, true, nil
 }
 
-func (r *egressGatewayResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, state EgressGatewayModel
+func (r *gatewayResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state GatewayModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
@@ -560,7 +560,7 @@ func (r *egressGatewayResource) Update(ctx context.Context, req resource.UpdateR
 	}
 
 	if state.ID.ValueString() == "" {
-		resp.Diagnostics.AddAttributeError(path.Root("id"), "Egress gateway has no id in state", noIDDetail)
+		resp.Diagnostics.AddAttributeError(path.Root("id"), "Gateway has no id in state", noIDDetail)
 		return
 	}
 
@@ -584,7 +584,7 @@ func (r *egressGatewayResource) Update(ctx context.Context, req resource.UpdateR
 	// Refuse locally, before any request. The API requires the acknowledgement
 	// for a mode change — the one that remains is moving a gateway off the
 	// withdrawn `nat` mode, which re-attaches an external gateway — and it is
-	// not ceremony: the VPC's egress source changes, in-flight connections drop,
+	// not ceremony: the VPC's outbound source changes, in-flight connections drop,
 	// and the platform routes are rebuilt.
 	//
 	// A public_ip_id change is held to the same rule even where the API would
@@ -596,8 +596,8 @@ func (r *egressGatewayResource) Update(ctx context.Context, req resource.UpdateR
 	if !plan.AcknowledgeConnectivityLoss.ValueBool() {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("acknowledge_connectivity_loss"),
-			egressChangeAckSummary(modeChanged),
-			egressChangeAckDetail(modeChanged, &plan, &state),
+			gatewayChangeAckSummary(modeChanged),
+			gatewayChangeAckDetail(modeChanged, &plan, &state),
 		)
 		return
 	}
@@ -605,8 +605,8 @@ func (r *egressGatewayResource) Update(ctx context.Context, req resource.UpdateR
 	// PATCH by the gateway's own id, which survives both changes — that is why
 	// this is an update rather than a replacement.
 	apiResp, err := r.client.Patch(ctx,
-		r.client.TenantPath("/egress-gateways/"+url.PathEscape(state.ID.ValueString())),
-		apiUpdateEgressGatewayRequest{
+		r.client.TenantPath("/gateways/"+url.PathEscape(state.ID.ValueString())),
+		apiUpdateGatewayRequest{
 			Mode: plan.Mode.ValueString(),
 			// Omitted when the practitioner named no address, which the API
 			// reads as "keep the address this gateway has" — never as "detach".
@@ -614,13 +614,13 @@ func (r *egressGatewayResource) Update(ctx context.Context, req resource.UpdateR
 			AcknowledgeConnectivityLoss: true,
 		})
 	if err != nil {
-		addEgressError(&resp.Diagnostics, "Failed to change egress gateway", err)
+		addGatewayError(&resp.Diagnostics, "Failed to change gateway", err)
 		return
 	}
 
-	var gw apiEgressGateway
+	var gw apiGateway
 	if err := json.Unmarshal(apiResp.Body, &gw); err != nil {
-		resp.Diagnostics.AddError("Failed to parse egress gateway response", err.Error())
+		resp.Diagnostics.AddError("Failed to parse gateway response", err.Error())
 		return
 	}
 
@@ -653,21 +653,21 @@ func publicIPPinChanged(plan, state types.String) bool {
 	return !plan.Equal(state)
 }
 
-func egressChangeAckSummary(modeChanged bool) string {
+func gatewayChangeAckSummary(modeChanged bool) string {
 	if modeChanged {
-		return "Egress gateway mode change requires acknowledgement"
+		return "Gateway mode change requires acknowledgement"
 	}
-	return "Egress gateway address change requires acknowledgement"
+	return "Gateway address change requires acknowledgement"
 }
 
-func egressChangeAckDetail(modeChanged bool, plan, state *EgressGatewayModel) string {
+func gatewayChangeAckDetail(modeChanged bool, plan, state *GatewayModel) string {
 	if modeChanged {
 		return fmt.Sprintf("Changing mode from %q to %q re-addresses this VPC's only outbound path and "+
 			"drops connections in flight. %s\n\nSet `acknowledge_connectivity_loss = true` on this "+
 			"resource to allow the change.",
 			state.Mode.ValueString(), plan.Mode.ValueString(), connectivityLossWarning)
 	}
-	return fmt.Sprintf("Changing `public_ip_id` from %s to %q moves this VPC's egress onto a different "+
+	return fmt.Sprintf("Changing `public_ip_id` from %s to %q moves this VPC's outbound path onto a different "+
 		"address. The gateway itself is updated in place, but the address your outbound traffic "+
 		"arrives from changes: connections in flight drop, and every partner allow-list entry and DNS "+
 		"record naming the old address stops matching.\n\nSet `acknowledge_connectivity_loss = true` "+
@@ -686,8 +686,8 @@ func quotedOrNone(v types.String) string {
 	return fmt.Sprintf("%q", v.ValueString())
 }
 
-func (r *egressGatewayResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var state EgressGatewayModel
+func (r *gatewayResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state GatewayModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -698,7 +698,7 @@ func (r *egressGatewayResource) Delete(ctx context.Context, req resource.DeleteR
 	// then read through IsNotFound as "already gone" and silently forget a
 	// gateway that is still up.
 	if state.ID.ValueString() == "" {
-		resp.Diagnostics.AddAttributeError(path.Root("id"), "Egress gateway has no id in state", noIDDetail)
+		resp.Diagnostics.AddAttributeError(path.Root("id"), "Gateway has no id in state", noIDDetail)
 		return
 	}
 
@@ -713,7 +713,7 @@ func (r *egressGatewayResource) Delete(ctx context.Context, req resource.DeleteR
 	if !state.AcknowledgeConnectivityLoss.ValueBool() {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("acknowledge_connectivity_loss"),
-			"Egress gateway removal requires acknowledgement",
+			"Gateway removal requires acknowledgement",
 			connectivityLossWarning+"\n\nSet `acknowledge_connectivity_loss = true` on this resource "+
 				"and run `terraform apply` first; the destroy then proceeds. Nothing has been changed.",
 		)
@@ -727,18 +727,18 @@ func (r *egressGatewayResource) Delete(ctx context.Context, req resource.DeleteR
 	q.Set("acknowledgeConnectivityLoss", "true")
 
 	_, err := r.client.DeleteWithQuery(ctx,
-		r.client.TenantPath("/egress-gateways/"+url.PathEscape(state.ID.ValueString())), q)
+		r.client.TenantPath("/gateways/"+url.PathEscape(state.ID.ValueString())), q)
 	if err != nil {
 		if client.IsNotFound(err) {
 			return
 		}
-		addEgressError(&resp.Diagnostics, "Failed to delete egress gateway", err)
+		addGatewayError(&resp.Diagnostics, "Failed to delete gateway", err)
 		return
 	}
 }
 
-func (r *egressGatewayResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	// Only `id` is set. GET /egress-gateways/{id} accepts the gateway id OR the
+func (r *gatewayResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// Only `id` is set. GET /gateways/{id} accepts the gateway id OR the
 	// VPC id, so Read resolves either and fills in vpc_id itself. Setting vpc_id
 	// to the imported string as well would be wrong for the gateway-id form: the
 	// following Read would filter the list by a vpcId that matches nothing, get

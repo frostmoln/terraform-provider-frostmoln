@@ -38,16 +38,16 @@ type apiVPC struct {
 
 // apiCreateVPCRequest is the API request to create a VPC.
 //
-// It deliberately carries NO `egressGateway` connectivity choice, even though
+// It deliberately carries NO `gateway` connectivity choice, even though
 // the network service's CreateVPCRequest accepts one ("none" | "public_ip" —
 // "nat" is withdrawn) and provisioning does forward it (its network handler
-// binds `egressGateway` and the CreateNetwork activity sets it on the gRPC
+// binds `gateway` and the CreateNetwork activity sets it on the gRPC
 // request).
 //
 // The choice is omitted here because it would make TWO owners of one object.
-// The gateway is its own resource (`frostmoln_egress_gateway`); a VPC that
+// The gateway is its own resource (`frostmoln_gateway`); a VPC that
 // creates one implicitly produces an object Terraform does not manage, and
-// declaring the resource as well then fails with EGRESS_GATEWAY_EXISTS. In
+// declaring the resource as well then fails with GATEWAY_EXISTS. In
 // Terraform the connectivity choice IS the presence, absence and `mode` of
 // that resource — which is also the only form that can be changed later, since
 // the create-time field cannot be re-stated on an existing VPC.

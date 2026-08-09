@@ -20,9 +20,9 @@ import (
 	apacheinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/apache_instance"
 	databaseenginesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/database_engines"
 	dnszoneds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/dns_zone"
-	egressgatewayds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/egress_gateway"
 	flavords "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/flavor"
 	flavorsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/flavors"
+	gatewayds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/gateway"
 	iampolicydocumentds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/iam_policy_document"
 	imageds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/image"
 	imagesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/images"
@@ -50,7 +50,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/bucket_lifecycle_configuration"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_record"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_zone"
-	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/egress_gateway"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/gateway"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/iam_policy"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/iam_policy_attachment"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/image"
@@ -367,7 +367,7 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		security_group_rule.NewResource,
 		public_ip.NewResource,
 		dns_zone.NewResource,
-		egress_gateway.NewResource,
+		gateway.NewResource,
 		dns_record.NewResource,
 		load_balancer.NewResource,
 		lb_listener.NewResource,
@@ -414,7 +414,7 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		vpcds.NewDataSource,
 		subnetds.NewDataSource,
 		dnszoneds.NewDataSource,
-		egressgatewayds.NewDataSource,
+		gatewayds.NewDataSource,
 		publicipds.NewDataSource,
 		instanceds.NewDataSource,
 		postgresversionsds.NewDataSource,

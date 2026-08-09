@@ -1,4 +1,4 @@
-package egress_gateway_test
+package gateway_test
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/provider"
-	egressgateway "go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/egress_gateway"
+	gatewaypkg "go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/gateway"
 )
 
 // ValidateResourceConfig is the RPC Terraform issues before `validate`, `plan`,
@@ -28,15 +28,15 @@ import (
 // everything but apply keeps working", and no direct-validator test could
 // contradict it.
 
-// egressGatewayConfig builds a resource config with every attribute null except
+// gatewayConfig builds a resource config with every attribute null except
 // vpc_id and mode, taken from the resource's own schema so the shape cannot
 // drift away from it.
-func egressGatewayConfig(t *testing.T, mode string) *tfprotov6.DynamicValue {
+func gatewayConfig(t *testing.T, mode string) *tfprotov6.DynamicValue {
 	t.Helper()
 	ctx := context.Background()
 
 	schemaResp := &fwresource.SchemaResponse{}
-	egressgateway.NewResource().Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+	gatewaypkg.NewResource().Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
 	if schemaResp.Diagnostics.HasError() {
 		t.Fatalf("schema returned diagnostics: %v", schemaResp.Diagnostics)
 	}
@@ -64,8 +64,8 @@ func validateEgressGatewayConfig(t *testing.T, mode string) []*tfprotov6.Diagnos
 	t.Helper()
 	server := providerserver.NewProtocol6(provider.New("test")())()
 	resp, err := server.ValidateResourceConfig(context.Background(), &tfprotov6.ValidateResourceConfigRequest{
-		TypeName: "frostmoln_egress_gateway",
-		Config:   egressGatewayConfig(t, mode),
+		TypeName: "frostmoln_gateway",
+		Config:   gatewayConfig(t, mode),
 	})
 	if err != nil {
 		t.Fatalf("ValidateResourceConfig returned error: %v", err)
@@ -73,7 +73,7 @@ func validateEgressGatewayConfig(t *testing.T, mode string) []*tfprotov6.Diagnos
 	return resp.Diagnostics
 }
 
-func egressDiagText(diags []*tfprotov6.Diagnostic) string {
+func gatewayDiagText(diags []*tfprotov6.Diagnostic) string {
 	var b strings.Builder
 	for _, d := range diags {
 		b.WriteString(d.Summary)
@@ -84,7 +84,7 @@ func egressDiagText(diags []*tfprotov6.Diagnostic) string {
 	return b.String()
 }
 
-func egressDiagsHaveError(diags []*tfprotov6.Diagnostic) bool {
+func gatewayDiagsHaveError(diags []*tfprotov6.Diagnostic) bool {
 	for _, d := range diags {
 		if d.Severity == tfprotov6.DiagnosticSeverityError {
 			return true
@@ -102,12 +102,12 @@ func TestEgressGatewayValidateResourceConfigRefusesNAT(t *testing.T) {
 	t.Parallel()
 
 	diags := validateEgressGatewayConfig(t, "nat")
-	if !egressDiagsHaveError(diags) {
+	if !gatewayDiagsHaveError(diags) {
 		t.Fatal("mode = \"nat\" must be refused by ValidateResourceConfig; if it is not, " +
 			"the schema's claim about when the refusal fires is wrong")
 	}
 
-	text := egressDiagText(diags)
+	text := gatewayDiagText(diags)
 	if !strings.Contains(strings.ToLower(text), "withdrawn") {
 		t.Errorf("the refusal must name the withdrawal, got:\n%s", text)
 	}
@@ -127,7 +127,7 @@ func TestEgressGatewayValidateResourceConfigAcceptsPublicIP(t *testing.T) {
 	t.Parallel()
 
 	diags := validateEgressGatewayConfig(t, "public_ip")
-	if egressDiagsHaveError(diags) {
-		t.Errorf("mode = \"public_ip\" must validate cleanly, got:\n%s", egressDiagText(diags))
+	if gatewayDiagsHaveError(diags) {
+		t.Errorf("mode = \"public_ip\" must validate cleanly, got:\n%s", gatewayDiagText(diags))
 	}
 }

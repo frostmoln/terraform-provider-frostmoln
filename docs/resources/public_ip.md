@@ -5,7 +5,7 @@ subcategory: ""
 description: |-
   Manages a public IP in the Frostmoln Cloud Platform.
   Destroying this resource RELEASES THE ADDRESS, and the address does not come back. It returns to a shared regional pool and is re-issued to whoever asks for one next — possibly another tenant, within minutes. Anything that named it stops matching: a partner's allow-list entry, a DNS record, a firewall rule at the other end.
-  There is no undo and no support request that recovers it, so an address anyone else depends on is worth protecting in the configuration itself with Terraform's own lifecycle { prevent_destroy = true } — see the example below. It fails the PLAN, so a module removal, a terraform destroy -target, or CI running terraform destroy -auto-approve stops before anything is sent. This provider additionally refuses to release an address that is serving a VPC's egress unless acknowledge_address_loss = true — see that attribute.
+  There is no undo and no support request that recovers it, so an address anyone else depends on is worth protecting in the configuration itself with Terraform's own lifecycle { prevent_destroy = true } — see the example below. It fails the PLAN, so a module removal, a terraform destroy -target, or CI running terraform destroy -auto-approve stops before anything is sent. This provider additionally refuses to release an address that is serving a VPC's outbound path unless acknowledge_address_loss = true — see that attribute.
 ---
 
 # frostmoln_public_ip (Resource)
@@ -14,7 +14,7 @@ Manages a public IP in the Frostmoln Cloud Platform.
 
 **Destroying this resource RELEASES THE ADDRESS, and the address does not come back.** It returns to a shared regional pool and is re-issued to whoever asks for one next — possibly another tenant, within minutes. Anything that named it stops matching: a partner's allow-list entry, a DNS record, a firewall rule at the other end.
 
-There is no undo and no support request that recovers it, so an address anyone else depends on is worth protecting in the configuration itself with Terraform's own `lifecycle { prevent_destroy = true }` — see the example below. It fails the PLAN, so a module removal, a `terraform destroy -target`, or CI running `terraform destroy -auto-approve` stops before anything is sent. This provider additionally refuses to release an address that is serving a VPC's egress unless `acknowledge_address_loss = true` — see that attribute.
+There is no undo and no support request that recovers it, so an address anyone else depends on is worth protecting in the configuration itself with Terraform's own `lifecycle { prevent_destroy = true }` — see the example below. It fails the PLAN, so a module removal, a `terraform destroy -target`, or CI running `terraform destroy -auto-approve` stops before anything is sent. This provider additionally refuses to release an address that is serving a VPC's outbound path unless `acknowledge_address_loss = true` — see that attribute.
 
 ## Example Usage
 
@@ -29,7 +29,7 @@ resource "frostmoln_public_ip" "example" {
 }
 
 # AN ADDRESS SOMEONE ELSE DEPENDS ON — one in a partner's allow-list, published
-# in DNS, or serving a VPC's egress — is worth protecting in the configuration
+# in DNS, or serving a VPC's outbound path — is worth protecting in the configuration
 # itself.
 #
 # Destroying this resource RELEASES THE ADDRESS.
@@ -56,14 +56,14 @@ resource "frostmoln_public_ip" "partner_facing" {
 }
 
 # This address is the VPC's outbound source address, so the whole VPC's traffic
-# arrives from it. See frostmoln_egress_gateway.
-resource "frostmoln_egress_gateway" "partner_facing" {
+# arrives from it. See frostmoln_gateway.
+resource "frostmoln_gateway" "partner_facing" {
   vpc_id       = frostmoln_vpc.example.id
   mode         = "public_ip"
   public_ip_id = frostmoln_public_ip.partner_facing.id
 }
 
-# The provider ALSO refuses to release an address that is serving a VPC's egress
+# The provider ALSO refuses to release an address that is serving a VPC's outbound path
 # unless the intent is stated:
 #
 #   acknowledge_address_loss = true
@@ -80,7 +80,7 @@ resource "frostmoln_egress_gateway" "partner_facing" {
 # earlier and covers more.
 
 # What is holding the address. Read this, not `instance_id`: an address serving
-# a VPC's egress has no instance and no port, so it looks idle from every other
+# a VPC's outbound path has no instance and no port, so it looks idle from every other
 # angle. "unknown" means the platform did not say — never read it as "free".
 output "partner_facing_attachment" {
   value = frostmoln_public_ip.partner_facing.attachment.kind
@@ -92,11 +92,11 @@ output "partner_facing_attachment" {
 
 ### Optional
 
-- `acknowledge_address_loss` (Boolean) Set to true to allow this public IP to be released while it is serving a VPC's outbound traffic (`attachment.kind` = "egress_gateway").
+- `acknowledge_address_loss` (Boolean) Set to true to allow this public IP to be released while it is serving a VPC's outbound traffic (`attachment.kind` = "gateway").
 
 **Releasing it loses the address permanently.** It returns to a shared regional pool and is re-issued to whoever asks next, so a partner's allow-list entry or a DNS record naming it stops matching — and cannot be restored by re-creating anything.
 
-The provider refuses that release without this flag, and refuses it BEFORE any request is sent, because the platform cannot refuse it for you on the path a correct configuration produces. When `frostmoln_egress_gateway.public_ip_id` refers to this resource, Terraform destroys the gateway first; the platform then hands the address back as an ordinary unattached address, and the release that follows looks — to the platform — like the release of something idle.
+The provider refuses that release without this flag, and refuses it BEFORE any request is sent, because the platform cannot refuse it for you on the path a correct configuration produces. When `frostmoln_gateway.public_ip_id` refers to this resource, Terraform destroys the gateway first; the platform then hands the address back as an ordinary unattached address, and the release that follows looks — to the platform — like the release of something idle.
 
 Set it to true and apply, then destroy. Leaving it unset (the default) makes `terraform destroy` fail on this resource instead of silently giving the address away.
 
@@ -122,10 +122,10 @@ Read this, not `instance_id`, to tell whether the address is free. An address se
 
 Read-Only:
 
-- `kind` (String) "none" (allocated, nothing using it — still yours, still counted against quota and still billed), "port" (attached to an instance or load balancer, its inbound address), "egress_gateway" (it is a VPC's outbound source address; see `frostmoln_egress_gateway`), or "unknown".
+- `kind` (String) "none" (allocated, nothing using it — still yours, still counted against quota and still billed), "port" (attached to an instance or load balancer, its inbound address), "gateway" (it is a VPC's outbound source address; see `frostmoln_gateway`), or "unknown".
 
-While it is "egress_gateway" the platform refuses to attach this address to an instance, and this provider refuses to release it without `acknowledge_address_loss = true`.
+While it is "gateway" the platform refuses to attach this address to an instance, and this provider refuses to release it without `acknowledge_address_loss = true`.
 
-"unknown" means the platform did not report an attachment for this address. Read it as "not established", never as "free": an address serving a VPC's egress has no port either, so nothing here distinguishes the two. New kinds can appear without a provider upgrade; a kind this provider build does not recognise is passed through unchanged and treated as attached.
-- `resource_id` (String) What holds the address: the network port for "port", the egress gateway for "egress_gateway". Null for "none".
-- `vpc_id` (String) The VPC whose outbound traffic leaves from this address. Set only for "egress_gateway".
+"unknown" means the platform did not report an attachment for this address. Read it as "not established", never as "free": an address serving a VPC's outbound path has no port either, so nothing here distinguishes the two. New kinds can appear without a provider upgrade; a kind this provider build does not recognise is passed through unchanged and treated as attached.
+- `resource_id` (String) What holds the address: the network port for "port", the gateway for "gateway". Null for "none".
+- `vpc_id` (String) The VPC whose outbound traffic leaves from this address. Set only for "gateway".

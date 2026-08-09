@@ -387,11 +387,11 @@ func fipAttachmentNull() tftypes.Value {
 	return tftypes.NewValue(fipAttachmentType(), nil)
 }
 
-// fipEgressBoundState is the state row of an address that IS a VPC's egress
+// fipGatewayBoundState is the state row of an address that IS a VPC's outbound path
 // source — the shape every address-loss guard is about. ack arms
 // acknowledge_address_loss, which is what lets a test get past the local gate
 // and exercise the platform-side path behind it.
-func fipEgressBoundState(ack bool) tftypes.Value {
+func fipGatewayBoundState(ack bool) tftypes.Value {
 	ackVal := tftypes.NewValue(tftypes.Bool, nil)
 	if ack {
 		ackVal = tftypes.NewValue(tftypes.Bool, true)
@@ -405,7 +405,7 @@ func fipEgressBoundState(ack bool) tftypes.Value {
 		"status":                   tftypes.NewValue(tftypes.String, "in_use"),
 		"private_ip":               tftypes.NewValue(tftypes.String, nil),
 		"created_at":               tftypes.NewValue(tftypes.String, "2026-01-01T00:00:00Z"),
-		"attachment":               fipEgressAttachment("gw-1", "vpc-1"),
+		"attachment":               fipGatewayAttachment("gw-1", "vpc-1"),
 	})
 }
 
@@ -419,7 +419,7 @@ func fipAttachmentOfKind(kind string) tftypes.Value {
 	})
 }
 
-// fipStateWithAttachment is fipEgressBoundState with an arbitrary attachment.
+// fipStateWithAttachment is fipGatewayBoundState with an arbitrary attachment.
 func fipStateWithAttachment(att tftypes.Value, ack bool) tftypes.Value {
 	ackVal := tftypes.NewValue(tftypes.Bool, nil)
 	if ack {
@@ -438,11 +438,11 @@ func fipStateWithAttachment(att tftypes.Value, ack bool) tftypes.Value {
 	})
 }
 
-// fipEgressAttachment is a recorded egress attachment, for the guards that
+// fipGatewayAttachment is a recorded gateway attachment, for the guards that
 // refuse to let a VPC's outbound source address be released silently.
-func fipEgressAttachment(gatewayID, vpcID string) tftypes.Value {
+func fipGatewayAttachment(gatewayID, vpcID string) tftypes.Value {
 	return tftypes.NewValue(fipAttachmentType(), map[string]tftypes.Value{
-		"kind":        tftypes.NewValue(tftypes.String, AttachmentKindEgressGateway),
+		"kind":        tftypes.NewValue(tftypes.String, AttachmentKindGateway),
 		"resource_id": tftypes.NewValue(tftypes.String, gatewayID),
 		"vpc_id":      tftypes.NewValue(tftypes.String, vpcID),
 	})
@@ -1970,22 +1970,22 @@ var _ = fmt.Sprintf
 // --- attachment ---
 
 // TestPublicIPAttachmentFromAPI: the platform's explicit statement is taken as
-// given, including the VPC whose egress the address serves.
+// given, including the VPC whose outbound path the address serves.
 func TestPublicIPAttachmentFromAPI(t *testing.T) {
 	var m PublicIPModel
 	var diags diag.Diagnostics
 	m.fromAPI(context.Background(), &apiPublicIP{
 		ID: "pip-1", Address: "203.0.113.10", Status: "in_use",
 		Attachment: &apiPublicIPAttachment{
-			Kind: AttachmentKindEgressGateway, ResourceID: "gw-1", VPCID: "vpc-1",
+			Kind: AttachmentKindGateway, ResourceID: "gw-1", VPCID: "vpc-1",
 		},
 	}, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
 
-	if !m.IsEgressBound() {
-		t.Error("an egress_gateway attachment must be recognised as egress-bound")
+	if !m.IsGatewayBound() {
+		t.Error("an egress_gateway attachment must be recognised as gateway-bound")
 	}
 	if m.AttachedVPCID() != "vpc-1" {
 		t.Errorf("expected vpc-1, got %q", m.AttachedVPCID())
@@ -2000,11 +2000,11 @@ func TestPublicIPAttachmentFromAPI(t *testing.T) {
 //
 // A non-empty portId is positive evidence of a port, which is what portId meant
 // before the object existed. The ABSENCE of a port is not evidence of the
-// absence of an attachment — an egress source address has never had one — so
+// absence of an attachment — an outbound source address has never had one — so
 // that case must be "unknown", never "none". Calling it "none" would tell a
 // practitioner an address is free at the one moment giving it away cannot be
 // undone: a platform rolled back below the version that reports attachments
-// still has egress-attached addresses, and answers for them with no object.
+// still has gateway-attached addresses, and answers for them with no object.
 //
 // Either way the object is non-null, so `attachment.kind` is readable in every
 // configuration rather than erroring on a null.
@@ -2038,8 +2038,8 @@ func TestPublicIPAttachmentDefaultsFromPortID(t *testing.T) {
 			if gotID != tc.wantID {
 				t.Errorf("resource_id present=%v, want %v", gotID, tc.wantID)
 			}
-			if m.IsEgressBound() {
-				t.Error("a port attachment is not an egress binding")
+			if m.IsGatewayBound() {
+				t.Error("a port attachment is not an gateway binding")
 			}
 		})
 	}
@@ -2050,14 +2050,14 @@ func TestPublicIPAttachmentDefaultsFromPortID(t *testing.T) {
 //
 // Nothing else in the plan says the address is in use: `terraform plan` renders
 // one ordinary "will be destroyed" line, and `instance_id` is empty precisely
-// BECAUSE the address is a VPC's egress source rather than an instance's. The
+// BECAUSE the address is a VPC's outbound source rather than an instance's. The
 // practitioner reads "an unused address goes away" and approves an apply that
 // takes a whole VPC off-net.
 func TestPublicIPDestroyPlanWarnsWhenEgressBound(t *testing.T) {
 	s := fipSchema(t)
 	r, ok := NewResource().(resource.ResourceWithModifyPlan)
 	if !ok {
-		t.Fatal("the resource must implement ModifyPlan so a destroy of an egress-bound address is " +
+		t.Fatal("the resource must implement ModifyPlan so a destroy of an gateway-bound address is " +
 			"visible in the PLAN, not only as an apply-time refusal")
 	}
 
@@ -2070,7 +2070,7 @@ func TestPublicIPDestroyPlanWarnsWhenEgressBound(t *testing.T) {
 		"status":                   tftypes.NewValue(tftypes.String, "in_use"),
 		"private_ip":               tftypes.NewValue(tftypes.String, nil),
 		"created_at":               tftypes.NewValue(tftypes.String, "2026-01-01T00:00:00Z"),
-		"attachment":               fipEgressAttachment("gw-1", "vpc-1"),
+		"attachment":               fipGatewayAttachment("gw-1", "vpc-1"),
 	})
 
 	resp := &resource.ModifyPlanResponse{Plan: tfsdk.Plan{Schema: s}}
@@ -2085,10 +2085,10 @@ func TestPublicIPDestroyPlanWarnsWhenEgressBound(t *testing.T) {
 			"first, and at plan time the attachment is still recorded: %v", resp.Diagnostics)
 	}
 	if resp.Diagnostics.WarningsCount() == 0 {
-		t.Fatal("destroying a VPC's egress source address must be surfaced in the plan")
+		t.Fatal("destroying a VPC's outbound source address must be surfaced in the plan")
 	}
 	text := resp.Diagnostics.Warnings()[0].Summary() + "\n" + resp.Diagnostics.Warnings()[0].Detail()
-	for _, want := range []string{"vpc-1", "203.0.113.10", "DNS", "frostmoln_egress_gateway"} {
+	for _, want := range []string{"vpc-1", "203.0.113.10", "DNS", "frostmoln_gateway"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the warning must contain %q, got:\n%s", want, text)
 		}
@@ -2207,8 +2207,8 @@ func TestPublicIPDeleteInUseByEgressGateway(t *testing.T) {
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"error": map[string]string{
-				"code":    "PUBLIC_IP_IN_USE_BY_EGRESS_GATEWAY",
-				"message": "public IP is the egress source address of vpc-1",
+				"code":    "PUBLIC_IP_IN_USE_BY_GATEWAY",
+				"message": "public IP is the outbound source address of vpc-1",
 			},
 		})
 	}))
@@ -2221,7 +2221,7 @@ func TestPublicIPDeleteInUseByEgressGateway(t *testing.T) {
 		resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
 
 	s := fipSchema(t)
-	stateVal := fipEgressBoundState(true)
+	stateVal := fipGatewayBoundState(true)
 
 	resp := &resource.DeleteResponse{State: tfsdk.State{Schema: s, Raw: stateVal}}
 	r.Delete(context.Background(), resource.DeleteRequest{
@@ -2235,19 +2235,19 @@ func TestPublicIPDeleteInUseByEgressGateway(t *testing.T) {
 	for _, d := range resp.Diagnostics.Errors() {
 		text += d.Summary() + "\n" + d.Detail() + "\n"
 	}
-	if !strings.Contains(text, "frostmoln_egress_gateway") {
+	if !strings.Contains(text, "frostmoln_gateway") {
 		t.Errorf("the diagnostic must point at the resource that holds the address:\n%s", text)
 	}
 	if !strings.Contains(text, "Nothing was changed") {
 		t.Errorf("the diagnostic must say nothing was changed:\n%s", text)
 	}
-	if !strings.Contains(text, "public IP is the egress source address of vpc-1") {
+	if !strings.Contains(text, "public IP is the outbound source address of vpc-1") {
 		t.Errorf("the diagnostic must still quote what the API said:\n%s", text)
 	}
 }
 
 // TestPublicIPSchemaExposesAttachment: a practitioner has to be able to tell an
-// egress-bound address from an unattached one, and `instance_id` cannot do it.
+// gateway-bound address from an unattached one, and `instance_id` cannot do it.
 func TestPublicIPSchemaExposesAttachment(t *testing.T) {
 	s := fipSchema(t)
 	att, ok := s.Attributes["attachment"].(schema.SingleNestedAttribute)
@@ -2263,7 +2263,7 @@ func TestPublicIPSchemaExposesAttachment(t *testing.T) {
 		}
 	}
 	kind := att.Attributes["kind"].GetDescription()
-	if !strings.Contains(kind, AttachmentKindEgressGateway) {
+	if !strings.Contains(kind, AttachmentKindGateway) {
 		t.Errorf("kind must document the egress_gateway value, got:\n%s", kind)
 	}
 }
@@ -2274,11 +2274,11 @@ func TestPublicIPSchemaExposesAttachment(t *testing.T) {
 // guard for the irreversible action on this surface.
 //
 // The platform CANNOT refuse this on the path a correct configuration produces.
-// `frostmoln_egress_gateway.public_ip_id` makes the gateway depend on this
+// `frostmoln_gateway.public_ip_id` makes the gateway depend on this
 // resource, so `terraform destroy` destroys the gateway FIRST; the platform
 // hands the address back as an ordinary unattached address
 // (`network/internal/service/impl/egress_gateway_public_ip.go`
-// releasePinnedAddress clears the egress binding), and the DELETE that follows
+// releasePinnedAddress clears the gateway binding), and the DELETE that follows
 // is — from its side — the release of something idle. It succeeds. The address
 // returns to a shared pool and is re-issued to whoever asks next; a partner's
 // allow-list entry and the DNS record stop matching, and nothing brings it
@@ -2304,7 +2304,7 @@ func TestPublicIPDeleteRefusesEgressBoundWithoutAcknowledgement(t *testing.T) {
 		resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
 
 	s := fipSchema(t)
-	stateVal := fipEgressBoundState(false)
+	stateVal := fipGatewayBoundState(false)
 
 	resp := &resource.DeleteResponse{State: tfsdk.State{Schema: s, Raw: stateVal}}
 	r.Delete(context.Background(), resource.DeleteRequest{
@@ -2312,7 +2312,7 @@ func TestPublicIPDeleteRefusesEgressBoundWithoutAcknowledgement(t *testing.T) {
 	}, resp)
 
 	if !resp.Diagnostics.HasError() {
-		t.Fatal("releasing a VPC's egress source address must be refused without an explicit " +
+		t.Fatal("releasing a VPC's outbound source address must be refused without an explicit " +
 			"acknowledgement — the address does not come back")
 	}
 	if calls != 0 {
@@ -2348,7 +2348,7 @@ func TestPublicIPDeleteProceedsWithAcknowledgement(t *testing.T) {
 		resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
 
 	s := fipSchema(t)
-	stateVal := fipEgressBoundState(true)
+	stateVal := fipGatewayBoundState(true)
 
 	resp := &resource.DeleteResponse{State: tfsdk.State{Schema: s, Raw: stateVal}}
 	r.Delete(context.Background(), resource.DeleteRequest{
@@ -2400,11 +2400,11 @@ func TestPublicIPDeleteRefusesUnrecognisedAttachmentKind(t *testing.T) {
 	if !strings.Contains(text, "ingress_gateway") {
 		t.Errorf("the refusal must quote the kind it did not recognise:\n%s", text)
 	}
-	// It must NOT claim a VPC's egress is affected — the provider does not know
+	// It must NOT claim a VPC's outbound path is affected — the provider does not know
 	// that, and sending the practitioner to check the wrong thing wastes the
 	// one moment they are paying attention.
 	if strings.Contains(text, "outbound traffic leaves the platform from") {
-		t.Errorf("an unrecognised kind must not be described as an egress binding:\n%s", text)
+		t.Errorf("an unrecognised kind must not be described as an gateway binding:\n%s", text)
 	}
 }
 
@@ -2486,7 +2486,7 @@ func TestPublicIPDeleteWaitsForTheOperation(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-1", "status": status, "resourceType": "public_ip",
-				"error": "PUBLIC_IP_IN_USE_BY_EGRESS_GATEWAY: public IP is the egress source address of vpc-1",
+				"error": "PUBLIC_IP_IN_USE_BY_GATEWAY: public IP is the outbound source address of vpc-1",
 			})
 			return
 		}
@@ -2501,7 +2501,7 @@ func TestPublicIPDeleteWaitsForTheOperation(t *testing.T) {
 		resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
 
 	s := fipSchema(t)
-	stateVal := fipEgressBoundState(true)
+	stateVal := fipGatewayBoundState(true)
 
 	resp := &resource.DeleteResponse{State: tfsdk.State{Schema: s, Raw: stateVal}}
 	r.Delete(context.Background(), resource.DeleteRequest{
@@ -2517,10 +2517,10 @@ func TestPublicIPDeleteWaitsForTheOperation(t *testing.T) {
 			"resource from state and the next apply allocates a different address")
 	}
 	text := fipDiagText(resp.Diagnostics)
-	if !strings.Contains(text, "frostmoln_egress_gateway") {
+	if !strings.Contains(text, "frostmoln_gateway") {
 		t.Errorf("the async refusal must read like the synchronous one:\n%s", text)
 	}
-	if !strings.Contains(text, "the egress source address of vpc-1") {
+	if !strings.Contains(text, "the outbound source address of vpc-1") {
 		t.Errorf("the diagnostic must quote what the platform said:\n%s", text)
 	}
 }

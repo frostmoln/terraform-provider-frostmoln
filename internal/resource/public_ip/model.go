@@ -21,10 +21,10 @@ const (
 	// inbound address.
 	AttachmentKindPort = "port"
 
-	// AttachmentKindEgressGateway means the address IS a VPC's outbound source
+	// AttachmentKindGateway means the address IS a VPC's outbound source
 	// address — the whole VPC leaves the platform from it. Releasing it, or
 	// attaching it to an instance, is refused while that lasts.
-	AttachmentKindEgressGateway = "egress_gateway"
+	AttachmentKindGateway = "gateway"
 
 	// AttachmentKindUnknown is SYNTHESIZED BY THIS PROVIDER, never sent by the
 	// platform. It is what an API response that carried no attachment object at
@@ -33,8 +33,8 @@ const (
 	// The tempting reading of an absent object is "attached to nothing", and it
 	// is wrong in the one direction that costs something irreversible: a
 	// platform rolled back below the version that reports attachments still has
-	// egress-attached addresses, and would answer for one of them with no
-	// object rather than with `egress_gateway`. Calling that "none" reassures a
+	// gateway-attached addresses, and would answer for one of them with no
+	// object rather than with `gateway`. Calling that "none" reassures a
 	// practitioner that an address is free at the exact moment it is not, and
 	// releasing it is unrecoverable. So it says it does not know.
 	AttachmentKindUnknown = "unknown"
@@ -68,12 +68,12 @@ type PublicIPModel struct {
 	// AcknowledgeAddressLoss is the practitioner's explicit statement that they
 	// accept losing this ADDRESS — not merely this resource.
 	//
-	// It exists because destroying an egress-attached public IP is the one
+	// It exists because destroying an gateway-attached public IP is the one
 	// irreversible action on this surface, and nothing else makes it visible.
 	// Terraform renders an ordinary "will be destroyed" line, `instance_id` is
-	// empty (an egress source address has no instance), and the platform's own
+	// empty (an outbound source address has no instance), and the platform's own
 	// refusal CANNOT fire on the path a correct configuration produces:
-	// `frostmoln_egress_gateway.public_ip_id` makes the gateway depend on this
+	// `frostmoln_gateway.public_ip_id` makes the gateway depend on this
 	// resource, so Terraform destroys the gateway FIRST, the platform hands the
 	// address back as an ordinary unattached address, and the release that
 	// follows is — to the platform — the release of something idle. The address
@@ -84,10 +84,10 @@ type PublicIPModel struct {
 	AcknowledgeAddressLoss types.Bool `tfsdk:"acknowledge_address_loss"`
 }
 
-// IsEgressBound reports whether the recorded attachment says this address is a
-// VPC's egress source.
-func (m *PublicIPModel) IsEgressBound() bool {
-	return m.AttachmentKind() == AttachmentKindEgressGateway
+// IsGatewayBound reports whether the recorded attachment says this address is a
+// VPC's outbound source.
+func (m *PublicIPModel) IsGatewayBound() bool {
+	return m.AttachmentKind() == AttachmentKindGateway
 }
 
 // AttachmentKind is the recorded attachment kind, or "" when no attachment has
@@ -132,7 +132,7 @@ func (m *PublicIPModel) RequiresAddressLossAcknowledgement() bool {
 	}
 }
 
-// AttachedVPCID is the VPC whose egress this address serves, or "".
+// AttachedVPCID is the VPC whose outbound path this address serves, or "".
 func (m *PublicIPModel) AttachedVPCID() string {
 	return m.attachmentString("vpc_id")
 }
@@ -173,7 +173,7 @@ type apiPublicIP struct {
 
 // apiPublicIPAttachment is the explicit statement of what holds the address.
 // It exists because `portId` alone cannot tell an unattached address from a
-// VPC's egress source address: an egress-attached public IP has no port, so a
+// VPC's outbound source address: an gateway-attached public IP has no port, so a
 // client inferring "available" from an empty portId offers to release an
 // address a whole VPC is egressing from.
 type apiPublicIPAttachment struct {
@@ -262,9 +262,9 @@ func (m *PublicIPModel) fromAPI(ctx context.Context, fip *apiPublicIP, diags *di
 // attachments. Only ONE inference is drawn from that: a non-empty `portId` is
 // positive evidence the address is attached to a port, which is what `portId`
 // meant before the object existed. The absence of a port is NOT evidence of the
-// absence of an attachment — an egress source address has never had one — so
+// absence of an attachment — an outbound source address has never had one — so
 // that case becomes "unknown", not "none". Getting this backwards is how a
-// practitioner is reassured that a VPC's egress address is idle.
+// practitioner is reassured that a VPC's outbound source address is idle.
 //
 // A present object whose `kind` is empty is likewise not a claim that the
 // address is free; it is an answer that said nothing.
