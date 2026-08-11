@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.26.0] - 2026-08-11
+
+### 🚀 Features
+
+- *(kubernetes_cluster)* [**breaking**] Ingress_scheme / ingress_public_ip_id; remove scheme (#296)
+
+### 📚 Documentation
+
+- *(image)* Correct the 403 caveat and document the destroy 409 (#295)
+
 ## [0.25.0] - 2026-08-11
 
 ### 🚀 Features
