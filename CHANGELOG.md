@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.0] - 2026-08-11
+
+### 🚀 Features
+
+- *(workload-identity-binding)* Make scopes optional for policy-granted bindings (#293)
+
 ## [0.24.0] - 2026-08-09
 
 ### 🚀 Features
