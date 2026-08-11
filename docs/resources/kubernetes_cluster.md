@@ -26,8 +26,14 @@ resource "frostmoln_kubernetes_cluster" "main" {
   # Endpoint exposure. Omit for the default "public" (LB VIP reachable via a
   # public IP). Set "internal" for a private VIP-only endpoint reachable only
   # from inside the VPC, with no public IP allocated. Create-only: changing it
-  # replaces the cluster. scheme = "internal" conflicts with public_ip_id.
-  # scheme = "internal"
+  # replaces the cluster. A bring-your-own address needs ingress_scheme = "public",
+  # and must differ from public_ip_id (the two load balancers never share one).
+  #
+  # Your ingress controller Service must publish node ports 30080 (HTTP) and
+  # 30443 (HTTPS); the load balancer forwards TCP 80 and 443 to them across every
+  # worker node. Point DNS at ingress_endpoint, not at endpoint (that is kubectl's).
+  # ingress_scheme       = "public"
+  # ingress_public_ip_id = frostmoln_public_ip.ingress.id
 
   # Cluster addons are installed once, at creation, and cannot be changed on an
   # existing cluster (changing this set replaces the cluster). Omit the attribute
@@ -65,9 +71,10 @@ output "kubeconfig" {
 
 - `addons` (Set of String) The set of cluster-addon catalog keys to install at cluster creation (see the frostmoln_kubernetes_addons data source for available keys). Addons are applied ONCE, at cluster creation, from first-boot manifests — they cannot be changed on an existing cluster, so changing this set REPLACES the cluster. Leave it unset to apply the platform default addons (currently external-secrets); set it to an explicit empty set ([]) to install no addons.
 - `control_plane_tier` (String) The control-plane tier key (see the frostmoln_kubernetes_tiers data source for canonical keys). Defaults to the platform default tier.
-- `public_ip_id` (String) The ID of an existing public IP to use for the cluster API endpoint (bring-your-own public IP). Write-only on the API: reads expose only the resolved address (public_ip), so imports cannot recover this value — after importing a cluster created with a BYO public IP, omit this attribute or add `lifecycle { ignore_changes = [public_ip_id] }`, otherwise the next plan will want to replace the cluster. A BYO public IP survives cluster deletion. Must not be combined with scheme = "internal" (an internal cluster has no public IP) — that combination is rejected at plan/apply time.
+- `ingress_public_ip_id` (String) The ID of an existing public IP to use for the WORKER ingress load balancer (bring-your-own public IP). Valid only with ingress_scheme = "public" — that combination is checked at plan time. A different address from public_ip_id, which serves the API endpoint: the two load balancers never share one, and the same id in both is rejected. A bring-your-own public IP survives cluster deletion. Create-only: changing it REPLACES the cluster.
+- `ingress_scheme` (String) Where the cluster's WORKER ingress load balancer is reachable from: "internal" (the default) gives it a VIP from the cluster's own subnet, reachable inside the VPC and costing no public IPv4; "public" additionally attaches a public IP. The load balancer is always created and forwards TCP 80 and 443 to node ports 30080 and 30443 across every worker node — publish those node ports from your own ingress-controller Service. This is a DIFFERENT load balancer from the Kubernetes API endpoint, whose exposure is not configurable. Defaults server-side to internal. Create-only: changing it REPLACES the cluster. Clusters created before this feature existed report no value at all.
+- `public_ip_id` (String) The ID of an existing public IP to use for the cluster API endpoint (bring-your-own public IP). Write-only on the API: reads expose only the resolved address (public_ip), so imports cannot recover this value — after importing a cluster created with a BYO public IP, omit this attribute or add `lifecycle { ignore_changes = [public_ip_id] }`, otherwise the next plan will want to replace the cluster. A BYO public IP survives cluster deletion. This is the API endpoint's address — for the worker ingress load balancer's, use ingress_public_ip_id; the same id in both is rejected.
 - `region` (String) The region to create the cluster in. Defaults server-side.
-- `scheme` (String) The endpoint exposure scheme: "public" (the default) fronts the Kubernetes API with a load-balancer VIP reachable via a public IP; "internal" makes the endpoint the private LB VIP only — reachable exclusively from inside the VPC, with NO public IP allocated. Defaults server-side to public. Create-only: changing it REPLACES the cluster. scheme = "internal" conflicts with public_ip_id (an internal cluster has no public IP).
 - `version` (String) The Kubernetes version (e.g. "1.35"). Defaults to the platform default version. Changing it currently REPLACES the cluster — in-place upgrade is not available yet.
 
 ### Read-Only
@@ -77,6 +84,8 @@ output "kubeconfig" {
 - `endpoint` (String) The Kubernetes API endpoint URL.
 - `ha_enabled` (Boolean) Whether the control plane is highly available (derived from the control-plane tier).
 - `id` (String) The unique identifier of the cluster.
+- `ingress_endpoint` (String) The address customer traffic reaches the cluster's workloads on: the ingress load balancer's VIP when ingress_scheme is "internal", its public IP when "public". Point your DNS here — `endpoint` is for kubectl, not for traffic. Null on a cluster with no ingress load balancer.
+- `ingress_load_balancer_id` (String) The ID of the cluster's worker ingress load balancer. It appears in your load-balancer list and is billed as one, but it is managed by the cluster: changing or deleting it through the load-balancer API is refused. Null on a cluster with no ingress load balancer.
 - `kubeconfig` (String, Sensitive) A kubeconfig for the cluster. Stored in the Terraform state in plaintext — protect the state file accordingly.
 - `load_balancer_id` (String) The ID of the load balancer fronting the Kubernetes API.
 - `pod_cidr` (String) The server-allocated pod network CIDR.

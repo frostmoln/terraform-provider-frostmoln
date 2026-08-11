@@ -8,29 +8,34 @@ import (
 
 // KubernetesClusterModel is the Terraform state model for a managed Kubernetes cluster.
 type KubernetesClusterModel struct {
-	ID               types.String          `tfsdk:"id"`
-	Name             types.String          `tfsdk:"name"`
-	Version          types.String          `tfsdk:"version"`
-	ControlPlaneTier types.String          `tfsdk:"control_plane_tier"`
-	Region           types.String          `tfsdk:"region"`
-	VPCID            types.String          `tfsdk:"vpc_id"`
-	SubnetID         types.String          `tfsdk:"subnet_id"`
-	Scheme           types.String          `tfsdk:"scheme"`
-	PublicIPID       types.String          `tfsdk:"public_ip_id"`
-	Addons           types.Set             `tfsdk:"addons"`
-	InitialNodePool  *InitialNodePoolModel `tfsdk:"initial_node_pool"`
-	Status           types.String          `tfsdk:"status"`
-	HAEnabled        types.Bool            `tfsdk:"ha_enabled"`
-	PodCIDR          types.String          `tfsdk:"pod_cidr"`
-	ServiceCIDR      types.String          `tfsdk:"service_cidr"`
-	Endpoint         types.String          `tfsdk:"endpoint"`
-	LoadBalancerID   types.String          `tfsdk:"load_balancer_id"`
-	PublicIP         types.String          `tfsdk:"public_ip"`
-	CACertHash       types.String          `tfsdk:"ca_cert_hash"`
-	Kubeconfig       types.String          `tfsdk:"kubeconfig"`
-	CreatedAt        types.String          `tfsdk:"created_at"`
-	UpdatedAt        types.String          `tfsdk:"updated_at"`
-	TenantID         types.String          `tfsdk:"tenant_id"`
+	ID               types.String `tfsdk:"id"`
+	Name             types.String `tfsdk:"name"`
+	Version          types.String `tfsdk:"version"`
+	ControlPlaneTier types.String `tfsdk:"control_plane_tier"`
+	Region           types.String `tfsdk:"region"`
+	VPCID            types.String `tfsdk:"vpc_id"`
+	SubnetID         types.String `tfsdk:"subnet_id"`
+	PublicIPID       types.String `tfsdk:"public_ip_id"`
+	// ADR-0115 worker ingress LB. `scheme` is GONE from this model: the Kubernetes
+	// API endpoint's exposure is not configurable, and the backend rejects the field.
+	IngressScheme         types.String          `tfsdk:"ingress_scheme"`
+	IngressPublicIPID     types.String          `tfsdk:"ingress_public_ip_id"`
+	IngressEndpoint       types.String          `tfsdk:"ingress_endpoint"`
+	IngressLoadBalancerID types.String          `tfsdk:"ingress_load_balancer_id"`
+	Addons                types.Set             `tfsdk:"addons"`
+	InitialNodePool       *InitialNodePoolModel `tfsdk:"initial_node_pool"`
+	Status                types.String          `tfsdk:"status"`
+	HAEnabled             types.Bool            `tfsdk:"ha_enabled"`
+	PodCIDR               types.String          `tfsdk:"pod_cidr"`
+	ServiceCIDR           types.String          `tfsdk:"service_cidr"`
+	Endpoint              types.String          `tfsdk:"endpoint"`
+	LoadBalancerID        types.String          `tfsdk:"load_balancer_id"`
+	PublicIP              types.String          `tfsdk:"public_ip"`
+	CACertHash            types.String          `tfsdk:"ca_cert_hash"`
+	Kubeconfig            types.String          `tfsdk:"kubeconfig"`
+	CreatedAt             types.String          `tfsdk:"created_at"`
+	UpdatedAt             types.String          `tfsdk:"updated_at"`
+	TenantID              types.String          `tfsdk:"tenant_id"`
 }
 
 // InitialNodePoolModel is the Terraform state model for the cluster's initial
@@ -58,17 +63,21 @@ type apiKubernetesCluster struct {
 	Region            string `json:"region"`
 	VPCID             string `json:"vpcId"`
 	SubnetID          string `json:"subnetId"`
-	// Scheme is the endpoint exposure mode: "public" (LB VIP + public IP) or
-	// "internal" (private VIP-only, VPC-reachable, no public IP). The backend
-	// always echoes it on reads; an empty value from an older service is mapped
-	// to "public" in fromAPI so state never holds an unknown scheme.
-	Scheme         string `json:"scheme"`
-	PodCIDR        string `json:"podCidr,omitempty"`
-	ServiceCIDR    string `json:"serviceCidr,omitempty"`
-	Endpoint       string `json:"endpoint,omitempty"`
-	LoadBalancerID string `json:"loadBalancerId,omitempty"`
-	PublicIP       string `json:"publicIp,omitempty"`
-	CACertHash     string `json:"caCertHash,omitempty"`
+	// The ADR-0115 worker ingress LB — a DIFFERENT load balancer from the API
+	// endpoint below. IngressScheme is "internal" or "public"; EMPTY means the
+	// cluster has no ingress LB (it predates the feature), which is why it maps to a
+	// NULL attribute rather than a default in fromAPI. `scheme` is gone: the backend
+	// no longer returns it.
+	IngressScheme         string `json:"ingressScheme,omitempty"`
+	IngressEndpoint       string `json:"ingressEndpoint,omitempty"`
+	IngressLoadBalancerID string `json:"ingressLoadBalancerId,omitempty"`
+	IngressPublicIPID     string `json:"ingressPublicIpId,omitempty"`
+	PodCIDR               string `json:"podCidr,omitempty"`
+	ServiceCIDR           string `json:"serviceCidr,omitempty"`
+	Endpoint              string `json:"endpoint,omitempty"`
+	LoadBalancerID        string `json:"loadBalancerId,omitempty"`
+	PublicIP              string `json:"publicIp,omitempty"`
+	CACertHash            string `json:"caCertHash,omitempty"`
 	// Addons is the set of cluster-addon catalog keys applied at creation. The
 	// backend always includes it (may be empty) — it echoes exactly what was
 	// applied. Addons are create-time only; they cannot change on an existing
@@ -118,8 +127,9 @@ type apiCreateClusterRequest struct {
 	Region            string                   `json:"region,omitempty"`
 	VPCID             string                   `json:"vpcId"`
 	SubnetID          string                   `json:"subnetId"`
-	Scheme            string                   `json:"scheme,omitempty"`
 	PublicIPID        string                   `json:"publicIpId,omitempty"`
+	IngressScheme     string                   `json:"ingressScheme,omitempty"`
+	IngressPublicIPID string                   `json:"ingressPublicIpId,omitempty"`
 	Addons            *[]string                `json:"addons,omitempty"`
 	InitialNodePool   apiCreateNodePoolRequest `json:"initialNodePool"`
 }
@@ -156,14 +166,18 @@ func (m *KubernetesClusterModel) toCreateRequest() apiCreateClusterRequest {
 	if !m.Region.IsNull() && !m.Region.IsUnknown() {
 		req.Region = m.Region.ValueString()
 	}
-	// Scheme: send only when the practitioner set it (known value); when unset
-	// (null/unknown, Computed-not-yet-resolved) leave it empty so omitempty
-	// OMITS it and the server applies the default (public).
-	if !m.Scheme.IsNull() && !m.Scheme.IsUnknown() {
-		req.Scheme = m.Scheme.ValueString()
-	}
 	if !m.PublicIPID.IsNull() && !m.PublicIPID.IsUnknown() {
 		req.PublicIPID = m.PublicIPID.ValueString()
+	}
+	// IngressScheme / IngressPublicIPID: send only when the practitioner set them
+	// (known value); when unset leave them empty so omitempty OMITS them and the
+	// server applies its own default (internal). Never send `scheme` — the backend
+	// rejects any value with a 400.
+	if !m.IngressScheme.IsNull() && !m.IngressScheme.IsUnknown() {
+		req.IngressScheme = m.IngressScheme.ValueString()
+	}
+	if !m.IngressPublicIPID.IsNull() && !m.IngressPublicIPID.IsUnknown() {
+		req.IngressPublicIPID = m.IngressPublicIPID.ValueString()
 	}
 
 	// Addons: only send the field when the practitioner set it (known value).
@@ -210,14 +224,17 @@ func (m *KubernetesClusterModel) fromAPI(c *apiKubernetesCluster) {
 	m.Region = stringOrNull(c.Region)
 	m.VPCID = types.StringValue(c.VPCID)
 	m.SubnetID = types.StringValue(c.SubnetID)
-	// Scheme IS readable (unlike public_ip_id): the backend always echoes it.
-	// Guard against an older service that omits it — an empty value falls back
-	// to "public" (the server default) so state never holds an unknown scheme.
-	if c.Scheme == "" {
-		m.Scheme = types.StringValue("public")
-	} else {
-		m.Scheme = types.StringValue(c.Scheme)
-	}
+	// The ingress LB is readable. EMPTY maps to NULL, never to a default: an empty
+	// ingressScheme means the cluster has no ingress LB at all (created before
+	// ADR-0115), and defaulting it to "internal" would show a load balancer that does
+	// not exist — and, because the attribute is Optional+Computed, would produce a
+	// plan diff against a config that correctly says nothing.
+	m.IngressScheme = stringOrNull(c.IngressScheme)
+	m.IngressEndpoint = stringOrNull(c.IngressEndpoint)
+	m.IngressLoadBalancerID = stringOrNull(c.IngressLoadBalancerID)
+	// Unlike public_ip_id, the ingress BYO id IS echoed by the backend, so it round-
+	// trips through state and an import recovers it.
+	m.IngressPublicIPID = stringOrNull(c.IngressPublicIPID)
 	m.Status = types.StringValue(c.Status)
 	m.HAEnabled = types.BoolValue(c.HAEnabled)
 	m.PodCIDR = stringOrNull(c.PodCIDR)

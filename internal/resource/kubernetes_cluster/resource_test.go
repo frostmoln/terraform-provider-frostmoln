@@ -139,20 +139,22 @@ func TestFromAPINulls(t *testing.T) {
 	}
 }
 
-func TestToCreateRequestSchemeUnsetOmitted(t *testing.T) {
-	// Both null and unknown mean "practitioner left scheme unset": the field
-	// must be OMITTED (empty string + json omitempty) so the server defaults it
-	// to public.
-	for name, scheme := range map[string]types.String{
+func TestToCreateRequestIngressUnsetOmitted(t *testing.T) {
+	// Both null and unknown mean "practitioner left it unset": the fields must be
+	// OMITTED (empty string + json omitempty) so the server applies its own default
+	// (internal). And `scheme` must NEVER appear on the wire — the backend rejects any
+	// value with a 400, so sending one could only turn a valid config into a failure.
+	for name, v := range map[string]types.String{
 		"null":    types.StringNull(),
 		"unknown": types.StringUnknown(),
 	} {
 		t.Run(name, func(t *testing.T) {
 			m := KubernetesClusterModel{
-				Name:     types.StringValue("my-cluster"),
-				VPCID:    types.StringValue("vpc-1"),
-				SubnetID: types.StringValue("sn-1"),
-				Scheme:   scheme,
+				Name:              types.StringValue("my-cluster"),
+				VPCID:             types.StringValue("vpc-1"),
+				SubnetID:          types.StringValue("sn-1"),
+				IngressScheme:     v,
+				IngressPublicIPID: v,
 				InitialNodePool: &InitialNodePoolModel{
 					FlavorID:  types.StringValue("k8s.gp1.small"),
 					NodeCount: types.Int64Value(1),
@@ -160,29 +162,31 @@ func TestToCreateRequestSchemeUnsetOmitted(t *testing.T) {
 				},
 			}
 			req := m.toCreateRequest()
-			if req.Scheme != "" {
-				t.Errorf("expected empty scheme (omitted) for %s value, got %q", name, req.Scheme)
+			if req.IngressScheme != "" || req.IngressPublicIPID != "" {
+				t.Errorf("expected empty ingress fields (omitted) for %s value, got %q / %q",
+					name, req.IngressScheme, req.IngressPublicIPID)
 			}
-			// omitempty must drop the key entirely from the wire payload.
 			b, err := json.Marshal(req)
 			if err != nil {
 				t.Fatalf("marshal failed: %v", err)
 			}
-			if bytes.Contains(b, []byte(`"scheme"`)) {
-				t.Errorf("expected no scheme key in payload, got %s", b)
+			for _, key := range []string{`"ingressScheme"`, `"ingressPublicIpId"`, `"scheme"`} {
+				if bytes.Contains(b, []byte(key)) {
+					t.Errorf("expected no %s key in payload, got %s", key, b)
+				}
 			}
 		})
 	}
 }
 
-func TestToCreateRequestSchemeSet(t *testing.T) {
-	for _, scheme := range []string{"public", "internal"} {
+func TestToCreateRequestIngressSet(t *testing.T) {
+	for _, scheme := range []string{"internal", "public"} {
 		t.Run(scheme, func(t *testing.T) {
 			m := KubernetesClusterModel{
-				Name:     types.StringValue("my-cluster"),
-				VPCID:    types.StringValue("vpc-1"),
-				SubnetID: types.StringValue("sn-1"),
-				Scheme:   types.StringValue(scheme),
+				Name:          types.StringValue("my-cluster"),
+				VPCID:         types.StringValue("vpc-1"),
+				SubnetID:      types.StringValue("sn-1"),
+				IngressScheme: types.StringValue(scheme),
 				InitialNodePool: &InitialNodePoolModel{
 					FlavorID:  types.StringValue("k8s.gp1.small"),
 					NodeCount: types.Int64Value(1),
@@ -190,53 +194,69 @@ func TestToCreateRequestSchemeSet(t *testing.T) {
 				},
 			}
 			req := m.toCreateRequest()
-			if req.Scheme != scheme {
-				t.Errorf("expected scheme %q on the create request, got %q", scheme, req.Scheme)
+			if req.IngressScheme != scheme {
+				t.Errorf("expected ingressScheme %q on the create request, got %q", scheme, req.IngressScheme)
 			}
 			b, err := json.Marshal(req)
 			if err != nil {
 				t.Fatalf("marshal failed: %v", err)
 			}
-			if !bytes.Contains(b, []byte(`"scheme":"`+scheme+`"`)) {
-				t.Errorf("expected scheme %q in payload, got %s", scheme, b)
+			if !bytes.Contains(b, []byte(`"ingressScheme":"`+scheme+`"`)) {
+				t.Errorf("expected ingressScheme %q in payload, got %s", scheme, b)
+			}
+			if bytes.Contains(b, []byte(`"scheme"`)) {
+				t.Errorf("the retired scheme key must never be sent, got %s", b)
 			}
 		})
 	}
 }
 
-func TestFromAPIScheme(t *testing.T) {
-	// The backend always echoes scheme; an empty value (older service) falls
-	// back to "public" so state never holds an unknown/empty scheme.
-	for name, tc := range map[string]struct {
-		apiScheme string
-		want      string
-	}{
-		"public":        {"public", "public"},
-		"internal":      {"internal", "internal"},
-		"empty->public": {"", "public"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			var m KubernetesClusterModel
-			m.fromAPI(&apiKubernetesCluster{
-				ID:                "c-1",
-				Name:              "my-cluster",
-				Status:            "running",
-				KubernetesVersion: "1.35",
-				ControlPlaneTier:  "development",
-				Region:            "falkenberg",
-				VPCID:             "vpc-1",
-				SubnetID:          "sn-1",
-				Scheme:            tc.apiScheme,
-				CreatedAt:         "2026-07-01T00:00:00Z",
-			})
-			if m.Scheme.ValueString() != tc.want {
-				t.Errorf("expected scheme %q, got %q", tc.want, m.Scheme.ValueString())
-			}
-			if m.Scheme.IsNull() {
-				t.Error("scheme must never be null in state (it is readable and defaulted)")
-			}
+func TestFromAPIIngress(t *testing.T) {
+	// EMPTY maps to NULL, never to a default. An empty ingressScheme means the
+	// cluster has NO ingress load balancer (it predates the feature) — defaulting it
+	// to "internal" would report a load balancer that does not exist and, because the
+	// attribute is Optional+Computed, would produce a perpetual plan diff against a
+	// config that correctly says nothing.
+	t.Run("absent stays null", func(t *testing.T) {
+		var m KubernetesClusterModel
+		m.fromAPI(&apiKubernetesCluster{
+			ID: "c-1", Name: "my-cluster", Status: "running", VPCID: "vpc-1", SubnetID: "sn-1",
+			CreatedAt: "2026-07-01T00:00:00Z",
 		})
-	}
+		for name, v := range map[string]types.String{
+			"ingress_scheme":           m.IngressScheme,
+			"ingress_endpoint":         m.IngressEndpoint,
+			"ingress_load_balancer_id": m.IngressLoadBalancerID,
+			"ingress_public_ip_id":     m.IngressPublicIPID,
+		} {
+			if !v.IsNull() {
+				t.Errorf("%s must be null for a cluster with no ingress LB, got %q", name, v.ValueString())
+			}
+		}
+	})
+
+	t.Run("populated round-trips", func(t *testing.T) {
+		var m KubernetesClusterModel
+		m.fromAPI(&apiKubernetesCluster{
+			ID: "c-1", Name: "my-cluster", Status: "running", VPCID: "vpc-1", SubnetID: "sn-1",
+			IngressScheme: "public", IngressEndpoint: "46.246.117.9",
+			IngressLoadBalancerID: "ing-lb-1", IngressPublicIPID: "byo-ip-1",
+			CreatedAt: "2026-07-01T00:00:00Z",
+		})
+		if m.IngressScheme.ValueString() != "public" {
+			t.Errorf("ingress_scheme = %q, want public", m.IngressScheme.ValueString())
+		}
+		if m.IngressEndpoint.ValueString() != "46.246.117.9" {
+			t.Errorf("ingress_endpoint = %q", m.IngressEndpoint.ValueString())
+		}
+		if m.IngressLoadBalancerID.ValueString() != "ing-lb-1" {
+			t.Errorf("ingress_load_balancer_id = %q", m.IngressLoadBalancerID.ValueString())
+		}
+		// Unlike public_ip_id, the ingress BYO id IS echoed, so an import recovers it.
+		if m.IngressPublicIPID.ValueString() != "byo-ip-1" {
+			t.Errorf("ingress_public_ip_id = %q", m.IngressPublicIPID.ValueString())
+		}
+	})
 }
 
 // setToStrings extracts a set of strings into a sorted []string for stable
@@ -414,7 +434,10 @@ func TestSchema(t *testing.T) {
 
 	for _, attr := range []string{
 		"id", "name", "version", "control_plane_tier", "region", "vpc_id", "subnet_id",
-		"scheme", "public_ip_id", "addons", "initial_node_pool", "status", "ha_enabled", "pod_cidr",
+		"ingress_scheme",
+		"ingress_public_ip_id",
+		"ingress_endpoint",
+		"ingress_load_balancer_id", "public_ip_id", "addons", "initial_node_pool", "status", "ha_enabled", "pod_cidr",
 		"service_cidr", "endpoint", "load_balancer_id", "public_ip", "ca_cert_hash",
 		"kubeconfig", "created_at", "updated_at", "tenant_id",
 	} {
@@ -427,34 +450,41 @@ func TestSchema(t *testing.T) {
 	}
 }
 
-func TestValidateConfigScheme(t *testing.T) {
+func TestValidateConfigIngress(t *testing.T) {
 	ctx := context.Background()
 	r := NewResource().(*kubernetesClusterResource)
 
 	tests := []struct {
-		name       string
-		scheme     types.String
-		fip        types.String
-		wantErrors bool
+		name          string
+		ingressScheme types.String
+		ingressFIP    types.String
+		apiFIP        types.String
+		wantErrors    bool
 	}{
-		{"internal with fip errors", types.StringValue("internal"), types.StringValue("fip-1"), true},
-		{"internal without fip ok", types.StringValue("internal"), types.StringNull(), false},
-		{"public with fip ok (BYO FIP)", types.StringValue("public"), types.StringValue("fip-1"), false},
-		{"public without fip ok", types.StringValue("public"), types.StringNull(), false},
-		{"null scheme with fip ok (defaults public)", types.StringNull(), types.StringValue("fip-1"), false},
-		{"null scheme without fip ok", types.StringNull(), types.StringNull(), false},
-		{"unknown scheme with fip skipped", types.StringUnknown(), types.StringValue("fip-1"), false},
-		{"internal with unknown fip skipped", types.StringValue("internal"), types.StringUnknown(), false},
+		{"public with byo ingress ip ok", types.StringValue("public"), types.StringValue("fip-ing"), types.StringNull(), false},
+		{"internal with byo ingress ip errors", types.StringValue("internal"), types.StringValue("fip-ing"), types.StringNull(), true},
+		// The dangerous one: unset defaults to internal server-side, so a bare
+		// ingress_public_ip_id would silently leave the address unused.
+		{"unset scheme with byo ingress ip errors", types.StringNull(), types.StringValue("fip-ing"), types.StringNull(), true},
+		{"internal without byo ok", types.StringValue("internal"), types.StringNull(), types.StringNull(), false},
+		{"unset without byo ok", types.StringNull(), types.StringNull(), types.StringNull(), false},
+		{"unknown scheme skipped", types.StringUnknown(), types.StringValue("fip-ing"), types.StringNull(), false},
+		{"unknown byo skipped", types.StringValue("internal"), types.StringUnknown(), types.StringNull(), false},
+		// Two DIFFERENT addresses, one per load balancer, is the legitimate case.
+		{"different addresses for api and ingress ok", types.StringValue("public"), types.StringValue("fip-ing"), types.StringValue("fip-api"), false},
+		// The SAME address in both cannot work: one public IP binds to one VIP port.
+		{"same address for api and ingress errors", types.StringValue("public"), types.StringValue("fip-same"), types.StringValue("fip-same"), true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			model := KubernetesClusterModel{
-				Name:       types.StringValue("my-cluster"),
-				VPCID:      types.StringValue("vpc-1"),
-				SubnetID:   types.StringValue("sn-1"),
-				Scheme:     tt.scheme,
-				PublicIPID: tt.fip,
-				Addons:     types.SetNull(types.StringType),
+				Name:              types.StringValue("my-cluster"),
+				VPCID:             types.StringValue("vpc-1"),
+				SubnetID:          types.StringValue("sn-1"),
+				IngressScheme:     tt.ingressScheme,
+				IngressPublicIPID: tt.ingressFIP,
+				PublicIPID:        tt.apiFIP,
+				Addons:            types.SetNull(types.StringType),
 				InitialNodePool: &InitialNodePoolModel{
 					FlavorID:  types.StringValue("k8s.gp1.small"),
 					NodeCount: types.Int64Value(1),
@@ -476,7 +506,7 @@ func TestValidateConfigScheme(t *testing.T) {
 // Regression (expert-review Medium): a wholly-unknown initial_node_pool — the
 // `initial_node_pool = var.pool` module pattern, unknown during
 // `terraform validate` — must not break ValidateConfig. The validator reads only
-// scheme + public_ip_id via GetAttribute, so the unknown pool is never decoded
+// the ingress attributes + public_ip_id via GetAttribute, so the unknown pool is never decoded
 // into the *struct model (which cannot carry unknown and would hard-error).
 func TestValidateConfigUnknownInitialNodePool(t *testing.T) {
 	ctx := context.Background()
@@ -597,7 +627,8 @@ func runningCluster() apiKubernetesCluster {
 		Region:            "falkenberg",
 		VPCID:             "vpc-1",
 		SubnetID:          "sn-1",
-		Scheme:            "public",
+		IngressScheme:     "internal",
+		IngressEndpoint:   "10.180.0.20",
 		PodCIDR:           "10.180.0.0/18",
 		ServiceCIDR:       "10.180.64.0/18",
 		Endpoint:          "https://203.0.113.10:6443",

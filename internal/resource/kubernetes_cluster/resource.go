@@ -132,12 +132,15 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"scheme": schema.StringAttribute{
-				Description: "The endpoint exposure scheme: \"public\" (the default) fronts the Kubernetes API with " +
-					"a load-balancer VIP reachable via a public IP; \"internal\" makes the endpoint the private " +
-					"LB VIP only — reachable exclusively from inside the VPC, with NO public IP allocated. " +
-					"Defaults server-side to public. Create-only: changing it REPLACES the cluster. " +
-					"scheme = \"internal\" conflicts with public_ip_id (an internal cluster has no public IP).",
+			"ingress_scheme": schema.StringAttribute{
+				Description: "Where the cluster's WORKER ingress load balancer is reachable from: " +
+					"\"internal\" (the default) gives it a VIP from the cluster's own subnet, reachable inside " +
+					"the VPC and costing no public IPv4; \"public\" additionally attaches a public IP. The load " +
+					"balancer is always created and forwards TCP 80 and 443 to node ports 30080 and 30443 across " +
+					"every worker node — publish those node ports from your own ingress-controller Service. " +
+					"This is a DIFFERENT load balancer from the Kubernetes API endpoint, whose exposure is not " +
+					"configurable. Defaults server-side to internal. Create-only: changing it REPLACES the " +
+					"cluster. Clusters created before this feature existed report no value at all.",
 				Optional: true,
 				Computed: true,
 				PlanModifiers: []planmodifier.String{
@@ -145,17 +148,42 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 					stringplanmodifier.RequiresReplace(),
 				},
 				Validators: []validator.String{
-					stringvalidator.OneOf("public", "internal"),
+					stringvalidator.OneOf("internal", "public"),
 				},
+			},
+			"ingress_public_ip_id": schema.StringAttribute{
+				Description: "The ID of an existing public IP to use for the WORKER ingress load balancer " +
+					"(bring-your-own public IP). Valid only with ingress_scheme = \"public\" — that combination " +
+					"is checked at plan time. A different address from public_ip_id, which serves the API " +
+					"endpoint: the two load balancers never share one, and the same id in both is rejected. " +
+					"A bring-your-own public IP survives cluster deletion. Create-only: changing it REPLACES " +
+					"the cluster.",
+				Optional: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"ingress_endpoint": schema.StringAttribute{
+				Description: "The address customer traffic reaches the cluster's workloads on: the ingress " +
+					"load balancer's VIP when ingress_scheme is \"internal\", its public IP when \"public\". " +
+					"Point your DNS here — `endpoint` is for kubectl, not for traffic. Null on a cluster with " +
+					"no ingress load balancer.",
+				Computed: true,
+			},
+			"ingress_load_balancer_id": schema.StringAttribute{
+				Description: "The ID of the cluster's worker ingress load balancer. It appears in your " +
+					"load-balancer list and is billed as one, but it is managed by the cluster: changing or " +
+					"deleting it through the load-balancer API is refused. Null on a cluster with no ingress " +
+					"load balancer.",
+				Computed: true,
 			},
 			"public_ip_id": schema.StringAttribute{
 				Description: "The ID of an existing public IP to use for the cluster API endpoint (bring-your-own public IP). " +
 					"Write-only on the API: reads expose only the resolved address (public_ip), so imports cannot recover " +
 					"this value — after importing a cluster created with a BYO public IP, omit this attribute or add " +
 					"`lifecycle { ignore_changes = [public_ip_id] }`, otherwise the next plan will want to replace the " +
-					"cluster. A BYO public IP survives cluster deletion. Must not be combined with " +
-					"scheme = \"internal\" (an internal cluster has no public IP) — that combination is rejected " +
-					"at plan/apply time.",
+					"cluster. A BYO public IP survives cluster deletion. This is the API endpoint's address — for " +
+					"the worker ingress load balancer's, use ingress_public_ip_id; the same id in both is rejected.",
 				Optional: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -302,38 +330,52 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 	}
 }
 
-// ValidateConfig rejects the one invalid scheme/public_ip_id combination at
-// plan time: an "internal" cluster has a private VIP-only endpoint and no
-// public IP, so pairing scheme = "internal" with public_ip_id is a config
-// error the API would 400. A ConflictsWith validator is NOT usable here because
-// the valid case (scheme "public" WITH public_ip_id, i.e. bring-your-own FIP)
-// also sets both attributes. Unknown (interpolated) values are skipped — the
-// backend stays authoritative. A null scheme defaults to public server-side,
-// which never conflicts with a public IP.
+// ValidateConfig rejects, at PLAN time, the two ingress combinations the API would
+// 400 on — so a practitioner learns from `terraform plan` rather than from a failed
+// apply half-way through a cluster create.
+//
+// A ConflictsWith validator is NOT usable for either: the valid bring-your-own case
+// sets both attributes too, so the rule is about the VALUE, not about presence.
+// Unknown (interpolated) values are skipped — the backend stays authoritative.
 func (r *kubernetesClusterResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
-	// Read ONLY the two attributes involved — decoding the whole model here would
+	// Read ONLY the attributes involved — decoding the whole model here would
 	// hard-error on a wholly-unknown initial_node_pool (a *struct target cannot
 	// carry unknown), breaking `terraform validate` for the common
 	// `initial_node_pool = var.pool` module pattern (expert-review Medium).
-	var scheme, publicIPID types.String
-	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("scheme"), &scheme)...)
+	var ingressScheme, ingressPublicIPID, publicIPID types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("ingress_scheme"), &ingressScheme)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("ingress_public_ip_id"), &ingressPublicIPID)...)
 	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("public_ip_id"), &publicIPID)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if scheme.IsUnknown() || publicIPID.IsUnknown() {
-		return
+
+	// 1) A bring-your-own ingress address needs an explicitly PUBLIC ingress. An
+	// omitted ingress_scheme defaults to internal server-side, so a bare
+	// ingress_public_ip_id would leave the address unused — the practitioner would
+	// believe they had a public ingress on their own IP and get neither.
+	if !ingressPublicIPID.IsUnknown() && !ingressScheme.IsUnknown() &&
+		!ingressPublicIPID.IsNull() && ingressPublicIPID.ValueString() != "" &&
+		(ingressScheme.IsNull() || ingressScheme.ValueString() != "public") {
+		detail := `ingress_public_ip_id requires ingress_scheme = "public".`
+		if ingressScheme.IsNull() {
+			detail += ` ingress_scheme is unset, which defaults to "internal" — an internal ingress has no public IP to attach.`
+		}
+		resp.Diagnostics.AddAttributeError(path.Root("ingress_public_ip_id"), "Unexpected ingress_public_ip_id", detail)
 	}
-	if scheme.IsNull() || scheme.ValueString() != "internal" {
-		return
-	}
-	if !publicIPID.IsNull() && publicIPID.ValueString() != "" {
+
+	// 2) The API endpoint and the ingress are two different load balancers, and one
+	// public IP binds to exactly one Octavia VIP port. The same id in both fields
+	// cannot work, and left to the API it fails asynchronously — a cluster in `error`
+	// with no usable message.
+	if !publicIPID.IsUnknown() && !ingressPublicIPID.IsUnknown() &&
+		!publicIPID.IsNull() && !ingressPublicIPID.IsNull() &&
+		publicIPID.ValueString() != "" && publicIPID.ValueString() == ingressPublicIPID.ValueString() {
 		resp.Diagnostics.AddAttributeError(
-			path.Root("public_ip_id"),
-			"Unexpected public_ip_id",
-			`public_ip_id must not be set when scheme is "internal": an internal cluster exposes only its `+
-				`private load-balancer VIP inside the VPC and has no public IP. Use scheme = "public" (the `+
-				`default) to attach a bring-your-own public IP.`,
+			path.Root("ingress_public_ip_id"),
+			"Duplicate public IP",
+			`public_ip_id and ingress_public_ip_id must be different addresses: one public IP cannot serve `+
+				`both the Kubernetes API endpoint and the worker ingress load balancer.`,
 		)
 	}
 }

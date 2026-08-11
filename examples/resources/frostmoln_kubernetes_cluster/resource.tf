@@ -11,8 +11,14 @@ resource "frostmoln_kubernetes_cluster" "main" {
   # Endpoint exposure. Omit for the default "public" (LB VIP reachable via a
   # public IP). Set "internal" for a private VIP-only endpoint reachable only
   # from inside the VPC, with no public IP allocated. Create-only: changing it
-  # replaces the cluster. scheme = "internal" conflicts with public_ip_id.
-  # scheme = "internal"
+  # replaces the cluster. A bring-your-own address needs ingress_scheme = "public",
+  # and must differ from public_ip_id (the two load balancers never share one).
+  #
+  # Your ingress controller Service must publish node ports 30080 (HTTP) and
+  # 30443 (HTTPS); the load balancer forwards TCP 80 and 443 to them across every
+  # worker node. Point DNS at ingress_endpoint, not at endpoint (that is kubectl's).
+  # ingress_scheme       = "public"
+  # ingress_public_ip_id = frostmoln_public_ip.ingress.id
 
   # Cluster addons are installed once, at creation, and cannot be changed on an
   # existing cluster (changing this set replaces the cluster). Omit the attribute
