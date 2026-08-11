@@ -2,6 +2,7 @@ package iam_policy_attachment
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -217,6 +218,30 @@ func (r *iamPolicyAttachmentResource) Delete(ctx context.Context, req resource.D
 	_, err := r.client.DeleteWithQuery(ctx, attachmentsPath(state.PolicyID.ValueString()), q)
 	if err != nil {
 		if client.IsNotFound(err) {
+			return
+		}
+		// A workload-identity binding must never be left with zero grant sources
+		// (ADR-0102), so detaching its LAST policy is refused server-side. That
+		// lands here on a plain `terraform destroy` of a policy-granted binding:
+		// the attachment references the binding, so Terraform destroys the
+		// attachment FIRST and the whole run stops. The raw code says nothing
+		// about the way out, which is to destroy the binding itself — deleting a
+		// binding is deliberately not guarded and reaps its attachment rows.
+		var apiErr *client.APIError
+		if errors.As(err, &apiErr) && apiErr.Code == "BINDING_WOULD_HAVE_NO_GRANT" {
+			resp.Diagnostics.AddError(
+				"Cannot detach the workload identity binding's last grant",
+				fmt.Sprintf(
+					"%s\n\nThis attachment is the only thing granting workload identity %s, and a "+
+						"granted binding is never left with nothing (ADR-0102).\n\n"+
+						"To tear the pair down, destroy the BINDING first — that removes its "+
+						"attachments with it:\n"+
+						"  terraform destroy -target=frostmoln_workload_identity_binding.<name>\n\n"+
+						"To keep the binding, give it another grant (scopes, or a second policy "+
+						"attachment) before removing this one.",
+					err.Error(), state.AttacheeID.ValueString(),
+				),
+			)
 			return
 		}
 		resp.Diagnostics.AddError("Failed to detach IAM policy", err.Error())

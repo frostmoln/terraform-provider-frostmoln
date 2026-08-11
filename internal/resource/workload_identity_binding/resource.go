@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/url"
 
-	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -20,7 +19,36 @@ import (
 var (
 	_ resource.Resource                = &workloadIdentityBindingResource{}
 	_ resource.ResourceWithImportState = &workloadIdentityBindingResource{}
+	_ resource.ResourceWithModifyPlan  = &workloadIdentityBindingResource{}
+	_ validator.List                   = emptyListNotAllowed{}
 )
+
+// emptyListNotAllowed rejects `scopes = []`. listvalidator.SizeAtLeast(1) does
+// the same check, but its message ("list must contain at least 1 elements") reads
+// as if the attribute were mandatory — the exact wrong thing to tell someone
+// reaching for the policy-granted shape, and the intuitive spelling for it.
+type emptyListNotAllowed struct{}
+
+func (emptyListNotAllowed) Description(context.Context) string {
+	return "must not be an empty list; omit the attribute for no scopes"
+}
+
+func (v emptyListNotAllowed) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (emptyListNotAllowed) ValidateList(_ context.Context, req validator.ListRequest, resp *validator.ListResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() || len(req.ConfigValue.Elements()) > 0 {
+		return
+	}
+	resp.Diagnostics.AddAttributeError(
+		req.Path,
+		"Empty scopes list",
+		"An empty list is not a valid way to say \"no scopes\". Omit the attribute (or set it "+
+			"to null) to author a policy-granted binding, whose authority comes from an access "+
+			"policy attached with frostmoln_iam_policy_attachment.",
+	)
+}
 
 // basePath is NOT tenant-scoped: the binding endpoints resolve the tenant from
 // the API key, so we must not use client.TenantPath here (it would inject
@@ -49,9 +77,12 @@ func (r *workloadIdentityBindingResource) Metadata(_ context.Context, req resour
 func (r *workloadIdentityBindingResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Manages a Workload Identity Federation binding, mapping a managed " +
-			"Kubernetes (namespace, service account) to a set of least-privilege Frostmoln scopes. " +
+			"Kubernetes (namespace, service account) to a least-privilege Frostmoln grant. " +
 			"A pod running as that service account can exchange its projected token for a short-lived, " +
-			"scoped Frostmoln credential. The binding is owned by the tenant resolved from the " +
+			"scoped Frostmoln credential. The grant is either flat `scopes` or an access policy attached " +
+			"with `frostmoln_iam_policy_attachment` — a policy expresses far narrower least privilege " +
+			"(per-resource targets, constraints, explicit denies), so prefer it for new bindings. " +
+			"The binding is owned by the tenant resolved from the " +
 			"provider credential (API key or OIDC session), not by a provider `tenant_id` override.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -84,12 +115,34 @@ func (r *workloadIdentityBindingResource) Schema(_ context.Context, _ resource.S
 			},
 			"scopes": schema.ListAttribute{
 				Description: "The least-privilege scopes granted to the workload (e.g. `compute:read`). " +
-					"At least one is required; wildcards (`*` or `<resource>:*`) are rejected. Changing " +
-					"the scopes updates the binding in place.",
-				Required:    true,
+					"Wildcards (`*` or `<resource>:*`) are rejected. Changing the scopes updates the " +
+					"binding in place. Optional: omit it to author a **policy-granted** binding, whose " +
+					"authority comes entirely from an access policy attached with " +
+					"`frostmoln_iam_policy_attachment` (directly, or through a group). Write `null` or " +
+					"omit the attribute for no scopes; an empty list is not a valid spelling.\n\n" +
+					"Notes on the policy-granted path:\n" +
+					"- The policy-granted path needs the `iam-policies` entitlement. Without it the " +
+					"binding is still created, but `frostmoln_iam_policy` fails and the binding is left " +
+					"inert.\n" +
+					"- Until a policy is attached the binding is inert — the token exchange refuses it " +
+					"rather than minting a credential that grants nothing.\n" +
+					"- While a binding carries BOTH scopes and a policy, its scopes stay authoritative " +
+					"and the policy's *additional* authority does not take effect. It goes live only " +
+					"once `scopes` is dropped, so verify after the drop, not after the attach.\n" +
+					"- Dropping `scopes` NARROWS the workload to whatever the policy allows, and the " +
+					"API only checks that *some* grant survives — never that the policy covers what the " +
+					"scopes covered. Enumerate the binding's effective access before dropping them.\n" +
+					"- Removing the LAST grant is rejected outright. A binding whose only grant is an " +
+					"attached policy must therefore be destroyed BEFORE that attachment; a plain " +
+					"`terraform destroy` tries the attachment first and fails. Destroy the binding with " +
+					"`-target` first — that removes its attachments with it.",
+				Optional:    true,
 				ElementType: types.StringType,
 				Validators: []validator.List{
-					listvalidator.SizeAtLeast(1),
+					// Rejects `scopes = []`. Omitted/null is the ONE spelling for
+					// "no flat scopes", so state can be normalized to null in
+					// fromAPI without an unconvergeable [] vs null diff.
+					emptyListNotAllowed{},
 				},
 			},
 			"tenant_id": schema.StringAttribute{
@@ -129,6 +182,44 @@ func (r *workloadIdentityBindingResource) Configure(_ context.Context, req resou
 	r.client = c
 }
 
+// ModifyPlan warns before an apply that drops a live binding's scopes. Nothing
+// downstream can catch this for the practitioner: the API only refuses the
+// removal when NO grant would survive, so the far more common case — a policy
+// remains, but a narrower one — succeeds silently and the workload starts 403ing
+// at its next token mint. ADR-0102 requires that move to be measured per binding,
+// so the plan is the last place to say so before it happens.
+func (r *workloadIdentityBindingResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// Create (no prior state) and destroy (no plan) are not this transition.
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return
+	}
+
+	var state, plan WorkloadIdentityBindingModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if state.Scopes.IsNull() || !plan.Scopes.IsNull() {
+		return
+	}
+
+	resp.Diagnostics.AddAttributeWarning(
+		path.Root("scopes"),
+		"Dropping a workload identity binding's scopes narrows it",
+		"This binding currently grants its workload through flat scopes, and the plan removes "+
+			"them. Its access afterwards is exactly what its attached access policies allow — "+
+			"which is NOT checked against what the scopes granted. Anything the scopes covered "+
+			"and the policy does not will start failing with 403 at the workload's next token "+
+			"exchange.\n\n"+
+			"Enumerate the binding's effective access before applying (ADR-0102 requires this "+
+			"move to be measured per binding).\n\n"+
+			"If no grant at all would survive, the apply is REJECTED rather than leaving a "+
+			"deny-all binding. To remove a workload's authority entirely, destroy the binding — "+
+			"emptying its scopes cannot express that.",
+	)
+}
+
 func (r *workloadIdentityBindingResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan WorkloadIdentityBindingModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -153,10 +244,10 @@ func (r *workloadIdentityBindingResource) Create(ctx context.Context, req resour
 		return
 	}
 
-	// scopes is a Required (config-authoritative) attribute: keep the planned
-	// value so a hypothetical server-side reorder/dedup of the echoed scopes
-	// can't trip "provider produced inconsistent result after apply". Genuine
-	// server-side divergence surfaces as drift in Read, not here.
+	// scopes is config-authoritative: keep the planned value so a server-side
+	// reorder/dedup of the echoed scopes — or a `[]` echo where the plan said
+	// null — can't trip "provider produced inconsistent result after apply".
+	// Genuine server-side divergence surfaces as drift in Read, not here.
 	plannedScopes := plan.Scopes
 	plan.fromAPI(ctx, binding, &resp.Diagnostics)
 	plan.Scopes = plannedScopes
@@ -219,7 +310,7 @@ func (r *workloadIdentityBindingResource) Update(ctx context.Context, req resour
 	}
 
 	// Preserve the planned scopes across the echo (see Create) — scopes is the
-	// config-authoritative Required attribute the user just changed.
+	// config-authoritative attribute the user just changed.
 	plannedScopes := plan.Scopes
 	plan.fromAPI(ctx, binding, &resp.Diagnostics)
 	plan.Scopes = plannedScopes
