@@ -717,10 +717,21 @@ func checkFormNotExpired(upload *apiImageUpload) error {
 
 // imageErrorDetail renders an API error for a diagnostic, appending the one
 // thing the server's own message cannot say: which of the two quota_exceeded
-// refusals this is. They share a code and differ only by status, and the remedies
-// are opposites — so a diagnostic that flattens them tells half the customers to
-// wait when they must delete something, and the other half to delete when they
-// only had to wait.
+// refusals this is. They share a code and differ only by status, and they are
+// bounded by different things — one by uploads in flight, the other by images
+// owned — so a diagnostic that flattens them names the wrong thing to remove.
+//
+// NEITHER arm may promise that waiting clears it. The 403's first check counts
+// the tenant's `queued` images, and a FAILED Glance import leaves the image in
+// `queued`, so abandoned attempts hold their slot until they are deleted. An
+// earlier revision of this text said the 403 "clears as uploads finish or are
+// abandoned", which is exactly backwards for that arm and sent practitioners
+// into an apply loop that could never succeed.
+//
+// The 403's OTHER two arms (staged bytes, staged objects) genuinely do drain —
+// compute reclaims a staged object once its import reaches a terminal state —
+// which is why the copy says "does NOT necessarily" rather than "does NOT".
+// Nothing on the wire distinguishes the three, so the hedge is the honest form.
 func imageErrorDetail(err error) string {
 	var apiErr *client.APIError
 	if !errors.As(err, &apiErr) || apiErr.Code != errCodeQuotaExceeded {
@@ -728,11 +739,15 @@ func imageErrorDetail(err error) string {
 	}
 	switch apiErr.StatusCode {
 	case http.StatusForbidden:
-		return err.Error() + "\n\nThis is the transient staging limit on uploads in flight, not this tenant's " +
-			"image allowance. It clears as uploads finish or are abandoned — apply again in a few minutes."
+		return err.Error() + "\n\nThis is the staging limit on uploads in flight, not this tenant's image " +
+			"allowance. It does NOT necessarily clear on its own: a failed import leaves the image queued and " +
+			"still holding a slot, so finish or delete the images in progress before applying again."
 	case http.StatusConflict:
 		return err.Error() + "\n\nThis is this tenant's custom-image allowance, and it is full. It does NOT " +
-			"clear on its own: delete an existing custom image (or ask for a higher limit) before applying again."
+			"clear on its own: delete an existing custom image (or ask for a higher limit) before applying again. " +
+			"The allowance bounds both the number of images and their total size, so freeing one slot may not be " +
+			"enough. An image the storage backend still holds clones of — in practice, one with instances built " +
+			"from it — refuses the delete with 409 resource_in_use; destroy those first."
 	}
 	return err.Error()
 }

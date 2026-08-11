@@ -500,10 +500,16 @@ func TestReadRemovesResourceOn404(t *testing.T) {
 // --- diagnostics -------------------------------------------------------------
 
 // TestImageErrorDetailSeparatesTheTwoQuotas asserts the two quota_exceeded
-// refusals get opposite advice. They share a code and differ only by HTTP
-// status; a 403 is the transient staging limit (wait), a 409 is the tenant's
-// image allowance (delete something). Rendering the 409 as retryable would send
-// a customer into a loop that can never succeed.
+// refusals name different things to remove. They share a code and differ only
+// by HTTP status; a 403 is the staging limit (uploads in flight), a 409 the
+// tenant's image allowance (images owned). Naming the wrong one sends a
+// customer to clear something that was never the constraint.
+//
+// NEITHER may read as "wait and it clears". The 403's first check counts the
+// tenant's `queued` images and a failed import leaves the image queued, so
+// abandoned attempts hold their slot until deleted — the reason this test
+// pinned "apply again" on the 403 arm until 2026-08-11, and why it no longer
+// does.
 func TestImageErrorDetailSeparatesTheTwoQuotas(t *testing.T) {
 	staging := &client.APIError{Code: "quota_exceeded", Message: "too many images awaiting upload", StatusCode: http.StatusForbidden}
 	allowance := &client.APIError{Code: "quota_exceeded", Message: "custom image quota exceeded", StatusCode: http.StatusConflict}
@@ -512,8 +518,8 @@ func TestImageErrorDetailSeparatesTheTwoQuotas(t *testing.T) {
 	if !strings.Contains(stagingDetail, "too many images awaiting upload") {
 		t.Errorf("the server's own message must survive, got: %s", stagingDetail)
 	}
-	if !strings.Contains(stagingDetail, "apply again") {
-		t.Errorf("a 403 staging refusal is transient and should say so, got: %s", stagingDetail)
+	if !strings.Contains(stagingDetail, "does NOT") || !strings.Contains(stagingDetail, "delete") {
+		t.Errorf("a 403 staging refusal is not self-clearing and must say what to remove, got: %s", stagingDetail)
 	}
 
 	allowanceDetail := imageErrorDetail(allowance)
@@ -522,6 +528,13 @@ func TestImageErrorDetailSeparatesTheTwoQuotas(t *testing.T) {
 	}
 	if !strings.Contains(allowanceDetail, "does NOT") || !strings.Contains(allowanceDetail, "delete an existing") {
 		t.Errorf("a 409 allowance refusal is permanent and must NOT read as retryable, got: %s", allowanceDetail)
+	}
+	// The advice "delete an existing custom image" is itself refusable: that
+	// delete answers 409 resource_in_use while instances built from the image
+	// exist (compute v2.32.5). Advice a customer can follow and still get
+	// nowhere is the same defect in a different place.
+	if !strings.Contains(allowanceDetail, "resource_in_use") {
+		t.Errorf("the allowance advice must warn that the delete can itself be refused, got: %s", allowanceDetail)
 	}
 
 	// Anything else is passed through untouched.
