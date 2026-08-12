@@ -3,6 +3,7 @@ package image
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -364,6 +365,72 @@ func TestCreateRefusesOversizedFileBeforeUploading(t *testing.T) {
 	createResp.State.Get(context.Background(), &state)
 	if state.ID.ValueString() != "img-big" {
 		t.Errorf("id = %q, want img-big", state.ID.ValueString())
+	}
+}
+
+// TestCreateRefusesImportWhenTheStorageEdgeChecksumDisagrees covers the arrival
+// check: the edge reports an MD5 over what it received, and if that is not what
+// we sent the staged object is not source_file. Importing it would convert
+// corrupt bytes into an image that boots wrong instead of one that visibly
+// failed, so the apply must fail with the import never started.
+//
+// It also pins the direction of the ETag test. An ETag that is NOT a plain MD5
+// (multipart, or an opaque value from a server-side-encrypted bucket) means
+// UNCHECKED, never corrupt — TestCreateUploadImportOrder covers that path, where
+// the edge sends no ETag at all and the import proceeds. Getting this backwards
+// would turn a bucket-policy change into a total BYOI outage.
+func TestCreateRefusesImportWhenTheStorageEdgeChecksumDisagrees(t *testing.T) {
+	source := writeImageFile(t, 2048)
+
+	importHit := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		switch {
+		case req.Method == http.MethodPost && req.URL.Path == "/v1/images":
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(apiCreateImageResponse{
+				apiImage: apiImage{ID: "img-bad", Name: "custom-ubuntu", Status: "queued", Visibility: "private"},
+				Upload: &apiImageUpload{
+					URL:             "http://" + req.Host + "/staging",
+					Fields:          map[string]string{"key": "staging/img-bad"},
+					MaxBytes:        1 << 30,
+					MaxVirtualBytes: 4 << 30,
+				},
+			})
+		case req.URL.Path == "/staging":
+			_, _ = io.Copy(io.Discard, req.Body)
+			// A well-formed MD5 that is not the one we sent: the shape of an
+			// object that arrived damaged, not of an edge that cannot answer.
+			w.Header().Set("ETag", `"00000000000000000000000000000000"`)
+			w.WriteHeader(http.StatusNoContent)
+		case req.URL.Path == "/v1/images/img-bad/import":
+			importHit = true
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			t.Errorf("unexpected request %s %s", req.Method, req.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	r := newTestImageResource(c, server.Client())
+
+	createResp := runCreate(t, r, source)
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("expected the apply to fail when the storage edge reports a different checksum")
+	}
+	if importHit {
+		t.Error("the import must not start for an object that did not arrive intact")
+	}
+
+	// The image record exists and holds staging quota; losing its id would leave
+	// the customer unable to destroy it.
+	var state ImageModel
+	createResp.State.Get(context.Background(), &state)
+	if state.ID.ValueString() != "img-bad" {
+		t.Errorf("id = %q, want img-bad", state.ID.ValueString())
 	}
 }
 

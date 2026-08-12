@@ -27,6 +27,19 @@ Manages a customer custom image (bring-your-own-image). The provider runs the fu
 # path, so pair it with source_file_hash when you rebuild the image in place — a
 # changed hash replaces the image, which re-uploads and re-imports it.
 #
+# VERIFYING A VENDOR IMAGE. source_file_hash is a change trigger, not a check: it
+# is never sent anywhere and nothing compares it to anything. The read-only
+# `checksum` attribute is not the check either — it is an MD5 of what the
+# platform STORES, and for a qcow2 the import converts the image to raw first,
+# so it cannot equal the SHA-256 a vendor publishes. Assert the published value
+# locally, against the file itself, before the upload spends the bandwidth — the
+# precondition below does that.
+#
+# That is a check on the SOURCE. In-transit corruption is a separate failure and
+# is handled for you: the provider hashes the bytes as it uploads them and
+# compares them with the checksum the storage edge reports, failing the apply
+# rather than importing a damaged image.
+#
 # Two create failures are worth recognising, because they share an error code
 # and differ only by status. Neither is safe to treat as "wait and re-apply":
 #
@@ -60,11 +73,19 @@ Manages a customer custom image (bring-your-own-image). The provider runs the fu
 # is a local path the API never returns, so an imported image would immediately
 # plan a destroy/recreate — re-uploading gigabytes to rebuild something that
 # already exists. Declare the image in configuration and apply instead.
+locals {
+  image_path = "${path.module}/build/golden-ubuntu-24.04.qcow2"
+  # The value from the vendor's published SHA256SUMS for exactly this file.
+  image_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+}
+
 resource "frostmoln_image" "golden" {
-  name             = "golden-ubuntu-24.04"
-  description      = "Hardened Ubuntu 24.04 base image"
-  source_file      = "${path.module}/build/golden-ubuntu-24.04.qcow2"
-  source_file_hash = filemd5("${path.module}/build/golden-ubuntu-24.04.qcow2")
+  name        = "golden-ubuntu-24.04"
+  description = "Hardened Ubuntu 24.04 base image"
+  source_file = local.image_path
+  # One expression serves both purposes: the change trigger that replaces the
+  # image when the file is rebuilt, and the value compared below.
+  source_file_hash = filesha256(local.image_path)
   disk_format      = "qcow2"
 
   os_distro    = "ubuntu"
@@ -73,6 +94,13 @@ resource "frostmoln_image" "golden" {
 
   min_disk_gb = 20
   min_ram_mb  = 2048
+
+  lifecycle {
+    precondition {
+      condition     = filesha256(local.image_path) == local.image_sha256
+      error_message = "The image at ${local.image_path} does not match the vendor's published SHA-256."
+    }
+  }
 }
 
 resource "frostmoln_instance" "app" {
@@ -105,7 +133,7 @@ resource "frostmoln_instance" "app" {
 
 ### Read-Only
 
-- `checksum` (String) The MD5 checksum of the stored image data, set by the platform once the image is active.
+- `checksum` (String) The MD5 checksum of the STORED image data, set by the platform once the image is active. It is not the value to check a vendor download against: it is an MD5 while vendors publish SHA-256, and for a qcow2 upload it describes the image AFTER the import has converted it to raw, so it cannot equal a digest of source_file. (For a disk_format of "raw" there is no conversion, so only the algorithm differs.) To verify a download, compare filesha256 of the local path against the vendor's published value before you apply — see the example. The provider also checks, at upload time, that the bytes the storage edge received match the bytes it sent, and fails the apply if they do not.
 - `created_at` (String) The timestamp when the image was created.
 - `id` (String) The unique identifier of the image.
 - `owner` (String) The owning project of the image.

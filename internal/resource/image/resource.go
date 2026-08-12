@@ -3,6 +3,8 @@ package image
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -215,8 +218,15 @@ func (r *imageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Computed:    true,
 			},
 			"checksum": schema.StringAttribute{
-				Description: "The MD5 checksum of the stored image data, set by the platform once the image is active.",
-				Computed:    true,
+				Description: "The MD5 checksum of the STORED image data, set by the platform once the image is " +
+					"active. It is not the value to check a vendor download against: it is an MD5 while vendors " +
+					"publish SHA-256, and for a qcow2 upload it describes the image AFTER the import has " +
+					"converted it to raw, so it cannot equal a digest of source_file. (For a disk_format of " +
+					"\"raw\" there is no conversion, so only the algorithm differs.) To verify a download, " +
+					"compare filesha256 of the local path against the vendor's published value before you apply " +
+					"— see the example. The provider also checks, at upload time, that the bytes the storage " +
+					"edge received match the bytes it sent, and fails the apply if they do not.",
+				Computed: true,
 			},
 			"visibility": schema.StringAttribute{
 				Description: "The visibility of the image. Customer images are always \"private\" — the API " +
@@ -588,8 +598,14 @@ func (r *imageResource) uploadImage(ctx context.Context, upload *apiImageUpload,
 	}
 	head, tail := frame.Bytes()[:headLen], frame.Bytes()[headLen:]
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, upload.URL,
-		io.MultiReader(bytes.NewReader(head), f, bytes.NewReader(tail)))
+	// Hash the image bytes in the pass that uploads them, so the storage edge's
+	// ETag can be checked against what we actually sent. A tens-of-gigabytes file
+	// must not be read twice, and MD5 is not a security primitive here — it is
+	// simply the only digest an S3/RGW ETag can be compared with.
+	sent := md5.New() // #nosec G401
+	body := io.MultiReader(bytes.NewReader(head), io.TeeReader(f, sent), bytes.NewReader(tail))
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, upload.URL, body)
 	if err != nil {
 		return fmt.Errorf("build upload request: %w", err)
 	}
@@ -606,7 +622,34 @@ func (r *imageResource) uploadImage(ctx context.Context, upload *apiImageUpload,
 		msg, _ := io.ReadAll(io.LimitReader(httpResp.Body, 4096))
 		return fmt.Errorf("image upload rejected: HTTP %d: %s", httpResp.StatusCode, string(msg))
 	}
+
+	// Refuse to go on to the import when the edge reports a checksum that is not
+	// the one we sent: the staged object is not source_file, and converting
+	// corrupt bytes yields an image that boots wrong rather than one that
+	// visibly failed. `fm compute image create` refuses on the same evidence, and
+	// the two clients must not disagree about the same upload.
+	//
+	// Only an ETag that IS a plain MD5 is comparable — server-side encryption and
+	// multipart both return something else, and treating those as "different"
+	// would refuse every healthy upload.
+	etag := strings.Trim(httpResp.Header.Get("ETag"), `"`)
+	if isMD5ETag(etag) && !strings.EqualFold(etag, hex.EncodeToString(sent.Sum(nil))) {
+		return fmt.Errorf("image upload arrived corrupted: sent MD5 %s, storage edge stored %s "+
+			"(the image record exists and holds staging quota until it is destroyed)",
+			hex.EncodeToString(sent.Sum(nil)), etag)
+	}
 	return nil
+}
+
+// isMD5ETag reports whether an ETag is a plain MD5 and can therefore be compared
+// with one. Deliberately an allow-list: an unrecognised shape means UNCHECKED,
+// never corrupt.
+func isMD5ETag(etag string) bool {
+	if len(etag) != 2*md5.Size {
+		return false
+	}
+	_, err := hex.DecodeString(etag)
+	return err == nil
 }
 
 // waitForImport polls the image until Glance has finished importing it,
