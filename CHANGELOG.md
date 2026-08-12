@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.27.0] - 2026-08-12
+
+### 🚀 Features
+
+- *(image)* Refuse the import when the uploaded bytes did not arrive intact (#299)
+
 ## [0.26.0] - 2026-08-11
 
 ### 🚀 Features
