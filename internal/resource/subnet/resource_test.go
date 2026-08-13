@@ -789,7 +789,7 @@ func TestSubnetResourceDeleteWaitsForOperation(t *testing.T) {
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/subnets/subnet-del-1":
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-del-1", Status: "pending", ResourceType: "subnet"})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-del-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-del-1":
 			opPolled = true
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-del-1", Status: "completed", ResourceType: "subnet", ResourceID: "subnet-del-1"})
 		default:
@@ -824,7 +824,7 @@ func TestSubnetResourceDeleteOperationFailed(t *testing.T) {
 		case r.Method == http.MethodDelete:
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-del-1", Status: "pending", ResourceType: "subnet"})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-del-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-del-1":
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-del-1", Status: "failed", ResourceType: "subnet", Error: "subnet has active resources and cannot be deleted"})
 		default:
 			w.WriteHeader(http.StatusNotFound)

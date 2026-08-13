@@ -842,8 +842,10 @@ func TestDefaultPollConfig(t *testing.T) {
 }
 
 func TestGetOperation(t *testing.T) {
+	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-1" {
+		paths = append(paths, r.URL.Path)
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-1" {
 			_ = json.NewEncoder(w).Encode(Operation{
 				OperationID:  "op-1",
 				Status:       "completed",
@@ -857,6 +859,7 @@ func TestGetOperation(t *testing.T) {
 	defer server.Close()
 
 	c := NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
 	op, err := c.GetOperation(context.Background(), "op-1")
 	if err != nil {
 		t.Fatalf("GetOperation failed: %v", err)
@@ -864,12 +867,114 @@ func TestGetOperation(t *testing.T) {
 	if op.ResourceID != "lb-1" || op.Status != "completed" {
 		t.Errorf("unexpected operation: %+v", op)
 	}
+	// The legacy untenanted route skips its ownership check when the caller's
+	// signed tenant is empty. It is a transition-window fallback only, so a
+	// working tenant-scoped read must never touch it.
+	for _, p := range paths {
+		if p == "/v1/operations/op-1" {
+			t.Fatalf("read the legacy untenanted route despite a healthy scoped route: %v", paths)
+		}
+	}
+}
+
+// A new provider can be pointed at a gateway that has not yet published the
+// tenant-scoped route — the provider is customer-pinned, so that ordering is
+// normal. WaitForState retries every poll error to the timeout, so without this
+// fallback the routing 404 would surface as "timed out waiting for operation".
+// writeNotFound writes provisioning's 404 envelope. Its code is deliberately the
+// same for "no such operation" and "not yours" — the route is
+// existence-oracle-free.
+func writeNotFound(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write([]byte(`{"error":{"code":"NOT_FOUND","message":"operation not found"}}`))
+}
+
+// writeRouteNotFound writes the api-gateway's answer for a path it does not serve.
+func writeRouteNotFound(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write([]byte(`{"error":{"code":"ROUTE_NOT_FOUND","message":"no route found for path"}}`))
+}
+
+func TestGetOperationFallsBackWhenTheGatewayHasNoScopedRoute(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-legacy" {
+			_ = json.NewEncoder(w).Encode(Operation{OperationID: "op-legacy", Status: "completed", ResourceID: "vol-1"})
+			return
+		}
+		writeRouteNotFound(w)
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	op, err := c.GetOperation(context.Background(), "op-legacy")
+	if err != nil {
+		t.Fatalf("GetOperation failed: %v", err)
+	}
+	if op.ResourceID != "vol-1" {
+		t.Errorf("expected resourceId vol-1, got %s", op.ResourceID)
+	}
+	want := []string{"/v1/tenants/t-1/operations/op-legacy", "/v1/operations/op-legacy"}
+	if len(paths) != len(want) || paths[0] != want[0] || paths[1] != want[1] {
+		t.Errorf("expected scoped-then-legacy, got %v", paths)
+	}
+}
+
+// THE SECURITY-LOAD-BEARING CASE. The scoped route answers 404/NOT_FOUND both for
+// an operation that does not exist and for one the caller does not own. Retrying
+// the legacy route on that would answer our own ownership denial by re-asking the
+// route that skips the ownership check — for an org-invited caller (empty signed
+// tenant) that is an unchecked read of any operation in the estate. It would also
+// keep the legacy-read metric that gates the route's removal permanently non-zero.
+func TestGetOperationDoesNotFallBackOnAServiceNotFound(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		writeNotFound(w)
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	if _, err := c.GetOperation(context.Background(), "op-1"); err == nil {
+		t.Fatal("expected an error when the operation is not found or not ours")
+	}
+	if len(paths) != 1 || paths[0] != "/v1/tenants/t-1/operations/op-1" {
+		t.Errorf("expected exactly one scoped request and no legacy retry, got %v", paths)
+	}
+}
+
+// A "../" in the id must not collapse the scoped path back onto the legacy route:
+// the URL is assembled with path.Join, which cleans dot segments.
+func TestGetOperationEscapesTheOperationID(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		writeNotFound(w)
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	_, _ = c.GetOperation(context.Background(), "../../v1/operations/victim")
+
+	if len(paths) != 1 {
+		t.Fatalf("expected one request, got %v", paths)
+	}
+	if paths[0] == "/v1/operations/victim" {
+		t.Fatalf("traversal collapsed onto the legacy route: %v", paths)
+	}
+	if !strings.HasPrefix(paths[0], "/v1/tenants/t-1/operations/") {
+		t.Errorf("escaped id left the scoped path: %v", paths)
+	}
 }
 
 func TestWaitForOperationCompleted(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-2" {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-2" {
 			calls++
 			status := "running"
 			if calls >= 2 {
@@ -883,6 +988,7 @@ func TestWaitForOperationCompleted(t *testing.T) {
 	defer server.Close()
 
 	c := NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
 	op, err := c.WaitForOperation(context.Background(), "op-2", 5*time.Millisecond, 2*time.Second)
 	if err != nil {
 		t.Fatalf("WaitForOperation failed: %v", err)
@@ -894,7 +1000,7 @@ func TestWaitForOperationCompleted(t *testing.T) {
 
 func TestWaitForOperationFailed(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-3" {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-3" {
 			_ = json.NewEncoder(w).Encode(Operation{OperationID: "op-3", Status: "failed", Error: "boom"})
 			return
 		}
@@ -903,6 +1009,7 @@ func TestWaitForOperationFailed(t *testing.T) {
 	defer server.Close()
 
 	c := NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
 	_, err := c.WaitForOperation(context.Background(), "op-3", 5*time.Millisecond, 2*time.Second)
 	if err == nil {
 		t.Fatal("expected error for failed operation")

@@ -218,7 +218,7 @@ func TestLoadBalancerCreateAsyncOperationPoll(t *testing.T) {
 				ResourceType: "load_balancer",
 			})
 
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-1":
 			opCalls++
 			status := "running"
 			if opCalls >= 2 {
@@ -294,7 +294,7 @@ func TestLoadBalancerCreateOperationFailed(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/load-balancers":
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-f", Status: "pending"})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-f":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-f":
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-f", Status: "failed", Error: "quota exceeded"})
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -334,7 +334,7 @@ func TestLoadBalancerCreateOperationNoResourceID(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/load-balancers":
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-n", Status: "pending"})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-n":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-n":
 			// Completed but no ResourceID.
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-n", Status: "completed"})
 		default:
@@ -374,7 +374,7 @@ func TestLoadBalancerDeleteAsyncOperationPoll(t *testing.T) {
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/load-balancers/lb-del-1":
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-d", Status: "pending"})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-d":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-d":
 			opCalls++
 			status := "running"
 			if opCalls >= 2 {

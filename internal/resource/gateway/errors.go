@@ -55,7 +55,8 @@ func addGatewayError(diags *diag.Diagnostics, fallback string, err error) {
 				"If the existing gateway should be managed by this resource, import it and then set "+
 				"`mode` to the value you want (the change is applied in place):\n\n"+
 				"    terraform import frostmoln_gateway.<name> <vpc id>\n\n"+
-				"API said: "+apiErr.Message)
+				"API said: "+apiErr.Message,
+		)
 	case errCodeGatewayInUse:
 		diags.AddError(
 			"Gateway is still in use",
@@ -88,7 +89,8 @@ func addGatewayError(diags *diag.Diagnostics, fallback string, err error) {
 				"gateway create then fails with GATEWAY_EXISTS. A `depends_on` written the "+
 				"other way round (on the gateway, listing the public IPs) reverses both orders and leaves "+
 				"this delete failing exactly as it just did.\n\n"+
-				"API said: "+apiErr.Message)
+				"API said: "+apiErr.Message,
+		)
 	case errCodePoolExhausted:
 		diags.AddError(
 			"No public IPv4 address is available in this region right now",
@@ -97,7 +99,8 @@ func addGatewayError(diags *diag.Diagnostics, fallback string, err error) {
 				"once an address frees — re-run `terraform apply`.\n\n"+
 				"Only a VPC that needs NO outbound path at all escapes this limit, and that is the "+
 				"absence of this resource rather than a different mode.\n\n"+
-				"API said: "+apiErr.Message)
+				"API said: "+apiErr.Message,
+		)
 	case errCodePublicIPUnavailable:
 		diags.AddError(
 			"That public IP is not free to be this VPC's outbound source address",
@@ -113,13 +116,15 @@ func addGatewayError(diags *diag.Diagnostics, fallback string, err error) {
 				"public IP of yours — it has no id, it is not in your public IP list, and nothing pins "+
 				"it, so it can change if the gateway is rebuilt. Take it when nothing outside the VPC "+
 				"needs to know the source address; name a `public_ip_id` when something does.\n\n"+
-				"API said: "+apiErr.Message)
+				"API said: "+apiErr.Message,
+		)
 	case errCodeLossNotAcked:
 		diags.AddError(
 			"Gateway connectivity loss was not acknowledged",
 			"The API refused the change because it costs this VPC reachability. Set "+
 				"`acknowledge_connectivity_loss = true` on the resource and apply that first.\n\n"+
-				"API said: "+apiErr.Message)
+				"API said: "+apiErr.Message,
+		)
 	default:
 		diags.AddError(fallback, apiErr.Error())
 	}

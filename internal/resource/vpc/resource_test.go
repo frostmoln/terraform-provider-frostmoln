@@ -406,7 +406,7 @@ func TestVPCResource_TFSDKCreate(t *testing.T) {
 				"operationId": "op-vpc-1", "status": "pending", "resourceType": "vpc",
 			})
 
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-vpc-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-vpc-1":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-vpc-1", "status": "completed", "resourceType": "vpc", "resourceId": "vpc-created-1",
 			})
@@ -1073,7 +1073,7 @@ func TestVPCResource_TFSDKCreatePollingErrorState(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-vpc-err", "status": "pending", "resourceType": "vpc",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-vpc-err":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-vpc-err":
 			// The create workflow failed → operation terminal-failed → create errors.
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-vpc-err", "status": "failed", "resourceType": "vpc",

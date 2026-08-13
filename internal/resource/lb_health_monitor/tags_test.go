@@ -123,7 +123,7 @@ func TestHealthMonitorUpdateSendsTagsAndSurvivesTheAsyncResponse(t *testing.T) {
 			body.capture(r)
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-1", Status: "pending"})
-		case r.URL.Path == "/v1/operations/op-1":
+		case r.URL.Path == "/v1/tenants/t-1/operations/op-1":
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-1", Status: "completed", ResourceID: "hm-1"})
 		case r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(sampleAPIHM(map[string]string{"env": "prod"}))
@@ -180,7 +180,7 @@ func TestHealthMonitorUpdateClearsTagsWhenRemovedFromConfig(t *testing.T) {
 			body.capture(r)
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-1", Status: "pending"})
-		case r.URL.Path == "/v1/operations/op-1":
+		case r.URL.Path == "/v1/tenants/t-1/operations/op-1":
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-1", Status: "completed", ResourceID: "hm-1"})
 		case r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(sampleAPIHM(nil))

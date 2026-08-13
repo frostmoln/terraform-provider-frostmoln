@@ -2478,7 +2478,7 @@ func TestPublicIPDeleteWaitsForTheOperation(t *testing.T) {
 			})
 			return
 		}
-		if r.URL.Path == "/v1/operations/op-1" {
+		if r.URL.Path == "/v1/tenants/t-123/operations/op-1" {
 			polls++
 			status := "running"
 			if polls > 1 {

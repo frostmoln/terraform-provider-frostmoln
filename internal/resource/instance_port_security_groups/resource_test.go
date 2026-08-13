@@ -72,7 +72,7 @@ func TestTFSDKCreate(t *testing.T) {
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(map[string]string{"operationId": "op-1", "status": "accepted", "resourceType": "instance"})
 
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-1":
 			_ = json.NewEncoder(w).Encode(map[string]string{"operationId": "op-1", "status": "completed", "resourceType": "instance"})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-1/security-groups":

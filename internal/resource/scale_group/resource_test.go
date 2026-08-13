@@ -533,7 +533,7 @@ func TestCreate(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-sg-1", "status": "pending", "resourceType": "scale_group",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-sg-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-sg-1":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-sg-1", "status": "completed", "resourceType": "scale_group", "resourceId": "asg-1",
 			})
@@ -602,7 +602,7 @@ func TestCreatePollError(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-sg-err", "status": "pending", "resourceType": "scale_group",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-sg-err":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-sg-err":
 			// The create workflow failed → operation terminal-failed → create errors.
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-sg-err", "status": "failed", "resourceType": "scale_group",

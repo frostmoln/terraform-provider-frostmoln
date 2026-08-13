@@ -506,7 +506,7 @@ func TestVolumeResource_TFSDKCreate(t *testing.T) {
 				"resourceType": "volume",
 			})
 
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-vol-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-vol-1":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId":  "op-vol-1",
 				"status":       "completed",
@@ -777,7 +777,7 @@ func TestVolumeResource_TFSDKUpdate_PatchAndResize(t *testing.T) {
 				"operationId": "op-resize-1", "status": "pending", "resourceType": "volume",
 			})
 
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-resize-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-resize-1":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-resize-1", "status": "completed", "resourceType": "volume", "resourceId": "vol-upd-1",
 			})
@@ -890,7 +890,7 @@ func TestVolumeResource_TFSDKDelete(t *testing.T) {
 				"operationId": "op-del-1", "status": "pending", "resourceType": "volume",
 			})
 
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-del-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-del-1":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-del-1", "status": "completed", "resourceType": "volume", "resourceId": "vol-del-1",
 			})
@@ -1108,7 +1108,7 @@ func TestVolumeResource_TFSDKCreatePollingErrorState(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-err-1", "status": "pending", "resourceType": "volume",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-err-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-err-1":
 			// The create workflow failed → operation terminal-failed → the resource
 			// must surface an error (was: volume polled to "error" state).
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -1177,7 +1177,7 @@ func TestVolumeResource_TFSDKCreateFinalReadError(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-fre-1", "status": "pending", "resourceType": "volume",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-fre-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-fre-1":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-fre-1", "status": "completed", "resourceType": "volume", "resourceId": "vol-fre-1",
 			})

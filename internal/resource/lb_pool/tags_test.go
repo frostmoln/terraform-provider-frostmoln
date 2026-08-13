@@ -134,7 +134,7 @@ func TestPoolUpdateSendsTagsAndSurvivesTheAsyncResponse(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(client.Operation{
 				OperationID: "op-1", Status: "pending", ResourceType: "load_balancer_pool",
 			})
-		case r.URL.Path == "/v1/operations/op-1":
+		case r.URL.Path == "/v1/tenants/t-1/operations/op-1":
 			_ = json.NewEncoder(w).Encode(client.Operation{
 				OperationID: "op-1", Status: "completed", ResourceID: "pool-1",
 			})
@@ -198,7 +198,7 @@ func TestPoolUpdateClearsTagsWhenRemovedFromConfig(t *testing.T) {
 			body.capture(r)
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-1", Status: "pending"})
-		case r.URL.Path == "/v1/operations/op-1":
+		case r.URL.Path == "/v1/tenants/t-1/operations/op-1":
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-1", Status: "completed", ResourceID: "pool-1"})
 		case r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(apiPool{

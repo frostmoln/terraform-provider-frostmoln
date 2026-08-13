@@ -328,7 +328,7 @@ const (
 
 // Operation represents an async provisioning operation. It is returned both as
 // the 202 Accepted body from load-balancer create/delete (status "pending") and
-// from GET /v1/operations/{id} when polling. The field set matches the
+// from GET /v1/tenants/{tid}/operations/{id} when polling. The field set matches the
 // provisioning service's domain.Operation.
 type Operation struct {
 	OperationID  string `json:"operationId"`
@@ -350,19 +350,73 @@ type Operation struct {
 	CompletedAt string `json:"completedAt,omitempty"`
 }
 
-// GetOperation fetches an async provisioning operation by ID.
+// GetOperation fetches an async provisioning operation by ID from the
+// tenant-scoped route, falling back to the legacy untenanted one on 404.
 //
-// IMPORTANT: the operation endpoint is NOT tenant-scoped — it lives at
-// /v1/operations/{id}, not under /v1/tenants/{tid}/...
+// The tenant-scoped route is the one that enforces ownership: the legacy
+// /v1/operations/{id} skips its check when the caller's signed tenant is empty,
+// so a migrated client must not keep using it.
+//
+// WHY THE FALLBACK IS KEYED ON ROUTE_NOT_FOUND AND NOT ON THE 404 STATUS.
+// Provisioning answers 404 with code NOT_FOUND for BOTH "no such operation" and
+// "you do not own this one" — deliberately existence-oracle-free, so those two
+// are indistinguishable and must stay that way. But "this gateway has no such
+// route" is a different layer: the gateway itself answers ROUTE_NOT_FOUND before
+// any service is consulted. Keying on the status alone conflates them, and a
+// migrated client would then answer its own ownership denial by re-asking the
+// route that does not check ownership — automatically, on every denial, handing
+// exactly the org-invited caller this migration protects an unchecked read of any
+// operation in the estate. It would also keep the legacy-read metric that gates
+// the route's removal permanently non-zero, produced by the migrated clients
+// themselves.
+//
+// The narrow fallback that remains covers the real transition case: the provider
+// is a customer-pinned artifact, so a new provider against a gateway that has not
+// yet published the scoped route is normal, not an ordering mistake — and
+// WaitForState retries every poll error to the timeout, so without it that would
+// surface as "timed out waiting for operation …" instead of a routing 404. Remove
+// it with the legacy route (Ambix 019ff725-06f0).
+//
+// Deliberately an ALLOW-list of one code, not "any 404 that is not NOT_FOUND".
+// The uncovered case is gateway-new / provisioning-old, where provisioning's own
+// Gin answers a bare 404 with no code: that poll times out instead of falling
+// back. It is transient, self-healing on rollout, and the operation still runs —
+// whereas a deny-list would silently start retrying the ownership-denied route
+// the day provisioning adds any other 404 code.
 func (c *Client) GetOperation(ctx context.Context, operationID string) (*Operation, error) {
-	resp, err := c.Get(ctx, fmt.Sprintf("/v1/operations/%s", operationID), nil)
+	// Escape the id for the same reason TenantPath escapes the tenant: the final
+	// URL is assembled with path.Join, which CLEANS dot segments, so an id
+	// containing "../" would otherwise collapse the scoped path back onto the
+	// legacy route (or any other GET endpoint) carrying the caller's credential.
+	suffix := url.PathEscape(operationID)
+	resp, err := c.Get(ctx, c.TenantPath(fmt.Sprintf("/operations/%s", suffix)), nil)
+	if err != nil && IsRouteNotFound(err) {
+		resp, err = c.Get(ctx, fmt.Sprintf("/v1/operations/%s", suffix), nil)
+	}
 	if err != nil {
 		return nil, err
 	}
 	return ParseResponse[Operation](resp)
 }
 
-// WaitForOperation polls GET /v1/operations/{id} until the operation reaches a
+// RouteNotFoundCode is the api-gateway's code for an unmatched path
+// (internal/gateway/gateway.go). It predates the tenant-scoped operations route,
+// so every gateway old enough to lack that route still answers with it.
+const RouteNotFoundCode = "ROUTE_NOT_FOUND"
+
+// IsRouteNotFound reports whether err is the api-gateway's "no route found for
+// path" answer — the gateway does not serve this path at all. It is NOT the same
+// as a 404 from the service behind the route, which for operations means either
+// "no such operation" or "not yours" and must never be retried elsewhere.
+func IsRouteNotFound(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) &&
+		apiErr.StatusCode == http.StatusNotFound &&
+		apiErr.Code == RouteNotFoundCode
+}
+
+// WaitForOperation polls GET /v1/tenants/{tid}/operations/{id} until the
+// operation reaches a
 // terminal state. On "completed" it returns the operation (whose ResourceID is
 // the affected resource's ID). On "failed"/"cancelled" it returns an error that
 // includes the operation's error message. It reuses the generic WaitForState

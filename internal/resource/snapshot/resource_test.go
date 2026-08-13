@@ -429,7 +429,7 @@ func TestSnapshotResource_Create_TFSDK(t *testing.T) {
 				"status":       "pending",
 				"resourceType": "snapshot",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-snap-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/operations/op-snap-1":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId":  "op-snap-1",
 				"status":       "completed",

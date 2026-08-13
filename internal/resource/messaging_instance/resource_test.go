@@ -347,7 +347,7 @@ func newTestMessagingResource(c *client.Client) *messagingInstanceResource {
 
 // TestCreate covers the async path: messaging create routes through
 // provisioning, which returns 202 + an Operation envelope (operationId only).
-// The provider polls GET /v1/operations/{id} to completion, takes the
+// The provider polls GET /v1/tenants/{tid}/operations/{id} to completion, takes the
 // operation's resourceId as the instance id, then reads the instance.
 func TestCreate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -365,7 +365,7 @@ func TestCreate(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-mq-1", "status": "pending", "resourceType": "messaging_instance",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-mq-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-mq-1":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-mq-1", "status": "completed", "resourceType": "messaging_instance", "resourceId": "mq-new",
 			})
@@ -561,7 +561,7 @@ func TestCreateOperationFailed(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-mq-err", "status": "pending", "resourceType": "messaging_instance",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-mq-err":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-mq-err":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-mq-err", "status": "failed", "resourceType": "messaging_instance",
 				"error": "messaging instance entered error state",

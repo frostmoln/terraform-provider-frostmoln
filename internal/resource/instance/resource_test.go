@@ -1254,7 +1254,7 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 				"operationId": "op-inst-1", "status": "pending", "resourceType": "instance",
 			})
 
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-inst-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-inst-1":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-inst-1", "status": "completed", "resourceType": "instance", "resourceId": "inst-new-1",
 			})
@@ -1371,7 +1371,7 @@ func TestInstanceResource_TFSDKCreateMinimal(t *testing.T) {
 				"operationId": "op-min-1", "status": "pending", "resourceType": "instance",
 			})
 
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-min-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-min-1":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-min-1", "status": "completed", "resourceType": "instance", "resourceId": "inst-min-1",
 			})
@@ -1466,7 +1466,7 @@ func TestInstanceResource_TFSDKCreateZoneless(t *testing.T) {
 				"operationId": "op-zoneless-1", "status": "pending", "resourceType": "instance",
 			})
 
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-zoneless-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-zoneless-1":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-zoneless-1", "status": "completed", "resourceType": "instance", "resourceId": "inst-zoneless-1",
 			})
@@ -1555,7 +1555,7 @@ func TestInstanceResource_TFSDKCreateErrorState(t *testing.T) {
 				"operationId": "op-inst-err", "status": "pending", "resourceType": "instance",
 			})
 
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-inst-err":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-inst-err":
 			// The create workflow failed → operation terminal-failed → create errors.
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"operationId": "op-inst-err", "status": "failed", "resourceType": "instance",
@@ -2325,7 +2325,7 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-sg-1", Status: "pending", ResourceType: "instance", ResourceID: "inst-tags-1"})
 
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-sg-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-sg-1":
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-sg-1", Status: "completed", ResourceType: "instance", ResourceID: "inst-tags-1"})
 
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-tags-1":
@@ -2475,7 +2475,7 @@ func TestInstanceResource_TFSDKClearSecurityGroups(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&sgPutBody)
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-clr-1", Status: "pending", ResourceType: "instance", ResourceID: "inst-clear-1"})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/operations/op-clr-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-clr-1":
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-clr-1", Status: "completed", ResourceType: "instance", ResourceID: "inst-clear-1"})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-clear-1":
 			_ = json.NewEncoder(w).Encode(apiInstance{ID: "inst-clear-1", Name: "clr-vm", Status: "running", FlavorID: "flavor-small", ImageID: "img-ubuntu", CreatedAt: "2025-06-01T12:00:00Z"})

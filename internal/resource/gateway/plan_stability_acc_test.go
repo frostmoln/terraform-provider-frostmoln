@@ -268,7 +268,8 @@ resource "frostmoln_gateway" "test" {
 			{
 				Config: config,
 				Check: resource.TestCheckResourceAttr(
-					"frostmoln_gateway.test", "public_ip_id", "pip-implicit"),
+					"frostmoln_gateway.test", "public_ip_id", "pip-implicit",
+				),
 			},
 			{
 				Config:   config,
@@ -319,7 +320,8 @@ resource "frostmoln_gateway" "test" {
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction(
-							"frostmoln_gateway.test", plancheck.ResourceActionUpdate),
+							"frostmoln_gateway.test", plancheck.ResourceActionUpdate,
+						),
 					},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
