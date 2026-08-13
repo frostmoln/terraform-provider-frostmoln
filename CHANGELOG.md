@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.27.1] - 2026-08-13
+
+### 🐛 Bug Fixes
+
+- *(client)* Poll the tenant-scoped operations route (#303)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.12 (#306)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.9.0 (#301)
+- *(deps)* Update dependency frostmoln/workflows to v0.9.1 (#305)
+
 ## [0.27.0] - 2026-08-12
 
 ### 🚀 Features
