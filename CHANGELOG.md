@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.28.0] - 2026-08-14
+
+### 🚀 Features
+
+- *(datasource)* Add frostmoln_api_key_scopes for scope discovery (#313)
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.13 (#309)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.9.2 (#311)
+
 ## [0.27.1] - 2026-08-13
 
 ### 🐛 Bug Fixes
