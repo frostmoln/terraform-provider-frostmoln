@@ -115,6 +115,8 @@ func (r *workloadIdentityBindingResource) Schema(_ context.Context, _ resource.S
 			},
 			"scopes": schema.ListAttribute{
 				Description: "The least-privilege scopes granted to the workload (e.g. `compute:read`). " +
+					"The grantable set, with a description of each, is served by the platform — read it " +
+					"with the `frostmoln_api_key_scopes` data source or `fm account api-key scopes`. " +
 					"Wildcards (`*` or `<resource>:*`) are rejected. Changing the scopes updates the " +
 					"binding in place. Optional: omit it to author a **policy-granted** binding, whose " +
 					"authority comes entirely from an access policy attached with " +

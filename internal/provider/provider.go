@@ -18,6 +18,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/clicreds"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	apacheinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/apache_instance"
+	apikeyscopesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/api_key_scopes"
 	databaseenginesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/database_engines"
 	dnszoneds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/dns_zone"
 	flavords "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/flavor"
@@ -428,6 +429,7 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		nginxinstanceds.NewDataSource,
 		regionsds.NewDataSource,
 		volumetiersds.NewDataSource,
+		apikeyscopesds.NewDataSource,
 		kubernetesversionsds.NewDataSource,
 		kubernetestiersds.NewDataSource,
 		kubernetesflavorsds.NewDataSource,

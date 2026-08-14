@@ -85,7 +85,7 @@ resource "frostmoln_iam_policy_attachment" "reaper" {
 
 ### Optional
 
-- `scopes` (List of String) The least-privilege scopes granted to the workload (e.g. `compute:read`). Wildcards (`*` or `<resource>:*`) are rejected. Changing the scopes updates the binding in place. Optional: omit it to author a **policy-granted** binding, whose authority comes entirely from an access policy attached with `frostmoln_iam_policy_attachment` (directly, or through a group). Write `null` or omit the attribute for no scopes; an empty list is not a valid spelling.
+- `scopes` (List of String) The least-privilege scopes granted to the workload (e.g. `compute:read`). The grantable set, with a description of each, is served by the platform — read it with the `frostmoln_api_key_scopes` data source or `fm account api-key scopes`. Wildcards (`*` or `<resource>:*`) are rejected. Changing the scopes updates the binding in place. Optional: omit it to author a **policy-granted** binding, whose authority comes entirely from an access policy attached with `frostmoln_iam_policy_attachment` (directly, or through a group). Write `null` or omit the attribute for no scopes; an empty list is not a valid spelling.
 
 Notes on the policy-granted path:
 - The policy-granted path needs the `iam-policies` entitlement. Without it the binding is still created, but `frostmoln_iam_policy` fails and the binding is left inert.
