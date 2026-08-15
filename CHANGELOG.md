@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.28.3] - 2026-08-15
+
+### 🐛 Bug Fixes
+
+- *(clicreds)* Stop deleting the fm CLI's per-context tenant on token write-back (#321)
+
 ## [0.28.2] - 2026-08-15
 
 ### 🐛 Bug Fixes
