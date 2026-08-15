@@ -21,7 +21,7 @@ terraform {
 }
 
 provider "frostmoln" {
-  api_endpoint = "https://api.frostmoln.cloud"
+  api_endpoint = "https://api.frostmoln.cloud/api"
   api_key      = var.frostmoln_api_key
 
   # Optional: select the tenant to manage resources in (defaults to your
@@ -52,7 +52,7 @@ This lets the provider "just work" after `fm auth login`, like `kubectl`, `aws`,
 
 ### Optional
 
-- `api_endpoint` (String) The API endpoint URL. Can also be set via the FROSTMOLN_API_ENDPOINT environment variable. Defaults to https://api.frostmoln.cloud.
+- `api_endpoint` (String) The API endpoint URL, including the /api prefix the gateway mounts customer routes under. Can also be set via the FROSTMOLN_API_ENDPOINT environment variable. Defaults to https://api.frostmoln.cloud/api.
 - `api_key` (String, Sensitive) The API key for authentication. Can also be set via the FROSTMOLN_API_KEY environment variable. When unset, the provider falls back to an existing fm CLI session (see use_cli_config).
 - `cli_config_path` (String) Path to the fm CLI config file. Defaults to ~/.fm/config.yaml. Can also be set via the FROSTMOLN_CLI_CONFIG environment variable.
 - `cli_context` (String) Name of the fm CLI context to read credentials from. Defaults to the config file's current_context.

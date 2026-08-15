@@ -82,14 +82,17 @@ provider "frostmoln" {
 
 ### Endpoint handling
 
-The `fm` CLI stores its API endpoint **with the `/api` suffix**
-(`https://api.frostmoln.cloud/api`) — the gateway mounts customer routes under
-`/api`. When the credential comes from the CLI config and you have **not** set
-`api_endpoint` explicitly, the provider adopts the context's endpoint (falling
-back to `https://api.frostmoln.cloud/api` if the config omits one), so both API
-calls and the OIDC discovery resolve correctly. If you set `api_endpoint`
-yourself while using a CLI session, include the `/api` suffix — and note that an
-OIDC bearer session requires an `https` endpoint.
+The gateway mounts customer routes under `/api`, so **every** endpoint the
+provider talks to carries that suffix — the default
+(`https://api.frostmoln.cloud/api`) and any `api_endpoint` you set yourself. An
+endpoint without it 404s at the edge (`NOT_FOUND: the requested resource was not
+found`) while the provider configures.
+
+The `fm` CLI stores its endpoint in the same `/api` form. When the credential
+comes from the CLI config and you have **not** set `api_endpoint` explicitly,
+the provider adopts the context's endpoint (falling back to the default if the
+config omits one), so both API calls and the OIDC discovery resolve correctly.
+Note that an OIDC bearer session requires an `https` endpoint.
 
 ## Disabling the CLI fallback (CI)
 

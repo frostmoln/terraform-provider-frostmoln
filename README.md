@@ -27,7 +27,7 @@ terraform {
 }
 
 provider "frostmoln" {
-  api_endpoint = "https://api.frostmoln.cloud"
+  api_endpoint = "https://api.frostmoln.cloud/api"
   api_key      = var.frostmoln_api_key
 }
 ```

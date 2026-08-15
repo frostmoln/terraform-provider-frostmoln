@@ -5,8 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
@@ -128,8 +131,9 @@ func (p *FrostmolnProvider) Schema(_ context.Context, _ provider.SchemaRequest, 
 		Description: "Terraform provider for the Frostmoln Cloud Platform.",
 		Attributes: map[string]schema.Attribute{
 			"api_endpoint": schema.StringAttribute{
-				Description: "The API endpoint URL. Can also be set via the FROSTMOLN_API_ENDPOINT environment variable. Defaults to https://api.frostmoln.cloud.",
-				Optional:    true,
+				Description: "The API endpoint URL, including the /api prefix the gateway mounts customer routes under. " +
+					"Can also be set via the FROSTMOLN_API_ENDPOINT environment variable. Defaults to https://api.frostmoln.cloud/api.",
+				Optional: true,
 			},
 			"api_key": schema.StringAttribute{
 				Description: "The API key for authentication. Can also be set via the FROSTMOLN_API_KEY environment variable. " +
@@ -202,6 +206,9 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 	// fm CLI config (api_key, else OIDC bearer with refresh) > error.
 	var c *client.Client
 	cliConfigFound := false
+	// Whether the endpoint in use was adopted from the fm CLI config, which
+	// changes where a wrong endpoint has to be fixed (see endpointHint).
+	endpointFromCLIConfig := false
 
 	apiKey := ""
 	if !config.APIKey.IsNull() && !config.APIKey.IsUnknown() {
@@ -233,6 +240,7 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 			}
 			// Adopt the CLI's endpoint (with /api) unless one was set explicitly.
 			endpoint := chooseCLIEndpoint(endpointExplicit, apiEndpoint, resolved.APIEndpoint)
+			endpointFromCLIConfig = !endpointExplicit && resolved.APIEndpoint != ""
 			switch {
 			case resolved.APIKey != "":
 				c = client.NewClient(endpoint, resolved.APIKey, ua, ver, tenantOpt)
@@ -278,7 +286,7 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 	if err := c.Configure(ctx); err != nil {
 		resp.Diagnostics.AddError(
 			"Failed to Configure Provider",
-			"Unable to authenticate with the Frostmoln API: "+err.Error(),
+			"Unable to authenticate with the Frostmoln API: "+err.Error()+endpointHint(c.Endpoint(), endpointFromCLIConfig, err),
 		)
 		return
 	}
@@ -287,13 +295,94 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 	resp.ResourceData = c
 }
 
-const (
-	// defaultAPIEndpoint is the api-key path default (historical, no /api suffix).
-	defaultAPIEndpoint = "https://api.frostmoln.cloud"
-	// defaultCLIAPIEndpoint is the fm-CLI-session default. The gateway mounts
-	// customer routes under /api/*, so the CLI path must use the /api form.
-	defaultCLIAPIEndpoint = "https://api.frostmoln.cloud/api"
-)
+// defaultAPIEndpoint is the endpoint used when neither api_endpoint nor
+// FROSTMOLN_API_ENDPOINT is set. The gateway mounts customer routes under
+// /api/*, so the suffix is mandatory: the bare https://api.frostmoln.cloud form
+// 404s at the edge ("NOT_FOUND: the requested resource was not found") on the
+// GET /v1/me the provider makes while configuring. It is the same endpoint the
+// fm CLI stores in ~/.fm/config.yaml, so both credential paths agree.
+const defaultAPIEndpoint = "https://api.frostmoln.cloud/api"
+
+// endpointHint appends a targeted hint when configuration failed with a 404
+// against an endpoint that lacks the /api prefix the gateway mounts customer
+// routes under. Nothing is served on the bare host, so the edge answers the
+// configure-time GET /v1/me with "NOT_FOUND: the requested resource was not
+// found" — which reads like a missing account rather than a wrong URL. The
+// endpoint is never rewritten: a customer may legitimately front the API with
+// their own proxy, so this only names what is wrong.
+func endpointHint(endpoint string, fromCLIConfig bool, err error) string {
+	if !isNotFound(err) || hasAPIPathPrefix(endpoint) {
+		return ""
+	}
+	u, perr := url.Parse(endpoint)
+	if perr != nil {
+		return ""
+	}
+	// Append the prefix to the PATH via net/url rather than concatenating onto
+	// the raw string: "https://host?x=1"+"/api" would bury the segment inside
+	// the query, and a sub-path-mounted proxy needs it after its own path.
+	suggested := *u
+	suggested.Path = strings.TrimSuffix(u.Path, "/") + "/api"
+	suggested.RawPath = ""
+
+	// A CLI-sourced endpoint was adopted from ~/.fm/config.yaml, so the fix
+	// belongs there — telling that practitioner to set api_endpoint would paper
+	// over a stale config that keeps breaking `fm` itself.
+	remedy := fmt.Sprintf("Set api_endpoint (or FROSTMOLN_API_ENDPOINT) to %q, or leave it unset to use the default (%s).",
+		displayURL(&suggested), defaultAPIEndpoint)
+	if fromCLIConfig {
+		remedy = fmt.Sprintf("It was adopted from the fm CLI config; fix it there with `fm config set api_endpoint %s` "+
+			"(a config written before the CLI stored the suffix keeps the old value).", displayURL(&suggested))
+	}
+	return fmt.Sprintf(
+		"\n\nThe endpoint %q has no /api path prefix. Frostmoln's public gateway mounts customer routes under /api, "+
+			"so if this endpoint points at it, requests to the bare host 404 at the edge. %s",
+		displayURL(u), remedy,
+	)
+}
+
+// isNotFound reports whether err is a 404 from either credential path. The
+// X-API-Key path surfaces the gateway's envelope as *client.APIError, but the
+// OIDC bearer path can fail earlier — during the token refresh against
+// <endpoint>/v1/auth/cli-config — where the shared oidc module returns a plain
+// formatted error ("... : HTTP 404: ..."), not an APIError. That refresh is the
+// case most likely to be hitting a stale bare endpoint, so it must not be the
+// one case the hint stays silent for.
+func isNotFound(err error) bool {
+	var apiErr *client.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode == http.StatusNotFound
+	}
+	return err != nil && strings.Contains(err.Error(), "HTTP 404")
+}
+
+// displayURL renders an endpoint for a Terraform diagnostic. Terraform does not
+// redact provider diagnostics and this one repeats on every plan until the
+// endpoint is fixed, so anything credential-shaped in the URL is stripped
+// first: the query and fragment are dropped outright, and Redacted() masks a
+// userinfo password: a practitioner fronting the API with a basic-auth proxy
+// has a working endpoint of the form https://<user>:<password>@host, which
+// net/http turns into an Authorization header. Neither part is relevant to the
+// /api prefix the hint is about.
+func displayURL(u *url.URL) string {
+	shown := *u
+	shown.RawQuery = ""
+	shown.Fragment = ""
+	shown.RawFragment = ""
+	return shown.Redacted()
+}
+
+// hasAPIPathPrefix reports whether the endpoint's path starts with the /api
+// segment. An unparseable endpoint counts as "has it" so the hint stays silent
+// rather than guessing at a URL it could not read.
+func hasAPIPathPrefix(endpoint string) bool {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return true
+	}
+	first, _, _ := strings.Cut(strings.TrimPrefix(u.Path, "/"), "/")
+	return first == "api"
+}
 
 // resolveUseCLIConfig reports whether the fm CLI config fallback is enabled.
 // Defaults to true; the use_cli_config attribute wins, else
@@ -325,8 +414,7 @@ func resolveTenantID(config FrostmolnProviderModel) string {
 
 // chooseCLIEndpoint picks the API endpoint for a CLI-sourced credential: an
 // explicitly-set endpoint wins; otherwise adopt the CLI config's endpoint
-// (which carries the /api suffix), falling back to the /api default rather than
-// the bare api-key default — the bare form 404s at the edge.
+// (which carries the /api suffix), falling back to the default.
 func chooseCLIEndpoint(explicit bool, base, cliEndpoint string) string {
 	if explicit {
 		return base
@@ -334,7 +422,7 @@ func chooseCLIEndpoint(explicit bool, base, cliEndpoint string) string {
 	if cliEndpoint != "" {
 		return cliEndpoint
 	}
-	return defaultCLIAPIEndpoint
+	return defaultAPIEndpoint
 }
 
 // cliConfigPath resolves the fm CLI config path override: the cli_config_path

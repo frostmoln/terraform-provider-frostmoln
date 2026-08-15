@@ -199,10 +199,16 @@ Resources that return HTTP 202 (VPCs, volumes) use the poller in `internal/clien
 
 ```hcl
 provider "frostmoln" {
-  api_endpoint = "https://api.frostmoln.cloud"  # or FROSTMOLN_API_ENDPOINT
-  api_key      = var.frostmoln_api_key             # or FROSTMOLN_API_KEY
+  api_endpoint = "https://api.frostmoln.cloud/api"  # or FROSTMOLN_API_ENDPOINT
+  api_key      = var.frostmoln_api_key              # or FROSTMOLN_API_KEY
 }
 ```
+
+**The `/api` suffix is mandatory** — the gateway mounts every customer route
+under `/api` (`/api/v1/me`, …), so a bare `https://api.frostmoln.cloud` 404s at
+the edge with `NOT_FOUND: the requested resource was not found` while the
+provider configures. It is also what the `fm` CLI stores in `~/.fm/config.yaml`,
+and the default when `api_endpoint` is unset.
 
 ## API Endpoints Reference
 

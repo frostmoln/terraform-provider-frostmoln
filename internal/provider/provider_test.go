@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
 
 func TestProviderSchema(t *testing.T) {
@@ -470,6 +473,105 @@ func TestConfigureCLIConfigDisabled(t *testing.T) {
 	assertHasErrorDiagnostic(t, resp.Diagnostics)
 }
 
+// The gateway mounts every customer route under /api (api-gateway
+// definitions.go serves the current-user endpoint at /api/v1/me), so a default
+// endpoint without that prefix makes the provider's configure-time GET /v1/me
+// 404 at the edge — "NOT_FOUND: the requested resource was not found" — for
+// every practitioner authenticating with an API key, which is exactly what the
+// docs.frostmoln.se getting-started guide tells them to do.
+func TestDefaultAPIEndpointCarriesGatewayAPIPrefix(t *testing.T) {
+	t.Parallel()
+
+	// Asserted on the literal, not via hasAPIPathPrefix: a guard that calls the
+	// helper it is guarding would pass vacuously if that helper regressed to
+	// always-true.
+	if !strings.HasSuffix(defaultAPIEndpoint, "/api") {
+		t.Errorf("defaultAPIEndpoint = %q, want the gateway's /api path prefix", defaultAPIEndpoint)
+	}
+}
+
+func TestEndpointHint(t *testing.T) {
+	t.Parallel()
+
+	notFound := &client.APIError{StatusCode: http.StatusNotFound, Code: "NOT_FOUND", Message: "the requested resource was not found"}
+	cases := []struct {
+		name     string
+		endpoint string
+		err      error
+		wantHint bool
+	}{
+		{"404 on a bare endpoint explains the missing prefix", "https://api.frostmoln.cloud", fmt.Errorf("failed to authenticate: %w", notFound), true},
+		{"404 on an /api endpoint is a real not-found", "https://api.frostmoln.cloud/api", fmt.Errorf("failed to authenticate: %w", notFound), false},
+		{"a non-404 failure is unrelated to the prefix", "https://api.frostmoln.cloud", fmt.Errorf("failed to authenticate: %w", &client.APIError{StatusCode: http.StatusUnauthorized, Code: "AUTHENTICATION_REQUIRED"}), false},
+		{"a transport error carries no status", "https://api.frostmoln.cloud", fmt.Errorf("dial tcp: connection refused"), false},
+		// The OIDC bearer path fails during the token refresh against
+		// <endpoint>/v1/auth/cli-config, where the shared oidc module returns a
+		// plain formatted error rather than an *APIError — the hint must still fire.
+		{"404 from the bearer refresh is not an APIError", "https://api.frostmoln.cloud",
+			fmt.Errorf("refresh access token: fetch cli-config: GET https://api.frostmoln.cloud/v1/auth/cli-config: HTTP 404: not found"), true},
+		{"404 from the bearer refresh on an /api endpoint stays silent", "https://api.frostmoln.cloud/api",
+			fmt.Errorf("refresh access token: fetch cli-config: GET https://api.frostmoln.cloud/api/v1/auth/cli-config: HTTP 404: not found"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := endpointHint(tc.endpoint, false, tc.err)
+			if (got != "") != tc.wantHint {
+				t.Errorf("endpointHint(%q, %v) = %q, want hint: %v", tc.endpoint, tc.err, got, tc.wantHint)
+			}
+		})
+	}
+}
+
+// A stale ~/.fm/config.yaml (written before the CLI stored the /api suffix) is
+// adopted verbatim, so the remedy is to fix the CLI config — not to paper over
+// it with api_endpoint, which would leave `fm` itself broken.
+func TestEndpointHintPointsCLIConfigUsersAtTheCLI(t *testing.T) {
+	t.Parallel()
+
+	notFound := fmt.Errorf("failed to authenticate: %w", &client.APIError{StatusCode: http.StatusNotFound, Code: "NOT_FOUND"})
+	hint := endpointHint("https://api.frostmoln.cloud", true, notFound)
+	if !strings.Contains(hint, "fm config set api_endpoint https://api.frostmoln.cloud/api") {
+		t.Errorf("hint should point at the fm CLI config: %s", hint)
+	}
+	if strings.Contains(hint, "FROSTMOLN_API_ENDPOINT") {
+		t.Errorf("hint should not offer the env-var workaround for a CLI-sourced endpoint: %s", hint)
+	}
+}
+
+// Terraform does not redact provider diagnostics, and this one repeats on every
+// plan until the endpoint is fixed — so a basic-auth proxy endpoint must not
+// spill its password (or a query token) into a CI log.
+func TestEndpointHintRedactsCredentialsInTheEndpoint(t *testing.T) {
+	t.Parallel()
+
+	notFound := fmt.Errorf("failed to authenticate: %w", &client.APIError{StatusCode: http.StatusNotFound, Code: "NOT_FOUND"})
+	hint := endpointHint("https://svc:hunter2@tf-proxy.corp.example?access_token=s3cret", false, notFound)
+	if hint == "" {
+		t.Fatal("expected a hint for a bare endpoint")
+	}
+	for _, secret := range []string{"hunter2", "s3cret"} { // pragma: allowlist secret
+		if strings.Contains(hint, secret) {
+			t.Errorf("hint leaks %q: %s", secret, hint)
+		}
+	}
+	// The suggestion must still be a usable URL: the segment belongs on the
+	// path, not appended after a query string.
+	if !strings.Contains(hint, "tf-proxy.corp.example/api") {
+		t.Errorf("hint does not suggest a well-formed /api endpoint: %s", hint)
+	}
+}
+
+func TestEndpointHintSuggestionKeepsProxySubPath(t *testing.T) {
+	t.Parallel()
+
+	notFound := fmt.Errorf("failed to authenticate: %w", &client.APIError{StatusCode: http.StatusNotFound, Code: "NOT_FOUND"})
+	hint := endpointHint("https://proxy.example/frostmoln/", false, notFound)
+	if !strings.Contains(hint, "https://proxy.example/frostmoln/api") {
+		t.Errorf("hint should append /api to the proxy's own path: %s", hint)
+	}
+}
+
 func TestChooseCLIEndpoint(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -480,7 +582,7 @@ func TestChooseCLIEndpoint(t *testing.T) {
 	}{
 		{"explicit wins", true, "https://explicit.example/api", "https://cli.example/api", "https://explicit.example/api"},
 		{"adopt CLI endpoint", false, defaultAPIEndpoint, "https://cli.example/api", "https://cli.example/api"},
-		{"CLI config without endpoint falls back to /api default", false, defaultAPIEndpoint, "", defaultCLIAPIEndpoint},
+		{"CLI config without endpoint falls back to the default", false, defaultAPIEndpoint, "", defaultAPIEndpoint},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -172,6 +172,13 @@ func (c *Client) Configure(ctx context.Context) error {
 	return nil
 }
 
+// Endpoint returns the base URL the client sends requests to. The provider uses
+// it to explain a configure-time 404 caused by an endpoint missing the gateway's
+// /api path prefix.
+func (c *Client) Endpoint() string {
+	return c.baseURL
+}
+
 // TenantID returns the resolved tenant ID.
 func (c *Client) TenantID() string {
 	return c.tenantID
