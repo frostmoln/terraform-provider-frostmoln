@@ -611,3 +611,43 @@ func TestLockFileExclusive(t *testing.T) {
 	}
 	unlock2()
 }
+
+// The CLI persists `fm tenant use <id>` as a per-context `tenant` key. The
+// provider never reads it, but writeConfig re-marshals the whole file — so a
+// field the struct does not model is DELETED on every token rotation, silently
+// resetting the user to their default tenant. Asserted against the raw YAML
+// (not cliConfig) so it stays honest for any future unmodelled key.
+func TestRefreshPreservesContextTenant(t *testing.T) {
+	s := newOIDCServer(t)
+	cfgWithTenant := strings.ReplaceAll(
+		sampleConfig,
+		"  default:\n    api_endpoint: https://api.frostmoln.cloud/api\n    region: sweden\n",
+		"  default:\n    api_endpoint: https://api.frostmoln.cloud/api\n    region: sweden\n    tenant: tenant-abc\n",
+	)
+	if !strings.Contains(cfgWithTenant, "tenant: tenant-abc") {
+		t.Fatal("test fixture did not gain a tenant key")
+	}
+	path := writeConfigFile(t, cfgWithTenant, 0o600)
+
+	r, err := Resolve(Options{Path: path})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if _, err := r.Bearer.Refresh(context.Background(), s.Client(), s.URL, r.RefreshToken, r.ExpiresAt); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	var raw map[string]any
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("parse back: %v", err)
+	}
+	contexts, _ := raw["contexts"].(map[string]any)
+	def, _ := contexts["default"].(map[string]any)
+	if got := def["tenant"]; got != "tenant-abc" {
+		t.Errorf("contexts.default.tenant = %v after a token write-back, want it preserved; file:\n%s", got, data)
+	}
+}

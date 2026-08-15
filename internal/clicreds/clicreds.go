@@ -43,16 +43,29 @@ type cliCredentials struct {
 }
 
 type cliContext struct {
-	APIEndpoint string         `yaml:"api_endpoint,omitempty"`
-	Region      string         `yaml:"region,omitempty"`
+	APIEndpoint string `yaml:"api_endpoint,omitempty"`
+	Region      string `yaml:"region,omitempty"`
+	// Tenant is the CLI's persisted `fm tenant use <id>` selection. The provider
+	// never reads it, but it MUST round-trip: writeConfig re-marshals this
+	// struct, so a field missing here is deleted from the user's file on every
+	// token rotation — silently resetting them to their default tenant.
+	Tenant      string         `yaml:"tenant,omitempty"`
 	Credentials cliCredentials `yaml:"credentials"`
 }
 
 // cliConfig mirrors fm-cli's config.Config.
 //
-// ponytail: typed round-trip matches fm-cli's own Save(), which likewise drops
-// unknown/future keys and comments. Switch to a yaml.Node round-trip only if
-// the CLI grows fields the provider must preserve verbatim.
+// Every field the CLI persists must be represented here even when the provider
+// has no use for it: writeConfig re-marshals this struct over the user's file,
+// so an unmodelled field is silently DELETED on each token rotation. That is
+// what happened to the per-context `tenant` key after the CLI grew it — the
+// user's `fm tenant use` selection was wiped, and the next fm command ran
+// against their default tenant with no warning.
+//
+// ponytail: the typed round-trip matches fm-cli's own Save(), which likewise
+// drops unknown/future keys and comments. Adding a field here is the fix when
+// the CLI grows one; switch to a yaml.Node round-trip if that ever stops being
+// enough (e.g. comments must survive too).
 type cliConfig struct {
 	APIEndpoint    string                `yaml:"api_endpoint,omitempty"`
 	Region         string                `yaml:"region,omitempty"`
