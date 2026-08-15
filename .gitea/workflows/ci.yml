@@ -11,7 +11,7 @@ jobs:
   # goreleaser, no OCI image). Keep name: CI + job id `test` so the required
   # context stays `CI / test (pull_request)`; version-pin (ADR-0048), Renovate bumps.
   test:
-    uses: frostmoln/workflows/.gitea/workflows/go-build.yml@v0.9.2
+    uses: frostmoln/workflows/.gitea/workflows/go-build.yml@v0.9.3
     with:
       build: false
     secrets:
