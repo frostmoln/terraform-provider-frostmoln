@@ -718,3 +718,146 @@ func TestConfigureExplicitAPIKeyWinsOverCLI(t *testing.T) {
 	}
 	assertNoErrorDiagnostics(t, resp.Diagnostics)
 }
+
+// A practitioner must be able to find out WHICH credential the provider used.
+// The resolution order falls through silently — api_key, FROSTMOLN_API_KEY,
+// then whatever `fm auth login` left behind — and a customer who created an API
+// key for Terraform ran their whole apply as their own user without knowing,
+// then reported the key as "never used". It was never used.
+func TestConfigureNamesTheCredentialSourceOnFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]string{"code": "AUTHENTICATION_REQUIRED", "message": "nope"},
+		})
+	}))
+	defer server.Close()
+
+	t.Run("an API key names the environment variable", func(t *testing.T) {
+		clearCredentialEnv(t)
+		t.Setenv("FROSTMOLN_API_KEY", "fmk_from_env") // pragma: allowlist secret
+		t.Setenv("FROSTMOLN_API_ENDPOINT", server.URL)
+
+		resp, err := providerserver.NewProtocol6(New("test")())().ConfigureProvider(
+			context.Background(), &tfprotov6.ConfigureProviderRequest{
+				Config: newProviderConfig(t, providerConfigValues{}),
+			})
+		if err != nil {
+			t.Fatalf("ConfigureProvider: %v", err)
+		}
+		assertConfigureFailureContains(t, resp.Diagnostics, "using the FROSTMOLN_API_KEY environment variable")
+		assertNoDiagnosticContains(t, resp.Diagnostics, "fmk_from_env") // pragma: allowlist secret
+	})
+
+	t.Run("a CLI session says so, and says it is not an API key", func(t *testing.T) {
+		clearCredentialEnv(t)
+		cfgPath := writeFMConfig(t, `api_endpoint: `+server.URL+`
+current_context: default
+contexts:
+  default:
+    api_endpoint: `+server.URL+`
+    credentials:
+      access_token: at_do_not_log
+      refresh_token: rt_do_not_log
+`)
+		t.Setenv("FROSTMOLN_CLI_CONFIG", cfgPath)
+
+		resp, err := providerserver.NewProtocol6(New("test")())().ConfigureProvider(
+			context.Background(), &tfprotov6.ConfigureProviderRequest{
+				Config: newProviderConfig(t, providerConfigValues{}),
+			})
+		if err != nil {
+			t.Fatalf("ConfigureProvider: %v", err)
+		}
+		assertConfigureFailureContains(t, resp.Diagnostics, "fm CLI login session")
+		assertConfigureFailureContains(t, resp.Diagnostics, "NOT an API key")
+		// The session's tokens must never ride out on the diagnostic.
+		assertNoDiagnosticContains(t, resp.Diagnostics, "at_do_not_log")
+		assertNoDiagnosticContains(t, resp.Diagnostics, "rt_do_not_log")
+	})
+}
+
+// assertConfigureFailureContains pins the phrase to the CONFIGURE FAILURE
+// diagnostic specifically. Matching any diagnostic was vacuous: the
+// "Missing Credentials" text also lists FROSTMOLN_API_KEY, so an assertion on
+// the bare variable name stayed green even if the env credential were never
+// picked up at all.
+func assertConfigureFailureContains(t *testing.T, diags []*tfprotov6.Diagnostic, want string) {
+	t.Helper()
+	for _, d := range diags {
+		if d.Summary == "Failed to Configure Provider" && strings.Contains(d.Detail, want) {
+			return
+		}
+	}
+	t.Errorf("no Failed-to-Configure diagnostic mentioning %q; got %+v", want, diags)
+}
+
+func assertNoDiagnosticContains(t *testing.T, diags []*tfprotov6.Diagnostic, forbidden string) {
+	t.Helper()
+	for _, d := range diags {
+		if strings.Contains(d.Summary+d.Detail, forbidden) {
+			t.Errorf("diagnostic leaked %q: %s / %s", forbidden, d.Summary, d.Detail)
+		}
+	}
+}
+
+// The four labels, tested directly. Driving each through providerserver +
+// httptest would have left the subtlest line — attribute vs environment
+// variable — with no coverage at all.
+func TestCredentialSourceLabels(t *testing.T) {
+	t.Parallel()
+
+	t.Run("cliSourceLabel names the resolved file and context", func(t *testing.T) {
+		t.Parallel()
+		assert := func(got, want string) {
+			t.Helper()
+			if got != want {
+				t.Errorf("cliSourceLabel = %q, want %q", got, want)
+			}
+		}
+		assert(cliSourceLabel("/home/j/.fm/config.yaml", "staging"), "/home/j/.fm/config.yaml, context staging")
+		// A flat, context-less file: no context to name.
+		assert(cliSourceLabel("/home/j/.fm/config.yaml", ""), "/home/j/.fm/config.yaml")
+		// Never guess a path we were not given.
+		assert(cliSourceLabel("", ""), "the fm CLI config")
+	})
+
+	t.Run("an endpoint is redacted before it reaches a log field", func(t *testing.T) {
+		t.Parallel()
+		got := redactedEndpoint("https://svc:hunter2@tf-proxy.corp.example/api?access_token=s3cret") // pragma: allowlist secret
+		for _, secret := range []string{"hunter2", "s3cret"} {                                       // pragma: allowlist secret
+			if strings.Contains(got, secret) {
+				t.Errorf("redactedEndpoint leaked %q: %s", secret, got)
+			}
+		}
+		if !strings.Contains(got, "tf-proxy.corp.example") {
+			t.Errorf("redactedEndpoint dropped the host, leaving nothing useful: %s", got)
+		}
+	})
+}
+
+// An empty api_key attribute must fall through to FROSTMOLN_API_KEY rather
+// than silently disabling it and landing on the CLI session.
+func TestEmptyAPIKeyAttributeFallsThroughToTheEnvironment(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]string{"code": "AUTHENTICATION_REQUIRED", "message": "nope"},
+		})
+	}))
+	defer server.Close()
+
+	clearCredentialEnv(t)
+	t.Setenv("FROSTMOLN_API_KEY", "fmk_from_env") // pragma: allowlist secret
+	t.Setenv("FROSTMOLN_API_ENDPOINT", server.URL)
+	empty := ""
+
+	resp, err := providerserver.NewProtocol6(New("test")())().ConfigureProvider(
+		context.Background(), &tfprotov6.ConfigureProviderRequest{
+			Config: newProviderConfig(t, providerConfigValues{apiKey: &empty}),
+		})
+	if err != nil {
+		t.Fatalf("ConfigureProvider: %v", err)
+	}
+	assertConfigureFailureContains(t, resp.Diagnostics, "using the FROSTMOLN_API_KEY environment variable")
+}

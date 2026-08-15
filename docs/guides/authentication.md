@@ -108,6 +108,34 @@ provider "frostmoln" {
 With the fallback off and no `api_key` / `FROSTMOLN_API_KEY` present, the
 provider fails with a clear "missing credentials" error.
 
+## Which credential am I actually using?
+
+The sources above are tried in order and the first one that has a value wins,
+**silently**. That matters most in the case that looks like success: if your
+shell has no `FROSTMOLN_API_KEY` and you have run `fm auth login`, Terraform
+authenticates with your **CLI session** and creates every resource as *you* —
+your API key is never used, and it will correctly show as never used in the
+portal.
+
+Ask the provider:
+
+```console
+$ TF_LOG_PROVIDER=INFO terraform plan 2>&1 | grep -E "credentials resolved|authenticated"
+... Frostmoln provider credentials resolved: credential_kind=cli_session
+    credential_source="the fm CLI login session (/home/you/.fm/config.yaml, context default), NOT an API key"
+... Frostmoln provider authenticated: credential_kind=cli_session user_id=... tenant_id=...
+```
+
+`credential_kind` is one of `api_key_attribute`, `api_key_env`, `cli_api_key`
+or `cli_session`. If it says `cli_session` and you meant to use an API key,
+either export `FROSTMOLN_API_KEY`, set the `api_key` attribute, or set
+`use_cli_config = false` to make the fallback an error instead of a surprise.
+The same source is named in the `Failed to Configure Provider` diagnostic, so a
+failed run tells you which credential was rejected without any extra logging.
+
+Note that `api_key = ""` counts as unset: an empty attribute falls through to
+`FROSTMOLN_API_KEY` rather than disabling it.
+
 ## Precedence summary
 
 | Source | How | Refresh |

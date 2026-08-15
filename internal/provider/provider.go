@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"go.frostmoln.internal/oidc"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/clicreds"
@@ -210,15 +211,35 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 	// changes where a wrong endpoint has to be fixed (see endpointHint).
 	endpointFromCLIConfig := false
 
+	// An attribute set to "" counts as UNSET, so an empty attribute bound from a
+	// variable with an empty default falls through to the environment instead of
+	// silently disabling it and landing on the CLI session.
 	apiKey := ""
-	if !config.APIKey.IsNull() && !config.APIKey.IsUnknown() {
-		apiKey = config.APIKey.ValueString()
+	apiKeyFromAttribute := false // pragma: allowlist secret
+	if v := stringValue(config.APIKey); v != "" {
+		apiKey, apiKeyFromAttribute = v, true // pragma: allowlist secret
 	} else if v := os.Getenv("FROSTMOLN_API_KEY"); v != "" {
-		apiKey = v
+		apiKey = v // pragma: allowlist secret
 	}
+
+	// Which credential is in play, named at the point it is chosen. The
+	// resolution order silently falls through — api_key, then
+	// FROSTMOLN_API_KEY, then whatever `fm auth login` left in
+	// ~/.fm/config.yaml — so a practitioner who believes they are running as
+	// their API key can be running as their own user instead, and nothing said
+	// so. A customer created an API key for CLI and Terraform, applied a
+	// configuration, and reported the key as "never used": it was never used,
+	// because their shell had no FROSTMOLN_API_KEY and the provider quietly
+	// used their CLI session. INFO, so `TF_LOG=INFO` answers the question and a
+	// normal run stays quiet.
+	credentialSource, credentialKind := "", ""
 
 	switch {
 	case apiKey != "":
+		credentialSource, credentialKind = "the FROSTMOLN_API_KEY environment variable", "api_key_env"
+		if apiKeyFromAttribute {
+			credentialSource, credentialKind = "the api_key provider attribute", "api_key_attribute"
+		}
 		c = client.NewClient(apiEndpoint, apiKey, ua, ver, tenantOpt)
 
 	case useCLI:
@@ -243,6 +264,8 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 			endpointFromCLIConfig = !endpointExplicit && resolved.APIEndpoint != ""
 			switch {
 			case resolved.APIKey != "":
+				credentialSource = fmt.Sprintf("the API key stored in the fm CLI config (%s)", cliSourceLabel(resolved.Path, resolved.Context))
+				credentialKind = "cli_api_key"
 				c = client.NewClient(endpoint, resolved.APIKey, ua, ver, tenantOpt)
 			case resolved.AccessToken != "":
 				// The OIDC bearer token (and the refresh token it is exchanged
@@ -254,6 +277,8 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 					)
 					return
 				}
+				credentialSource = fmt.Sprintf("the fm CLI login session (%s), NOT an API key", cliSourceLabel(resolved.Path, resolved.Context))
+				credentialKind = "cli_session"
 				c = client.NewClient(endpoint, "", ua, ver, tenantOpt, client.WithTokenSource(client.TokenSourceConfig{
 					AccessToken:  resolved.AccessToken,
 					RefreshToken: resolved.RefreshToken,
@@ -283,13 +308,34 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 		return
 	}
 
+	tflog.Info(ctx, "Frostmoln provider credentials resolved", map[string]any{
+		"credential_kind":   credentialKind,
+		"credential_source": credentialSource,
+		// REDACTED, not raw: the endpoint can carry basic-auth userinfo or a
+		// query token (that is why displayURL exists), Terraform does not redact
+		// provider logs, and TF_LOG_PROVIDER=INFO is exactly what a practitioner
+		// turns on to read this line.
+		"api_endpoint": redactedEndpoint(c.Endpoint()),
+	})
+
 	if err := c.Configure(ctx); err != nil {
 		resp.Diagnostics.AddError(
 			"Failed to Configure Provider",
-			"Unable to authenticate with the Frostmoln API: "+err.Error()+endpointHint(c.Endpoint(), endpointFromCLIConfig, err),
+			"Unable to authenticate with the Frostmoln API using "+credentialSource+": "+
+				err.Error()+endpointHint(c.Endpoint(), endpointFromCLIConfig, err),
 		)
 		return
 	}
+
+	// WHO, not just which source. The customer's question was "was my API key
+	// used?", and the answer they needed was that every resource was being
+	// created as their own user. Configure has just resolved both from
+	// GET /v1/me, so say it.
+	tflog.Info(ctx, "Frostmoln provider authenticated", map[string]any{
+		"credential_kind": credentialKind,
+		"user_id":         c.UserID(),
+		"tenant_id":       c.TenantID(),
+	})
 
 	resp.DataSourceData = c
 	resp.ResourceData = c
@@ -423,6 +469,30 @@ func chooseCLIEndpoint(explicit bool, base, cliEndpoint string) string {
 		return cliEndpoint
 	}
 	return defaultAPIEndpoint
+}
+
+// cliSourceLabel names WHICH fm CLI credential was adopted, so the log line and
+// the failure diagnostic point at a file the practitioner can open.
+func cliSourceLabel(path, contextName string) string {
+	if path == "" {
+		path = "the fm CLI config"
+	}
+	if contextName == "" {
+		return path
+	}
+	return path + ", context " + contextName
+}
+
+// redactedEndpoint renders an endpoint for a LOG line. Same reasoning as
+// displayURL, which redacts it for a diagnostic: the value is practitioner-
+// supplied and can carry basic-auth userinfo or a query token, and a log is a
+// wider surface than a diagnostic, not a narrower one.
+func redactedEndpoint(endpoint string) string {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return "(unparseable)"
+	}
+	return displayURL(u)
 }
 
 // cliConfigPath resolves the fm CLI config path override: the cli_config_path

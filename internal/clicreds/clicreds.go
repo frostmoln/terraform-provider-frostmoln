@@ -100,6 +100,15 @@ type Resolved struct {
 	RefreshToken string
 	ExpiresAt    int64
 
+	// Path is the config file actually read, and Context the context actually
+	// chosen (empty for a flat, context-less file). Both are what the provider
+	// reports when it names the credential it authenticated with: reconstructing
+	// them at the call site guesses — it cannot know that an unset cli_context
+	// resolved to the file's current_context, which is the DEFAULT case and the
+	// one a multi-context user most needs named.
+	Path    string
+	Context string
+
 	// PermsWarning is non-empty when the config file is group/other-readable.
 	PermsWarning string
 
@@ -170,6 +179,8 @@ func Resolve(opts Options) (*Resolved, error) {
 	}
 
 	res := &Resolved{
+		Path:         path,
+		Context:      chosen,
 		APIEndpoint:  endpoint,
 		APIKey:       creds.APIKey,
 		AccessToken:  creds.AccessToken,
