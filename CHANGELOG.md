@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.29.0] - 2026-08-15
+
+### 🚀 Features
+
+- *(provider)* Say which credential the provider authenticated with (#323)
+
 ## [0.28.3] - 2026-08-15
 
 ### 🐛 Bug Fixes
