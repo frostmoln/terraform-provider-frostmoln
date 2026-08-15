@@ -2,10 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.28.2] - 2026-08-15
+
+### 🐛 Bug Fixes
+
+- *(provider)* Default the API endpoint to the gateway's /api prefix (#319)
+
 ## [0.28.1] - 2026-08-15
 
 ### 🐛 Bug Fixes
 
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.14 (#316)
 - *(deps)* Update module go.frostmoln.internal/oidc to v0.3.14 (#316)
 
 ### ⚙️ Miscellaneous Tasks
