@@ -128,9 +128,29 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				},
 			},
 			"user_data": schema.StringAttribute{
-				Description: "User data to provide to the instance at launch. This is write-only; the API does not return it. A SHA256 hash is stored in state for change detection.",
-				Optional:    true,
-				Sensitive:   true,
+				Description: "User data to provide to the instance at launch — typically a cloud-init " +
+					"document. This is write-only; the API does not return it. A SHA256 hash is stored " +
+					"in state for change detection.\n\n" +
+					"**Write the document as plain text — `file(\"cloud-init.yaml\")`, not " +
+					"`base64encode(file(...))`.** Base64 is accepted by the API, but it must NOT be " +
+					"used on an instance that also sets `ssh_key_names`, `console_password` or " +
+					"`instance_access`. In those cases the platform merges its own cloud-config into " +
+					"the document, and the merge dispatches on the literal `#cloud-config` prefix: a " +
+					"base64 blob does not carry it, so the blob is treated as a shell script and " +
+					"combined alongside the platform's cloud-config instead of into it. The apply " +
+					"succeeds and the plan stays clean, but the document never runs as cloud-config " +
+					"and the only evidence is in the guest's cloud-init log. Plain text is correct in " +
+					"both directions: a `#cloud-config` document is merged in place, and a `#!` script " +
+					"is combined as intended. See the example below.\n\n" +
+					"The hash is taken over the value AS WRITTEN in the configuration, and any change " +
+					"to `user_data` forces the instance to be REPLACED — so moving a live instance off " +
+					"`base64encode(file(...))` onto `file(...)` plans a replacement even though the " +
+					"document itself is unchanged. Worth doing, but do it deliberately.\n\n" +
+					"A cloud-init step that installs packages or calls an external endpoint also needs " +
+					"the instance's VPC to have an outbound path: declare a `frostmoln_gateway` for the " +
+					"VPC, or the step fails on first boot with no internet and no name resolution.",
+				Optional:  true,
+				Sensitive: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 					stringplanmodifier.RequiresReplace(),

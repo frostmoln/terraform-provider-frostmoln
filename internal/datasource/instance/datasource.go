@@ -115,9 +115,9 @@ func (d *instanceDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 					"network attachment. MAY BE NULL when the platform cannot resolve " +
 					"it (resolution is best-effort), and a multi-NIC instance reports " +
 					"only one of its VPCs. Do not feed this into a RequiresReplace " +
-					"attribute such as frostmoln_instance.vpc_id — a null-to-value " +
+					"attribute such as `frostmoln_instance.vpc_id` — a null-to-value " +
 					"transition would plan a destroy and recreate. Reference " +
-					"frostmoln_vpc.<name>.id for that.",
+					"`frostmoln_vpc.<name>.id` for that.",
 				Computed: true,
 			},
 			"subnet_id": schema.StringAttribute{

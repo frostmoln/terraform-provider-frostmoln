@@ -30,6 +30,36 @@ resource "frostmoln_instance" "example" {
   # Install the Frostmoln in-guest agent at first boot for `fm ssh` terminal access.
   instance_access = true
 
+  # Cloud-init as PLAIN TEXT. Base64 is accepted by the API, but do not use it here:
+  # this instance also sets ssh_key_names, console_password and instance_access, so the
+  # platform merges its own cloud-config into the document — and that merge dispatches
+  # on the literal #cloud-config prefix. A base64 blob does not carry it, so the blob
+  # would be treated as a shell script and the document below would never run. The
+  # apply still succeeds and the plan stays clean; the only evidence is in the guest's
+  # cloud-init log.
+  #
+  # Changing user_data REPLACES the instance, and the change-detection hash is taken
+  # over the value as written — so moving a live instance off base64encode(file(...))
+  # plans a replacement even though the document itself is unchanged.
+  #
+  # cloud-init.yaml, alongside this configuration:
+  #
+  #   #cloud-config
+  #   package_update: true
+  #   packages:
+  #     - nginx
+  #   write_files:
+  #     - path: /var/www/html/index.html
+  #       content: |
+  #         <h1>web-server-01</h1>
+  #   runcmd:
+  #     - [systemctl, enable, --now, nginx]
+  #
+  # That package step needs the VPC to have an outbound path. A VPC with no
+  # frostmoln_gateway has no internet and no platform DNS, and cloud-init fails on
+  # first boot with nothing in the Terraform plan to explain it.
+  user_data = file("${path.module}/cloud-init.yaml")
+
   tags = {
     role        = "web"
     environment = "production"
@@ -54,7 +84,13 @@ resource "frostmoln_instance" "example" {
 - `ssh_key_names` (Set of String) The SSH key names to inject into the instance.
 - `subnet_id` (String) The subnet ID for the instance.
 - `tags` (Map of String) Key-value tags for the instance.
-- `user_data` (String, Sensitive) User data to provide to the instance at launch. This is write-only; the API does not return it. A SHA256 hash is stored in state for change detection.
+- `user_data` (String, Sensitive) User data to provide to the instance at launch — typically a cloud-init document. This is write-only; the API does not return it. A SHA256 hash is stored in state for change detection.
+
+**Write the document as plain text — `file("cloud-init.yaml")`, not `base64encode(file(...))`.** Base64 is accepted by the API, but it must NOT be used on an instance that also sets `ssh_key_names`, `console_password` or `instance_access`. In those cases the platform merges its own cloud-config into the document, and the merge dispatches on the literal `#cloud-config` prefix: a base64 blob does not carry it, so the blob is treated as a shell script and combined alongside the platform's cloud-config instead of into it. The apply succeeds and the plan stays clean, but the document never runs as cloud-config and the only evidence is in the guest's cloud-init log. Plain text is correct in both directions: a `#cloud-config` document is merged in place, and a `#!` script is combined as intended. See the example below.
+
+The hash is taken over the value AS WRITTEN in the configuration, and any change to `user_data` forces the instance to be REPLACED — so moving a live instance off `base64encode(file(...))` onto `file(...)` plans a replacement even though the document itself is unchanged. Worth doing, but do it deliberately.
+
+A cloud-init step that installs packages or calls an external endpoint also needs the instance's VPC to have an outbound path: declare a `frostmoln_gateway` for the VPC, or the step fails on first boot with no internet and no name resolution.
 - `vpc_id` (String) The VPC ID for the instance.
 - `zone` (String) The availability zone for the instance. If omitted, the platform selects one and records it in state.
 

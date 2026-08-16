@@ -37,7 +37,35 @@ func (r *securityGroupRuleResource) Metadata(_ context.Context, req resource.Met
 
 func (r *securityGroupRuleResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a security group rule in the Frostmoln Cloud Platform.",
+		Description: "Manages a security group rule in the Frostmoln Cloud Platform.\n\n" +
+			"One resource is one rule. The parent `frostmoln_security_group` manages the group " +
+			"only and has no `rules` attribute, so the rules a group carries are exactly the " +
+			"`frostmoln_security_group_rule` resources declared for it — plus whatever else exists " +
+			"on the group, which Terraform neither sees nor removes.\n\n" +
+			"**What drift this resource does and does not catch.** Read looks this rule up by id in " +
+			"the parent group's rule list, so a rule THIS configuration owns that is deleted out of " +
+			"band is detected on refresh and planned for re-creation. A rule ADDED out of band is " +
+			"invisible: no resource holds its id, nothing looks for it, and it appears in no plan " +
+			"and is removed by no apply. Terraform cannot tell you a group has gained a rule; only " +
+			"listing the group outside Terraform (`fm`, the portal or the API) can. Bring such a " +
+			"rule under management with `terraform import " +
+			"frostmoln_security_group_rule.<name> <security_group_id>/<rule_id>`.\n\n" +
+			"**Two allow-all egress rules exist on every group before any of these resources are " +
+			"created.** Frostmoln adds no default rules to a security group you create, but the " +
+			"underlying network service unconditionally creates one \"any protocol to " +
+			"everywhere\" egress rule per address family — IPv4 and IPv6 — on every security group, " +
+			"each with an EMPTY remote prefix. Declaring egress rules here does not replace or " +
+			"narrow them: rules are additive, so traffic matching any rule is allowed, and those " +
+			"two keep allowing all outbound traffic until they are deleted. They are unmanaged by " +
+			"Terraform, so removing them is a deliberate act — either delete them outside " +
+			"Terraform, or import them ONLY IN ORDER TO DESTROY THEM, and remove the block from " +
+			"configuration again once the destroy has run. Leaving the block in place makes the " +
+			"next apply try to RE-CREATE the rule, and the platform refuses a rule with no remote " +
+			"(`remote_cidr` and `remote_group_id` both unset). This resource also has no " +
+			"`ether_type` attribute, so the IPv4 and IPv6 defaults are indistinguishable in " +
+			"configuration — only one of the two could ever be expressed.\n\n" +
+			"Every attribute forces replacement: rules are immutable, and a change destroys and " +
+			"re-creates the rule rather than updating it.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the rule.",

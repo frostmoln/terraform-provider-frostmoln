@@ -22,6 +22,30 @@ resource "frostmoln_launch_template" "web" {
   ssh_key_ids        = [frostmoln_ssh_key.deploy.id]
   security_group_ids = [frostmoln_security_group.web.id]
 
+  # Cloud-init as PLAIN TEXT. Base64 is accepted by the API, but do not use it here:
+  # instances launched from this template get SSH keys, so the platform merges its own
+  # cloud-config into the document — and that merge dispatches on the literal
+  # #cloud-config prefix. A base64 blob does not carry it, so the blob would be treated
+  # as a shell script and the document below would never run, with nothing surfacing in
+  # Terraform to say so.
+  #
+  # cloud-init.yaml, alongside this configuration:
+  #
+  #   #cloud-config
+  #   package_update: true
+  #   packages:
+  #     - nginx
+  #   runcmd:
+  #     - [systemctl, enable, --now, nginx]
+  #
+  # That package step needs the launched instance's VPC to have an outbound path. A
+  # VPC with no frostmoln_gateway has no internet and no platform DNS, and cloud-init
+  # fails on first boot with nothing in the Terraform plan to explain it.
+  #
+  # Editing this updates the template; instances already launched from it keep the
+  # user data they were created with.
+  user_data = file("${path.module}/cloud-init.yaml")
+
   metadata = {
     role = "web"
   }
@@ -48,7 +72,11 @@ resource "frostmoln_launch_template" "web" {
 - `security_group_ids` (Set of String) The security group IDs to attach to instances launched from this template.
 - `ssh_key_ids` (Set of String) The SSH key IDs to inject into instances launched from this template.
 - `tags` (Map of String) Key-value tags for the launch template.
-- `user_data` (String, Sensitive) User data to provide to instances at launch. This is write-only; the API does not return it.
+- `user_data` (String, Sensitive) User data to provide to instances at launch — typically a cloud-init document. This is write-only; the API does not return it.
+
+**Write the document as plain text — `file("cloud-init.yaml")`, not `base64encode(file(...))`.** Base64 is accepted by the API, but it must NOT be used when instances launched from this template also get SSH keys, a console password or `instance_access`. In those cases the platform merges its own cloud-config into the document, and the merge dispatches on the literal `#cloud-config` prefix: a base64 blob does not carry it, so the blob is treated as a shell script and combined alongside the platform's cloud-config instead of into it. The launch succeeds and nothing surfaces in Terraform, but the document never runs as cloud-config. Plain text is correct in both directions: a `#cloud-config` document is merged in place, and a `#!` script is combined as intended. See the example below.
+
+Changing this updates the template in place; instances already launched from it keep the user data they were created with. A cloud-init step that installs packages or calls an external endpoint needs the launched instance's VPC to have an outbound path — declare a `frostmoln_gateway` for the VPC, or the step fails on first boot with no internet and no name resolution.
 
 ### Read-Only
 

@@ -40,7 +40,31 @@ func (r *vpcResource) Metadata(_ context.Context, req resource.MetadataRequest, 
 
 func (r *vpcResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a VPC in the Frostmoln Cloud Platform.",
+		Description: "Manages a VPC in the Frostmoln Cloud Platform.\n\n" +
+			"**A VPC created through Terraform is an ISOLATED network until a `frostmoln_gateway` " +
+			"is declared for it.** This resource deliberately carries no connectivity choice: in " +
+			"Terraform the choice IS the presence, absence and `mode` of that separate resource, " +
+			"so a VPC with no `frostmoln_gateway` has no outbound internet path — and no inbound " +
+			"one either.\n\n" +
+			"Platform DNS resolution and managed-service control-plane connectivity are reached over " +
+			"routes that exist only while the gateway does, so they are absent too. Instances in a " +
+			"gateway-less VPC cannot resolve names and cannot fetch anything from the internet — " +
+			"which is what makes a `user_data` cloud-init step that installs packages or calls an " +
+			"external endpoint fail on first boot. A managed database, cache or message broker that " +
+			"is deployed INTO this VPC still answers on its private address: that traffic stays " +
+			"inside the VPC and never crosses the gateway, though reaching it by name does need DNS. " +
+			"This is not a fault to diagnose; it is what a VPC is before its outbound path is " +
+			"declared.\n\n" +
+			"Declare a `frostmoln_gateway` with `vpc_id` set to this VPC to give it that path — see " +
+			"the example below and the `frostmoln_gateway` resource. Connectivity is a stated " +
+			"choice, never one a VPC acquires because a field was omitted.\n\n" +
+			"One thing to know before you conclude the gateway is missing: associating a public IP " +
+			"with an instance in the VPC makes the platform attach a gateway implicitly, because a " +
+			"public IP cannot work without one. Egress then starts working for the WHOLE VPC, not " +
+			"just that instance, and the gateway reports `origin` = \"implicit_public_ip\". It is a " +
+			"real gateway that Terraform did not declare — so prefer declaring `frostmoln_gateway` " +
+			"explicitly, and see that resource for how an implicit gateway and an explicit one " +
+			"interact.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the VPC.",

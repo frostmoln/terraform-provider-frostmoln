@@ -78,9 +78,26 @@ func (r *launchTemplateResource) Schema(_ context.Context, _ resource.SchemaRequ
 				},
 			},
 			"user_data": schema.StringAttribute{
-				Description: "User data to provide to instances at launch. This is write-only; the API does not return it.",
-				Optional:    true,
-				Sensitive:   true,
+				Description: "User data to provide to instances at launch — typically a cloud-init " +
+					"document. This is write-only; the API does not return it.\n\n" +
+					"**Write the document as plain text — `file(\"cloud-init.yaml\")`, not " +
+					"`base64encode(file(...))`.** Base64 is accepted by the API, but it must NOT be " +
+					"used when instances launched from this template also get SSH keys, a console " +
+					"password or `instance_access`. In those cases the platform merges its own " +
+					"cloud-config into the document, and the merge dispatches on the literal " +
+					"`#cloud-config` prefix: a base64 blob does not carry it, so the blob is treated " +
+					"as a shell script and combined alongside the platform's cloud-config instead of " +
+					"into it. The launch succeeds and nothing surfaces in Terraform, but the document " +
+					"never runs as cloud-config. Plain text is correct in both directions: a " +
+					"`#cloud-config` document is merged in place, and a `#!` script is combined as " +
+					"intended. See the example below.\n\n" +
+					"Changing this updates the template in place; instances already launched from it " +
+					"keep the user data they were created with. A cloud-init step that installs " +
+					"packages or calls an external endpoint needs the launched instance's VPC to have " +
+					"an outbound path — declare a `frostmoln_gateway` for the VPC, or the step fails " +
+					"on first boot with no internet and no name resolution.",
+				Optional:  true,
+				Sensitive: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},

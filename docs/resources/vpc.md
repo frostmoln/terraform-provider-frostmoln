@@ -4,15 +4,47 @@ page_title: "frostmoln_vpc Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a VPC in the Frostmoln Cloud Platform.
+  A VPC created through Terraform is an ISOLATED network until a frostmoln_gateway is declared for it. This resource deliberately carries no connectivity choice: in Terraform the choice IS the presence, absence and mode of that separate resource, so a VPC with no frostmoln_gateway has no outbound internet path — and no inbound one either.
+  Platform DNS resolution and managed-service control-plane connectivity are reached over routes that exist only while the gateway does, so they are absent too. Instances in a gateway-less VPC cannot resolve names and cannot fetch anything from the internet — which is what makes a user_data cloud-init step that installs packages or calls an external endpoint fail on first boot. A managed database, cache or message broker that is deployed INTO this VPC still answers on its private address: that traffic stays inside the VPC and never crosses the gateway, though reaching it by name does need DNS. This is not a fault to diagnose; it is what a VPC is before its outbound path is declared.
+  Declare a frostmoln_gateway with vpc_id set to this VPC to give it that path — see the example below and the frostmoln_gateway resource. Connectivity is a stated choice, never one a VPC acquires because a field was omitted.
+  One thing to know before you conclude the gateway is missing: associating a public IP with an instance in the VPC makes the platform attach a gateway implicitly, because a public IP cannot work without one. Egress then starts working for the WHOLE VPC, not just that instance, and the gateway reports origin = "implicit_public_ip". It is a real gateway that Terraform did not declare — so prefer declaring frostmoln_gateway explicitly, and see that resource for how an implicit gateway and an explicit one interact.
 ---
 
 # frostmoln_vpc (Resource)
 
 Manages a VPC in the Frostmoln Cloud Platform.
 
+**A VPC created through Terraform is an ISOLATED network until a `frostmoln_gateway` is declared for it.** This resource deliberately carries no connectivity choice: in Terraform the choice IS the presence, absence and `mode` of that separate resource, so a VPC with no `frostmoln_gateway` has no outbound internet path — and no inbound one either.
+
+Platform DNS resolution and managed-service control-plane connectivity are reached over routes that exist only while the gateway does, so they are absent too. Instances in a gateway-less VPC cannot resolve names and cannot fetch anything from the internet — which is what makes a `user_data` cloud-init step that installs packages or calls an external endpoint fail on first boot. A managed database, cache or message broker that is deployed INTO this VPC still answers on its private address: that traffic stays inside the VPC and never crosses the gateway, though reaching it by name does need DNS. This is not a fault to diagnose; it is what a VPC is before its outbound path is declared.
+
+Declare a `frostmoln_gateway` with `vpc_id` set to this VPC to give it that path — see the example below and the `frostmoln_gateway` resource. Connectivity is a stated choice, never one a VPC acquires because a field was omitted.
+
+One thing to know before you conclude the gateway is missing: associating a public IP with an instance in the VPC makes the platform attach a gateway implicitly, because a public IP cannot work without one. Egress then starts working for the WHOLE VPC, not just that instance, and the gateway reports `origin` = "implicit_public_ip". It is a real gateway that Terraform did not declare — so prefer declaring `frostmoln_gateway` explicitly, and see that resource for how an implicit gateway and an explicit one interact.
+
 ## Example Usage
 
 ```terraform
+# An ISOLATED VPC. This is what a VPC is on its own: no outbound internet, no
+# inbound, and — because they are reached over the same path — no platform DNS
+# resolution and no managed-service connectivity either. Nothing is missing from
+# this configuration; a VPC simply has no connectivity until one is declared for
+# it, and there is no argument here that turns it on.
+resource "frostmoln_vpc" "isolated" {
+  name        = "isolated-vpc"
+  description = "Backend VPC with no internet path"
+  cidr        = "10.1.0.0/16"
+
+  tags = {
+    environment = "production"
+  }
+}
+
+# A CONNECTED VPC. The outbound path is its own resource, frostmoln_gateway,
+# pointed at the VPC. Declare it and instances in the VPC get internet egress,
+# platform DNS resolution and managed-service connectivity; leave it out and they
+# get none of the three — which is what makes a cloud-init step that installs
+# packages or calls an external endpoint fail on first boot.
 resource "frostmoln_vpc" "example" {
   name        = "production-vpc"
   description = "Production VPC"
@@ -22,6 +54,17 @@ resource "frostmoln_vpc" "example" {
     environment = "production"
   }
 }
+
+resource "frostmoln_gateway" "example" {
+  vpc_id = frostmoln_vpc.example.id
+  mode   = "public_ip"
+}
+
+# With no public_ip_id the platform draws the gateway an address itself — fine
+# when nothing outside the VPC needs to know what its traffic comes from. Name a
+# frostmoln_public_ip instead when a partner allow-list or a DNS record does.
+# See the frostmoln_gateway resource for that, and for the
+# acknowledge_connectivity_loss guard that removing a gateway requires.
 ```
 
 <!-- schema generated by tfplugindocs -->
