@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -36,6 +38,29 @@ func (r *publicIPResource) Metadata(_ context.Context, req resource.MetadataRequ
 	resp.TypeName = req.ProviderTypeName + "_public_ip"
 }
 
+// MutualExclusivityNote is the ONE statement of the conflict between
+// `frostmoln_public_ip.instance_id` and the `frostmoln_public_ip_association`
+// resource. Both express the same attachment, so a practitioner reading either
+// surface is choosing between them and has to be told the other exists.
+//
+// It is written once and rendered on BOTH — the resource description and
+// `instance_id` here, the association's description there — because two copies
+// of "these conflict" drift into two different explanations of the same
+// unconverging plan. It lives in this package because the association imports
+// it, and not the other way round.
+const MutualExclusivityNote = "~> **`frostmoln_public_ip.instance_id` and the " +
+	"`frostmoln_public_ip_association` resource are mutually exclusive — never use both for the " +
+	"same address.** Both express the SAME attachment, so both would manage it: whichever applies " +
+	"second undoes what the first did, every subsequent plan proposes the change again, and the " +
+	"configuration never converges. (It is the same conflict the AWS provider documents between " +
+	"`aws_eip.instance` and `aws_eip_association`.)\n\n" +
+	"Pick one per address. Use **`frostmoln_public_ip.instance_id`** when the SAME configuration " +
+	"allocates the address, so the address and its attachment are created and destroyed together.\n\n" +
+	"Use **`frostmoln_public_ip_association`** when the address ALREADY EXISTS (look it up with " +
+	"the `frostmoln_public_ip` data source), or when it has to outlive the instance it is attached " +
+	"to. Destroying that resource detaches the address and leaves it allocated to your tenant, " +
+	"whereas destroying a `frostmoln_public_ip` RELEASES the address for good."
+
 func (r *publicIPResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Manages a public IP in the Frostmoln Cloud Platform.\n\n" +
@@ -49,7 +74,8 @@ func (r *publicIPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"module removal, a `terraform destroy -target`, or CI running `terraform destroy " +
 			"-auto-approve` stops before anything is sent. This provider additionally refuses to " +
 			"release an address that is serving a VPC's outbound path unless `acknowledge_address_loss = " +
-			"true` — see that attribute.",
+			"true` — see that attribute.\n\n" +
+			MutualExclusivityNote,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the public IP.",
@@ -66,8 +92,9 @@ func (r *publicIPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				},
 			},
 			"instance_id": schema.StringAttribute{
-				Description: "The ID of the instance to associate with. Set to associate, remove to disassociate.",
-				Optional:    true,
+				Description: "The ID of the instance to associate with. Set to associate, remove to disassociate.\n\n" +
+					MutualExclusivityNote,
+				Optional: true,
 			},
 			"tags": schema.MapAttribute{
 				Description: "Tags for the public IP.",
@@ -285,25 +312,70 @@ func vpcOrUnknown(vpcID string) string {
 	return vpcID
 }
 
-// resolvePortID looks up the Neutron port to attach a public IP to by reading
-// the instance and returning its first network port. The provisioning associate
-// endpoint requires a portId; instance_id is the user-friendly input the
-// provider resolves on their behalf (mirrors how the portal associates by port).
-func (r *publicIPResource) resolvePortID(ctx context.Context, instanceID string) (string, error) {
-	readResp, err := r.client.Get(ctx, r.client.TenantPath("/instances/"+instanceID), nil)
+// ResolveInstancePortID looks up the Neutron port to attach a public IP to by
+// reading the instance and returning its first network port. The provisioning
+// associate endpoint requires a portId; instance_id is the user-friendly input
+// the provider resolves on their behalf (mirrors how the portal associates by
+// port).
+//
+// Exported because `frostmoln_public_ip_association` has to resolve the SAME
+// port for the same instance. Two copies of "the instance's first network port"
+// that drift would let the two resources bind an address to different ports for
+// one instance, and each would then read the other's binding as drift.
+func ResolveInstancePortID(ctx context.Context, c *client.Client, instanceID string) (string, error) {
+	ports, err := InstancePortIDs(ctx, c, instanceID)
 	if err != nil {
-		return "", fmt.Errorf("failed to read instance %s: %w", instanceID, err)
+		return "", err
+	}
+	return SelectInstancePort(ports, instanceID)
+}
+
+// SelectInstancePort is the rule for "which port does a configuration that
+// names only an INSTANCE mean?" — the first port the platform reports.
+//
+// It is exported and separate from ResolveInstancePortID because
+// `frostmoln_public_ip_association` already holds the whole port set (it needs
+// it to validate a configured `port_id`) and must not re-read the instance just
+// to apply the same rule. One definition, so the two resources cannot drift
+// into binding different ports for the same instance.
+func SelectInstancePort(ports []string, instanceID string) (string, error) {
+	if len(ports) == 0 {
+		return "", fmt.Errorf("instance %s has no network port available to associate the public IP with", instanceID)
+	}
+	return ports[0], nil
+}
+
+// InstancePortIDs returns every network port the instance has, in the order the
+// platform reports them.
+//
+// ResolveInstancePortID picks the first of these to ATTACH to. Deciding whether
+// an address is still attached to an instance is the other question and needs
+// the whole set: an address can sit on a port that is not the first one (it was
+// associated out of band, or the instance grew a second interface afterwards),
+// and reading only the first port would report that as detached and silently
+// drop a live association out of state.
+//
+// A 404 for the instance is returned as the client's not-found error, so
+// callers can tell "the instance is gone" from "the read failed".
+func InstancePortIDs(ctx context.Context, c *client.Client, instanceID string) ([]string, error) {
+	readResp, err := c.Get(ctx, c.TenantPath("/instances/"+instanceID), nil)
+	if err != nil {
+		if client.IsNotFound(err) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("failed to read instance %s: %w", instanceID, err)
 	}
 	var inst apiInstanceForPort
 	if err := json.Unmarshal(readResp.Body, &inst); err != nil {
-		return "", fmt.Errorf("failed to parse instance %s response: %w", instanceID, err)
+		return nil, fmt.Errorf("failed to parse instance %s response: %w", instanceID, err)
 	}
+	ports := make([]string, 0, len(inst.Networks))
 	for _, n := range inst.Networks {
 		if n.PortID != "" {
-			return n.PortID, nil
+			ports = append(ports, n.PortID)
 		}
 	}
-	return "", fmt.Errorf("instance %s has no network port available to associate the public IP with", instanceID)
+	return ports, nil
 }
 
 func (r *publicIPResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -356,15 +428,15 @@ func (r *publicIPResource) Create(ctx context.Context, req resource.CreateReques
 
 	// If instance_id is set, associate after allocation (also async via provisioning).
 	if !plan.InstanceID.IsNull() && !plan.InstanceID.IsUnknown() {
-		portID, portErr := r.resolvePortID(ctx, plan.InstanceID.ValueString())
+		portID, portErr := ResolveInstancePortID(ctx, r.client, plan.InstanceID.ValueString())
 		if portErr != nil {
-			resp.Diagnostics.AddError("Failed to Resolve Instance Port", portErr.Error())
+			AddPortResolutionError(&resp.Diagnostics, plan.InstanceID.ValueString(), portErr)
 			return
 		}
 		assocReq := apiAssociatePublicIPRequest{PortID: portID}
 		assocResp, err := r.client.Post(ctx, r.client.TenantPath(fmt.Sprintf("/public-ips/%s/associate", fipID)), assocReq)
 		if err != nil {
-			addPublicIPError(&resp.Diagnostics, "Failed to Associate Public IP", err)
+			AddAPIError(&resp.Diagnostics, "Failed to Associate Public IP", err)
 			return
 		}
 		if assocResp.IsAccepted() {
@@ -431,6 +503,103 @@ func (r *publicIPResource) Read(ctx context.Context, req resource.ReadRequest, r
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
+// fetch reads one public IP.
+func (r *publicIPResource) fetch(ctx context.Context, fipID string) (*apiPublicIP, error) {
+	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/public-ips/"+fipID), nil)
+	if err != nil {
+		return nil, err
+	}
+	var fip apiPublicIP
+	if err := json.Unmarshal(apiResp.Body, &fip); err != nil {
+		return nil, fmt.Errorf("failed to parse public IP %s response: %w", fipID, err)
+	}
+	return &fip, nil
+}
+
+// detachFromRecordedInstance takes the address off the instance this resource
+// has RECORDED it against — after confirming that is where it actually is. It
+// reports whether the update may continue; diagnostics say why when it may not.
+//
+// The confirmation is the whole point. `disassociate` takes no port: it removes
+// whatever binding the address holds at that moment, so issuing it blind is the
+// same hazard `frostmoln_public_ip_association.Delete` was written to avoid —
+// and it is worse from an UPDATE, because nothing in the plan hints at it. A
+// `frostmoln_public_ip` whose `instance_id` moves from X to Y, while a
+// `frostmoln_public_ip_association` (or anyone else) holds that same address,
+// would rip the address off the port the association bound it to; the running
+// instance loses its inbound address with no plan line saying so, and the
+// association's next Read quietly drops itself from state.
+func (r *publicIPResource) detachFromRecordedInstance(ctx context.Context, fipID, oldInstanceID, newInstanceID string, diags *diag.Diagnostics) bool {
+	fip, err := r.fetch(ctx, fipID)
+	if err != nil {
+		diags.AddError("Failed to Read Public IP", err.Error())
+		return false
+	}
+	if fip.PortID == "" {
+		// No port holds the address, so there is nothing for a disassociate to
+		// remove. (An address that is a VPC's outbound source also has no port;
+		// the associate that may follow is what the platform refuses, with the
+		// gateway text AddAPIError renders.)
+		return true
+	}
+
+	ports, portsErr := InstancePortIDs(ctx, r.client, oldInstanceID)
+	switch {
+	case portsErr != nil && client.IsNotFound(portsErr):
+		// The instance is gone, so it holds nothing: whatever the address is on
+		// now is not this resource's to remove.
+		ports = nil
+	case portsErr != nil:
+		AddPortResolutionError(diags, oldInstanceID, portsErr)
+		return false
+	}
+
+	if slices.Contains(ports, fip.PortID) {
+		return r.disassociate(ctx, fipID, diags)
+	}
+
+	const summary = "Public IP Is Attached To Something Else"
+	detail := fmt.Sprintf("Public IP %s is recorded against instance %s, but the platform reports it "+
+		"attached to port %s, which is not one of that instance's ports. It was attached outside this "+
+		"resource — by a `frostmoln_public_ip_association`, by the portal, or by the CLI.\n\n"+
+		"Detaching it here would take the address away from whatever holds it now, with nothing in "+
+		"the plan saying so, so nothing was disassociated.", fipID, oldInstanceID, fip.PortID)
+
+	if newInstanceID == "" {
+		// The plan only asks for the address to stop being this resource's. It
+		// already is: something else owns the binding.
+		diags.AddWarning(summary, detail+" The address is untouched and still allocated to your tenant.")
+		return true
+	}
+
+	diags.AddError(summary, detail+fmt.Sprintf("\n\nNothing has been changed — the address was NOT "+
+		"moved to instance %s. Decide which configuration owns this attachment first: remove "+
+		"`instance_id` from this resource if a `frostmoln_public_ip_association` manages it, or "+
+		"detach it where it is attached now.", newInstanceID))
+	return false
+}
+
+// disassociate removes the address's current binding and waits for the outcome.
+func (r *publicIPResource) disassociate(ctx context.Context, fipID string, diags *diag.Diagnostics) bool {
+	disResp, err := r.client.Post(ctx, r.client.TenantPath(fmt.Sprintf("/public-ips/%s/disassociate", fipID)), nil)
+	if err != nil {
+		diags.AddError("Failed to Disassociate Public IP", err.Error())
+		return false
+	}
+	if disResp.IsAccepted() {
+		op, opErr := client.ParseResponse[client.Operation](disResp)
+		if opErr != nil {
+			diags.AddError("Failed to Parse Operation Response", opErr.Error())
+			return false
+		}
+		if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute); waitErr != nil {
+			diags.AddError("Public IP Disassociation Failed", waitErr.Error())
+			return false
+		}
+	}
+	return true
+}
+
 func (r *publicIPResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan PublicIPModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -456,34 +625,21 @@ func (r *publicIPResource) Update(ctx context.Context, req resource.UpdateReques
 	if oldInstanceID != newInstanceID {
 		// Disassociate if previously associated
 		if oldInstanceID != "" {
-			disResp, err := r.client.Post(ctx, r.client.TenantPath(fmt.Sprintf("/public-ips/%s/disassociate", fipID)), nil)
-			if err != nil {
-				resp.Diagnostics.AddError("Failed to Disassociate Public IP", err.Error())
+			if !r.detachFromRecordedInstance(ctx, fipID, oldInstanceID, newInstanceID, &resp.Diagnostics) {
 				return
-			}
-			if disResp.IsAccepted() {
-				op, opErr := client.ParseResponse[client.Operation](disResp)
-				if opErr != nil {
-					resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
-					return
-				}
-				if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute); waitErr != nil {
-					resp.Diagnostics.AddError("Public IP Disassociation Failed", waitErr.Error())
-					return
-				}
 			}
 		}
 
 		// Associate if new instance_id is set
 		if newInstanceID != "" {
-			portID, portErr := r.resolvePortID(ctx, newInstanceID)
+			portID, portErr := ResolveInstancePortID(ctx, r.client, newInstanceID)
 			if portErr != nil {
-				resp.Diagnostics.AddError("Failed to Resolve Instance Port", portErr.Error())
+				AddPortResolutionError(&resp.Diagnostics, newInstanceID, portErr)
 				return
 			}
 			assocResp, err := r.client.Post(ctx, r.client.TenantPath(fmt.Sprintf("/public-ips/%s/associate", fipID)), apiAssociatePublicIPRequest{PortID: portID})
 			if err != nil {
-				addPublicIPError(&resp.Diagnostics, "Failed to Associate Public IP", err)
+				AddAPIError(&resp.Diagnostics, "Failed to Associate Public IP", err)
 				return
 			}
 			if assocResp.IsAccepted() {
@@ -586,7 +742,7 @@ func (r *publicIPResource) Delete(ctx context.Context, req resource.DeleteReques
 		// A SYNCHRONOUS refusal — a pre-flight rejection before the release is
 		// started. The raw envelope does not say why an apparently unused
 		// address cannot go, so it is translated.
-		addPublicIPError(&resp.Diagnostics, "Failed to Delete Public IP", err)
+		AddAPIError(&resp.Diagnostics, "Failed to Delete Public IP", err)
 		return
 	}
 
@@ -608,7 +764,7 @@ func (r *publicIPResource) Delete(ctx context.Context, req resource.DeleteReques
 			return
 		}
 		if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute); waitErr != nil {
-			addPublicIPOperationError(&resp.Diagnostics, "Public IP Release Failed", waitErr)
+			AddOperationError(&resp.Diagnostics, "Public IP Release Failed", waitErr)
 			return
 		}
 	}

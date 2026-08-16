@@ -1610,6 +1610,13 @@ func TestFIPResourceUpdateTagsOnly(t *testing.T) {
 func TestFIPResourceUpdateDisassociateError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		// The address must be readable and on the RECORDED instance's port, or
+		// Update stops at the pre-flight read and never reaches the
+		// disassociate this test is about.
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-de-1":
+			_ = json.NewEncoder(w).Encode(apiPublicIP{ID: "fip-de-1", PortID: "port-old"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-old":
+			writeInstanceWithPort(w, "inst-old", "port-old")
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-de-1/disassociate":
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1666,6 +1673,10 @@ func TestFIPResourceUpdateDisassociateError(t *testing.T) {
 func TestFIPResourceUpdateAssociateError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-ae2-1":
+			_ = json.NewEncoder(w).Encode(apiPublicIP{ID: "fip-ae2-1", PortID: "port-old"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-old":
+			writeInstanceWithPort(w, "inst-old", "port-old")
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-ae2-1/disassociate":
 			_ = json.NewEncoder(w).Encode(apiPublicIP{})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-new":
@@ -2630,4 +2641,223 @@ func fipDiagText(diags diag.Diagnostics) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// fipUpdateState builds a state/plan pair for an association change on
+// frostmoln_public_ip: the address is recorded against oldInstance and the plan
+// asks for newInstance ("" meaning `instance_id` removed).
+func fipUpdateStateAndPlan(fipID, oldInstance, newInstance string) (tftypes.Value, tftypes.Value) {
+	row := func(instanceID any, computedKnown bool) tftypes.Value {
+		status := tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
+		privateIP := tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
+		if computedKnown {
+			status = tftypes.NewValue(tftypes.String, "active")
+			privateIP = tftypes.NewValue(tftypes.String, "10.0.1.5")
+		}
+		return tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+			"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
+			"attachment":               fipAttachmentNull(),
+			"id":                       tftypes.NewValue(tftypes.String, fipID),
+			"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
+			"instance_id":              tftypes.NewValue(tftypes.String, instanceID),
+			"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+			"status":                   status,
+			"private_ip":               privateIP,
+			"created_at":               tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		})
+	}
+	var planInstance any
+	if newInstance != "" {
+		planInstance = newInstance
+	}
+	return row(oldInstance, true), row(planInstance, false)
+}
+
+// TestFIPResourceUpdateDoesNotDetachABindingSomebodyElseHolds is the REGRESSION
+// TEST for the blind disassociate in Update.
+//
+// `disassociate` takes no port: it removes whatever binding the address holds
+// at that moment. So moving `frostmoln_public_ip.instance_id` from X to Y, on
+// an address whose attachment a `frostmoln_public_ip_association` (or the
+// portal, or the CLI) actually owns, used to rip that binding out — a running
+// instance losing its inbound address with nothing in the plan saying so, and
+// the association silently dropping itself from state on its next read.
+//
+// Update must confirm the address is where this resource thinks it is before
+// removing anything.
+func TestFIPResourceUpdateDoesNotDetachABindingSomebodyElseHolds(t *testing.T) {
+	var disassociateCalls, associateCalls int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-h2-1":
+			// The address is attached to a port that is NOT inst-old's — an
+			// association resource moved it.
+			_ = json.NewEncoder(w).Encode(apiPublicIP{
+				ID: "fip-h2-1", Address: "203.0.113.50", Status: "active", PortID: "port-held-by-someone-else",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-old":
+			writeInstanceWithPort(w, "inst-old", "port-old")
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-new":
+			writeInstanceWithPort(w, "inst-new", "port-new")
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-h2-1/disassociate":
+			disassociateCalls++
+			_ = json.NewEncoder(w).Encode(apiPublicIP{ID: "fip-h2-1"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-h2-1/associate":
+			associateCalls++
+			_ = json.NewEncoder(w).Encode(apiPublicIP{ID: "fip-h2-1", PortID: "port-new"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := fipSchema(t)
+	stateVal, planVal := fipUpdateStateAndPlan("fip-h2-1", "inst-old", "inst-new")
+
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s}}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: s, Raw: planVal},
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}, resp)
+
+	if disassociateCalls != 0 {
+		t.Errorf("Update must NOT detach a binding this resource does not hold — that is a live "+
+			"attachment removed with nothing in the plan saying so (got %d disassociate calls)", disassociateCalls)
+	}
+	if associateCalls != 0 {
+		t.Errorf("nothing may be attached either: the address is still somewhere else (got %d associate calls)", associateCalls)
+	}
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("moving an address that something else holds must fail the apply, not be papered over")
+	}
+	if detail := resp.Diagnostics.Errors()[0].Detail(); !strings.Contains(detail, "port-held-by-someone-else") {
+		t.Errorf("the diagnostic must name the port that actually holds the address, got: %s", detail)
+	}
+}
+
+// TestFIPResourceUpdateWarnsWhenDetachingSomethingAlreadyMoved: removing
+// `instance_id` asks for the address to stop being this resource's. It already
+// is — something else owns the binding — so the update succeeds without
+// touching that binding, and says so.
+func TestFIPResourceUpdateWarnsWhenDetachingSomethingAlreadyMoved(t *testing.T) {
+	var disassociateCalls int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-h2-2":
+			_ = json.NewEncoder(w).Encode(apiPublicIP{
+				ID: "fip-h2-2", Address: "203.0.113.50", Status: "active", PortID: "port-held-by-someone-else",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-old":
+			writeInstanceWithPort(w, "inst-old", "port-old")
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-h2-2/disassociate":
+			disassociateCalls++
+			_ = json.NewEncoder(w).Encode(apiPublicIP{ID: "fip-h2-2"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := fipSchema(t)
+	stateVal, planVal := fipUpdateStateAndPlan("fip-h2-2", "inst-old", "")
+
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s}}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: s, Raw: planVal},
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("dropping instance_id must succeed — the address already is not this resource's: %v",
+			resp.Diagnostics.Errors())
+	}
+	if disassociateCalls != 0 {
+		t.Errorf("nothing may be detached: the binding belongs to something else (got %d calls)", disassociateCalls)
+	}
+	if resp.Diagnostics.WarningsCount() == 0 {
+		t.Error("the practitioner has to be told the address was attached outside this resource")
+	}
+}
+
+// TestFIPResourceUpdateStillDetachesItsOwnBinding: the guard must not become a
+// refusal to do the ordinary thing. When the address IS on the recorded
+// instance's port, the move happens exactly as before.
+func TestFIPResourceUpdateStillDetachesItsOwnBinding(t *testing.T) {
+	var disassociateCalls, associateCalls int
+	attachedPort := "port-old"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-h2-3":
+			_ = json.NewEncoder(w).Encode(apiPublicIP{
+				ID: "fip-h2-3", Address: "203.0.113.50", Status: "active", PortID: attachedPort,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-old":
+			writeInstanceWithPort(w, "inst-old", "port-old")
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/instances/inst-new":
+			writeInstanceWithPort(w, "inst-new", "port-new")
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-h2-3/disassociate":
+			disassociateCalls++
+			attachedPort = ""
+			_ = json.NewEncoder(w).Encode(apiPublicIP{ID: "fip-h2-3"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-h2-3/associate":
+			associateCalls++
+			attachedPort = "port-new"
+			_ = json.NewEncoder(w).Encode(apiPublicIP{ID: "fip-h2-3", PortID: "port-new"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := fipSchema(t)
+	stateVal, planVal := fipUpdateStateAndPlan("fip-h2-3", "inst-old", "inst-new")
+
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s}}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: s, Raw: planVal},
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("the ordinary move must still work: %v", resp.Diagnostics.Errors())
+	}
+	if disassociateCalls != 1 || associateCalls != 1 {
+		t.Errorf("expected one disassociate and one associate, got %d and %d", disassociateCalls, associateCalls)
+	}
+
+	var model PublicIPModel
+	resp.State.Get(context.Background(), &model)
+	if model.InstanceID.ValueString() != "inst-new" {
+		t.Errorf("expected instance_id inst-new, got %s", model.InstanceID.ValueString())
+	}
 }

@@ -78,6 +78,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/postgres_instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/postgres_read_replica"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/public_ip"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/public_ip_association"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/redis_instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/s3_credential"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/scale_group"
@@ -525,6 +526,7 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		security_group.NewResource,
 		security_group_rule.NewResource,
 		public_ip.NewResource,
+		public_ip_association.NewResource,
 		dns_zone.NewResource,
 		gateway.NewResource,
 		dns_record.NewResource,

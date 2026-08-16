@@ -2,6 +2,7 @@ package public_ip
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -37,10 +38,14 @@ const inUseByGatewayDetail = "The platform refused the change because this addre
 	"outbound path at all. Terraform sequences that for you when the gateway's `public_ip_id` refers to this " +
 	"resource — the gateway is then changed or destroyed before this address is.\n\n"
 
-// addPublicIPError appends the best diagnostic available for a SYNCHRONOUS
+// AddAPIError appends the best diagnostic available for a SYNCHRONOUS
 // failure — one carried by the HTTP response itself. fallback is the summary
 // used for anything this surface does not define.
-func addPublicIPError(diags *diag.Diagnostics, fallback string, err error) {
+//
+// Exported because `frostmoln_public_ip_association` writes to the same
+// endpoints and gets the same refusals; one copy of the gateway text, so the
+// two resources cannot describe the identical refusal differently.
+func AddAPIError(diags *diag.Diagnostics, fallback string, err error) {
 	var apiErr *client.APIError
 	if !errors.As(err, &apiErr) {
 		diags.AddError(fallback, err.Error())
@@ -55,7 +60,7 @@ func addPublicIPError(diags *diag.Diagnostics, fallback string, err error) {
 	diags.AddError(inUseByGatewaySummary, inUseByGatewayDetail+"API said: "+apiErr.Message)
 }
 
-// addPublicIPOperationError appends the best diagnostic available for an
+// AddOperationError appends the best diagnostic available for an
 // ASYNCHRONOUS failure — one reported by a provisioning operation rather than
 // by the HTTP response that started it.
 //
@@ -65,10 +70,44 @@ func addPublicIPError(diags *diag.Diagnostics, fallback string, err error) {
 // the operation's error message as a plain string. A substring match is weaker
 // than a code comparison, so the fallback carries the operation's message
 // verbatim — a missed match costs presentation, never information.
-func addPublicIPOperationError(diags *diag.Diagnostics, fallback string, err error) {
+func AddOperationError(diags *diag.Diagnostics, fallback string, err error) {
+	AddOperationErrorContext(diags, fallback, "", err)
+}
+
+// AddOperationErrorContext is AddOperationError with practitioner context put
+// in FRONT of the operation's verbatim message: what was being attempted, and
+// what is true now that it failed.
+//
+// The gateway translation still wins when it matches — that text already says
+// both, and says them better than a caller-supplied line could.
+func AddOperationErrorContext(diags *diag.Diagnostics, fallback, context string, err error) {
 	if strings.Contains(err.Error(), errCodeInUseByGateway) {
 		diags.AddError(inUseByGatewaySummary, inUseByGatewayDetail+"The platform said: "+err.Error())
 		return
 	}
-	diags.AddError(fallback, err.Error())
+	if context == "" {
+		diags.AddError(fallback, err.Error())
+		return
+	}
+	diags.AddError(fallback, context+"\n\nThe platform said: "+err.Error())
+}
+
+// AddPortResolutionError renders a failed instance-port lookup as a diagnostic
+// that still names the INSTANCE.
+//
+// InstancePortIDs deliberately returns the client's error unwrapped on a 404 —
+// client.IsNotFound is a bare type assertion, so a `%w` prefix would defeat the
+// "the instance is gone" branch that reads it. The instance id is therefore
+// re-attached HERE, at the point the error becomes practitioner copy, instead of
+// in the error value: "not found: not found" tells nobody which instance.
+func AddPortResolutionError(diags *diag.Diagnostics, instanceID string, err error) {
+	const summary = "Failed to Resolve Instance Port"
+	if client.IsNotFound(err) {
+		diags.AddError(summary, fmt.Sprintf(
+			"Instance %s was not found, so the network port to attach the address to could not be "+
+				"resolved. Nothing was changed.", instanceID))
+		return
+	}
+	diags.AddError(summary, fmt.Sprintf(
+		"Could not resolve the network port of instance %s: %s", instanceID, err.Error()))
 }

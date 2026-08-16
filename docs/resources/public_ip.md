@@ -6,6 +6,9 @@ description: |-
   Manages a public IP in the Frostmoln Cloud Platform.
   Destroying this resource RELEASES THE ADDRESS, and the address does not come back. It returns to a shared regional pool and is re-issued to whoever asks for one next — possibly another tenant, within minutes. Anything that named it stops matching: a partner's allow-list entry, a DNS record, a firewall rule at the other end.
   There is no undo and no support request that recovers it, so an address anyone else depends on is worth protecting in the configuration itself with Terraform's own lifecycle { prevent_destroy = true } — see the example below. It fails the PLAN, so a module removal, a terraform destroy -target, or CI running terraform destroy -auto-approve stops before anything is sent. This provider additionally refuses to release an address that is serving a VPC's outbound path unless acknowledge_address_loss = true — see that attribute.
+  ~> frostmoln_public_ip.instance_id and the frostmoln_public_ip_association resource are mutually exclusive — never use both for the same address. Both express the SAME attachment, so both would manage it: whichever applies second undoes what the first did, every subsequent plan proposes the change again, and the configuration never converges. (It is the same conflict the AWS provider documents between aws_eip.instance and aws_eip_association.)
+  Pick one per address. Use frostmoln_public_ip.instance_id when the SAME configuration allocates the address, so the address and its attachment are created and destroyed together.
+  Use frostmoln_public_ip_association when the address ALREADY EXISTS (look it up with the frostmoln_public_ip data source), or when it has to outlive the instance it is attached to. Destroying that resource detaches the address and leaves it allocated to your tenant, whereas destroying a frostmoln_public_ip RELEASES the address for good.
 ---
 
 # frostmoln_public_ip (Resource)
@@ -15,6 +18,12 @@ Manages a public IP in the Frostmoln Cloud Platform.
 **Destroying this resource RELEASES THE ADDRESS, and the address does not come back.** It returns to a shared regional pool and is re-issued to whoever asks for one next — possibly another tenant, within minutes. Anything that named it stops matching: a partner's allow-list entry, a DNS record, a firewall rule at the other end.
 
 There is no undo and no support request that recovers it, so an address anyone else depends on is worth protecting in the configuration itself with Terraform's own `lifecycle { prevent_destroy = true }` — see the example below. It fails the PLAN, so a module removal, a `terraform destroy -target`, or CI running `terraform destroy -auto-approve` stops before anything is sent. This provider additionally refuses to release an address that is serving a VPC's outbound path unless `acknowledge_address_loss = true` — see that attribute.
+
+~> **`frostmoln_public_ip.instance_id` and the `frostmoln_public_ip_association` resource are mutually exclusive — never use both for the same address.** Both express the SAME attachment, so both would manage it: whichever applies second undoes what the first did, every subsequent plan proposes the change again, and the configuration never converges. (It is the same conflict the AWS provider documents between `aws_eip.instance` and `aws_eip_association`.)
+
+Pick one per address. Use **`frostmoln_public_ip.instance_id`** when the SAME configuration allocates the address, so the address and its attachment are created and destroyed together.
+
+Use **`frostmoln_public_ip_association`** when the address ALREADY EXISTS (look it up with the `frostmoln_public_ip` data source), or when it has to outlive the instance it is attached to. Destroying that resource detaches the address and leaves it allocated to your tenant, whereas destroying a `frostmoln_public_ip` RELEASES the address for good.
 
 ## Example Usage
 
@@ -104,6 +113,12 @@ Set it to true and apply, then destroy. Leaving it unset (the default) makes `te
 
 It is not a substitute for `lifecycle { prevent_destroy = true }`, which fails the plan rather than the apply and covers every reason an address can be destroyed, including ones this attribute does not gate.
 - `instance_id` (String) The ID of the instance to associate with. Set to associate, remove to disassociate.
+
+~> **`frostmoln_public_ip.instance_id` and the `frostmoln_public_ip_association` resource are mutually exclusive — never use both for the same address.** Both express the SAME attachment, so both would manage it: whichever applies second undoes what the first did, every subsequent plan proposes the change again, and the configuration never converges. (It is the same conflict the AWS provider documents between `aws_eip.instance` and `aws_eip_association`.)
+
+Pick one per address. Use **`frostmoln_public_ip.instance_id`** when the SAME configuration allocates the address, so the address and its attachment are created and destroyed together.
+
+Use **`frostmoln_public_ip_association`** when the address ALREADY EXISTS (look it up with the `frostmoln_public_ip` data source), or when it has to outlive the instance it is attached to. Destroying that resource detaches the address and leaves it allocated to your tenant, whereas destroying a `frostmoln_public_ip` RELEASES the address for good.
 - `tags` (Map of String) Tags for the public IP.
 
 ### Read-Only
