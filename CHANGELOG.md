@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.30.0] - 2026-08-16
+
+### 🚀 Features
+
+- *(public-ip)* Attach an already-reserved Public IP to an instance (#326)
+
+### 📚 Documentation
+
+- *(provider)* A Terraform VPC is isolated, user_data must be plain text, and SG rule drift is invisible (#325)
+
 ## [0.29.0] - 2026-08-15
 
 ### 🚀 Features
