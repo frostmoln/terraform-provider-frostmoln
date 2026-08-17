@@ -1,10 +1,22 @@
 # A public IP attached to an instance. Destroying this releases the address.
+#
+# `instance_id` is what makes the ATTACHMENT here, and an attached address
+# depends on the VPC having a gateway — which Terraform cannot see, because
+# nothing in this resource refers to frostmoln_gateway. Left unordered the two
+# run concurrently: on teardown the gateway usually goes first and its delete is
+# refused ("Gateway is still in use", GATEWAY_IN_USE), and on create the
+# attachment can land first, after which the platform attaches a gateway itself
+# and an explicit one either collides with it (GATEWAY_EXISTS, if it pins a
+# public_ip_id) or silently adopts it. depends_on states the order; it creates
+# and releases nothing.
 resource "frostmoln_public_ip" "example" {
   instance_id = frostmoln_instance.example.id
 
   tags = {
     service = "web"
   }
+
+  depends_on = [frostmoln_gateway.partner_facing]
 }
 
 # AN ADDRESS SOMEONE ELSE DEPENDS ON — one in a partner's allow-list, published
@@ -36,6 +48,13 @@ resource "frostmoln_public_ip" "partner_facing" {
 
 # This address is the VPC's outbound source address, so the whole VPC's traffic
 # arrives from it. See frostmoln_gateway.
+#
+# NOTE THE ASYMMETRY WITH THE ADDRESS ABOVE. This one is NAMED by the gateway, so
+# the gateway already depends on it and Terraform already sequences the two
+# correctly — allocate first, and on teardown detach the gateway before the
+# address is released. Adding a depends_on back to the gateway here would be a
+# plan-time `Cycle:` error. The ordering above is needed only because an ATTACHED
+# address has no such reference to derive the dependency from.
 resource "frostmoln_gateway" "partner_facing" {
   vpc_id       = frostmoln_vpc.example.id
   mode         = "public_ip"

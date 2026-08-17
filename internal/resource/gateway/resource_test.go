@@ -1187,6 +1187,71 @@ func TestGatewayInUseDiagnosticPutsDependsOnOnThePublicIP(t *testing.T) {
 	}
 }
 
+// TestGatewayInUseDiagnosticNamesBothAttachingResources: the `depends_on`
+// belongs on whichever resource makes the ATTACHMENT, and there are two that
+// can. A diagnostic that names only `frostmoln_public_ip` sends a practitioner
+// whose attachment is a `frostmoln_public_ip_association` to a resource where
+// the dependency is at best redundant — and where, if the address is looked up
+// with the data source rather than allocated here, there is no resource to put
+// it on at all. That is not hypothetical: it is how this text was first found
+// wanting, by a practitioner who had to move the dependency across by hand.
+func TestGatewayInUseDiagnosticNamesBothAttachingResources(t *testing.T) {
+	var diags diag.Diagnostics
+	addGatewayError(&diags, "Failed to delete gateway", &client.APIError{
+		Code: errCodeGatewayInUse, Message: "1 public IP in this VPC still depends on the gateway", StatusCode: 409,
+	})
+
+	// ANCHORED, not bare resource names: "frostmoln_public_ip" is a substring of
+	// "frostmoln_public_ip_association", so a bare Contains for the former passes
+	// on a diagnostic that names only the latter — the very regression this test
+	// exists to catch. Each want below appears only in its own clause.
+	text := diagText(diags)
+	for _, want := range []string{
+		"`frostmoln_public_ip` where its own `instance_id`",
+		"`frostmoln_public_ip_association` where that",
+		"`frostmoln_load_balancer` where a public-scheme",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the ordering advice must name every surface that can hold the address, and say "+
+				"which is which; %q is missing from:\n%s", want, text)
+		}
+	}
+	if !strings.Contains(text, "ATTACHES") {
+		t.Errorf("the advice must say the dependency goes on the resource that ATTACHES the address — "+
+			"naming three resources without saying how to choose is worse than naming one, got:\n%s", text)
+	}
+	// The cycle is the one way this advice can make things WORSE than the failure
+	// it is fixing: a plan that no longer runs at all.
+	if !strings.Contains(text, "Cycle:") {
+		t.Errorf("the advice must warn that the address a frostmoln_gateway.public_ip_id names is the "+
+			"one place this dependency is a plan-time cycle, got:\n%s", text)
+	}
+}
+
+// TestGatewayExistsDiagnosticDescribesTheReachableCause: `mode` has one settable
+// value since ADR-0114, so the old text ("already has a gateway in a different
+// mode") named a cause that cannot occur, and offered a remedy — import, then set
+// `mode` — for a change there is nothing to make. What actually reaches this code
+// is a create that pins a `public_ip_id` against a gateway the VPC already has,
+// most often one the PLATFORM attached when an address was associated first.
+func TestGatewayExistsDiagnosticDescribesTheReachableCause(t *testing.T) {
+	var diags diag.Diagnostics
+	addGatewayError(&diags, "Failed to create gateway", &client.APIError{
+		Code: errCodeGatewayExists, Message: "VPC vpc-1 already has a gateway", StatusCode: 409,
+	})
+
+	text := diagText(diags)
+	if strings.Contains(text, "different mode") {
+		t.Errorf("the diagnostic still blames a mode difference, which ADR-0114 made impossible:\n%s", text)
+	}
+	if !strings.Contains(text, "public_ip_id") {
+		t.Errorf("the diagnostic must name the pinned address as the collision, got:\n%s", text)
+	}
+	if !strings.Contains(text, "terraform import frostmoln_gateway") {
+		t.Errorf("the diagnostic must still offer the import, got:\n%s", text)
+	}
+}
+
 func TestGatewayDeleteInUse(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(apiErrorHandler(&calls, http.StatusConflict,

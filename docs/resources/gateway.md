@@ -86,12 +86,23 @@ resource "frostmoln_gateway" "chosen_address" {
 # change that forces replacement would then disconnect the VPC with nothing in
 # the plan beyond an ordinary "will be destroyed" line.
 
-# An associated public IP cannot exist without a gateway, so put the
-# dependency on the PUBLIC IP, pointing at the gateway. Terraform then creates
-# the gateway first (associating a public IP into a gateway-less VPC makes the
-# platform attach one implicitly, and the explicit gateway would then collide
-# with it) and destroys the public IPs first (the gateway cannot be removed
-# while they still depend on it).
+# An ATTACHED public IP cannot exist without a gateway, so put the dependency on
+# the resource that makes the ATTACHMENT, pointing at the gateway. Terraform then
+# creates the gateway first and destroys the attachments first (the gateway
+# cannot be removed while they still depend on it — GATEWAY_IN_USE).
+#
+# The create order matters as much as the destroy order: attaching an address
+# into a VPC with no gateway makes the platform attach one itself, after which an
+# explicit gateway that pins a public_ip_id collides with it (GATEWAY_EXISTS) and
+# one that pins none does NOT fail — it silently adopts the platform's gateway,
+# and the VPC egresses from an address nobody chose.
+#
+# Below is the frostmoln_public_ip itself, because its own instance_id is what
+# attaches the address. Where a frostmoln_public_ip_association attaches it, or a
+# public-scheme frostmoln_load_balancer holds it, the depends_on goes on THAT
+# resource — the attachment is what depends on the gateway, not the allocation.
+# Never put it on frostmoln_public_ip.egress above: the gateway already refers to
+# that address, so a dependency back the other way is a plan-time Cycle error.
 resource "frostmoln_public_ip" "example" {
   instance_id = frostmoln_instance.example.id
 

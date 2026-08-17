@@ -70,11 +70,16 @@ func TestExampleCarriesNoInternalNames(t *testing.T) {
 }
 
 // TestExampleOrdersPublicIPsAfterTheGateway pins the dependency direction the
-// GATEWAY_IN_USE diagnostic also teaches: the `depends_on` belongs on
-// the public IP, pointing at the gateway. Terraform creates the gateway first
-// (an association into a gateway-less VPC makes the platform attach an implicit
-// one, which then collides with an explicit `nat` gateway) and destroys the
-// public IPs first (the gateway cannot be removed while they depend on it).
+// GATEWAY_IN_USE diagnostic also teaches: the `depends_on` belongs on the
+// resource that ATTACHES the address, pointing at the gateway. Terraform then
+// creates the gateway first (an attachment into a gateway-less VPC makes the
+// platform attach one itself, which an explicit gateway either collides with or
+// silently adopts) and destroys the attachments first (the gateway cannot be
+// removed while they depend on it).
+//
+// The `nat` mode this comment used to cite as the collision case is withdrawn
+// (ADR-0114); `public_ip` is the only settable mode, so the collision is now a
+// pinned `public_ip_id`, and an unpinned create is the SILENT case.
 func TestExampleOrdersPublicIPsAfterTheGateway(t *testing.T) {
 	example := readExample(t)
 	if !strings.Contains(example, "depends_on = [frostmoln_gateway") {

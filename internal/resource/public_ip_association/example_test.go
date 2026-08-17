@@ -103,3 +103,33 @@ func TestExampleCarriesNoInternalNames(t *testing.T) {
 		}
 	}
 }
+
+// TestExampleShowsTheGatewayOrdering pins the `depends_on` this example must
+// teach, and the resource it belongs on.
+//
+// Terraform cannot derive the dependency — nothing in this resource refers to
+// `frostmoln_gateway` — so an unaided practitioner meets it as a destroy that
+// fails with GATEWAY_IN_USE half way through a teardown, or a create that fails
+// with GATEWAY_EXISTS. The dependency belongs on the ATTACHMENT: pointing it the
+// other way about (on the gateway, listing the addresses) reverses both orders
+// and fixes neither.
+func TestExampleShowsTheGatewayOrdering(t *testing.T) {
+	example := readExample(t)
+
+	if !strings.Contains(example, "depends_on = [frostmoln_gateway") {
+		t.Error("the example must show depends_on on the association, pointing at the gateway: an " +
+			"attached address cannot exist without a gateway and Terraform cannot see that")
+	}
+	// Matched with the trailing dot: "depends_on = [frostmoln_public_ip" also
+	// rejects a legitimate depends_on naming an ASSOCIATION.
+	if strings.Contains(example, "depends_on = [frostmoln_public_ip.") {
+		t.Error("a depends_on pointing at the public IPs reverses both the create and the destroy " +
+			"order, and leaves the destroy failing with GATEWAY_IN_USE")
+	}
+	for _, want := range []string{"GATEWAY_IN_USE", "GATEWAY_EXISTS"} {
+		if !strings.Contains(example, want) {
+			t.Errorf("the example must name %s — the failure this ordering prevents is how a reader "+
+				"recognises the problem they already have", want)
+		}
+	}
+}

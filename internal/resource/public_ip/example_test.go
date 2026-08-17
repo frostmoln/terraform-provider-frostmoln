@@ -86,3 +86,32 @@ func TestExampleCarriesNoInternalNames(t *testing.T) {
 		}
 	}
 }
+
+// TestExampleOrdersTheAttachedAddressAfterTheGateway.
+//
+// The example is the snippet practitioners copy, and it declares a gateway in
+// the same VPC as an address attached with `instance_id`. Without the dependency
+// it IS the configuration whose destroy fails with GATEWAY_IN_USE — the failure
+// the attribute note directly below it on the rendered page warns about.
+//
+// The second half is the asymmetry, and it is the more dangerous half: the
+// address a `frostmoln_gateway.public_ip_id` NAMES must never get this
+// dependency, because the gateway already depends on it and the reverse edge is
+// a plan-time cycle. An example that ordered both would hand every reader a
+// configuration that no longer plans.
+func TestExampleOrdersTheAttachedAddressAfterTheGateway(t *testing.T) {
+	example := readExample(t)
+
+	if !strings.Contains(example, "depends_on = [frostmoln_gateway") {
+		t.Error("the example attaches an address with instance_id in a VPC that has a gateway, so it " +
+			"must show the depends_on that orders the two — Terraform cannot derive it")
+	}
+	if strings.Contains(example, "depends_on = [frostmoln_public_ip") {
+		t.Error("a depends_on pointing at the addresses reverses both orders; the dependency belongs " +
+			"on the resource that attaches, pointing at the gateway")
+	}
+	if !strings.Contains(example, "Cycle") {
+		t.Error("the example must say why the address NAMED by frostmoln_gateway.public_ip_id does " +
+			"not get the same line: adding it there is a plan-time cycle")
+	}
+}

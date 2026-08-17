@@ -29,12 +29,24 @@ Use **`frostmoln_public_ip_association`** when the address ALREADY EXISTS (look 
 
 ```terraform
 # A public IP attached to an instance. Destroying this releases the address.
+#
+# `instance_id` is what makes the ATTACHMENT here, and an attached address
+# depends on the VPC having a gateway — which Terraform cannot see, because
+# nothing in this resource refers to frostmoln_gateway. Left unordered the two
+# run concurrently: on teardown the gateway usually goes first and its delete is
+# refused ("Gateway is still in use", GATEWAY_IN_USE), and on create the
+# attachment can land first, after which the platform attaches a gateway itself
+# and an explicit one either collides with it (GATEWAY_EXISTS, if it pins a
+# public_ip_id) or silently adopts it. depends_on states the order; it creates
+# and releases nothing.
 resource "frostmoln_public_ip" "example" {
   instance_id = frostmoln_instance.example.id
 
   tags = {
     service = "web"
   }
+
+  depends_on = [frostmoln_gateway.partner_facing]
 }
 
 # AN ADDRESS SOMEONE ELSE DEPENDS ON — one in a partner's allow-list, published
@@ -66,6 +78,13 @@ resource "frostmoln_public_ip" "partner_facing" {
 
 # This address is the VPC's outbound source address, so the whole VPC's traffic
 # arrives from it. See frostmoln_gateway.
+#
+# NOTE THE ASYMMETRY WITH THE ADDRESS ABOVE. This one is NAMED by the gateway, so
+# the gateway already depends on it and Terraform already sequences the two
+# correctly — allocate first, and on teardown detach the gateway before the
+# address is released. Adding a depends_on back to the gateway here would be a
+# plan-time `Cycle:` error. The ordering above is needed only because an ATTACHED
+# address has no such reference to derive the dependency from.
 resource "frostmoln_gateway" "partner_facing" {
   vpc_id       = frostmoln_vpc.example.id
   mode         = "public_ip"
@@ -119,6 +138,18 @@ It is not a substitute for `lifecycle { prevent_destroy = true }`, which fails t
 Pick one per address. Use **`frostmoln_public_ip.instance_id`** when the SAME configuration allocates the address, so the address and its attachment are created and destroyed together.
 
 Use **`frostmoln_public_ip_association`** when the address ALREADY EXISTS (look it up with the `frostmoln_public_ip` data source), or when it has to outlive the instance it is attached to. Destroying that resource detaches the address and leaves it allocated to your tenant, whereas destroying a `frostmoln_public_ip` RELEASES the address for good.
+
+~> **Terraform cannot see that an ATTACHED address depends on the VPC's gateway.** An address reaches the outside world only through one, but no attribute here refers to `frostmoln_gateway`, so nothing orders the two — Terraform runs them concurrently and either can win.
+
+On teardown the gateway usually goes first, and its delete is then refused ("Gateway is still in use", `GATEWAY_IN_USE`) because something in the VPC still depends on it — the failure that stops a `terraform destroy` half way through. On create the attachment can land first, and the platform then attaches a gateway ITSELF to carry it: a `frostmoln_gateway` that names a `public_ip_id` is refused after that ("VPC already has a gateway", `GATEWAY_EXISTS`), and one that names none is not refused at all — it quietly ADOPTS the gateway the platform made, leaving the VPC egressing from an address the platform drew instead of the one you meant to pin, with `origin` reading `implicit_public_ip`.
+
+Where the same configuration manages the gateway, state the ordering yourself: put `depends_on = [frostmoln_gateway.<name>]` on the resource that makes the ATTACHMENT — the `frostmoln_public_ip` here. A public-scheme `frostmoln_load_balancer` holds an address the same way and takes the same line. Where the gateway is in another module, the dependency is on the module itself: `depends_on = [module.<name>]`.
+
+The ATTACHMENT is the place for it because an address that is merely allocated depends on nothing — and because an address resolved through the `frostmoln_public_ip` data source has no allocation resource to hang it on at all.
+
+Two places it must not go. **Never put it on an address that a `frostmoln_gateway.public_ip_id` names** — the gateway already depends on that address, so a dependency back the other way is a plan-time `Cycle:` error, and that reference already sequences the two correctly without help. And written the other way about — on the gateway, listing the addresses — it reverses both orders, turning a race that sometimes passed into a teardown that fails every time.
+
+It changes ORDER only: nothing is created and nothing is released. It does not arm the gateway's own destroy either — without `acknowledge_connectivity_loss` the teardown stops at that refusal instead, and never reaches the ordering at all.
 - `tags` (Map of String) Tags for the public IP.
 
 ### Read-Only

@@ -88,3 +88,64 @@ resource "frostmoln_public_ip_association" "api" {
   public_ip_id = frostmoln_public_ip.api.id
   instance_id  = frostmoln_instance.web.id
 }
+
+# ORDERING AGAINST THE VPC'S GATEWAY. Declared in its own VPC on purpose: every
+# association above would need the same line if it shared this gateway's VPC, and
+# an example that quietly omitted it would teach the opposite of what it says.
+#
+# An attached address depends on the VPC having a gateway, and Terraform cannot
+# see that — no attribute here refers to frostmoln_gateway, so the two are
+# unordered and run concurrently. On teardown the gateway usually goes first and
+# its delete is refused ("Gateway is still in use", GATEWAY_IN_USE), stopping the
+# destroy half way. On create the attachment can land first, and the platform
+# attaches a gateway ITSELF to carry it — after which an explicit gateway that
+# pins a public_ip_id is refused ("VPC already has a gateway", GATEWAY_EXISTS),
+# and one that pins none is NOT refused: it adopts the platform's gateway, and
+# the VPC egresses from an address nobody chose.
+#
+# The depends_on belongs on the resource that makes the ATTACHMENT — this one.
+# Not on frostmoln_public_ip.ordered: an address that is merely allocated depends
+# on nothing, and where the address comes from the data source above there is no
+# allocation resource to hang it on at all. Written the other way about (on the
+# gateway, listing the addresses) it reverses both orders and makes the teardown
+# fail every time rather than sometimes.
+#
+# Ordering is not the whole teardown: removing a gateway also needs
+# `acknowledge_connectivity_loss = true` applied first — see frostmoln_gateway,
+# and remove the line again once the destroy is done.
+resource "frostmoln_vpc" "ordered" {
+  name = "ordered-example"
+  cidr = "10.20.0.0/16"
+}
+
+resource "frostmoln_subnet" "ordered" {
+  vpc_id = frostmoln_vpc.ordered.id
+  name   = "ordered-example"
+  cidr   = "10.20.1.0/24"
+}
+
+resource "frostmoln_gateway" "ordered" {
+  vpc_id = frostmoln_vpc.ordered.id
+  mode   = "public_ip"
+}
+
+resource "frostmoln_instance" "ordered" {
+  name      = "ordered-01"
+  flavor_id = data.frostmoln_flavor.medium.id
+  image_id  = data.frostmoln_image.ubuntu.id
+  vpc_id    = frostmoln_vpc.ordered.id
+  subnet_id = frostmoln_subnet.ordered.id
+}
+
+resource "frostmoln_public_ip" "ordered" {
+  tags = {
+    purpose = "ordering example"
+  }
+}
+
+resource "frostmoln_public_ip_association" "ordered" {
+  public_ip_id = frostmoln_public_ip.ordered.id
+  instance_id  = frostmoln_instance.ordered.id
+
+  depends_on = [frostmoln_gateway.ordered]
+}

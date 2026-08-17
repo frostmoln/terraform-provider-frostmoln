@@ -50,11 +50,20 @@ func addGatewayError(diags *diag.Diagnostics, fallback string, err error) {
 	case errCodeGatewayExists:
 		diags.AddError(
 			"VPC already has a gateway",
-			"A VPC has at most one gateway, and this one already has a gateway in a different "+
-				"mode — creating a second is not how the mode is changed.\n\n"+
-				"If the existing gateway should be managed by this resource, import it and then set "+
-				"`mode` to the value you want (the change is applied in place):\n\n"+
+			"A VPC has at most one gateway, and this one already has one that does not match what this "+
+				"resource asks for — creating a second is not how it is changed.\n\n"+
+				"The gateway it already has need not be one you declared. Associating a public IP into a "+
+				"VPC with no gateway makes the platform attach one to carry the address, and a VPC can be "+
+				"created with connectivity as well; either way the VPC has a gateway before this resource "+
+				"ever runs, and a create that pins a `public_ip_id` then collides with it. (A create that "+
+				"names NO address does not collide — it adopts the existing gateway silently, which is its "+
+				"own surprise: see `frostmoln_public_ip_association`.)\n\n"+
+				"Import the gateway that exists and state what you want on it — a `public_ip_id` change is "+
+				"applied in place:\n\n"+
 				"    terraform import frostmoln_gateway.<name> <vpc id>\n\n"+
+				"If it was the platform that attached it, ordering the two stops the collision happening "+
+				"again — put `depends_on = [frostmoln_gateway.<name>]` on whatever attaches the address, so "+
+				"the gateway is created first.\n\n"+
 				"API said: "+apiErr.Message,
 		)
 	case errCodeGatewayInUse:
@@ -76,19 +85,25 @@ func addGatewayError(diags *diag.Diagnostics, fallback string, err error) {
 				"listing by construction. Delete that resource, or contact support if you cannot "+
 				"identify it. The API message below says which of the two cases this is.\n\n"+
 				"Where the public IPs ARE being destroyed too — a whole stack coming down — the "+
-				"ordering can be Terraform's job rather than yours. Put the dependency on the PUBLIC "+
-				"IPs, pointing at the gateway:\n\n"+
-				"    resource \"frostmoln_public_ip\" \"example\" {\n"+
-				"      # ...\n"+
+				"ordering can be Terraform's job rather than yours. Put the dependency on the resource "+
+				"that ATTACHES the address, pointing at the gateway — the `frostmoln_public_ip` where its "+
+				"own `instance_id` makes the attachment, the `frostmoln_public_ip_association` where that "+
+				"resource makes it, the `frostmoln_load_balancer` where a public-scheme load balancer holds "+
+				"the address. It is the ATTACHMENT that depends on the gateway, not the allocation:\n\n"+
+				"    resource \"frostmoln_public_ip_association\" \"example\" {\n"+
+				"      # ... or whichever of the three attaches the address\n"+
 				"      depends_on = [frostmoln_gateway.example]\n"+
 				"    }\n\n"+
 				"That changes ORDER only; it releases nothing that was not already being destroyed. "+
-				"Terraform destroys dependents first, so this destroys the public IPs before the gateway "+
-				"— and creates the gateway before them, which also matters: associating a public IP while "+
-				"the VPC has no gateway makes the platform attach one implicitly, and the explicit "+
-				"gateway create then fails with GATEWAY_EXISTS. A `depends_on` written the "+
-				"other way round (on the gateway, listing the public IPs) reverses both orders and leaves "+
-				"this delete failing exactly as it just did.\n\n"+
+				"Terraform destroys dependents first, so the address is detached before the gateway goes — "+
+				"and creates the gateway first, which matters too: attaching an address into a VPC with no "+
+				"gateway makes the platform attach one itself, and an explicit `frostmoln_gateway` then "+
+				"either collides with it (GATEWAY_EXISTS, if it pins a `public_ip_id`) or silently adopts "+
+				"it (if it does not). Do NOT write the dependency the other way about — on the gateway, "+
+				"listing the addresses — which reverses both orders and makes this delete fail every time "+
+				"rather than sometimes. And never put it on an address a `frostmoln_gateway.public_ip_id` "+
+				"names: that is a plan-time `Cycle:` error, and that address is already sequenced "+
+				"correctly.\n\n"+
 				"API said: "+apiErr.Message,
 		)
 	case errCodePoolExhausted:
