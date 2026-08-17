@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.30.2] - 2026-08-17
+
+### 📚 Documentation
+
+- *(gateway-ordering)* Complete the set of attaching surfaces, and guard it (#335)
+
 ## [0.30.1] - 2026-08-17
 
 ### 🐛 Bug Fixes
