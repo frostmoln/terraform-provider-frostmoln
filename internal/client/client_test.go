@@ -1105,3 +1105,89 @@ func TestRateLimitBackoff(t *testing.T) {
 		}
 	}
 }
+
+// A SERVICE's 429 must keep its own code and details. The gateway's rate-limit
+// body has neither, and parsing that shape first flattened every service 429
+// into RATE_LIMITED with a nil Details — which silently disabled every caller
+// that branches on `details.cap` to decide what the refusal even means.
+//
+// End to end through Do deliberately: a hand-built APIError proves nothing about
+// what the wire produces, and that is exactly how this defect survived a review.
+func TestServiceRateLimitKeepsItsCodeAndDetails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"code":"rate_limited",` +
+			`"message":"this tenant already has 1 image import(s) running (limit 1); wait for one to finish",` +
+			`"details":{"cap":"concurrent_imports","limit":1,"used":1,"retryAfterSeconds":30}}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "k")
+	_, err := c.Do(context.Background(), http.MethodPost, "/v1/images/img-1/import", nil, nil)
+
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("want an *APIError, got %v", err)
+	}
+	if apiErr.Code != "rate_limited" {
+		t.Errorf("Code = %q, want the service's own code", apiErr.Code)
+	}
+	if got, _ := apiErr.Details["cap"].(string); got != "concurrent_imports" {
+		t.Errorf("details.cap = %q, want concurrent_imports — the discriminator was dropped", got)
+	}
+	// The body's wait must be picked up when no header carries it, or Do's
+	// backoff falls back to its own escalation and ignores what the server said.
+	if apiErr.RetryAfter != 30 {
+		t.Errorf("RetryAfter = %d, want 30 from details.retryAfterSeconds", apiErr.RetryAfter)
+	}
+}
+
+// The gateway's own shape has no `code`, so it must still land on the legacy
+// branch — this is the fallback the ordering above must not break.
+func TestGatewayRateLimitStillParses(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"rate limit exceeded","message":"too many requests","retry_after":7}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "k")
+	_, err := c.Do(context.Background(), http.MethodGet, "/v1/images", nil, nil)
+
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("want an *APIError, got %v", err)
+	}
+	if apiErr.Code != "RATE_LIMITED" || apiErr.RetryAfter != 7 {
+		t.Errorf("gateway 429 parsed as code=%q retry_after=%d, want RATE_LIMITED/7", apiErr.Code, apiErr.RetryAfter)
+	}
+}
+
+// A quota refusal must cost ONE request, not six. Do's escalating backoff is
+// sized for the gateway's per-minute window; spending it on a cap that clears
+// when an import finishes means ~60s of extra load aimed at the component that
+// is already at its limit, and the same refusal at the end of it.
+func TestServiceQuotaRefusalIsNotRetried(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"code":"rate_limited","message":"at the cap",` +
+			`"details":{"cap":"concurrent_imports","limit":1,"used":1}}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "k")
+	start := time.Now()
+	_, err := c.Do(context.Background(), http.MethodPost, "/v1/images/img-1/import", nil, nil)
+	if err == nil {
+		t.Fatal("expected the refusal to surface")
+	}
+	if calls != 1 {
+		t.Errorf("%d requests for one quota refusal, want 1", calls)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("refusal took %s — the rate-limit backoff is still running for a quota cap", elapsed)
+	}
+}

@@ -3,6 +3,7 @@ package image
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1070,5 +1071,63 @@ func TestCheckFormNotExpired(t *testing.T) {
 				t.Errorf("expected the form to be accepted, got: %v", err)
 			}
 		})
+	}
+}
+
+// The concurrent-import cap is waited out; every other 429 is not. Both halves
+// matter: the gateway's per-key rate limit arrives with the SAME status and has
+// already been retried by client.Do by the time it reaches here, so waiting it
+// out again would hold an apply open for a limit that is not about imports.
+func TestOnlyTheConcurrentImportCapIsWaitedOut(t *testing.T) {
+	cases := map[string]struct {
+		err  error
+		want bool
+	}{
+		"the import cap": {&client.APIError{
+			StatusCode: http.StatusTooManyRequests, Code: "rate_limited",
+			Details: map[string]any{"cap": "concurrent_imports", "limit": float64(1), "used": float64(1)},
+		}, true},
+		"a gateway rate limit": {&client.APIError{
+			StatusCode: http.StatusTooManyRequests, Code: "rate_limited",
+		}, false},
+		"the mint rate cap": {&client.APIError{
+			StatusCode: http.StatusTooManyRequests, Code: "rate_limited",
+			Details: map[string]any{"cap": "mint_rate"},
+		}, false},
+		"a conflict": {&client.APIError{
+			StatusCode: http.StatusConflict, Code: "invalid_state",
+			Details: map[string]any{"cap": "concurrent_imports"},
+		}, false},
+		"a transport error": {errors.New("connection reset"), false},
+		"no error":          {nil, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := isConcurrentImportRefusal(tc.err); got != tc.want {
+				t.Errorf("isConcurrentImportRefusal(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// Waiters that started together must not poll in lockstep: one slot frees, they
+// all wake in the same window, one wins and the rest are refused again — tighter
+// synchronised each round. Different images must therefore wait different times,
+// and the same image must be reproducible across runs.
+func TestJitterSeparatesWaitersDeterministically(t *testing.T) {
+	const interval = 10 * time.Second
+	a := jitter(interval, "6f1e2d3c-4b5a-4c9d-8e7f-0a1b2c3d4e5f")
+	b := jitter(interval, "7a2b3c4d-5e6f-4a8b-9c0d-1e2f3a4b5c6d")
+
+	if a == b {
+		t.Errorf("two images wait the same %s — they will keep colliding", a)
+	}
+	if got := jitter(interval, "6f1e2d3c-4b5a-4c9d-8e7f-0a1b2c3d4e5f"); got != a {
+		t.Errorf("jitter is not reproducible for one image: %s then %s", a, got)
+	}
+	for _, w := range []time.Duration{a, b} {
+		if w < interval || w >= interval*3/2 {
+			t.Errorf("wait %s is outside [%s, %s) — the interval is no longer the floor", w, interval, interval*3/2)
+		}
 	}
 }

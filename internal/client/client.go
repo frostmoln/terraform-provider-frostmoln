@@ -478,6 +478,18 @@ func (c *Client) Do(ctx context.Context, method, reqPath string, query url.Value
 		if !ok || apiErr.StatusCode != http.StatusTooManyRequests || attempt >= rateLimitRetries {
 			return resp, err
 		}
+		// A SERVICE quota refusal is not a rate window and must NOT be retried
+		// here. `details.cap` says which limit refused, and the remedies differ:
+		// delete an image, wait for an import to finish, or nothing at all. This
+		// loop's escalating backoff is sized for the gateway's per-minute window,
+		// so retrying a quota refusal spends ~60s and five more requests to be
+		// told the same thing — against the very component that is already at its
+		// limit — and then fails the apply anyway. Hand it to the caller, which is
+		// the only layer that knows what the cap means (see
+		// resource/image.startImport, which waits out `concurrent_imports`).
+		if _, hasCap := apiErr.Details["cap"]; hasCap {
+			return resp, err
+		}
 		// The gateway rate-limits per key and says when to come back;
 		// Terraform runs resource operations concurrently (parallel destroys
 		// especially), so surfacing the 429 would fail an apply the server
@@ -489,6 +501,13 @@ func (c *Client) Do(ctx context.Context, method, reqPath string, query url.Value
 		}
 	}
 }
+
+// detailRetryAfterSeconds is where a service puts a 429's wait when the header
+// cannot carry it. It is the same key servicekit-based services emit
+// (compute/internal/domain/errors.go DetailRetryAfterSeconds), and it exists
+// because `Retry-After` is not CORS-safelisted, so browser clients cannot read
+// the header at all and services send the wait in the body instead.
+const detailRetryAfterSeconds = "retryAfterSeconds"
 
 // rateLimitBackoff computes the wait before 429-retry number attempt. The
 // server's Retry-After hint alone is not enough: the limiter's minute window
@@ -631,6 +650,30 @@ func (c *Client) do(ctx context.Context, method, reqPath string, query url.Value
 		// string, not an object) so parse it before the generic formats; Do
 		// retries these using the server-suggested wait.
 		if httpResp.StatusCode == http.StatusTooManyRequests {
+			// A SERVICE's 429 comes first, and this ordering is the whole point:
+			// the gateway shape below has no `details`, so parsing it first
+			// flattened every service 429 into Code="RATE_LIMITED" with a nil
+			// Details — discarding the `cap` discriminator that says WHICH limit
+			// refused and therefore what the remedy is. compute has more than one
+			// 429 (`mint_rate`, `mint_unavailable`, `concurrent_imports`) and they
+			// do not share a remedy: one clears by waiting, one by deleting an
+			// image, one not at all. A caller that cannot tell them apart cannot
+			// do the right thing, and image_resource.startImport is one such
+			// caller. Recognised by a non-empty `code`, which the gateway's own
+			// body does not carry.
+			var svc APIError
+			_ = json.Unmarshal(respBody, &svc)
+			if svc.Code != "" {
+				svc.StatusCode = httpResp.StatusCode
+				if svc.RetryAfter <= 0 {
+					if s, ok := svc.Details[detailRetryAfterSeconds].(float64); ok {
+						svc.RetryAfter = int(s)
+					} else {
+						svc.RetryAfter, _ = strconv.Atoi(httpResp.Header.Get("Retry-After"))
+					}
+				}
+				return nil, &svc
+			}
 			var rl struct {
 				Message    string `json:"message"`
 				RetryAfter int    `json:"retry_after"`

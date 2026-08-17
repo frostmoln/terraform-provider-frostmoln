@@ -23,6 +23,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
@@ -386,7 +387,7 @@ func (r *imageResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	if _, err := r.client.Post(ctx, "/v1/images/"+created.ID+"/import", nil); err != nil {
+	if err := r.startImport(ctx, created.ID); err != nil {
 		resp.Diagnostics.AddError("Failed to start the image import",
 			imageErrorDetail(err)+"\n\n"+orphanHint(created.ID))
 		return
@@ -557,6 +558,74 @@ func (r *imageResource) resolveUploadForm(ctx context.Context, created *apiCreat
 		return nil, fmt.Errorf("image %s was created but the minted upload form carried no url", created.ID)
 	}
 	return upload, nil
+}
+
+// startImport asks the platform to convert the uploaded bytes, waiting out the
+// per-tenant concurrent-import cap rather than failing the apply on it.
+//
+// WHY THE CLIENT'S OWN 429 RETRY IS NOT ENOUGH. client.Do retries a 429 with
+// ~60s of total patience, which is sized for the gateway's per-MINUTE rate
+// window. This 429 is not a rate window: it clears only when another of the
+// tenant's imports FINISHES, and an import takes as long as the image it is
+// converting — minutes for a large one. Terraform runs resource operations
+// concurrently, so a config with two images would reliably burn all five
+// retries and fail an apply that only needed to wait its turn.
+//
+// The bound is the same poll timeout the import wait itself uses: waiting for a
+// slot and waiting for the conversion are the same wait from the practitioner's
+// side, and neither should outlive the resource's configured patience.
+//
+// Only `concurrent_imports` is waited out. Every other 429 — including a
+// gateway rate limit, which client.Do has already retried properly — is
+// returned, because a wait is not its remedy.
+func (r *imageResource) startImport(ctx context.Context, imageID string) error {
+	deadline := time.Now().Add(r.getPollTimeout())
+	for {
+		_, err := r.client.Post(ctx, "/v1/images/"+imageID+"/import", nil)
+		if err == nil || !isConcurrentImportRefusal(err) || !time.Now().Before(deadline) {
+			return err
+		}
+		wait := jitter(r.getPollInterval(), imageID)
+		tflog.Info(ctx, "waiting for a free import slot",
+			map[string]any{"image_id": imageID, "retry_in": wait.String()})
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+}
+
+// jitter spreads waiters that started together. Terraform runs the image
+// resources of one config concurrently, so without it every waiter polls on the
+// same fixed interval, wakes in the same window when a slot frees, and hits the
+// platform as one burst — of which exactly one succeeds and the rest are refused
+// again, having synchronised themselves a little tighter each round.
+//
+// Derived from the image id rather than drawn randomly: it needs to differ
+// BETWEEN waiters, not between attempts, and a deterministic offset keeps an
+// apply's timing reproducible when someone has to read the log afterwards.
+// Spread is 0-50% on top of the interval, which is enough to separate the
+// waiters of any realistic config.
+func jitter(interval time.Duration, seed string) time.Duration {
+	var h uint32 = 2166136261
+	for i := 0; i < len(seed); i++ {
+		h = (h ^ uint32(seed[i])) * 16777619
+	}
+	return interval + time.Duration(uint64(h%50)*uint64(interval)/100)
+}
+
+// isConcurrentImportRefusal reports whether err is the platform's
+// concurrent-import cap. It reads `details.cap` rather than the status alone:
+// the same 429 status carries the gateway's rate limit, which has already been
+// retried by the time it reaches here and must not be waited out again.
+func isConcurrentImportRefusal(err error) bool {
+	var apiErr *client.APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusTooManyRequests {
+		return false
+	}
+	capName, _ := apiErr.Details["cap"].(string)
+	return capName == "concurrent_imports"
 }
 
 // uploadImage POSTs the disk image to the presigned storage endpoint as
