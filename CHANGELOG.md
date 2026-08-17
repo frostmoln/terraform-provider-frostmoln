@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.30.1] - 2026-08-17
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.15 (#332)
+
+### 📚 Documentation
+
+- *(public-ip)* Say where the gateway depends_on goes, and correct what it prevents (#329)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.9.4 (#331)
+
 ## [0.30.0] - 2026-08-16
 
 ### 🚀 Features
