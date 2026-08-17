@@ -18,6 +18,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/public_ip"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
 )
 
 var (
@@ -67,7 +68,7 @@ func (r *publicIPAssociationResource) Schema(_ context.Context, _ resource.Schem
 			"destroying a `frostmoln_public_ip`, where the address itself is released and does not come " +
 			"back.\n\n" +
 			public_ip.MutualExclusivityNote + "\n\n" +
-			public_ip.GatewayOrderingNote("frostmoln_public_ip_association") + "\n\n" +
+			schemadoc.GatewayOrderingNote("frostmoln_public_ip_association") + "\n\n" +
 			"Every configurable attribute forces replacement. The platform has no in-place " +
 			"re-point — moving an address is a disassociate followed by an associate — so Terraform " +
 			"sequences it as a destroy and a create, and the instance is without the address in " +

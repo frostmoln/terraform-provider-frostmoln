@@ -1210,6 +1210,7 @@ func TestGatewayInUseDiagnosticNamesBothAttachingResources(t *testing.T) {
 		"`frostmoln_public_ip` where its own `instance_id`",
 		"`frostmoln_public_ip_association` where that",
 		"`frostmoln_load_balancer` where a public-scheme",
+		"`frostmoln_kubernetes_cluster` where its ingress",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the ordering advice must name every surface that can hold the address, and say "+

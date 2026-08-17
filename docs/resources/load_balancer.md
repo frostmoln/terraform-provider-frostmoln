@@ -3,12 +3,30 @@
 page_title: "frostmoln_load_balancer Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a load balancer in the Frostmoln Cloud Platform. Load balancer creation and deletion are asynchronous (Octavia), so applies wait on the provisioning operation to complete.
+  Manages a load balancer in the Frostmoln Cloud Platform. Load balancer creation and deletion are asynchronous, so applies wait on the provisioning operation to complete.
+  ~> Terraform cannot see that an ATTACHED address depends on the VPC's gateway. This resource attaches one when scheme is public, and an address reaches the outside world only through a gateway — but nothing that attaches an address refers to frostmoln_gateway, so nothing orders the two. Terraform runs them concurrently and either can win.
+  On teardown the gateway can go first, and its delete is then refused ("Gateway is still in use", GATEWAY_IN_USE) because something in the VPC still depends on it — the failure that stops a terraform destroy half way through. On create the attachment can land first, and the platform then attaches a gateway ITSELF to carry it: a frostmoln_gateway that names a public_ip_id is refused after that ("VPC already has a gateway", GATEWAY_EXISTS), and one that names none is not refused at all — it quietly ADOPTS the gateway the platform made, leaving the VPC egressing from whatever address that gateway already had rather than one this configuration names, with origin reading implicit_public_ip.
+  Where the same configuration manages the gateway, state the ordering yourself: put depends_on = [frostmoln_gateway.<name>] on the resource that makes the ATTACHMENT — this one. Where the gateway is in another module, the dependency is on the module itself: depends_on = [module.<name>]. This resource is not the only one that needs it: frostmoln_apache_instance (public), frostmoln_kubernetes_cluster (ingress_public_ip_id), frostmoln_nginx_instance (public), frostmoln_public_ip_association and frostmoln_public_ip (instance_id) attach addresses too, and each takes the line on itself.
+  It works only where the gateway is a frostmoln_gateway RESOURCE in the same configuration. A data "frostmoln_gateway" cannot carry the order — a data source is read, never created or destroyed — so depending on one defers a read and sequences nothing.
+  Do not write it the other way about — on the gateway, listing what attaches. depends_on orders the resource it is written on, so that reverses both orders and turns a race that sometimes passed into a teardown that fails every time.
+  It changes ORDER only: nothing is created and nothing is released. It does not arm the gateway's own destroy either — without acknowledge_connectivity_loss the teardown stops at that refusal instead, and never reaches the ordering at all. And if a gateway was already adopted, nothing needs importing or rebuilding: it is in state already — add the ordering so it cannot recur, then give the gateway the address you meant with public_ip_id, which is applied in place.
 ---
 
 # frostmoln_load_balancer (Resource)
 
-Manages a load balancer in the Frostmoln Cloud Platform. Load balancer creation and deletion are asynchronous (Octavia), so applies wait on the provisioning operation to complete.
+Manages a load balancer in the Frostmoln Cloud Platform. Load balancer creation and deletion are asynchronous, so applies wait on the provisioning operation to complete.
+
+~> **Terraform cannot see that an ATTACHED address depends on the VPC's gateway.** This resource attaches one when `scheme` is `public`, and an address reaches the outside world only through a gateway — but nothing that attaches an address refers to `frostmoln_gateway`, so nothing orders the two. Terraform runs them concurrently and either can win.
+
+On teardown the gateway can go first, and its delete is then refused ("Gateway is still in use", `GATEWAY_IN_USE`) because something in the VPC still depends on it — the failure that stops a `terraform destroy` half way through. On create the attachment can land first, and the platform then attaches a gateway ITSELF to carry it: a `frostmoln_gateway` that names a `public_ip_id` is refused after that ("VPC already has a gateway", `GATEWAY_EXISTS`), and one that names none is not refused at all — it quietly ADOPTS the gateway the platform made, leaving the VPC egressing from whatever address that gateway already had rather than one this configuration names, with `origin` reading `implicit_public_ip`.
+
+Where the same configuration manages the gateway, state the ordering yourself: put `depends_on = [frostmoln_gateway.<name>]` on the resource that makes the ATTACHMENT — this one. Where the gateway is in another module, the dependency is on the module itself: `depends_on = [module.<name>]`. This resource is not the only one that needs it: `frostmoln_apache_instance` (`public`), `frostmoln_kubernetes_cluster` (`ingress_public_ip_id`), `frostmoln_nginx_instance` (`public`), `frostmoln_public_ip_association` and `frostmoln_public_ip` (`instance_id`) attach addresses too, and each takes the line on itself.
+
+It works only where the gateway is a `frostmoln_gateway` RESOURCE in the same configuration. A `data "frostmoln_gateway"` cannot carry the order — a data source is read, never created or destroyed — so depending on one defers a read and sequences nothing.
+
+Do not write it the other way about — on the gateway, listing what attaches. `depends_on` orders the resource it is written on, so that reverses both orders and turns a race that sometimes passed into a teardown that fails every time.
+
+It changes ORDER only: nothing is created and nothing is released. It does not arm the gateway's own destroy either — without `acknowledge_connectivity_loss` the teardown stops at that refusal instead, and never reaches the ordering at all. And if a gateway was already adopted, nothing needs importing or rebuilding: it is in state already — add the ordering so it cannot recur, then give the gateway the address you meant with `public_ip_id`, which is applied in place.
 
 ## Example Usage
 
@@ -48,6 +66,12 @@ resource "frostmoln_load_balancer" "web" {
 # when scheme = "public" and must be omitted when scheme = "internal".
 resource "frostmoln_public_ip" "ingress" {}
 
+# The depends_on is not decoration. Attaching the address makes this load
+# balancer depend on the VPC having a gateway, and nothing here refers to
+# frostmoln_gateway, so Terraform runs the two concurrently: on teardown the
+# gateway can go first and its delete is refused (GATEWAY_IN_USE), stopping the
+# destroy half way. Point it at the gateway resource, on the LOAD BALANCER —
+# written the other way about it reverses the order and fails every time.
 resource "frostmoln_load_balancer" "public_web" {
   name         = "public-web-lb"
   vpc_id       = frostmoln_vpc.main.id
@@ -56,6 +80,8 @@ resource "frostmoln_load_balancer" "public_web" {
   public_ip_id = frostmoln_public_ip.ingress.id
 
   # public_ip_address is computed (the attached public IP's address).
+
+  depends_on = [frostmoln_gateway.main]
 }
 ```
 
@@ -74,6 +100,8 @@ resource "frostmoln_load_balancer" "public_web" {
 - `flavor_id` (String) The Octavia flavor ID for the load balancer (amphora provider only). Changing this forces a new resource.
 - `provider_type` (String) The Octavia provider driver: amphora (default, full L7 + TLS) or ovn (L4-only, source-IP preserving, zero VM overhead). There is no in-place migration between providers; changing this forces a new resource. (Named provider_type because "provider" is a reserved Terraform attribute name.)
 - `public_ip_id` (String) ID of a pre-allocated, tenant-owned, unassociated public IP to attach to the VIP. Required when scheme is public; must be omitted when scheme is internal. Changing this forces a new resource.
+
+Attaching it makes this load balancer depend on the VPC's gateway, which Terraform cannot see — see the ordering note on this resource above.
 - `scheme` (String) Reachability scheme: internal (default, private VIP only) or public (a bring-your-own public IP is attached to the VIP for external reachability). When public, public_ip_id is required. There is no in-place change between schemes; changing this forces a new resource.
 - `tags` (Map of String) Key-value tags for the load balancer.
 - `vip_address` (String) The virtual IP address of the load balancer. If omitted, an address is allocated automatically. An explicitly-set VIP is effectively immutable: the backend does not support changing a VIP in place, so a changed vip_address in config is ignored on update. To move to a different VIP, taint the resource (terraform taint / -replace) to force a destroy and recreate.

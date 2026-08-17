@@ -33,6 +33,12 @@ resource "frostmoln_load_balancer" "web" {
 # when scheme = "public" and must be omitted when scheme = "internal".
 resource "frostmoln_public_ip" "ingress" {}
 
+# The depends_on is not decoration. Attaching the address makes this load
+# balancer depend on the VPC having a gateway, and nothing here refers to
+# frostmoln_gateway, so Terraform runs the two concurrently: on teardown the
+# gateway can go first and its delete is refused (GATEWAY_IN_USE), stopping the
+# destroy half way. Point it at the gateway resource, on the LOAD BALANCER —
+# written the other way about it reverses the order and fails every time.
 resource "frostmoln_load_balancer" "public_web" {
   name         = "public-web-lb"
   vpc_id       = frostmoln_vpc.main.id
@@ -41,4 +47,6 @@ resource "frostmoln_load_balancer" "public_web" {
   public_ip_id = frostmoln_public_ip.ingress.id
 
   # public_ip_address is computed (the attached public IP's address).
+
+  depends_on = [frostmoln_gateway.main]
 }

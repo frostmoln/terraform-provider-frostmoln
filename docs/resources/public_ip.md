@@ -33,7 +33,7 @@ Use **`frostmoln_public_ip_association`** when the address ALREADY EXISTS (look 
 # `instance_id` is what makes the ATTACHMENT here, and an attached address
 # depends on the VPC having a gateway — which Terraform cannot see, because
 # nothing in this resource refers to frostmoln_gateway. Left unordered the two
-# run concurrently: on teardown the gateway usually goes first and its delete is
+# run concurrently: on teardown the gateway can go first and its delete is
 # refused ("Gateway is still in use", GATEWAY_IN_USE), and on create the
 # attachment can land first, after which the platform attaches a gateway itself
 # and an explicit one either collides with it (GATEWAY_EXISTS, if it pins a
@@ -139,17 +139,21 @@ Pick one per address. Use **`frostmoln_public_ip.instance_id`** when the SAME co
 
 Use **`frostmoln_public_ip_association`** when the address ALREADY EXISTS (look it up with the `frostmoln_public_ip` data source), or when it has to outlive the instance it is attached to. Destroying that resource detaches the address and leaves it allocated to your tenant, whereas destroying a `frostmoln_public_ip` RELEASES the address for good.
 
-~> **Terraform cannot see that an ATTACHED address depends on the VPC's gateway.** An address reaches the outside world only through one, but no attribute here refers to `frostmoln_gateway`, so nothing orders the two — Terraform runs them concurrently and either can win.
+~> **Terraform cannot see that an ATTACHED address depends on the VPC's gateway.** This resource attaches one when `instance_id` names an instance, and an address reaches the outside world only through a gateway — but nothing that attaches an address refers to `frostmoln_gateway`, so nothing orders the two. Terraform runs them concurrently and either can win.
 
-On teardown the gateway usually goes first, and its delete is then refused ("Gateway is still in use", `GATEWAY_IN_USE`) because something in the VPC still depends on it — the failure that stops a `terraform destroy` half way through. On create the attachment can land first, and the platform then attaches a gateway ITSELF to carry it: a `frostmoln_gateway` that names a `public_ip_id` is refused after that ("VPC already has a gateway", `GATEWAY_EXISTS`), and one that names none is not refused at all — it quietly ADOPTS the gateway the platform made, leaving the VPC egressing from an address the platform drew instead of the one you meant to pin, with `origin` reading `implicit_public_ip`.
+On teardown the gateway can go first, and its delete is then refused ("Gateway is still in use", `GATEWAY_IN_USE`) because something in the VPC still depends on it — the failure that stops a `terraform destroy` half way through. On create the attachment can land first, and the platform then attaches a gateway ITSELF to carry it: a `frostmoln_gateway` that names a `public_ip_id` is refused after that ("VPC already has a gateway", `GATEWAY_EXISTS`), and one that names none is not refused at all — it quietly ADOPTS the gateway the platform made, leaving the VPC egressing from whatever address that gateway already had rather than one this configuration names, with `origin` reading `implicit_public_ip`.
 
-Where the same configuration manages the gateway, state the ordering yourself: put `depends_on = [frostmoln_gateway.<name>]` on the resource that makes the ATTACHMENT — the `frostmoln_public_ip` here. A public-scheme `frostmoln_load_balancer` holds an address the same way and takes the same line. Where the gateway is in another module, the dependency is on the module itself: `depends_on = [module.<name>]`.
+Where the same configuration manages the gateway, state the ordering yourself: put `depends_on = [frostmoln_gateway.<name>]` on the resource that makes the ATTACHMENT — this one. Where the gateway is in another module, the dependency is on the module itself: `depends_on = [module.<name>]`. This resource is not the only one that needs it: `frostmoln_apache_instance` (`public`), `frostmoln_kubernetes_cluster` (`ingress_public_ip_id`), `frostmoln_load_balancer` (`public_ip_id`), `frostmoln_nginx_instance` (`public`) and `frostmoln_public_ip_association` attach addresses too, and each takes the line on itself.
+
+It works only where the gateway is a `frostmoln_gateway` RESOURCE in the same configuration. A `data "frostmoln_gateway"` cannot carry the order — a data source is read, never created or destroyed — so depending on one defers a read and sequences nothing.
 
 The ATTACHMENT is the place for it because an address that is merely allocated depends on nothing — and because an address resolved through the `frostmoln_public_ip` data source has no allocation resource to hang it on at all.
 
-Two places it must not go. **Never put it on an address that a `frostmoln_gateway.public_ip_id` names** — the gateway already depends on that address, so a dependency back the other way is a plan-time `Cycle:` error, and that reference already sequences the two correctly without help. And written the other way about — on the gateway, listing the addresses — it reverses both orders, turning a race that sometimes passed into a teardown that fails every time.
+**Never put it on an address that a `frostmoln_gateway.public_ip_id` names** — the gateway already depends on that address, so a dependency back the other way is a plan-time `Cycle:` error, and that reference already sequences the two correctly without help.
 
-It changes ORDER only: nothing is created and nothing is released. It does not arm the gateway's own destroy either — without `acknowledge_connectivity_loss` the teardown stops at that refusal instead, and never reaches the ordering at all.
+Do not write it the other way about — on the gateway, listing what attaches. `depends_on` orders the resource it is written on, so that reverses both orders and turns a race that sometimes passed into a teardown that fails every time.
+
+It changes ORDER only: nothing is created and nothing is released. It does not arm the gateway's own destroy either — without `acknowledge_connectivity_loss` the teardown stops at that refusal instead, and never reaches the ordering at all. And if a gateway was already adopted, nothing needs importing or rebuilding: it is in state already — add the ordering so it cannot recur, then give the gateway the address you meant with `public_ip_id`, which is applied in place.
 - `tags` (Map of String) Tags for the public IP.
 
 ### Read-Only

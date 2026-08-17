@@ -4,11 +4,32 @@ page_title: "frostmoln_kubernetes_cluster Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a managed Kubernetes cluster in the Frostmoln platform. The cluster owns its initial node pool (created embedded, scaled in-place). Additional node pools are managed with the frostmoln_kubernetes_node_pool resource.
+  ~> Terraform cannot see that an ATTACHED address depends on the VPC's gateway. This resource attaches one when ingress_scheme is public, and for the API endpoint on accounts where that takes a public address, and an address reaches the outside world only through a gateway — but nothing that attaches an address refers to frostmoln_gateway, so nothing orders the two. Terraform runs them concurrently and either can win.
+  On teardown the gateway can go first, and its delete is then refused ("Gateway is still in use", GATEWAY_IN_USE) because something in the VPC still depends on it — the failure that stops a terraform destroy half way through. On create the attachment can land first, and the platform then attaches a gateway ITSELF to carry it: a frostmoln_gateway that names a public_ip_id is refused after that ("VPC already has a gateway", GATEWAY_EXISTS), and one that names none is not refused at all — it quietly ADOPTS the gateway the platform made, leaving the VPC egressing from whatever address that gateway already had rather than one this configuration names, with origin reading implicit_public_ip.
+  Where the same configuration manages the gateway, state the ordering yourself: put depends_on = [frostmoln_gateway.<name>] on the resource that makes the ATTACHMENT — this one. Where the gateway is in another module, the dependency is on the module itself: depends_on = [module.<name>]. This resource is not the only one that needs it: frostmoln_apache_instance (public), frostmoln_load_balancer (public_ip_id), frostmoln_nginx_instance (public), frostmoln_public_ip_association and frostmoln_public_ip (instance_id) attach addresses too, and each takes the line on itself.
+  It works only where the gateway is a frostmoln_gateway RESOURCE in the same configuration. A data "frostmoln_gateway" cannot carry the order — a data source is read, never created or destroyed — so depending on one defers a read and sequences nothing.
+  Do not write it the other way about — on the gateway, listing what attaches. depends_on orders the resource it is written on, so that reverses both orders and turns a race that sometimes passed into a teardown that fails every time.
+  It changes ORDER only: nothing is created and nothing is released. It does not arm the gateway's own destroy either — without acknowledge_connectivity_loss the teardown stops at that refusal instead, and never reaches the ordering at all. And if a gateway was already adopted, nothing needs importing or rebuilding: it is in state already — add the ordering so it cannot recur, then give the gateway the address you meant with public_ip_id, which is applied in place.
+  It matters more here than on the other attaching resources: a cluster whose ingress load balancer cannot be built comes up WITHOUT one rather than failing the apply, so an ordering problem costs you the ingress path silently.
 ---
 
 # frostmoln_kubernetes_cluster (Resource)
 
 Manages a managed Kubernetes cluster in the Frostmoln platform. The cluster owns its initial node pool (created embedded, scaled in-place). Additional node pools are managed with the frostmoln_kubernetes_node_pool resource.
+
+~> **Terraform cannot see that an ATTACHED address depends on the VPC's gateway.** This resource attaches one when `ingress_scheme` is `public`, and for the API endpoint on accounts where that takes a public address, and an address reaches the outside world only through a gateway — but nothing that attaches an address refers to `frostmoln_gateway`, so nothing orders the two. Terraform runs them concurrently and either can win.
+
+On teardown the gateway can go first, and its delete is then refused ("Gateway is still in use", `GATEWAY_IN_USE`) because something in the VPC still depends on it — the failure that stops a `terraform destroy` half way through. On create the attachment can land first, and the platform then attaches a gateway ITSELF to carry it: a `frostmoln_gateway` that names a `public_ip_id` is refused after that ("VPC already has a gateway", `GATEWAY_EXISTS`), and one that names none is not refused at all — it quietly ADOPTS the gateway the platform made, leaving the VPC egressing from whatever address that gateway already had rather than one this configuration names, with `origin` reading `implicit_public_ip`.
+
+Where the same configuration manages the gateway, state the ordering yourself: put `depends_on = [frostmoln_gateway.<name>]` on the resource that makes the ATTACHMENT — this one. Where the gateway is in another module, the dependency is on the module itself: `depends_on = [module.<name>]`. This resource is not the only one that needs it: `frostmoln_apache_instance` (`public`), `frostmoln_load_balancer` (`public_ip_id`), `frostmoln_nginx_instance` (`public`), `frostmoln_public_ip_association` and `frostmoln_public_ip` (`instance_id`) attach addresses too, and each takes the line on itself.
+
+It works only where the gateway is a `frostmoln_gateway` RESOURCE in the same configuration. A `data "frostmoln_gateway"` cannot carry the order — a data source is read, never created or destroyed — so depending on one defers a read and sequences nothing.
+
+Do not write it the other way about — on the gateway, listing what attaches. `depends_on` orders the resource it is written on, so that reverses both orders and turns a race that sometimes passed into a teardown that fails every time.
+
+It changes ORDER only: nothing is created and nothing is released. It does not arm the gateway's own destroy either — without `acknowledge_connectivity_loss` the teardown stops at that refusal instead, and never reaches the ordering at all. And if a gateway was already adopted, nothing needs importing or rebuilding: it is in state already — add the ordering so it cannot recur, then give the gateway the address you meant with `public_ip_id`, which is applied in place.
+
+It matters more here than on the other attaching resources: a cluster whose ingress load balancer cannot be built comes up WITHOUT one rather than failing the apply, so an ordering problem costs you the ingress path silently.
 
 ## Example Usage
 
@@ -17,11 +38,24 @@ data "frostmoln_kubernetes_versions" "available" {}
 
 data "frostmoln_kubernetes_flavors" "available" {}
 
+# The depends_on is not decoration. A cluster attaches public IPs into your VPC —
+# the worker ingress load balancer when ingress_scheme is "public", and the API
+# endpoint on accounts where that takes a public address — and it does so whether
+# or not you name an address of your own, allocating one for you when you name
+# none. Nothing here refers to frostmoln_gateway, so Terraform runs the two
+# concurrently and on teardown the gateway can go first, with its delete refused
+# (GATEWAY_IN_USE) part-way through the destroy.
+#
+# It costs more here than elsewhere: a cluster whose ingress load balancer cannot
+# be built comes up WITHOUT one rather than failing the apply, so the damage is
+# silent.
 resource "frostmoln_kubernetes_cluster" "main" {
   name      = "my-cluster"
   version   = [for v in data.frostmoln_kubernetes_versions.available.versions : v.version if v.is_default][0]
   vpc_id    = frostmoln_vpc.main.id
   subnet_id = frostmoln_subnet.nodes.id
+
+  depends_on = [frostmoln_gateway.main]
 
   # Endpoint exposure. Omit for the default "public" (LB VIP reachable via a
   # public IP). Set "internal" for a private VIP-only endpoint reachable only
@@ -72,8 +106,12 @@ output "kubeconfig" {
 - `addons` (Set of String) The set of cluster-addon catalog keys to install at cluster creation (see the frostmoln_kubernetes_addons data source for available keys). Addons are applied ONCE, at cluster creation, from first-boot manifests — they cannot be changed on an existing cluster, so changing this set REPLACES the cluster. Leave it unset to apply the platform default addons (currently external-secrets); set it to an explicit empty set ([]) to install no addons.
 - `control_plane_tier` (String) The control-plane tier key (see the frostmoln_kubernetes_tiers data source for canonical keys). Defaults to the platform default tier.
 - `ingress_public_ip_id` (String) The ID of an existing public IP to use for the WORKER ingress load balancer (bring-your-own public IP). Valid only with ingress_scheme = "public" — that combination is checked at plan time. A different address from public_ip_id, which serves the API endpoint: the two load balancers never share one, and the same id in both is rejected. A bring-your-own public IP survives cluster deletion. Create-only: changing it REPLACES the cluster.
+
+Naming one does not change WHETHER an address is attached — `ingress_scheme = "public"` attaches one either way, allocating it for you when you name none — so the gateway ordering this creates applies whether or not you set this. See the ordering note on this resource above.
 - `ingress_scheme` (String) Where the cluster's WORKER ingress load balancer is reachable from: "internal" (the default) gives it a VIP from the cluster's own subnet, reachable inside the VPC and costing no public IPv4; "public" additionally attaches a public IP. The load balancer is always created and forwards TCP 80 and 443 to node ports 30080 and 30443 across every worker node — publish those node ports from your own ingress-controller Service. This is a DIFFERENT load balancer from the Kubernetes API endpoint, whose exposure is not configurable. Defaults server-side to internal. Create-only: changing it REPLACES the cluster. Clusters created before this feature existed report no value at all.
 - `public_ip_id` (String) The ID of an existing public IP to use for the cluster API endpoint (bring-your-own public IP). Write-only on the API: reads expose only the resolved address (public_ip), so imports cannot recover this value — after importing a cluster created with a BYO public IP, omit this attribute or add `lifecycle { ignore_changes = [public_ip_id] }`, otherwise the next plan will want to replace the cluster. A BYO public IP survives cluster deletion. This is the API endpoint's address — for the worker ingress load balancer's, use ingress_public_ip_id; the same id in both is rejected.
+
+Where this attribute is accepted at all, the address lands on a port in your own VPC and carries the same gateway dependency as every other attachment — see the ordering note on this resource above. On some accounts this attribute is refused outright (400) — the cluster API endpoint takes no address of yours there — so if you get that refusal, the ordering it describes does not arise for the API endpoint.
 - `region` (String) The region to create the cluster in. Defaults server-side.
 - `version` (String) The Kubernetes version (e.g. "1.35"). Defaults to the platform default version. Changing it currently REPLACES the cluster — in-place upgrade is not available yet.
 

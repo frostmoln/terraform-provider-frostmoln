@@ -95,7 +95,7 @@ resource "frostmoln_public_ip_association" "api" {
 #
 # An attached address depends on the VPC having a gateway, and Terraform cannot
 # see that — no attribute here refers to frostmoln_gateway, so the two are
-# unordered and run concurrently. On teardown the gateway usually goes first and
+# unordered and run concurrently. On teardown the gateway can go first and
 # its delete is refused ("Gateway is still in use", GATEWAY_IN_USE), stopping the
 # destroy half way. On create the attachment can land first, and the platform
 # attaches a gateway ITSELF to carry it — after which an explicit gateway that

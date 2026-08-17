@@ -21,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
 )
 
 // Cluster and node-pool statuses (kubernetes service vocabulary). Deletes are
@@ -76,7 +77,11 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 	resp.Schema = schema.Schema{
 		Description: "Manages a managed Kubernetes cluster in the Frostmoln platform. " +
 			"The cluster owns its initial node pool (created embedded, scaled in-place). " +
-			"Additional node pools are managed with the frostmoln_kubernetes_node_pool resource.",
+			"Additional node pools are managed with the frostmoln_kubernetes_node_pool resource.\n\n" +
+			schemadoc.GatewayOrderingNote("frostmoln_kubernetes_cluster") + "\n\n" +
+			"It matters more here than on the other attaching resources: a cluster whose ingress load " +
+			"balancer cannot be built comes up WITHOUT one rather than failing the apply, so an " +
+			"ordering problem costs you the ingress path silently.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the cluster.",
@@ -157,7 +162,11 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 					"is checked at plan time. A different address from public_ip_id, which serves the API " +
 					"endpoint: the two load balancers never share one, and the same id in both is rejected. " +
 					"A bring-your-own public IP survives cluster deletion. Create-only: changing it REPLACES " +
-					"the cluster.",
+					"the cluster.\n\n" +
+					"Naming one does not change WHETHER an address is attached — `ingress_scheme = " +
+					"\"public\"` attaches one either way, allocating it for you when you name none — so " +
+					"the gateway ordering this creates applies whether or not you set this. See the " +
+					"ordering note on this resource above.",
 				Optional: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -183,7 +192,13 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 					"this value — after importing a cluster created with a BYO public IP, omit this attribute or add " +
 					"`lifecycle { ignore_changes = [public_ip_id] }`, otherwise the next plan will want to replace the " +
 					"cluster. A BYO public IP survives cluster deletion. This is the API endpoint's address — for " +
-					"the worker ingress load balancer's, use ingress_public_ip_id; the same id in both is rejected.",
+					"the worker ingress load balancer's, use ingress_public_ip_id; the same id in both is " +
+					"rejected.\n\n" +
+					"Where this attribute is accepted at all, the address lands on a port in your own VPC " +
+					"and carries the same gateway dependency as every other attachment — see " +
+					"the ordering note on this resource above. On some accounts this attribute is refused " +
+					"outright (400) — the cluster API endpoint takes no address of yours there — so if you " +
+					"get that refusal, the ordering it describes does not arise for the API endpoint.",
 				Optional: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),

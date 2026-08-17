@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
 )
 
 var (
@@ -56,7 +57,9 @@ func (r *loadBalancerResource) Metadata(_ context.Context, req resource.Metadata
 
 func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a load balancer in the Frostmoln Cloud Platform. Load balancer creation and deletion are asynchronous (Octavia), so applies wait on the provisioning operation to complete.",
+		Description: "Manages a load balancer in the Frostmoln Cloud Platform. Load balancer creation and " +
+			"deletion are asynchronous, so applies wait on the provisioning operation to complete.\n\n" +
+			schemadoc.GatewayOrderingNote("frostmoln_load_balancer"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the load balancer.",
@@ -108,8 +111,12 @@ func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 				},
 			},
 			"public_ip_id": schema.StringAttribute{
-				Description: "ID of a pre-allocated, tenant-owned, unassociated public IP to attach to the VIP. Required when scheme is public; must be omitted when scheme is internal. Changing this forces a new resource.",
-				Optional:    true,
+				Description: "ID of a pre-allocated, tenant-owned, unassociated public IP to attach to the VIP. " +
+					"Required when scheme is public; must be omitted when scheme is internal. Changing this " +
+					"forces a new resource.\n\n" +
+					"Attaching it makes this load balancer depend on the VPC's gateway, which Terraform " +
+					"cannot see — see the ordering note on this resource above.",
+				Optional: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},

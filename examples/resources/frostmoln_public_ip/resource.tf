@@ -3,7 +3,7 @@
 # `instance_id` is what makes the ATTACHMENT here, and an attached address
 # depends on the VPC having a gateway — which Terraform cannot see, because
 # nothing in this resource refers to frostmoln_gateway. Left unordered the two
-# run concurrently: on teardown the gateway usually goes first and its delete is
+# run concurrently: on teardown the gateway can go first and its delete is
 # refused ("Gateway is still in use", GATEWAY_IN_USE), and on create the
 # attachment can land first, after which the platform attaches a gateway itself
 # and an explicit one either collides with it (GATEWAY_EXISTS, if it pins a

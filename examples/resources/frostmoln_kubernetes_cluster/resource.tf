@@ -2,11 +2,24 @@ data "frostmoln_kubernetes_versions" "available" {}
 
 data "frostmoln_kubernetes_flavors" "available" {}
 
+# The depends_on is not decoration. A cluster attaches public IPs into your VPC —
+# the worker ingress load balancer when ingress_scheme is "public", and the API
+# endpoint on accounts where that takes a public address — and it does so whether
+# or not you name an address of your own, allocating one for you when you name
+# none. Nothing here refers to frostmoln_gateway, so Terraform runs the two
+# concurrently and on teardown the gateway can go first, with its delete refused
+# (GATEWAY_IN_USE) part-way through the destroy.
+#
+# It costs more here than elsewhere: a cluster whose ingress load balancer cannot
+# be built comes up WITHOUT one rather than failing the apply, so the damage is
+# silent.
 resource "frostmoln_kubernetes_cluster" "main" {
   name      = "my-cluster"
   version   = [for v in data.frostmoln_kubernetes_versions.available.versions : v.version if v.is_default][0]
   vpc_id    = frostmoln_vpc.main.id
   subnet_id = frostmoln_subnet.nodes.id
+
+  depends_on = [frostmoln_gateway.main]
 
   # Endpoint exposure. Omit for the default "public" (LB VIP reachable via a
   # public IP). Set "internal" for a private VIP-only endpoint reachable only

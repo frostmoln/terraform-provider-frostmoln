@@ -20,6 +20,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
 )
 
@@ -335,8 +336,10 @@ func (r *apacheInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 		// v1: the HCL attribute flavor was renamed to flavor_id to match the
 		// flagship frostmoln_instance and the cache/messaging offers (the wire
 		// tag was always flavorId). See UpgradeState for the v0->v1 migration.
-		Version:     1,
-		Description: "Manages a managed Apache webserver instance in the Frostmoln platform.",
+		Version: 1,
+		Description: "Manages a managed Apache webserver instance in the Frostmoln platform." +
+			"\n\n" +
+			schemadoc.GatewayOrderingNote("frostmoln_apache_instance"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the Apache instance.",
@@ -437,7 +440,9 @@ func (r *apacheInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 				Description: "Whether the instance is publicly exposed: when true a Public IP is " +
 					"associated to the instance's engine port so the deployed site is reachable on the public " +
 					"internet, and public_ip is populated. Set at create to expose immediately; toggling it " +
-					"afterwards runs the platform's expose (true) or unexpose (false) action.",
+					"afterwards runs the platform's expose (true) or unexpose (false) action.\n\n" +
+					"Setting it true makes this instance depend on the VPC having a gateway, which " +
+					"Terraform cannot see — see the ordering note on this resource above.",
 				Optional: true,
 				Computed: true,
 				PlanModifiers: []planmodifier.Bool{

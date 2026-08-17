@@ -17,6 +17,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/public_ip"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
 )
 
 // --- helpers ---
@@ -143,69 +144,22 @@ func TestSchema_MutualExclusivityIsDocumentedOnBothResources(t *testing.T) {
 	}
 }
 
-// TestSchema_GatewayOrderingIsDocumentedOnBothAttachingSurfaces guards the
-// dependency Terraform cannot derive.
+// TestSchema_GatewayOrderingNoteIsRendered is the wiring check for THIS
+// resource: the note reaches the description, naming this resource as where the
+// `depends_on` goes.
 //
-// An attached address needs its VPC to have a gateway, and neither attaching
-// surface refers to `frostmoln_gateway`, so nothing orders the two and Terraform
-// picks: on destroy it takes the gateway first and the delete is refused with
-// GATEWAY_IN_USE, on create it attaches first and the explicit gateway create is
-// refused with GATEWAY_EXISTS. The only place a practitioner can learn this
-// before it bites is the description of the resource that makes the attachment,
-// and there are TWO of those — this resource, and frostmoln_public_ip.instance_id.
-//
-// The note is generated per attaching resource on purpose: the `depends_on`
-// belongs on whichever resource attaches, and a reader given the other one's
-// name moves it across by hand or not at all. That is not hypothetical — it is
-// exactly what the first practitioner to hit this had to do.
-func TestSchema_GatewayOrderingIsDocumentedOnBothAttachingSurfaces(t *testing.T) {
+// Membership of the attaching-surface set, and the note's claims, are owned by
+// internal/provider/gateway_ordering_note_test.go — this file used to assert
+// both and said "there are TWO of those" in its name and its comment. There are
+// six. A guard whose title is a false statement about the size of the set is one
+// the next reader believes.
+func TestSchema_GatewayOrderingNoteIsRendered(t *testing.T) {
 	t.Parallel()
 
 	assoc := getSchema(t)
-	if !strings.Contains(assoc.Schema.Description, public_ip.GatewayOrderingNote("frostmoln_public_ip_association")) {
-		t.Errorf("frostmoln_public_ip_association's description must carry the gateway-ordering note, "+
+	if !strings.Contains(assoc.Schema.Description, schemadoc.GatewayOrderingNote("frostmoln_public_ip_association")) {
+		t.Errorf("frostmoln_public_ip_association's description must carry the gateway-ordering note "+
 			"naming ITSELF as where the depends_on goes:\n%s", assoc.Schema.Description)
-	}
-
-	var pipSchema resource.SchemaResponse
-	public_ip.NewResource().Schema(context.Background(), resource.SchemaRequest{}, &pipSchema)
-	instanceID, ok := pipSchema.Schema.Attributes["instance_id"]
-	if !ok {
-		t.Fatal("frostmoln_public_ip has no instance_id attribute")
-	}
-	if !strings.Contains(instanceID.GetDescription(), public_ip.GatewayOrderingNote("frostmoln_public_ip")) {
-		t.Errorf("frostmoln_public_ip.instance_id — the other surface that attaches an address — must "+
-			"carry the note naming frostmoln_public_ip:\n%s", instanceID.GetDescription())
-	}
-
-	// The note is only actionable if it says what to write, which failures it
-	// prevents, and that the dependency points AT the gateway rather than the
-	// other way about.
-	//
-	// NOT asserted: that the note contains its own argument — the function
-	// interpolates it, so that check can never fail. These are the claims that
-	// can be got wrong, and two of them WERE: the create side does not always
-	// fail (an unpinned gateway adopts the platform's silently), and the one
-	// address this dependency must never be hung on is the gateway's own.
-	note := public_ip.GatewayOrderingNote("frostmoln_public_ip_association")
-	for _, want := range []string{
-		"depends_on = [frostmoln_gateway.<name>]",
-		"GATEWAY_IN_USE",
-		"GATEWAY_EXISTS",
-		"ADOPTS",
-		"Cycle:",
-		"acknowledge_connectivity_loss",
-		"module.<name>",
-	} {
-		if !strings.Contains(note, want) {
-			t.Errorf("the gateway-ordering note must contain %q", want)
-		}
-	}
-	// The create side is a RACE, not a fixed order. Stating it flatly as "the
-	// attachment goes first" reads as wrong to everyone whose apply succeeded.
-	if !strings.Contains(note, "concurrently") {
-		t.Error("the note must say the two run concurrently — with no edge between them neither " +
-			"order is guaranteed, and a reader whose create worked will discard the whole note")
 	}
 }
 

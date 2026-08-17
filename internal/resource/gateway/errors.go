@@ -89,9 +89,13 @@ func addGatewayError(diags *diag.Diagnostics, fallback string, err error) {
 				"that ATTACHES the address, pointing at the gateway — the `frostmoln_public_ip` where its "+
 				"own `instance_id` makes the attachment, the `frostmoln_public_ip_association` where that "+
 				"resource makes it, the `frostmoln_load_balancer` where a public-scheme load balancer holds "+
-				"the address. It is the ATTACHMENT that depends on the gateway, not the allocation:\n\n"+
+				"the address, the `frostmoln_kubernetes_cluster` where its ingress does, the "+
+				"`frostmoln_nginx_instance` or `frostmoln_apache_instance` where `public = true` does. It is "+
+				"the ATTACHMENT that depends on the gateway, not the allocation — and the address need not "+
+				"be one you named: the platform allocates its own for most of these, and it holds the "+
+				"gateway open just the same:\n\n"+
 				"    resource \"frostmoln_public_ip_association\" \"example\" {\n"+
-				"      # ... or whichever of the three attaches the address\n"+
+				"      # ... or whichever of them attaches the address\n"+
 				"      depends_on = [frostmoln_gateway.example]\n"+
 				"    }\n\n"+
 				"That changes ORDER only; it releases nothing that was not already being destroyed. "+

@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
 )
 
 var (
@@ -61,59 +62,6 @@ const MutualExclusivityNote = "~> **`frostmoln_public_ip.instance_id` and the " 
 	"to. Destroying that resource detaches the address and leaves it allocated to your tenant, " +
 	"whereas destroying a `frostmoln_public_ip` RELEASES the address for good."
 
-// GatewayOrderingNote states the one dependency on this surface that Terraform
-// CANNOT derive: an ATTACHED address depends on its VPC having a gateway, and no
-// attribute on either attaching surface refers to `frostmoln_gateway`, so the two
-// are unordered and run concurrently.
-//
-// It takes the attaching resource type because the `depends_on` belongs on
-// whichever resource makes the ATTACHMENT, and that is the one thing a reader
-// cannot work out from a snippet naming the other one. The first practitioner to
-// hit this had to: the GATEWAY_IN_USE diagnostic named `frostmoln_public_ip`,
-// their attachment was a `frostmoln_public_ip_association`, and the destroy kept
-// failing until they moved the dependency across by hand.
-//
-// Both failures are stated as the service actually behaves, which is NOT what
-// this provider said before. `gatewayService.Create` treats a create that names
-// no `public_ip_id` as an idempotent replay (`publicIPMatches` reads an unnamed
-// address as "whatever it has"), so it ADOPTS a gateway the platform attached
-// rather than refusing it — GATEWAY_EXISTS is reached only by a create that pins
-// an address. A note promising an error that does not come is worse than no note:
-// the reader concludes the ordering does not matter, and keeps the silent
-// outcome, which is a VPC egressing from an address they never chose.
-func GatewayOrderingNote(attachingResource string) string {
-	return "~> **Terraform cannot see that an ATTACHED address depends on the VPC's gateway.** An " +
-		"address reaches the outside world only through one, but no attribute here refers to " +
-		"`frostmoln_gateway`, so nothing orders the two — Terraform runs them concurrently and " +
-		"either can win.\n\n" +
-		"On teardown the gateway usually goes first, and its delete is then refused (\"Gateway is " +
-		"still in use\", `GATEWAY_IN_USE`) because something in the VPC still depends on it — the " +
-		"failure that stops a `terraform destroy` half way through. On create the attachment can " +
-		"land first, and the platform then attaches a gateway ITSELF to carry it: a " +
-		"`frostmoln_gateway` that names a `public_ip_id` is refused after that (\"VPC already has a " +
-		"gateway\", `GATEWAY_EXISTS`), and one that names none is not refused at all — it quietly " +
-		"ADOPTS the gateway the platform made, leaving the VPC egressing from an address the " +
-		"platform drew instead of the one you meant to pin, with `origin` reading " +
-		"`implicit_public_ip`.\n\n" +
-		"Where the same configuration manages the gateway, state the ordering yourself: put " +
-		"`depends_on = [frostmoln_gateway.<name>]` on the resource that makes the ATTACHMENT — the " +
-		"`" + attachingResource + "` here. A public-scheme `frostmoln_load_balancer` holds an " +
-		"address the same way and takes the same line. Where the gateway is in another module, the " +
-		"dependency is on the module itself: `depends_on = [module.<name>]`.\n\n" +
-		"The ATTACHMENT is the place for it because an address that is merely allocated depends on " +
-		"nothing — and because an address resolved through the `frostmoln_public_ip` data source has " +
-		"no allocation resource to hang it on at all.\n\n" +
-		"Two places it must not go. **Never put it on an address that a " +
-		"`frostmoln_gateway.public_ip_id` names** — the gateway already depends on that address, so " +
-		"a dependency back the other way is a plan-time `Cycle:` error, and that reference already " +
-		"sequences the two correctly without help. And written the other way about — on the gateway, " +
-		"listing the addresses — it reverses both orders, turning a race that sometimes passed into a " +
-		"teardown that fails every time.\n\n" +
-		"It changes ORDER only: nothing is created and nothing is released. It does not arm the " +
-		"gateway's own destroy either — without `acknowledge_connectivity_loss` the teardown stops " +
-		"at that refusal instead, and never reaches the ordering at all."
-}
-
 func (r *publicIPResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Manages a public IP in the Frostmoln Cloud Platform.\n\n" +
@@ -147,7 +95,7 @@ func (r *publicIPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"instance_id": schema.StringAttribute{
 				Description: "The ID of the instance to associate with. Set to associate, remove to disassociate.\n\n" +
 					MutualExclusivityNote + "\n\n" +
-					GatewayOrderingNote("frostmoln_public_ip"),
+					schemadoc.GatewayOrderingNote("frostmoln_public_ip"),
 				Optional: true,
 			},
 			"tags": schema.MapAttribute{

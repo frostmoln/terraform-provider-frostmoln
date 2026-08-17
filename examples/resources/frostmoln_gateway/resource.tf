@@ -83,9 +83,13 @@ resource "frostmoln_gateway" "chosen_address" {
 # and the VPC egresses from an address nobody chose.
 #
 # Below is the frostmoln_public_ip itself, because its own instance_id is what
-# attaches the address. Where a frostmoln_public_ip_association attaches it, or a
-# public-scheme frostmoln_load_balancer holds it, the depends_on goes on THAT
-# resource — the attachment is what depends on the gateway, not the allocation.
+# attaches the address. Wherever something ELSE attaches it, the depends_on goes
+# on that resource instead: a frostmoln_public_ip_association, a public-scheme
+# frostmoln_load_balancer, a frostmoln_kubernetes_cluster with a public ingress,
+# a frostmoln_nginx_instance or frostmoln_apache_instance with public = true.
+# The attachment is what depends on the gateway, not the allocation — and the
+# address does not have to be one you named, since the platform allocates its own
+# for most of those and it holds the gateway open just the same.
 # Never put it on frostmoln_public_ip.egress above: the gateway already refers to
 # that address, so a dependency back the other way is a plan-time Cycle error.
 resource "frostmoln_public_ip" "example" {
