@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.31.0] - 2026-08-18
+
+### 🚀 Features
+
+- *(image)* Retry a destroy while an import still holds the image (#341)
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.16 (#339)
+
 ## [0.30.3] - 2026-08-17
 
 ### 🐛 Bug Fixes
