@@ -3,12 +3,12 @@
 page_title: "frostmoln_image Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a customer custom image (bring-your-own-image). The provider runs the full flow: it creates the image record, uploads the local disk image straight to Frostmoln object storage with the presigned form the platform returns, asks the platform to import it, and waits for the image to reach "active". Custom images require the custom-images entitlement; without it the API refuses the create. Only name, description, min_disk_gb and min_ram_mb can be changed in place — every other attribute, including source_file, replaces the image. Create waits up to 60 minutes for the import to finish; that budget is not configurable.
+  Manages a customer custom image (bring-your-own-image). The provider runs the full flow: it creates the image record, uploads the local disk image straight to Frostmoln object storage with the presigned form the platform returns, asks the platform to import it, and waits for the image to reach "active". Custom images require the custom-images entitlement; without it the API refuses the create. Only name, description, min_disk_gb and min_ram_mb can be changed in place — every other attribute, including source_file, replaces the image. Create waits up to 60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import still holds the image; neither budget is configurable.
 ---
 
 # frostmoln_image (Resource)
 
-Manages a customer custom image (bring-your-own-image). The provider runs the full flow: it creates the image record, uploads the local disk image straight to Frostmoln object storage with the presigned form the platform returns, asks the platform to import it, and waits for the image to reach "active". Custom images require the custom-images entitlement; without it the API refuses the create. Only name, description, min_disk_gb and min_ram_mb can be changed in place — every other attribute, including source_file, replaces the image. Create waits up to 60 minutes for the import to finish; that budget is not configurable.
+Manages a customer custom image (bring-your-own-image). The provider runs the full flow: it creates the image record, uploads the local disk image straight to Frostmoln object storage with the presigned form the platform returns, asks the platform to import it, and waits for the image to reach "active". Custom images require the custom-images entitlement; without it the API refuses the create. Only name, description, min_disk_gb and min_ram_mb can be changed in place — every other attribute, including source_file, replaces the image. Create waits up to 60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import still holds the image; neither budget is configurable.
 
 ## Example Usage
 
@@ -68,6 +68,31 @@ Manages a customer custom image (bring-your-own-image). The provider runs the fu
 #
 # The image stays fully intact — the refusal happens before anything is removed,
 # so the same destroy succeeds once the last clone is gone.
+#
+# DESTROY CAN ALSO FAIL WITH 409 invalid_state, while the image is still being
+# imported. Glance holds the image for the lifetime of its import task, so it
+# cannot be deleted mid-import. What clears that is the import FINISHING — after
+# which the image is deletable like any other. The platform also expires a
+# STALLED import on its own, and reports how long that has left to run, which is
+# the number the refusal quotes; because the countdown restarts every time the
+# import makes progress, a healthy four-minute import quotes about an hour for
+# its whole life and then goes deletable in four minutes.
+#
+# The provider therefore keeps RETRYING rather than sleeping out the quoted time,
+# and does not weigh that time against its own patience before starting — a
+# healthy import quotes more than the destroy's whole 60-minute budget for its
+# entire life, so weighing it would refuse the one case retrying is for. A
+# destroy retries every half minute until the image lets go or the 60 minutes are
+# spent; an import that finishes normally is picked up within seconds of
+# finishing. If the budget runs out first, the destroy fails with the platform's
+# latest quote in the diagnostic — re-run once the import has finished, or after
+# that time if it never does. When the platform cannot quote anything at all, the
+# destroy fails immediately: re-run shortly (that answer also covers a passing
+# failure to read the import) and contact support if it keeps failing.
+#
+# Note the budget cuts both ways: a destroy against an importing image may now
+# BLOCK for up to an hour rather than failing fast, which matters most in CI,
+# where a job timeout is what notices.
 #
 # `terraform import` is deliberately NOT supported for this resource. source_file
 # is a local path the API never returns, so an imported image would immediately

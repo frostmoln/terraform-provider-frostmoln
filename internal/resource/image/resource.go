@@ -42,6 +42,9 @@ type imageResource struct {
 	client       *client.Client
 	pollInterval time.Duration
 	pollTimeout  time.Duration
+	// deleteRetryInterval paces the destroy's retries while an import still holds
+	// the image; see getDeleteRetryInterval.
+	deleteRetryInterval time.Duration
 	// uploadClient sends the presigned multipart POST to the storage edge (a
 	// different host than the API). nil uses a default with a generous timeout.
 	uploadClient *http.Client
@@ -58,10 +61,17 @@ func (r *imageResource) getPollTimeout() time.Duration {
 	if r.pollTimeout > 0 {
 		return r.pollTimeout
 	}
-	// Glance has to fetch the staged object and convert it to raw before the
-	// image goes active; on a multi-gigabyte qcow2 that is minutes, not seconds.
-	return 60 * time.Minute
+	return defaultPollTimeout
 }
+
+// defaultPollTimeout is how long this resource waits on the platform: Glance has
+// to fetch the staged object and convert it to raw before the image goes active,
+// and on a multi-gigabyte qcow2 that is minutes, not seconds. It is also the
+// budget deleteImage waits an import lock out within, so it is a named constant
+// rather than a literal in getPollTimeout. Practitioner copy deliberately does
+// NOT quote it: the bound deleteImage actually applies is what is LEFT of the
+// budget when the refusal arrives, which after a first wait is less.
+const defaultPollTimeout = 60 * time.Minute
 
 func (r *imageResource) getUploadClient() *http.Client {
 	if r.uploadClient != nil {
@@ -96,7 +106,8 @@ func (r *imageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"for the image to reach \"active\". Custom images require the custom-images entitlement; without " +
 			"it the API refuses the create. Only name, description, min_disk_gb and min_ram_mb can be changed " +
 			"in place — every other attribute, including source_file, replaces the image. Create waits up to " +
-			"60 minutes for the import to finish; that budget is not configurable.",
+			"60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import " +
+			"still holds the image; neither budget is configurable.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the image.",
@@ -514,7 +525,7 @@ func (r *imageResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		return
 	}
 
-	if _, err := r.client.Delete(ctx, "/v1/images/"+state.ID.ValueString()); err != nil {
+	if err := r.deleteImage(ctx, state.ID.ValueString()); err != nil {
 		// Already gone — including the case a failed create left a queued image
 		// the practitioner deleted by hand. The end state is what was asked for.
 		if client.IsNotFound(err) {
@@ -523,6 +534,146 @@ func (r *imageResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		resp.Diagnostics.AddError("Failed to delete image", imageErrorDetail(err))
 	}
 }
+
+// deleteImage destroys the image, retrying while an import still holds it rather
+// than failing the destroy on the first refusal.
+//
+// WHAT ACTUALLY CLEARS IT. An image being imported cannot be deleted while
+// Glance holds it for the import task. compute answers that DELETE with a 409
+// invalid_state carrying `reason: import_running`, and — when it can work one
+// out — `details.retryAfterSeconds`. That number is NOT an appointment: compute
+// derives it from how long the task has been IDLE (the lock window minus time
+// since the task last progressed), and a healthy import refreshes that timestamp
+// about once a minute. So a four-minute import quotes "about 65 minutes" for its
+// whole life and then becomes deletable the moment it finishes, an hour before
+// its own quote. The quote is the STALL fallback; finishing is the common exit.
+//
+// Hence: retry until the destroy's budget is spent, and do NOT weigh the quote
+// against the remaining budget to decide whether to start. A fit check on a
+// number that big refuses the healthy case on the first request — the one case
+// retrying exists for — and, worse, aborts a wait already begun the moment the
+// import proves it is alive, because a resumed task pushes the quote back UP.
+//
+// The refusal that carries NO wait is still surfaced immediately. compute sends
+// none when it could not work one out at all, so there is nothing to retry
+// towards; the diagnostic sends the practitioner back for one prompt re-run,
+// which covers the one passing cause among them (it could not read the import
+// task at that moment).
+//
+// The bound is the resource's poll timeout, the same patience the import wait
+// itself gets. The cadence is deliberately slower than that wait's: DELETE is a
+// write, and each attempt costs compute an admin read against Glance, so this
+// loop spends about a hundred requests over an hour rather than the several
+// hundred a ten-second interval would.
+func (r *imageResource) deleteImage(ctx context.Context, imageID string) error {
+	deadline := time.Now().Add(r.getPollTimeout())
+	for {
+		_, err := r.client.Delete(ctx, "/v1/images/"+imageID)
+		if err == nil {
+			return nil
+		}
+		if _, known := importLockWait(err); !known {
+			return err
+		}
+		wait := r.getDeleteRetryInterval()
+		if time.Until(deadline) <= wait {
+			// Budget spent. The error carried out is the LAST refusal, so the
+			// diagnostic quotes the platform's most recent answer rather than the
+			// one from an hour ago.
+			return err
+		}
+		tflog.Info(ctx, "waiting for the image import to release the image",
+			map[string]any{"image_id": imageID, "retry_in": wait.String()})
+		select {
+		case <-ctx.Done():
+			// Named, because "context canceled" alone hides the one fact that
+			// tells a practitioner what to do next: the destroy was part-way
+			// through a wait the platform had already agreed to.
+			return fmt.Errorf("waiting out the image import: %w", ctx.Err())
+		case <-time.After(wait):
+		}
+	}
+}
+
+// getDeleteRetryInterval is how often the destroy re-attempts while an import
+// holds the image. Its own knob rather than getPollInterval: that interval paces
+// a GET during create, this paces a DELETE that costs compute an admin call into
+// Glance on every attempt, and nothing here is waiting on a fast transition.
+func (r *imageResource) getDeleteRetryInterval() time.Duration {
+	if r.deleteRetryInterval > 0 {
+		return r.deleteRetryInterval
+	}
+	return 30 * time.Second
+}
+
+// importLockRefusal returns err as an APIError when it is compute refusing to
+// delete an image whose Glance import lock may still be live, and nil otherwise.
+// It keys on `details.reason` rather than the status and code alone: the same
+// 409 invalid_state carries the `protected` and `undeletable_status` refusals,
+// and no amount of waiting clears either of those.
+//
+// It hands back the error rather than reporting a bool so importLockWait reads
+// the details off the value the predicate already resolved, instead of walking
+// the chain a second time and discarding the result.
+func importLockRefusal(err error) *client.APIError {
+	var apiErr *client.APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusConflict || apiErr.Code != errCodeInvalidState {
+		return nil
+	}
+	if reason, _ := apiErr.Details[detailReason].(string); reason != reasonImportRunning {
+		return nil
+	}
+	return apiErr
+}
+
+// importLockWait returns how long compute says a stalled import has left before
+// the platform expires it, and whether that is known at all. Absent, non-positive
+// or not a number all mean there is nothing to point the practitioner at — never
+// that the wait is zero.
+//
+// Its two callers use it differently, and neither sleeps it: deleteImage reads
+// only WHETHER it is known (to decide between retrying and giving up), and
+// importLockDetail reads the value to quote it. The retry cadence is
+// getDeleteRetryInterval, which is why no server value can pace this loop.
+//
+// The value is still CONVERTED BEFORE it is judged, and the guard is still
+// two-sided, because both callers would otherwise repeat nonsense back to the
+// practitioner: guarding `seconds <= 0` first lets a FRACTIONAL wait through
+// (`time.Duration(0.5)` truncates to zero, quoted as "in about 0s"), and a value
+// past int64 nanoseconds lands outside the range in an implementation-defined
+// direction. Both are caught here rather than at either call site.
+func importLockWait(err error) (time.Duration, bool) {
+	apiErr := importLockRefusal(err)
+	if apiErr == nil {
+		return 0, false
+	}
+	// JSON numbers decode into the details map as float64.
+	seconds, ok := apiErr.Details[detailRetryAfterSeconds].(float64)
+	if !ok {
+		return 0, false
+	}
+	wait := time.Duration(seconds * float64(time.Second))
+	if wait <= 0 || wait > maxImportLockWait {
+		return 0, false
+	}
+	return wait, true
+}
+
+// maxImportLockWait is the longest wait this provider will believe. Glance's
+// lock runs 60 minutes, or 120 for a `pending` task, and compute adds a
+// five-minute skew margin — so a day is generous by an order of magnitude and
+// anything past it is not a lock lifetime at all.
+//
+// It is a CORRECTNESS bound, not tidiness. `retryAfterSeconds` is a remaining-
+// seconds delta, and the classic regression is to send an absolute timestamp
+// instead: epoch seconds (~1.8e9) converts cleanly to a wait of some 57 years,
+// which the practitioner would be told to come back after, and epoch millis
+// (~1.8e12) lands outside int64 nanoseconds altogether — a conversion Go leaves
+// implementation-defined, so it saturates positive on one architecture and
+// negative on another, which is why the guard is two-sided. Out of range is
+// treated exactly like absent: a wait the provider cannot make sense of is not a
+// wait it can repeat back.
+const maxImportLockWait = 24 * time.Hour
 
 // resolveUploadForm returns the presigned upload form for a freshly created
 // image, minting one if the create did not carry it.
@@ -846,23 +997,75 @@ func checkFormNotExpired(upload *apiImageUpload) error {
 // Nothing on the wire distinguishes the three, so the hedge is the honest form.
 func imageErrorDetail(err error) string {
 	var apiErr *client.APIError
-	if !errors.As(err, &apiErr) || apiErr.Code != errCodeQuotaExceeded {
+	if !errors.As(err, &apiErr) {
 		return err.Error()
 	}
-	switch apiErr.StatusCode {
-	case http.StatusForbidden:
+	switch {
+	case apiErr.Code == errCodeQuotaExceeded && apiErr.StatusCode == http.StatusForbidden:
 		return err.Error() + "\n\nThis is the staging limit on uploads in flight, not this tenant's image " +
 			"allowance. It does NOT necessarily clear on its own: a failed import leaves the image queued and " +
 			"still holding a slot, so finish or delete the images in progress before applying again."
-	case http.StatusConflict:
+	case apiErr.Code == errCodeQuotaExceeded && apiErr.StatusCode == http.StatusConflict:
 		return err.Error() + "\n\nThis is this tenant's custom-image allowance, and it is full. It does NOT " +
 			"clear on its own: delete an existing custom image (or ask for a higher limit) before applying again. " +
 			"The allowance bounds both the number of images and their total size, so freeing one slot may not be " +
 			"enough. An image the storage backend still holds clones of — in practice, one with instances built " +
 			"from it — refuses the delete with 409 resource_in_use; destroy those first."
+	case importLockRefusal(apiErr) != nil:
+		return err.Error() + importLockDetail(apiErr)
 	}
 	return err.Error()
 }
 
+// importLockDetail explains a delete refused because the image's import still
+// holds it, and — this is the whole point of the arm — what actually clears it.
+//
+// TWO THINGS THE WIRE DOES NOT SAY, and the copy must. First, the quoted wait is
+// the STALL budget, not an appointment: it is Glance's lock window minus the time
+// the import task has been idle, and a healthy import refreshes that idle timer
+// about once a minute, so a four-minute import quotes "about 65 minutes" for its
+// whole life and becomes deletable the moment it finishes. Copy that says "the
+// delete succeeds after 65 minutes" is wrong on the COMMON path — every delete
+// aimed at a running import lands here, not only the wedged ones.
+//
+// Second, an absent wait is not automatically permanent. compute omits it for
+// several operator-shaped causes AND for one passing one — it could not read the
+// import task from Glance at that moment. So the copy hedges: try again, and
+// escalate only if it keeps failing. Promising permanence would send someone to
+// support for a thirty-second blip.
+func importLockDetail(err error) string {
+	wait, known := importLockWait(err)
+	if !known {
+		return "\n\nThe image is still being imported, and the platform cannot say when its import releases " +
+			"the image — the import task is in a state that never expires on its own, or the image service " +
+			"could not be reached, which is a passing condition. Re-run the destroy shortly; if it keeps " +
+			"failing the same way, contact Frostmoln support to have the image released."
+	}
+	// Floored at a minute for display only: compute's smallest real wait is
+	// minutes (the remainder carries a five-minute skew margin), and rounding a
+	// shorter one to "0s" would tell the practitioner a lock expires in no time
+	// at all while refusing to wait for it.
+	if wait < time.Minute {
+		wait = time.Minute
+	}
+	return "\n\nThe image is still being imported, and cannot be deleted until that import lets go of it — " +
+		"which happens as soon as the import FINISHES, or once the platform expires one that has stalled. " +
+		"This destroy retried until its patience ran out and the import still held the image; the platform " +
+		"last reported about " + wait.Round(time.Minute).String() + " before it would expire a stall. Re-run " +
+		"the destroy once the import has finished, or after that time if it never does."
+}
+
 // errCodeQuotaExceeded is servicekit's wire code for both image quota refusals.
 const errCodeQuotaExceeded = "quota_exceeded"
+
+// The wire shape of compute's delete refusals. errCodeInvalidState is shared by
+// all three (import lock, protected, undeletable status), so detailReason is the
+// only thing that tells them apart; detailRetryAfterSeconds is the same key
+// servicekit services use for a wait the Retry-After header cannot carry (it is
+// not CORS-safelisted, so browser clients read the body instead).
+const (
+	errCodeInvalidState     = "invalid_state"
+	detailReason            = "reason"
+	reasonImportRunning     = "import_running"
+	detailRetryAfterSeconds = "retryAfterSeconds"
+)

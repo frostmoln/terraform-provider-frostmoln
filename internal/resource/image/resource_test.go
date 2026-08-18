@@ -26,10 +26,11 @@ import (
 
 func newTestImageResource(c *client.Client, upload *http.Client) *imageResource {
 	return &imageResource{
-		client:       c,
-		uploadClient: upload,
-		pollInterval: time.Millisecond,
-		pollTimeout:  5 * time.Second,
+		client:              c,
+		uploadClient:        upload,
+		pollInterval:        time.Millisecond,
+		pollTimeout:         5 * time.Second,
+		deleteRetryInterval: time.Millisecond,
 	}
 }
 
@@ -535,6 +536,436 @@ func TestDeleteTolerates404(t *testing.T) {
 
 	if deleteResp.Diagnostics.HasError() {
 		t.Fatalf("Delete must tolerate a 404, got: %v", deleteResp.Diagnostics.Errors())
+	}
+}
+
+// deleteRefusal is compute's 409 for a delete it will not do. reason picks which
+// of the three refusals it is; retryAfterSeconds is omitted entirely when <= 0,
+// because "absent" is exactly what the platform sends when no wait clears it.
+func deleteRefusal(reason string, retryAfterSeconds int) map[string]any {
+	return deleteRefusalSeconds(reason, float64(retryAfterSeconds))
+}
+
+// deleteRefusalSeconds is deleteRefusal for a wait that is not a whole number of
+// seconds — the shape only a buggy or hostile server sends.
+func deleteRefusalSeconds(reason string, retryAfterSeconds float64) map[string]any {
+	details := map[string]any{"reason": reason}
+	if retryAfterSeconds > 0 {
+		details["retryAfterSeconds"] = retryAfterSeconds
+	}
+	return map[string]any{"code": "invalid_state", "message": "image is being imported", "details": details}
+}
+
+// deleteServer answers DELETE with the given responses in order (the last one
+// repeats), and reports how many requests it took.
+func deleteServer(t *testing.T, responses ...func(w http.ResponseWriter)) (*httptest.Server, *int) {
+	t.Helper()
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodDelete {
+			t.Errorf("unexpected request %s %s", req.Method, req.URL.Path)
+		}
+		i := calls
+		calls++
+		if i >= len(responses) {
+			i = len(responses) - 1
+		}
+		responses[i](w)
+	}))
+	return server, &calls
+}
+
+func refuse(body map[string]any) func(http.ResponseWriter) {
+	return func(w http.ResponseWriter) {
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(body)
+	}
+}
+
+func accept() func(http.ResponseWriter) {
+	return func(w http.ResponseWriter) { w.WriteHeader(http.StatusNoContent) }
+}
+
+// deleteResource builds an image resource pointed at server. The poll interval is
+// a parameter because the delete loop now waits on it rather than on the server's
+// number, so a test that measures requests-per-budget has to set it.
+func deleteResource(t *testing.T, server *httptest.Server, pollTimeout, retryInterval time.Duration) *imageResource {
+	t.Helper()
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	r := newTestImageResource(c, server.Client())
+	r.pollTimeout, r.deleteRetryInterval = pollTimeout, retryInterval
+	return r
+}
+
+// runDeleteWith drives r's Delete under ctx and returns the response.
+func runDeleteWith(t *testing.T, ctx context.Context, r *imageResource) *resource.DeleteResponse {
+	t.Helper()
+	s := resourceSchema(t)
+	stateVal := stateValue(t, s, "img-wedged")
+	deleteResp := &resource.DeleteResponse{State: tfsdk.State{Schema: s, Raw: stateVal}}
+	r.Delete(ctx, resource.DeleteRequest{State: tfsdk.State{Schema: s, Raw: stateVal}}, deleteResp)
+	return deleteResp
+}
+
+// runDelete is runDeleteWith for the common case: no cancellation, and a poll
+// interval short enough that a test never waits on it.
+func runDelete(t *testing.T, server *httptest.Server, pollTimeout time.Duration) *resource.DeleteResponse {
+	t.Helper()
+	return runDeleteWith(t, context.Background(), deleteResource(t, server, pollTimeout, time.Millisecond))
+}
+
+// An image wedged in `importing` is deletable once Glance's import lock expires,
+// and compute says exactly when. A destroy must sit out a wait that fits its
+// budget instead of failing an apply that only needed to be patient — that is
+// the whole remedy compute v2.37.0 shipped, and before this the provider threw
+// away every 409 it was given.
+func TestDeleteWaitsOutTheImportLock(t *testing.T) {
+	server, calls := deleteServer(t, refuse(deleteRefusal("import_running", 1)), accept())
+	defer server.Close()
+
+	start := time.Now()
+	deleteResp := runDelete(t, server, 30*time.Second)
+
+	if deleteResp.Diagnostics.HasError() {
+		t.Fatalf("Delete must wait the lock out and succeed, got: %v", deleteResp.Diagnostics.Errors())
+	}
+
+	if *calls != 2 {
+		t.Errorf("made %d delete requests, want 2 (the refusal and the retry)", *calls)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("took %s — the destroy did not retry promptly after the refusal", elapsed)
+	}
+}
+
+// A quote LARGER than the destroy's whole budget must not stop it from trying.
+// The quote is the import's stall fallback, not an appointment: a healthy import
+// quotes ~65 minutes for its whole life — more than the 60-minute budget — and
+// then goes deletable as soon as it finishes. Weighing the quote against the
+// budget would refuse the one case retrying exists for, on the first request.
+// What the budget bounds is how long the retrying lasts, and the diagnostic then
+// quotes the platform's LAST answer.
+func TestDeleteRetriesEvenWhenTheQuoteOutlastsTheBudget(t *testing.T) {
+	server, calls := deleteServer(t, refuse(deleteRefusal("import_running", 3900)))
+	defer server.Close()
+
+	start := time.Now()
+	deleteResp := runDeleteWith(t, context.Background(),
+		deleteResource(t, server, 600*time.Millisecond, 100*time.Millisecond))
+
+	if !deleteResp.Diagnostics.HasError() {
+		t.Fatal("Delete must surface an import that never lets go")
+	}
+	if *calls < 3 {
+		t.Errorf("made %d delete requests — a 65-minute quote stopped it from retrying at all", *calls)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("took %s — the destroy outlived its budget", elapsed)
+	}
+	detail := deleteResp.Diagnostics.Errors()[0].Detail()
+	if !strings.Contains(detail, "1h5m0s") {
+		t.Errorf("diagnostic does not tell the practitioner how long the stall has left:\n%s", detail)
+	}
+	if !strings.Contains(detail, "Re-run the destroy") {
+		t.Errorf("diagnostic does not say that re-running later works:\n%s", detail)
+	}
+	// The quoted time is how long the import has left to STALL in, not when the
+	// delete starts working: compute derives it from the import task's idle
+	// timer, which a healthy import keeps pushing forward. Every delete aimed at
+	// a running import lands here, so copy promising success at that moment is
+	// wrong on the common path.
+	if !strings.Contains(detail, "FINISHES") {
+		t.Errorf("diagnostic does not say the import finishing is what clears it:\n%s", detail)
+	}
+	// The copy must not quote the FULL budget as the thing the wait had to fit
+	// inside: after a first wait the bound is what is left of it, and a
+	// diagnostic saying 35m did not fit inside 1h reads as a provider bug.
+	if strings.Contains(detail, defaultPollTimeout.String()) {
+		t.Errorf("diagnostic quotes a budget it does not enforce:\n%s", detail)
+	}
+}
+
+// The loop polls on the RESOURCE's interval, never on a server-supplied number,
+// so a pathological wait cannot become a request storm. Left to the server, a
+// fractional second would mean thousands of DELETEs against the service that
+// just refused — and then the gateway's rate limiter on top.
+func TestATinyServerWaitStillPollsOnTheResourceInterval(t *testing.T) { //nolint:revive // named for the behaviour, not the field
+	server, calls := deleteServer(t, refuse(deleteRefusalSeconds("import_running", 0.05)), accept())
+	defer server.Close()
+
+	start := time.Now()
+	deleteResp := runDeleteWith(t, context.Background(),
+		deleteResource(t, server, 30*time.Second, 300*time.Millisecond))
+
+	if deleteResp.Diagnostics.HasError() {
+		t.Fatalf("Delete must still succeed, got: %v", deleteResp.Diagnostics.Errors())
+	}
+	if *calls != 2 {
+		t.Errorf("made %d delete requests, want 2", *calls)
+	}
+	if elapsed := time.Since(start); elapsed < 300*time.Millisecond {
+		t.Errorf("retried after %s — a 50ms server wait was slept instead of the poll interval", elapsed)
+	}
+}
+
+// A wait that clears EARLY must be noticed. compute's wait is the import's
+// remaining STALL budget — a healthy import refreshes it about once a minute, so
+// a four-minute import quotes ~65 minutes throughout and then becomes deletable
+// the moment it finishes. Sleeping the whole quoted wait would miss that by the
+// best part of an hour, so a single sleep is capped and the delete re-probed.
+func TestALongWaitIsReProbedRatherThanSleptWhole(t *testing.T) {
+	// Refused with an hour to go, then the import finishes and the delete works.
+	server, calls := deleteServer(t, refuse(deleteRefusal("import_running", 3600)), accept())
+	defer server.Close()
+
+	start := time.Now()
+	// A budget SMALLER than the quoted wait, as production's always is: 60
+	// minutes of patience against the ~65 a healthy import quotes throughout.
+	deleteResp := runDeleteWith(t, context.Background(),
+		deleteResource(t, server, 5*time.Second, time.Millisecond))
+
+	if deleteResp.Diagnostics.HasError() {
+		t.Fatalf("Delete must retry and succeed once the import finishes, got: %v", deleteResp.Diagnostics.Errors())
+	}
+	if *calls != 2 {
+		t.Errorf("made %d delete requests, want 2", *calls)
+	}
+	// The retry interval bounds the sleep; the quoted hour does not.
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("slept %s — the whole quoted wait was slept instead of retrying", elapsed)
+	}
+}
+
+// A refusal with NO wait attached is not slept on: compute sends no wait when it
+// cannot compute one, and there is nothing to sleep until. The copy, though, must
+// NOT declare the refusal permanent — one of the causes compute omits the wait
+// for is simply failing to read the import task from Glance at that moment, which
+// clears by itself. So: no sleep, but "try again shortly" rather than "waiting
+// will not help, open a ticket".
+func TestDeleteDoesNotWaitARefusalWithNoWait(t *testing.T) {
+	server, calls := deleteServer(t, refuse(deleteRefusal("import_running", 0)))
+	defer server.Close()
+
+	start := time.Now()
+	deleteResp := runDelete(t, server, 30*time.Second)
+
+	if !deleteResp.Diagnostics.HasError() {
+		t.Fatal("Delete must surface a refusal no wait clears")
+	}
+	if *calls != 1 {
+		t.Errorf("made %d delete requests, want 1", *calls)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("took %s — it slept on a refusal that carries no wait", elapsed)
+	}
+	detail := deleteResp.Diagnostics.Errors()[0].Detail()
+	if !strings.Contains(detail, "Re-run the destroy shortly") {
+		t.Errorf("diagnostic does not offer the retry that clears the transient cause:\n%s", detail)
+	}
+	// A refusal with no wait is NOT proof of permanence: compute also omits the
+	// wait when it merely could not read the import task, and a rolling
+	// glance-api is a routine event. Copy that forecasts failure sends someone to
+	// support for a thirty-second blip.
+	for _, forecast := range []string{"Waiting is not the remedy", "will keep failing"} {
+		if strings.Contains(detail, forecast) {
+			t.Errorf("diagnostic forecasts permanence for a cause that can be transient (%q):\n%s", forecast, detail)
+		}
+	}
+}
+
+// The sibling 409s share the code and differ only by `details.reason`. Neither
+// is cleared by waiting, so both must fail the destroy on the first request and
+// must NOT pick up the import-lock copy.
+func TestDeleteDoesNotWaitTheSiblingRefusals(t *testing.T) {
+	for _, reason := range []string{"protected", "undeletable_status"} {
+		t.Run(reason, func(t *testing.T) {
+			server, calls := deleteServer(t, refuse(deleteRefusal(reason, 3900)))
+			defer server.Close()
+
+			deleteResp := runDelete(t, server, 30*time.Second)
+
+			if !deleteResp.Diagnostics.HasError() {
+				t.Fatalf("Delete must surface the %s refusal", reason)
+			}
+			if *calls != 1 {
+				t.Errorf("made %d delete requests, want 1 — %s is not cleared by waiting", *calls, reason)
+			}
+			// "still being imported" is the provider's own copy; the fixture's
+			// server message says "image is being imported", so this cannot pass
+			// on the server sentence alone.
+			if detail := deleteResp.Diagnostics.Errors()[0].Detail(); strings.Contains(detail, "still being imported") {
+				t.Errorf("%s got the import copy:\n%s", reason, detail)
+			}
+		})
+	}
+}
+
+// A wait the provider cannot make sense of must never be treated as known — and
+// above all must never come back NEGATIVE, which is less than the remaining
+// budget by construction and so walks straight past the deadline guard. Values
+// at the conversion boundary are implementation-defined (arm64 saturates to
+// MaxInt64, amd64 lands on MinInt64), so this pins the OUTCOME rather than the
+// arithmetic: whatever the platform does with it, the wait is not believed.
+func TestNoWaitOutsideAPlausibleLockIsEverBelieved(t *testing.T) {
+	for _, seconds := range []float64{9.3e9, 1e10, 1.8e12, 1e300, maxImportLockWait.Seconds() + 1} {
+		refusal := &client.APIError{
+			StatusCode: http.StatusConflict, Code: "invalid_state",
+			Details: map[string]any{"reason": "import_running", "retryAfterSeconds": seconds},
+		}
+		if wait, known := importLockWait(refusal); known {
+			t.Errorf("retryAfterSeconds %g was believed as a wait of %s", seconds, wait)
+		}
+	}
+	// The ceiling is a ceiling, not a smaller budget: a long but credible lock is
+	// still a wait.
+	credible := &client.APIError{
+		StatusCode: http.StatusConflict, Code: "invalid_state",
+		Details: map[string]any{"reason": "import_running", "retryAfterSeconds": maxImportLockWait.Seconds() - 1},
+	}
+	if _, known := importLockWait(credible); !known {
+		t.Error("a wait just inside the ceiling must still be believed")
+	}
+}
+
+// The bound is the whole budget, not the budget per refusal. Repeated refusals
+// each carrying a wait that individually fits must still stop when the destroy
+// has spent its patience — the case the loop actually exists for, and the one a
+// single-shot oversized wait never exercises.
+func TestRepeatedRefusalsStillStopAtTheBudget(t *testing.T) {
+	server, calls := deleteServer(t, refuse(deleteRefusal("import_running", 3900)))
+	defer server.Close()
+
+	start := time.Now()
+	deleteResp := runDeleteWith(t, context.Background(),
+		deleteResource(t, server, 2*time.Second, 300*time.Millisecond))
+
+	if !deleteResp.Diagnostics.HasError() {
+		t.Fatal("an import that never lets go must eventually fail the destroy")
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("took %s — the destroy outlived its 2s budget", elapsed)
+	}
+	// One request per 300ms retry over a 2s budget — nowhere near the thousands an
+	// unbounded loop would make, and not the single one a fit check would.
+	if *calls < 2 || *calls > 12 {
+		t.Errorf("made %d delete requests over a 2s budget at a 300ms interval, want ~7", *calls)
+	}
+}
+
+// Ctrl-C during the wait must not surface a bare "context canceled": the one
+// fact that tells a practitioner to simply re-run is that the destroy was
+// part-way through a wait the platform itself had quoted.
+func TestCancellingTheWaitSaysWhatItWasWaitingFor(t *testing.T) {
+	server, _ := deleteServer(t, refuse(deleteRefusal("import_running", 10)))
+	defer server.Close()
+
+	// A poll interval long enough that the cancellation lands in the WAIT rather
+	// than in the HTTP request — the branch this test exists for.
+	r := deleteResource(t, server, 30*time.Second, 2*time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	err := r.deleteImage(ctx, "img-wedged")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation must survive the wrap, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "image import") {
+		t.Errorf("a cancelled destroy does not say what it was waiting for: %v", err)
+	}
+}
+
+// The predicate that decides whether a destroy waits. It keys on
+// `details.reason`, because status+code alone cover all three delete refusals,
+// and it treats a MISSING retryAfterSeconds as "no wait clears this" rather than
+// as a zero wait — the distinction compute encodes by omitting the field.
+func TestOnlyTheImportLockRefusalIsWaited(t *testing.T) {
+	cases := map[string]struct {
+		err       error
+		refusal   bool
+		wantWait  time.Duration
+		waitKnown bool
+	}{
+		// A fractional wait must survive as the fraction it is. Judging the value
+		// before converting it truncates 0.5 to a ZERO duration reported as
+		// KNOWN, and deleteImage would then re-issue DELETE with no pause at all
+		// until the whole budget was gone.
+		"a sub-second wait": {&client.APIError{
+			StatusCode: http.StatusConflict, Code: "invalid_state",
+			Details: map[string]any{"reason": "import_running", "retryAfterSeconds": float64(0.5)},
+		}, true, 500 * time.Millisecond, true},
+		// A remaining-seconds delta sent as an absolute timestamp is the classic
+		// regression this ceiling exists for. Epoch seconds converts cleanly to
+		// ~57 years, which the practitioner would be told to wait out; epoch
+		// millis overflows int64 nanoseconds, and a NEGATIVE wait is less than
+		// the remaining budget by construction, so the deadline guard would never
+		// fire and the destroy would never return.
+		"a wait sent as epoch seconds": {&client.APIError{
+			StatusCode: http.StatusConflict, Code: "invalid_state",
+			Details: map[string]any{"reason": "import_running", "retryAfterSeconds": float64(1.8e9)},
+		}, true, 0, false},
+		"a wait sent as epoch millis": {&client.APIError{
+			StatusCode: http.StatusConflict, Code: "invalid_state",
+			Details: map[string]any{"reason": "import_running", "retryAfterSeconds": float64(1.8e12)},
+		}, true, 0, false},
+		"a wait beyond any plausible lock": {&client.APIError{
+			StatusCode: http.StatusConflict, Code: "invalid_state",
+			Details: map[string]any{"reason": "import_running", "retryAfterSeconds": float64(1e300)},
+		}, true, 0, false},
+		"a non-numeric wait": {&client.APIError{
+			StatusCode: http.StatusConflict, Code: "invalid_state",
+			Details: map[string]any{"reason": "import_running", "retryAfterSeconds": "3900"},
+		}, true, 0, false},
+		"the import lock with a known wait": {&client.APIError{
+			StatusCode: http.StatusConflict, Code: "invalid_state",
+			Details: map[string]any{"reason": "import_running", "retryAfterSeconds": float64(3900)},
+		}, true, 65 * time.Minute, true},
+		"the import lock with no wait": {&client.APIError{
+			StatusCode: http.StatusConflict, Code: "invalid_state",
+			Details: map[string]any{"reason": "import_running"},
+		}, true, 0, false},
+		"the import lock with a zero wait": {&client.APIError{
+			StatusCode: http.StatusConflict, Code: "invalid_state",
+			Details: map[string]any{"reason": "import_running", "retryAfterSeconds": float64(0)},
+		}, true, 0, false},
+		"a protected image": {&client.APIError{
+			StatusCode: http.StatusConflict, Code: "invalid_state",
+			Details: map[string]any{"reason": "protected", "retryAfterSeconds": float64(3900)},
+		}, false, 0, false},
+		"an undeletable status": {&client.APIError{
+			StatusCode: http.StatusConflict, Code: "invalid_state",
+			Details: map[string]any{"reason": "undeletable_status"},
+		}, false, 0, false},
+		"a plain conflict": {&client.APIError{
+			StatusCode: http.StatusConflict, Code: "conflict",
+			Details: map[string]any{"reason": "import_running", "retryAfterSeconds": float64(3900)},
+		}, false, 0, false},
+		"the same reason on a 429": {&client.APIError{
+			StatusCode: http.StatusTooManyRequests, Code: "invalid_state",
+			Details: map[string]any{"reason": "import_running", "retryAfterSeconds": float64(3900)},
+		}, false, 0, false},
+		"a refusal with no details": {&client.APIError{
+			StatusCode: http.StatusConflict, Code: "invalid_state",
+		}, false, 0, false},
+		"a transport error": {errors.New("connection reset"), false, 0, false},
+		"no error":          {nil, false, 0, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := importLockRefusal(tc.err) != nil; got != tc.refusal {
+				t.Errorf("importLockRefusal(%v) != nil = %v, want %v", tc.err, got, tc.refusal)
+			}
+			wait, known := importLockWait(tc.err)
+			if known != tc.waitKnown {
+				t.Errorf("importLockWait(%v) known = %v, want %v", tc.err, known, tc.waitKnown)
+			}
+			if wait != tc.wantWait {
+				t.Errorf("importLockWait(%v) = %s, want %s", tc.err, wait, tc.wantWait)
+			}
+		})
 	}
 }
 
@@ -1078,6 +1509,12 @@ func TestCheckFormNotExpired(t *testing.T) {
 // matter: the gateway's per-key rate limit arrives with the SAME status and has
 // already been retried by client.Do by the time it reaches here, so waiting it
 // out again would hold an apply open for a limit that is not about imports.
+//
+// The 409 cases below no longer mean "a 409 is terminal" — deleteImage does wait
+// one out (see TestOnlyTheImportLockRefusalIsWaited). They mean this predicate
+// must not claim it: the import-lock refusal has its own remedy and its own
+// wait, taken from the server rather than from getPollInterval, and routing it
+// through startImport's cap loop would poll for an hour on the wrong schedule.
 func TestOnlyTheConcurrentImportCapIsWaitedOut(t *testing.T) {
 	cases := map[string]struct {
 		err  error
@@ -1097,6 +1534,10 @@ func TestOnlyTheConcurrentImportCapIsWaitedOut(t *testing.T) {
 		"a conflict": {&client.APIError{
 			StatusCode: http.StatusConflict, Code: "invalid_state",
 			Details: map[string]any{"cap": "concurrent_imports"},
+		}, false},
+		"the import-lock refusal": {&client.APIError{
+			StatusCode: http.StatusConflict, Code: "invalid_state",
+			Details: map[string]any{"reason": "import_running", "retryAfterSeconds": float64(3900)},
 		}, false},
 		"a transport error": {errors.New("connection reset"), false},
 		"no error":          {nil, false},
