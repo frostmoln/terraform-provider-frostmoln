@@ -85,8 +85,9 @@ resource "frostmoln_gateway" "chosen_address" {
 # Below is the frostmoln_public_ip itself, because its own instance_id is what
 # attaches the address. Wherever something ELSE attaches it, the depends_on goes
 # on that resource instead: a frostmoln_public_ip_association, a public-scheme
-# frostmoln_load_balancer, a frostmoln_kubernetes_cluster with a public ingress,
-# a frostmoln_nginx_instance or frostmoln_apache_instance with public = true.
+# frostmoln_load_balancer, a frostmoln_kubernetes_cluster whose API endpoint
+# takes a public address, a frostmoln_nginx_instance or
+# frostmoln_apache_instance with public = true.
 # The attachment is what depends on the gateway, not the allocation — and the
 # address does not have to be one you named, since the platform allocates its own
 # for most of those and it holds the gateway open just the same.
