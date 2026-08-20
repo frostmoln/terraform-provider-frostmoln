@@ -113,8 +113,13 @@ type apiImage struct {
 	// ImportFailedStores names the stores the import could not write, verbatim
 	// from Glance — the one piece of detail a failure diagnostic can offer.
 	ImportFailedStores string `json:"importFailedStores,omitempty"`
-	Owner              string `json:"owner"`
-	CreatedAt          string `json:"createdAt"`
+	// ImportFailureReason is WHY the import failed, as a stable code compute
+	// defines. It is the only part of a failure a practitioner can act on: the
+	// stores above name what the platform could not write, which says nothing
+	// about the file. Empty when compute could not read the reason.
+	ImportFailureReason string `json:"importFailureReason,omitempty"`
+	Owner               string `json:"owner"`
+	CreatedAt           string `json:"createdAt"`
 }
 
 // apiCreateImageRequest mirrors compute domain.CreateImageRequest, narrowed to
@@ -251,4 +256,38 @@ func (m *ImageModel) keepPlanned(description types.String, minDiskGB types.Int64
 	if !minDiskGB.IsUnknown() && !minDiskGB.IsNull() {
 		m.MinDiskGB = minDiskGB
 	}
+}
+
+// Import failure reason codes, as compute defines them, with the copy the
+// practitioner sees. An UNRECOGNISED code renders as nothing rather than raw: a
+// code from a compute newer than this provider is not text to put in a
+// diagnostic, and the generic line is a correct fallback.
+const (
+	importFailureNestedFormat       = "nestedFormat"
+	importFailureUnsupportedFeature = "unsupportedFeature"
+	importFailureDeclaredFormat     = "declaredFormat"
+	importFailureConversionFailed   = "conversionFailed"
+	importFailureUnknown            = "unknown"
+)
+
+var importFailureReasonText = map[string]string{
+	importFailureNestedFormat: "the file is a disk image whose contents are themselves a disk image " +
+		"(a qcow2 exported from inside another qcow2). Re-applying will fail the same way — export the " +
+		"guest disk from the hypervisor as a plain qcow2 or raw image and point `source_file` at that",
+	importFailureUnsupportedFeature: "the file uses a feature the platform cannot convert, such as a " +
+		"backing file or encryption. Flatten it into a single unencrypted qcow2 or raw image " +
+		"(qemu-img convert) and point `source_file` at that",
+	importFailureDeclaredFormat: "the file is not the disk format `disk_format` declares. Check what " +
+		"it really is (qemu-img info will tell you) and set `disk_format` to match",
+	importFailureConversionFailed: "the file could not be converted to the platform's storage format, " +
+		"which usually means the upload was incomplete or the image is corrupt. Check the file opens " +
+		"locally, then re-apply",
+	importFailureUnknown: "the platform could not determine why the import failed. Contact support and " +
+		"quote the image ID — re-applying with the same file is unlikely to help",
+}
+
+// importFailureReason renders an import failure reason code, or "" when there is
+// no code or the code is not one this provider build knows.
+func importFailureReason(code string) string {
+	return importFailureReasonText[code]
 }

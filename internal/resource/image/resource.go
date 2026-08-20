@@ -929,6 +929,23 @@ func (r *imageResource) waitForImport(ctx context.Context, imageID string) (*api
 		return nil, fmt.Errorf("image %s disappeared while it was importing: the platform reports it no "+
 			"longer exists. It was most likely deleted outside Terraform; re-apply to create it again", imageID)
 	case last != nil && last.ImportFailed:
+		// The REASON replaces the guess when compute could name one. "check that
+		// disk_format matches the file" is wrong advice for the failure this
+		// exists to surface — a qcow2 whose guest content is itself a qcow2 has
+		// the right disk_format, and re-applying re-uploads the whole file to
+		// fail identically.
+		if reason := importFailureReason(last.ImportFailureReason); reason != "" {
+			return nil, fmt.Errorf("image %s: the platform could not import the uploaded data: %s.\n\n%s",
+				imageID, reason, orphanHint(imageID))
+		}
+		if last.ImportFailureReason != "" {
+			// The platform DID give a reason, this provider build just does not
+			// know the code. The disk_format guess below is wrong advice by
+			// construction for anything the codes cover.
+			return nil, fmt.Errorf("image %s: the platform could not import the uploaded data, for a "+
+				"reason this provider version does not recognise (%q). Upgrade the provider, or check "+
+				"the portal for the explanation.\n\n%s", imageID, last.ImportFailureReason, orphanHint(imageID))
+		}
 		detail := "the platform could not import the uploaded data"
 		if last.ImportFailedStores != "" {
 			detail += " (stores: " + last.ImportFailedStores + ")"
