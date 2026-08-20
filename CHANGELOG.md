@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.33.0] - 2026-08-20
+
+### 🚀 Features
+
+- *(image)* Name the reason an import failed (#343)
+
+### 📚 Documentation
+
+- *(gateway)* Stop naming the retired cluster ingress in the example (#347)
+
 ## [0.32.0] - 2026-08-20
 
 ### 🚀 Features
