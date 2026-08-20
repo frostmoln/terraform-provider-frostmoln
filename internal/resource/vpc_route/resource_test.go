@@ -315,7 +315,7 @@ func TestVPCRouteCreateDoesNotRetryPermanentConflicts(t *testing.T) {
 // first" is advice nobody can follow.
 func TestDefaultProvidedByGatewayNeverOffersTheRemoveRemedy(t *testing.T) {
 	var diags diagCollector
-	addRouteError(&diags.d, "fallback", &client.APIError{
+	addRouteError(&diags.d, opCreate, &client.APIError{
 		Code:       errCodeRouteDefaultProvidedByGateway,
 		Message:    "this VPC's gateway already provides a default route",
 		StatusCode: http.StatusConflict,
@@ -336,7 +336,7 @@ func TestDefaultProvidedByGatewayNeverOffersTheRemoveRemedy(t *testing.T) {
 // not folded into generic invalid input.
 func TestNoInternetGatewayNamesTheGatewayResource(t *testing.T) {
 	var diags diagCollector
-	addRouteError(&diags.d, "fallback", &client.APIError{
+	addRouteError(&diags.d, opCreate, &client.APIError{
 		Code:       errCodeRouteNoInternetGateway,
 		Message:    "this VPC has no internet gateway",
 		StatusCode: http.StatusBadRequest,
@@ -360,7 +360,7 @@ func TestNoInternetGatewayNamesTheGatewayResource(t *testing.T) {
 // reinterpret — and above all not one to retry.
 func TestUnknownRouteCodeFallsThrough(t *testing.T) {
 	var diags diagCollector
-	addRouteError(&diags.d, "Failed to Create VPC Route", &client.APIError{
+	addRouteError(&diags.d, opCreate, &client.APIError{
 		Code:       "ROUTE_SOME_FUTURE_CODE",
 		Message:    "something the provider has never heard of",
 		StatusCode: http.StatusBadRequest,
@@ -644,5 +644,154 @@ func TestImportRejectsAnUnusableVPCID(t *testing.T) {
 		if !resp.Diagnostics.HasError() {
 			t.Errorf("import id %q must be refused at import time", id)
 		}
+	}
+}
+
+// TestNextHopUnreachableOnDeleteDropsTheCreateTimeRemedy — since network
+// v2.57.1 a DELETE can be refused with ROUTE_NEXT_HOP_UNREACHABLE, which was
+// unreachable on this path before. A removal is applied by writing the whole
+// REMAINING set and Neutron revalidates all of it, so the refused next hop
+// belongs to a route that was already stored, not to the one being destroyed.
+//
+// The create-time diagnostic is wrong twice over on that path: its title
+// accuses the resource being destroyed, and "make this route depend on it" is
+// meaningless for a resource Terraform is removing from the graph.
+//
+// The server message is the SAME for both operations by design — the repository
+// classifier deliberately does not know which service operation called it — so
+// the operation-specific half has to come from the provider, from the `fallback`
+// summary it already passes.
+func TestNextHopUnreachableOnDeleteDropsTheCreateTimeRemedy(t *testing.T) {
+	// The v2.57.1 wire shape: the repository's own message, verbatim.
+	const serverMsg = "a next hop in this route set is not an address on any attached subnet; a next hop " +
+		"must be reachable directly, such as an instance acting as a gateway. The whole route set is " +
+		"validated on every write, so a route already stored may be the one refused — list the routes " +
+		"and correct or remove that one, or send the whole set with PUT"
+
+	refusal := func() *client.APIError {
+		return &client.APIError{
+			Code:       errCodeRouteNextHopUnreachable,
+			Message:    serverMsg,
+			StatusCode: http.StatusBadRequest,
+		}
+	}
+
+	var del diagCollector
+	addRouteError(&del.d, opDelete, refusal())
+	var create diagCollector
+	addRouteError(&create.d, opCreate, refusal())
+
+	// The server's own sentence survives on both — it is appended, not replaced.
+	for name, got := range map[string]string{"delete": del.text(), "create": create.text()} {
+		if !strings.Contains(got, "a route already stored may be the one refused") {
+			t.Errorf("%s: the server's sentence must reach the practitioner: %s", name, got)
+		}
+	}
+
+	// THE MUTATION TARGET. Destroy must not repeat the create-time remedy...
+	gotDelete := del.text()
+	if strings.Contains(gotDelete, "make this route depend on it") {
+		t.Errorf("destroy must not advise a depends_on for a resource being removed: %s", gotDelete)
+	}
+	if strings.Contains(gotDelete, "The next hop is not reachable inside this VPC") {
+		t.Errorf("destroy must not title the refusal as being about this route's next hop: %s", gotDelete)
+	}
+	// ...and must say the refused route is a DIFFERENT one.
+	if !strings.Contains(gotDelete, "not the one being destroyed") {
+		t.Errorf("destroy copy must say the refused route is a different one: %s", gotDelete)
+	}
+	// IT MUST NAME A COMMAND THAT CAN ACTUALLY SHOW THE OFFENDING ROUTE.
+	// `terraform state list` prints resource ADDRESSES, not destinations or next
+	// hops, and it reflects state rather than the platform — while the premise of
+	// this whole branch is that the offending route may be one Terraform does not
+	// manage, and so is absent from state by construction.
+	if strings.Contains(gotDelete, "terraform state list") {
+		t.Errorf("destroy copy must not point at state for a route that may not be in it: %s", gotDelete)
+	}
+	if !strings.Contains(gotDelete, "fm network vpc route list") {
+		t.Errorf("destroy copy must name a command that lists the stored routes: %s", gotDelete)
+	}
+	// Delete runs on a plain `terraform apply` whenever the resource leaves the
+	// config, and on a RequiresReplace — not only under `terraform destroy`. The
+	// write-conflict arm above already says "run `terraform apply` again", so
+	// naming destroy here would make the same file contradict itself.
+	if strings.Contains(gotDelete, "terraform destroy") {
+		t.Errorf("destroy copy must not assume the destroy command: %s", gotDelete)
+	}
+
+	// CREATE IS THE CONTROL. Without it, deleting the branch under test still
+	// fails only the assertions above, and a reviewer cannot tell whether the
+	// create-time remedy was moved or lost.
+	if !strings.Contains(create.text(), "make this route depend on it") {
+		t.Errorf("create must keep its own remedy: %s", create.text())
+	}
+}
+
+// TestQuotaExceededOnDeleteDoesNotSendThePractitionerRoundTheLoop —
+// ROUTE_QUOTA_EXCEEDED is the SECOND code network v2.57.1 made reachable on a
+// removal, and the one where create-shaped copy does not merely fail to help but
+// never terminates.
+//
+// A removal writes the whole REMAINING set. A set already over the network's
+// ceiling is still over it once one route goes, so the write is refused and the
+// route stays — and "remove a route you no longer need" is the operation that
+// just failed. network's own OpenAPI says so on removeVPCRoute's 403: "It
+// repeats until the set is back under the limit, which a single DELETE cannot
+// achieve". This provider removes one route per resource, so it cannot converge.
+func TestQuotaExceededOnDeleteDoesNotSendThePractitionerRoundTheLoop(t *testing.T) {
+	refusal := func() *client.APIError {
+		return &client.APIError{
+			Code:       errCodeRouteQuotaExceeded,
+			Message:    "the route set exceeds the maximum number of routes",
+			StatusCode: http.StatusForbidden,
+		}
+	}
+
+	var del diagCollector
+	addRouteError(&del.d, opDelete, refusal())
+	var create diagCollector
+	addRouteError(&create.d, opCreate, refusal())
+
+	gotDelete := del.text()
+	// THE MUTATION TARGET.
+	if strings.Contains(gotDelete, "remove a route you no longer need") {
+		t.Errorf("destroy must not advise the operation that just failed: %s", gotDelete)
+	}
+	if !strings.Contains(gotDelete, "cannot converge") {
+		t.Errorf("destroy must say why retrying cannot work: %s", gotDelete)
+	}
+	if !strings.Contains(gotDelete, "Contact support") {
+		t.Errorf("destroy must name the only path out: %s", gotDelete)
+	}
+
+	// CREATE IS THE CONTROL: on a create, removing a spare route IS a real and
+	// terminating remedy and must survive.
+	if !strings.Contains(create.text(), "remove a route you no longer need") {
+		t.Errorf("create must keep its own remedy: %s", create.text())
+	}
+}
+
+// TestReadPathNeverReachesTheWriteShapedRouteCopy pins that the create-shaped
+// arms are DEAD on a read rather than wrong on one.
+//
+// ROUTE_NEXT_HOP_UNREACHABLE and ROUTE_QUOTA_EXCEEDED are produced only by the
+// write paths in the network service — no GET can answer either (its OpenAPI
+// gives listVPCRoutes only 503 ROUTES_UNAVAILABLE and 404). So opRead has no
+// branch of its own by design, and this test records that as a checked claim
+// rather than an assumption a later reader has to re-derive.
+func TestReadPathNeverReachesTheWriteShapedRouteCopy(t *testing.T) {
+	var diags diagCollector
+	addRouteError(&diags.d, opRead, &client.APIError{
+		Code:       errCodeRoutesUnavailable,
+		Message:    "route management is not available in this deployment",
+		StatusCode: http.StatusServiceUnavailable,
+	})
+	got := diags.text()
+	if !strings.Contains(got, "property of the deployment") {
+		t.Errorf("a read refusal must get the deployment copy: %s", got)
+	}
+	// The op still titles the fallback correctly.
+	if opRead.summary() != "Failed to Read VPC Routes" {
+		t.Errorf("read summary drifted: %s", opRead.summary())
 	}
 }

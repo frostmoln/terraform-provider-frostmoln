@@ -164,7 +164,7 @@ func (r *vpcRouteResource) Create(ctx context.Context, req resource.CreateReques
 		writeConflictRetryInterval, writeConflictRetryTimeout,
 	)
 	if err != nil {
-		addRouteError(&resp.Diagnostics, "Failed to Create VPC Route", err)
+		addRouteError(&resp.Diagnostics, opCreate, err)
 		return
 	}
 
@@ -206,7 +206,7 @@ func (r *vpcRouteResource) Read(ctx context.Context, req resource.ReadRequest, r
 	apiResp, err := r.client.Get(ctx, routesPath, nil)
 	if err != nil {
 		if !client.IsNotFound(err) {
-			addRouteError(&resp.Diagnostics, "Failed to Read VPC Routes", err)
+			addRouteError(&resp.Diagnostics, opRead, err)
 			return
 		}
 		// A 404 HERE IS NOT ENOUGH TO DROP ANYTHING. The list operation answers
@@ -316,16 +316,16 @@ func (r *vpcRouteResource) Delete(ctx context.Context, req resource.DeleteReques
 			if !r.vpcExists(ctx, state.VPCID.ValueString()) {
 				return
 			}
-			addRouteError(&resp.Diagnostics, "Failed to Delete VPC Route", err)
+			addRouteError(&resp.Diagnostics, opDelete, err)
 			return
 		}
 		if !isRouteWriteConflict(err) || !time.Now().Before(deadline) {
-			addRouteError(&resp.Diagnostics, "Failed to Delete VPC Route", err)
+			addRouteError(&resp.Diagnostics, opDelete, err)
 			return
 		}
 		select {
 		case <-ctx.Done():
-			resp.Diagnostics.AddError("Failed to Delete VPC Route", ctx.Err().Error())
+			resp.Diagnostics.AddError(opDelete.summary(), ctx.Err().Error())
 			return
 		case <-time.After(writeConflictRetryInterval):
 		}

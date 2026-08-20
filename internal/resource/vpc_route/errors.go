@@ -91,15 +91,55 @@ func isRouteNotFound(err error) bool {
 		apiErr.Code == errCodeRouteNotFound
 }
 
+// The diagnostic summaries addRouteError is called with, one per CRUD operation.
+//
+// CONSTANTS BECAUSE ONE OF THEM IS A DISCRIMINATOR, not only a fallback title.
+// Since network v2.57.1 a DELETE can be refused with
+// ROUTE_NEXT_HOP_UNREACHABLE — a removal is applied by writing the whole
+// remaining set and Neutron revalidates all of it — so that code's remedy
+// differs by operation, and the branch below reads `fallback` to pick it. A
+// literal at the call site would let a reword silently drop the branch.
+//
+// A DEFINED TYPE SPLITS THE TWO JOBS. `fallback` was carrying both the
+// diagnostic TITLE and the operation discriminator in one bare string, and copy
+// reviewers edit titles freely — so a retitled call site, or a fourth one
+// passing a literal, would silently take the create-shaped arm with no compiler
+// complaint. The op is the control value; its title is derived.
+type routeOp int
+
+const (
+	opCreate routeOp = iota
+	opRead
+	opDelete
+)
+
+func (o routeOp) summary() string {
+	switch o {
+	case opRead:
+		return "Failed to Read VPC Routes"
+	case opDelete:
+		return "Failed to Delete VPC Route"
+	default:
+		return "Failed to Create VPC Route"
+	}
+}
+
 // addRouteError turns a route refusal into a diagnostic whose remedy is
 // actually followable.
 //
 // An unrecognised code falls through to the API's own rendering: a code this
-// build has never seen is a fault to surface, not a refusal to reinterpret.
-func addRouteError(diags *diag.Diagnostics, fallback string, err error) {
+// build has never seen is a fault to surface, not a refusal to reinterpret.//
+// AND `invalid_input` DELIBERATELY GETS NO ARM, which is a divergence from the
+// portal rather than an oversight. On a removal that code is a UNION: the
+// service 400s a malformed `destination` the caller supplied, before any write,
+// and the repository answers the same code when the remaining set is refused.
+// The portal's destination comes from a listed row so only the second case is
+// reachable there, and it overrides the copy. Here it comes from configuration
+// or state, and the server's own sentence already names the destination.
+func addRouteError(diags *diag.Diagnostics, op routeOp, err error) {
 	var apiErr *client.APIError
 	if !errors.As(err, &apiErr) {
-		diags.AddError(fallback, err.Error())
+		diags.AddError(op.summary(), err.Error())
 		return
 	}
 
@@ -143,6 +183,26 @@ func addRouteError(diags *diag.Diagnostics, fallback string, err error) {
 				"the `"+NextHopInternet+"` token.\n\n"+apiErr.Message,
 		)
 	case errCodeRouteNextHopUnreachable:
+		// TWO DIAGNOSTICS, PICKED BY OPERATION. On a DESTROY there is no next hop
+		// in the configuration to correct and no dependency to add — the route is
+		// being taken away. The refused next hop belongs to some OTHER route in
+		// the set, which Neutron revalidated along with the removal, so the title
+		// "the next hop is not reachable" reads as an accusation about the
+		// resource being destroyed and the remedy is unfollowable.
+		if op == opDelete {
+			diags.AddError(
+				"Another route in this VPC was refused while removing this one",
+				"Removing a route rewrites the VPC's whole route set, and every route in it is "+
+					"checked again — so the route refused here may be one that was already stored, "+
+					"not the one being destroyed. A next hop must be an address on a subnet attached "+
+					"to this VPC, or the `"+NextHopInternet+"` token.\n\n"+
+					"The offending route may not be managed by Terraform at all, so read the VPC's "+
+					"stored set rather than state: `fm network vpc route list <vpc_id>`, or the "+
+					"routes panel in the portal. Correct or remove that route, then run the same "+
+					"command again.\n\n"+apiErr.Message,
+			)
+			return
+		}
 		diags.AddError(
 			"The next hop is not reachable inside this VPC",
 			"A next hop must be a host address on a subnet attached to this VPC. If the subnet is "+
@@ -163,6 +223,23 @@ func addRouteError(diags *diag.Diagnostics, fallback string, err error) {
 				"without a route.\n\n"+apiErr.Message,
 		)
 	case errCodeRouteQuotaExceeded:
+		// A CLOSED LOOP ON A DESTROY, which is why it cannot share the copy below.
+		// A removal writes the whole REMAINING set, and a set already over the
+		// ceiling is still over it once one route goes — so the write is refused,
+		// the route stays, and the next apply fails identically. "Remove a route
+		// you no longer need" is the operation that just failed. This provider
+		// removes one route per resource, so it cannot converge either.
+		if op == opDelete {
+			diags.AddError(
+				"This VPC's route set is over the limit, and removing one route cannot get under it",
+				"Every removal rewrites the VPC's whole route set, and a set already over the "+
+					"limit is still over it once one route goes — so the write is refused and the "+
+					"route stays. Removing them one at a time cannot converge, and this provider "+
+					"removes one route per resource. Contact support to have the route set "+
+					"replaced in a single write.\n\n"+apiErr.Message,
+			)
+			return
+		}
 		diags.AddError(
 			"This VPC's route limit is reached",
 			"The cap counts your own routes only; platform routes do not consume it. It is the same "+
@@ -176,6 +253,6 @@ func addRouteError(diags *diag.Diagnostics, fallback string, err error) {
 				"change it.\n\n"+apiErr.Message,
 		)
 	default:
-		diags.AddError(fallback, apiErr.Error())
+		diags.AddError(op.summary(), apiErr.Error())
 	}
 }
