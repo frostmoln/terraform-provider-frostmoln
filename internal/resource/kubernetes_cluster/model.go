@@ -16,26 +16,26 @@ type KubernetesClusterModel struct {
 	VPCID            types.String `tfsdk:"vpc_id"`
 	SubnetID         types.String `tfsdk:"subnet_id"`
 	PublicIPID       types.String `tfsdk:"public_ip_id"`
-	// ADR-0115 worker ingress LB. `scheme` is GONE from this model: the Kubernetes
-	// API endpoint's exposure is not configurable, and the backend rejects the field.
-	IngressScheme         types.String          `tfsdk:"ingress_scheme"`
-	IngressPublicIPID     types.String          `tfsdk:"ingress_public_ip_id"`
-	IngressEndpoint       types.String          `tfsdk:"ingress_endpoint"`
-	IngressLoadBalancerID types.String          `tfsdk:"ingress_load_balancer_id"`
-	Addons                types.Set             `tfsdk:"addons"`
-	InitialNodePool       *InitialNodePoolModel `tfsdk:"initial_node_pool"`
-	Status                types.String          `tfsdk:"status"`
-	HAEnabled             types.Bool            `tfsdk:"ha_enabled"`
-	PodCIDR               types.String          `tfsdk:"pod_cidr"`
-	ServiceCIDR           types.String          `tfsdk:"service_cidr"`
-	Endpoint              types.String          `tfsdk:"endpoint"`
-	LoadBalancerID        types.String          `tfsdk:"load_balancer_id"`
-	PublicIP              types.String          `tfsdk:"public_ip"`
-	CACertHash            types.String          `tfsdk:"ca_cert_hash"`
-	Kubeconfig            types.String          `tfsdk:"kubeconfig"`
-	CreatedAt             types.String          `tfsdk:"created_at"`
-	UpdatedAt             types.String          `tfsdk:"updated_at"`
-	TenantID              types.String          `tfsdk:"tenant_id"`
+	// Neither `scheme` nor the ingress_* attributes exist on this model any more.
+	// The Kubernetes API endpoint's exposure is not configurable, and the
+	// platform-provisioned worker ingress load balancer is gone — a Service of
+	// type=LoadBalancer produces a per-Service load balancer instead, so there is no
+	// cluster-level ingress surface left to model. The backend rejects the retired
+	// create fields with a 400 and no longer returns the read-only ones.
+	Addons          types.Set             `tfsdk:"addons"`
+	InitialNodePool *InitialNodePoolModel `tfsdk:"initial_node_pool"`
+	Status          types.String          `tfsdk:"status"`
+	HAEnabled       types.Bool            `tfsdk:"ha_enabled"`
+	PodCIDR         types.String          `tfsdk:"pod_cidr"`
+	ServiceCIDR     types.String          `tfsdk:"service_cidr"`
+	Endpoint        types.String          `tfsdk:"endpoint"`
+	LoadBalancerID  types.String          `tfsdk:"load_balancer_id"`
+	PublicIP        types.String          `tfsdk:"public_ip"`
+	CACertHash      types.String          `tfsdk:"ca_cert_hash"`
+	Kubeconfig      types.String          `tfsdk:"kubeconfig"`
+	CreatedAt       types.String          `tfsdk:"created_at"`
+	UpdatedAt       types.String          `tfsdk:"updated_at"`
+	TenantID        types.String          `tfsdk:"tenant_id"`
 }
 
 // InitialNodePoolModel is the Terraform state model for the cluster's initial
@@ -63,21 +63,16 @@ type apiKubernetesCluster struct {
 	Region            string `json:"region"`
 	VPCID             string `json:"vpcId"`
 	SubnetID          string `json:"subnetId"`
-	// The ADR-0115 worker ingress LB — a DIFFERENT load balancer from the API
-	// endpoint below. IngressScheme is "internal" or "public"; EMPTY means the
-	// cluster has no ingress LB (it predates the feature), which is why it maps to a
-	// NULL attribute rather than a default in fromAPI. `scheme` is gone: the backend
-	// no longer returns it.
-	IngressScheme         string `json:"ingressScheme,omitempty"`
-	IngressEndpoint       string `json:"ingressEndpoint,omitempty"`
-	IngressLoadBalancerID string `json:"ingressLoadBalancerId,omitempty"`
-	IngressPublicIPID     string `json:"ingressPublicIpId,omitempty"`
-	PodCIDR               string `json:"podCidr,omitempty"`
-	ServiceCIDR           string `json:"serviceCidr,omitempty"`
-	Endpoint              string `json:"endpoint,omitempty"`
-	LoadBalancerID        string `json:"loadBalancerId,omitempty"`
-	PublicIP              string `json:"publicIp,omitempty"`
-	CACertHash            string `json:"caCertHash,omitempty"`
+	// The load balancer below is the Kubernetes API ENDPOINT's, the only one this
+	// resource reports. The worker ingress load balancer is retired, and the
+	// backend no longer returns ingressScheme / ingressEndpoint /
+	// ingressLoadBalancerId / ingressPublicIpId at all.
+	PodCIDR        string `json:"podCidr,omitempty"`
+	ServiceCIDR    string `json:"serviceCidr,omitempty"`
+	Endpoint       string `json:"endpoint,omitempty"`
+	LoadBalancerID string `json:"loadBalancerId,omitempty"`
+	PublicIP       string `json:"publicIp,omitempty"`
+	CACertHash     string `json:"caCertHash,omitempty"`
 	// Addons is the set of cluster-addon catalog keys applied at creation. The
 	// backend always includes it (may be empty) — it echoes exactly what was
 	// applied. Addons are create-time only; they cannot change on an existing
@@ -128,8 +123,6 @@ type apiCreateClusterRequest struct {
 	VPCID             string                   `json:"vpcId"`
 	SubnetID          string                   `json:"subnetId"`
 	PublicIPID        string                   `json:"publicIpId,omitempty"`
-	IngressScheme     string                   `json:"ingressScheme,omitempty"`
-	IngressPublicIPID string                   `json:"ingressPublicIpId,omitempty"`
 	Addons            *[]string                `json:"addons,omitempty"`
 	InitialNodePool   apiCreateNodePoolRequest `json:"initialNodePool"`
 }
@@ -169,16 +162,10 @@ func (m *KubernetesClusterModel) toCreateRequest() apiCreateClusterRequest {
 	if !m.PublicIPID.IsNull() && !m.PublicIPID.IsUnknown() {
 		req.PublicIPID = m.PublicIPID.ValueString()
 	}
-	// IngressScheme / IngressPublicIPID: send only when the practitioner set them
-	// (known value); when unset leave them empty so omitempty OMITS them and the
-	// server applies its own default (internal). Never send `scheme` — the backend
-	// rejects any value with a 400.
-	if !m.IngressScheme.IsNull() && !m.IngressScheme.IsUnknown() {
-		req.IngressScheme = m.IngressScheme.ValueString()
-	}
-	if !m.IngressPublicIPID.IsNull() && !m.IngressPublicIPID.IsUnknown() {
-		req.IngressPublicIPID = m.IngressPublicIPID.ValueString()
-	}
+	// Never send `scheme`, `ingressScheme` or `ingressPublicIpId`: all three are
+	// retired and the backend answers 400 to any of them, so a body carrying one
+	// could only turn a valid configuration into a failed apply. Guarded on the wire
+	// bytes by TestToCreateRequestRetiredKeysNeverSent.
 
 	// Addons: only send the field when the practitioner set it (known value).
 	// When unset (null/unknown, i.e. Computed-not-yet-resolved), leave req.Addons
@@ -224,17 +211,6 @@ func (m *KubernetesClusterModel) fromAPI(c *apiKubernetesCluster) {
 	m.Region = stringOrNull(c.Region)
 	m.VPCID = types.StringValue(c.VPCID)
 	m.SubnetID = types.StringValue(c.SubnetID)
-	// The ingress LB is readable. EMPTY maps to NULL, never to a default: an empty
-	// ingressScheme means the cluster has no ingress LB at all (created before
-	// ADR-0115), and defaulting it to "internal" would show a load balancer that does
-	// not exist — and, because the attribute is Optional+Computed, would produce a
-	// plan diff against a config that correctly says nothing.
-	m.IngressScheme = stringOrNull(c.IngressScheme)
-	m.IngressEndpoint = stringOrNull(c.IngressEndpoint)
-	m.IngressLoadBalancerID = stringOrNull(c.IngressLoadBalancerID)
-	// Unlike public_ip_id, the ingress BYO id IS echoed by the backend, so it round-
-	// trips through state and an import recovers it.
-	m.IngressPublicIPID = stringOrNull(c.IngressPublicIPID)
 	m.Status = types.StringValue(c.Status)
 	m.HAEnabled = types.BoolValue(c.HAEnabled)
 	m.PodCIDR = stringOrNull(c.PodCIDR)

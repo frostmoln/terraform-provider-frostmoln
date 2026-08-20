@@ -110,9 +110,13 @@ var AttachingSurfaces = []AttachingSurface{
 		Why: "the saga attaches the address to the VIP port in the vpc_id/subnet_id this resource names (provisioning create_load_balancer.go -> AssociatePublicIPResource)",
 	},
 	{
-		TypeName: "frostmoln_kubernetes_cluster", Attribute: "ingress_public_ip_id",
-		When: "when `ingress_scheme` is `public`, and for the API endpoint on accounts where that takes a public address", Placement: OnResource,
-		Why: "the worker ingress load balancer's VIP is built in the customer's own VPC and subnet on both control-plane architectures (provisioning kubernetes_ingress.go); the address is platform-allocated when the configuration names none",
+		// Re-keyed from `ingress_public_ip_id` when the platform-provisioned worker
+		// ingress load balancer was retired. The cluster is STILL a surface — the API
+		// endpoint's address is the one that remains — so the row moves rather than
+		// going away, and `public_ip_id` stops needing a NotAttaching exemption.
+		TypeName: "frostmoln_kubernetes_cluster", Attribute: "public_ip_id",
+		When: "for the API endpoint, on accounts where it takes a public address", Placement: OnResource,
+		Why: "the API endpoint's load-balancer VIP is built in the customer's own VPC and subnet, and the address is associated to that VIP port (provisioning create_kubernetes_cluster.go -> AssociatePublicIPResource); the address is platform-allocated when the configuration names none, which is why the note goes on the resource",
 	},
 	{
 		TypeName: "frostmoln_nginx_instance", Attribute: "public",
@@ -136,9 +140,6 @@ var AttachingSurfaces = []AttachingSurface{
 var NotAttaching = map[string]string{
 	"frostmoln_gateway.public_ip_id": "This IS the gateway. It has no ordering problem with itself, and a " +
 		"depends_on here would be the cycle the note warns about.",
-	"frostmoln_kubernetes_cluster.public_ip_id": "The same attachment as ingress_public_ip_id where it is " +
-		"accepted, and the note on the resource covers it. Not keyed to this attribute because on some " +
-		"accounts it is refused outright (400), which would hide the note from everyone else.",
 	"frostmoln_public_ip_association.public_ip_id": "The whole resource is the attachment and carries the " +
 		"note; a second copy on the attribute would render it twice on one page.",
 }

@@ -139,124 +139,76 @@ func TestFromAPINulls(t *testing.T) {
 	}
 }
 
-func TestToCreateRequestIngressUnsetOmitted(t *testing.T) {
-	// Both null and unknown mean "practitioner left it unset": the fields must be
-	// OMITTED (empty string + json omitempty) so the server applies its own default
-	// (internal). And `scheme` must NEVER appear on the wire — the backend rejects any
-	// value with a 400, so sending one could only turn a valid config into a failure.
-	for name, v := range map[string]types.String{
-		"null":    types.StringNull(),
-		"unknown": types.StringUnknown(),
+// TestToCreateRequestRetiredKeysNeverSent is the guard that stops a retired key
+// silently coming back on the wire. It started as the `scheme` guard, gained
+// `ingressScheme` / `ingressPublicIpId` when those were introduced, and KEEPS all
+// three now that the worker ingress load balancer is retired too — a Service of
+// type=LoadBalancer produces a per-Service load balancer instead, and the
+// kubernetes service answers 400 to any of the three keys. A create body carrying
+// one could only turn a valid configuration into a failed apply.
+//
+// It asserts on the marshalled WIRE bytes rather than on struct fields on purpose:
+// re-adding a field to apiCreateClusterRequest is exactly the change this must
+// catch, and a field-level assertion could not even compile against the removal it
+// guards. Both a minimal model (every optional left unset — null AND unknown, the
+// Computed-not-yet-resolved case) and a fully populated one are checked, because a
+// re-add could be conditional on a value being set.
+func TestToCreateRequestRetiredKeysNeverSent(t *testing.T) {
+	pool := func() *InitialNodePoolModel {
+		return &InitialNodePoolModel{
+			FlavorID:  types.StringValue("k8s.gp1.small"),
+			NodeCount: types.Int64Value(1),
+			Name:      types.StringNull(),
+		}
+	}
+
+	for name, m := range map[string]KubernetesClusterModel{
+		"unset (null)": {
+			Name:             types.StringValue("my-cluster"),
+			Version:          types.StringNull(),
+			ControlPlaneTier: types.StringNull(),
+			Region:           types.StringNull(),
+			VPCID:            types.StringValue("vpc-1"),
+			SubnetID:         types.StringValue("sn-1"),
+			PublicIPID:       types.StringNull(),
+			Addons:           types.SetNull(types.StringType),
+			InitialNodePool:  pool(),
+		},
+		"unset (unknown)": {
+			Name:             types.StringValue("my-cluster"),
+			Version:          types.StringUnknown(),
+			ControlPlaneTier: types.StringUnknown(),
+			Region:           types.StringUnknown(),
+			VPCID:            types.StringValue("vpc-1"),
+			SubnetID:         types.StringValue("sn-1"),
+			PublicIPID:       types.StringUnknown(),
+			Addons:           types.SetUnknown(types.StringType),
+			InitialNodePool:  pool(),
+		},
+		"populated": {
+			Name:             types.StringValue("my-cluster"),
+			Version:          types.StringValue("1.35"),
+			ControlPlaneTier: types.StringValue("standard"),
+			Region:           types.StringValue("falkenberg"),
+			VPCID:            types.StringValue("vpc-1"),
+			SubnetID:         types.StringValue("sn-1"),
+			PublicIPID:       types.StringValue("fip-api"),
+			Addons:           stringSliceToSet([]string{"external-secrets"}),
+			InitialNodePool:  pool(),
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			m := KubernetesClusterModel{
-				Name:              types.StringValue("my-cluster"),
-				VPCID:             types.StringValue("vpc-1"),
-				SubnetID:          types.StringValue("sn-1"),
-				IngressScheme:     v,
-				IngressPublicIPID: v,
-				InitialNodePool: &InitialNodePoolModel{
-					FlavorID:  types.StringValue("k8s.gp1.small"),
-					NodeCount: types.Int64Value(1),
-					Name:      types.StringNull(),
-				},
-			}
-			req := m.toCreateRequest()
-			if req.IngressScheme != "" || req.IngressPublicIPID != "" {
-				t.Errorf("expected empty ingress fields (omitted) for %s value, got %q / %q",
-					name, req.IngressScheme, req.IngressPublicIPID)
-			}
-			b, err := json.Marshal(req)
+			b, err := json.Marshal(m.toCreateRequest())
 			if err != nil {
 				t.Fatalf("marshal failed: %v", err)
 			}
-			for _, key := range []string{`"ingressScheme"`, `"ingressPublicIpId"`, `"scheme"`} {
+			for _, key := range []string{`"scheme"`, `"ingressScheme"`, `"ingressPublicIpId"`} {
 				if bytes.Contains(b, []byte(key)) {
-					t.Errorf("expected no %s key in payload, got %s", key, b)
+					t.Errorf("the retired key %s must never reach the wire, got %s", key, b)
 				}
 			}
 		})
 	}
-}
-
-func TestToCreateRequestIngressSet(t *testing.T) {
-	for _, scheme := range []string{"internal", "public"} {
-		t.Run(scheme, func(t *testing.T) {
-			m := KubernetesClusterModel{
-				Name:          types.StringValue("my-cluster"),
-				VPCID:         types.StringValue("vpc-1"),
-				SubnetID:      types.StringValue("sn-1"),
-				IngressScheme: types.StringValue(scheme),
-				InitialNodePool: &InitialNodePoolModel{
-					FlavorID:  types.StringValue("k8s.gp1.small"),
-					NodeCount: types.Int64Value(1),
-					Name:      types.StringNull(),
-				},
-			}
-			req := m.toCreateRequest()
-			if req.IngressScheme != scheme {
-				t.Errorf("expected ingressScheme %q on the create request, got %q", scheme, req.IngressScheme)
-			}
-			b, err := json.Marshal(req)
-			if err != nil {
-				t.Fatalf("marshal failed: %v", err)
-			}
-			if !bytes.Contains(b, []byte(`"ingressScheme":"`+scheme+`"`)) {
-				t.Errorf("expected ingressScheme %q in payload, got %s", scheme, b)
-			}
-			if bytes.Contains(b, []byte(`"scheme"`)) {
-				t.Errorf("the retired scheme key must never be sent, got %s", b)
-			}
-		})
-	}
-}
-
-func TestFromAPIIngress(t *testing.T) {
-	// EMPTY maps to NULL, never to a default. An empty ingressScheme means the
-	// cluster has NO ingress load balancer (it predates the feature) — defaulting it
-	// to "internal" would report a load balancer that does not exist and, because the
-	// attribute is Optional+Computed, would produce a perpetual plan diff against a
-	// config that correctly says nothing.
-	t.Run("absent stays null", func(t *testing.T) {
-		var m KubernetesClusterModel
-		m.fromAPI(&apiKubernetesCluster{
-			ID: "c-1", Name: "my-cluster", Status: "running", VPCID: "vpc-1", SubnetID: "sn-1",
-			CreatedAt: "2026-07-01T00:00:00Z",
-		})
-		for name, v := range map[string]types.String{
-			"ingress_scheme":           m.IngressScheme,
-			"ingress_endpoint":         m.IngressEndpoint,
-			"ingress_load_balancer_id": m.IngressLoadBalancerID,
-			"ingress_public_ip_id":     m.IngressPublicIPID,
-		} {
-			if !v.IsNull() {
-				t.Errorf("%s must be null for a cluster with no ingress LB, got %q", name, v.ValueString())
-			}
-		}
-	})
-
-	t.Run("populated round-trips", func(t *testing.T) {
-		var m KubernetesClusterModel
-		m.fromAPI(&apiKubernetesCluster{
-			ID: "c-1", Name: "my-cluster", Status: "running", VPCID: "vpc-1", SubnetID: "sn-1",
-			IngressScheme: "public", IngressEndpoint: "46.246.117.9",
-			IngressLoadBalancerID: "ing-lb-1", IngressPublicIPID: "byo-ip-1",
-			CreatedAt: "2026-07-01T00:00:00Z",
-		})
-		if m.IngressScheme.ValueString() != "public" {
-			t.Errorf("ingress_scheme = %q, want public", m.IngressScheme.ValueString())
-		}
-		if m.IngressEndpoint.ValueString() != "46.246.117.9" {
-			t.Errorf("ingress_endpoint = %q", m.IngressEndpoint.ValueString())
-		}
-		if m.IngressLoadBalancerID.ValueString() != "ing-lb-1" {
-			t.Errorf("ingress_load_balancer_id = %q", m.IngressLoadBalancerID.ValueString())
-		}
-		// Unlike public_ip_id, the ingress BYO id IS echoed, so an import recovers it.
-		if m.IngressPublicIPID.ValueString() != "byo-ip-1" {
-			t.Errorf("ingress_public_ip_id = %q", m.IngressPublicIPID.ValueString())
-		}
-	})
 }
 
 // setToStrings extracts a set of strings into a sorted []string for stable
@@ -434,10 +386,7 @@ func TestSchema(t *testing.T) {
 
 	for _, attr := range []string{
 		"id", "name", "version", "control_plane_tier", "region", "vpc_id", "subnet_id",
-		"ingress_scheme",
-		"ingress_public_ip_id",
-		"ingress_endpoint",
-		"ingress_load_balancer_id", "public_ip_id", "addons", "initial_node_pool", "status", "ha_enabled", "pod_cidr",
+		"public_ip_id", "addons", "initial_node_pool", "status", "ha_enabled", "pod_cidr",
 		"service_cidr", "endpoint", "load_balancer_id", "public_ip", "ca_cert_hash",
 		"kubeconfig", "created_at", "updated_at", "tenant_id",
 	} {
@@ -445,94 +394,39 @@ func TestSchema(t *testing.T) {
 			t.Errorf("expected attribute %s in schema", attr)
 		}
 	}
+	// The other direction: the retired attributes must stay gone. `scheme` selected
+	// an exposure that was never configurable; the ingress_* four described a
+	// platform-provisioned worker ingress load balancer that no longer exists — a
+	// Service of type=LoadBalancer produces a per-Service load balancer instead.
+	// Re-adding any of them would put a create field back in front of practitioners
+	// that the kubernetes service answers 400 to.
+	for _, attr := range []string{
+		"scheme", "ingress_scheme", "ingress_public_ip_id", "ingress_endpoint",
+		"ingress_load_balancer_id",
+	} {
+		if _, ok := resp.Schema.Attributes[attr]; ok {
+			t.Errorf("%s is retired and must not be in the schema", attr)
+		}
+	}
 	if !resp.Schema.Attributes["kubeconfig"].IsSensitive() {
 		t.Error("kubeconfig must be sensitive")
 	}
 }
 
-func TestValidateConfigIngress(t *testing.T) {
-	ctx := context.Background()
-	r := NewResource().(*kubernetesClusterResource)
-
-	tests := []struct {
-		name          string
-		ingressScheme types.String
-		ingressFIP    types.String
-		apiFIP        types.String
-		wantErrors    bool
-	}{
-		{"public with byo ingress ip ok", types.StringValue("public"), types.StringValue("fip-ing"), types.StringNull(), false},
-		{"internal with byo ingress ip errors", types.StringValue("internal"), types.StringValue("fip-ing"), types.StringNull(), true},
-		// The dangerous one: unset defaults to internal server-side, so a bare
-		// ingress_public_ip_id would silently leave the address unused.
-		{"unset scheme with byo ingress ip errors", types.StringNull(), types.StringValue("fip-ing"), types.StringNull(), true},
-		{"internal without byo ok", types.StringValue("internal"), types.StringNull(), types.StringNull(), false},
-		{"unset without byo ok", types.StringNull(), types.StringNull(), types.StringNull(), false},
-		{"unknown scheme skipped", types.StringUnknown(), types.StringValue("fip-ing"), types.StringNull(), false},
-		{"unknown byo skipped", types.StringValue("internal"), types.StringUnknown(), types.StringNull(), false},
-		// Two DIFFERENT addresses, one per load balancer, is the legitimate case.
-		{"different addresses for api and ingress ok", types.StringValue("public"), types.StringValue("fip-ing"), types.StringValue("fip-api"), false},
-		// The SAME address in both cannot work: one public IP binds to one VIP port.
-		{"same address for api and ingress errors", types.StringValue("public"), types.StringValue("fip-same"), types.StringValue("fip-same"), true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			model := KubernetesClusterModel{
-				Name:              types.StringValue("my-cluster"),
-				VPCID:             types.StringValue("vpc-1"),
-				SubnetID:          types.StringValue("sn-1"),
-				IngressScheme:     tt.ingressScheme,
-				IngressPublicIPID: tt.ingressFIP,
-				PublicIPID:        tt.apiFIP,
-				Addons:            types.SetNull(types.StringType),
-				InitialNodePool: &InitialNodePoolModel{
-					FlavorID:  types.StringValue("k8s.gp1.small"),
-					NodeCount: types.Int64Value(1),
-				},
-			}
-			cfg := buildConfig(t, model)
-			resp := &resource.ValidateConfigResponse{}
-			r.ValidateConfig(ctx, resource.ValidateConfigRequest{Config: cfg}, resp)
-			if tt.wantErrors && !resp.Diagnostics.HasError() {
-				t.Errorf("expected a validation error, got none")
-			}
-			if !tt.wantErrors && resp.Diagnostics.HasError() {
-				t.Errorf("expected no validation error, got: %v", resp.Diagnostics.Errors())
-			}
-		})
-	}
-}
-
-// Regression (expert-review Medium): a wholly-unknown initial_node_pool — the
-// `initial_node_pool = var.pool` module pattern, unknown during
-// `terraform validate` — must not break ValidateConfig. The validator reads only
-// the ingress attributes + public_ip_id via GetAttribute, so the unknown pool is never decoded
-// into the *struct model (which cannot carry unknown and would hard-error).
-func TestValidateConfigUnknownInitialNodePool(t *testing.T) {
-	ctx := context.Background()
-	r := NewResource().(*kubernetesClusterResource)
-
-	var schemaResp resource.SchemaResponse
-	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
-	objType := schemaResp.Schema.Type().TerraformType(ctx).(tftypes.Object)
-
-	vals := map[string]tftypes.Value{}
-	for name, at := range objType.AttributeTypes {
-		switch name {
-		case "initial_node_pool":
-			vals[name] = tftypes.NewValue(at, tftypes.UnknownValue)
-		case "scheme":
-			vals[name] = tftypes.NewValue(at, "internal")
-		default:
-			vals[name] = tftypes.NewValue(at, nil)
-		}
-	}
-	cfg := tfsdk.Config{Schema: schemaResp.Schema, Raw: tftypes.NewValue(objType, vals)}
-
-	resp := &resource.ValidateConfigResponse{}
-	r.ValidateConfig(ctx, resource.ValidateConfigRequest{Config: cfg}, resp)
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("wholly-unknown initial_node_pool must not error: %v", resp.Diagnostics.Errors())
+// TestKubernetesClusterHasNoValidateConfig documents a deliberate removal.
+//
+// The resource implemented ValidateConfig for exactly two plan-time cross-field
+// checks, both about the retired worker ingress load balancer: an
+// ingress_public_ip_id without ingress_scheme = "public", and the same address in
+// public_ip_id and ingress_public_ip_id. Neither combination is expressible any
+// more — the attributes are gone — so the method would have nothing left to read.
+// The unknown-initial_node_pool regression it also carried (a *struct target
+// cannot hold an unknown, so the validator read single attributes via
+// GetAttribute) cannot recur without a validator to hit.
+func TestKubernetesClusterHasNoValidateConfig(t *testing.T) {
+	if _, ok := NewResource().(resource.ResourceWithValidateConfig); ok {
+		t.Error("both checks this validated were about the retired ingress load balancer; a " +
+			"ValidateConfig here would have no cross-field invariant left to enforce")
 	}
 }
 
@@ -582,14 +476,6 @@ func buildPlan(t *testing.T, model KubernetesClusterModel) tfsdk.Plan {
 	return plan
 }
 
-// buildConfig serializes a model into a tfsdk.Config. tfsdk.Config has no Set
-// method (it is read-only), so the model is first serialized via a tfsdk.State
-// (same Schema+Raw shape) and converted to a Config.
-func buildConfig(t *testing.T, model KubernetesClusterModel) tfsdk.Config {
-	t.Helper()
-	return tfsdk.Config(buildState(t, model))
-}
-
 func emptyState(t *testing.T) tfsdk.State {
 	t.Helper()
 	r := NewResource()
@@ -627,8 +513,6 @@ func runningCluster() apiKubernetesCluster {
 		Region:            "falkenberg",
 		VPCID:             "vpc-1",
 		SubnetID:          "sn-1",
-		IngressScheme:     "internal",
-		IngressEndpoint:   "10.180.0.20",
 		PodCIDR:           "10.180.0.0/18",
 		ServiceCIDR:       "10.180.64.0/18",
 		Endpoint:          "https://203.0.113.10:6443",

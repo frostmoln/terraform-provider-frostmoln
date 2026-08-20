@@ -34,7 +34,7 @@ var mustReplaceOnRealChange = map[string][]string{
 	"frostmoln_bucket":                {"region", "storage_class"},
 	"frostmoln_image":                 {"container_format"},
 	"frostmoln_instance":              {"zone"},
-	"frostmoln_kubernetes_cluster":    {"version", "control_plane_tier", "region", "ingress_scheme", "addons", "initial_node_pool.name"},
+	"frostmoln_kubernetes_cluster":    {"version", "control_plane_tier", "region", "addons", "initial_node_pool.name"},
 	"frostmoln_kubernetes_node_pool":  {"name"},
 	"frostmoln_load_balancer":         {"scheme", "provider_type"},
 	"frostmoln_messaging_instance":    {"engine", "version"},

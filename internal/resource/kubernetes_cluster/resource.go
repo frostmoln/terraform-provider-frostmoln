@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
-	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -39,9 +38,8 @@ const (
 const kubeconfigFetchAttempts = 3
 
 var (
-	_ resource.Resource                   = &kubernetesClusterResource{}
-	_ resource.ResourceWithImportState    = &kubernetesClusterResource{}
-	_ resource.ResourceWithValidateConfig = &kubernetesClusterResource{}
+	_ resource.Resource                = &kubernetesClusterResource{}
+	_ resource.ResourceWithImportState = &kubernetesClusterResource{}
 )
 
 // NewResource returns a new kubernetes_cluster resource factory.
@@ -78,10 +76,7 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 		Description: "Manages a managed Kubernetes cluster in the Frostmoln platform. " +
 			"The cluster owns its initial node pool (created embedded, scaled in-place). " +
 			"Additional node pools are managed with the frostmoln_kubernetes_node_pool resource.\n\n" +
-			schemadoc.GatewayOrderingNote("frostmoln_kubernetes_cluster") + "\n\n" +
-			"It matters more here than on the other attaching resources: a cluster whose ingress load " +
-			"balancer cannot be built comes up WITHOUT one rather than failing the apply, so an " +
-			"ordering problem costs you the ingress path silently.",
+			schemadoc.GatewayOrderingNote("frostmoln_kubernetes_cluster"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the cluster.",
@@ -137,63 +132,14 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"ingress_scheme": schema.StringAttribute{
-				Description: "Where the cluster's WORKER ingress load balancer is reachable from: " +
-					"\"internal\" (the default) gives it a VIP from the cluster's own subnet, reachable inside " +
-					"the VPC and costing no public IPv4; \"public\" additionally attaches a public IP. The load " +
-					"balancer is always created and forwards TCP 80 and 443 to node ports 30080 and 30443 across " +
-					"every worker node — publish those node ports from your own ingress-controller Service. " +
-					"This is a DIFFERENT load balancer from the Kubernetes API endpoint, whose exposure is not " +
-					"configurable. Defaults server-side to internal. Create-only: changing it REPLACES the " +
-					"cluster. Clusters created before this feature existed report no value at all.",
-				Optional: true,
-				Computed: true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-					stringplanmodifier.RequiresReplace(),
-				},
-				Validators: []validator.String{
-					stringvalidator.OneOf("internal", "public"),
-				},
-			},
-			"ingress_public_ip_id": schema.StringAttribute{
-				Description: "The ID of an existing public IP to use for the WORKER ingress load balancer " +
-					"(bring-your-own public IP). Valid only with ingress_scheme = \"public\" — that combination " +
-					"is checked at plan time. A different address from public_ip_id, which serves the API " +
-					"endpoint: the two load balancers never share one, and the same id in both is rejected. " +
-					"A bring-your-own public IP survives cluster deletion. Create-only: changing it REPLACES " +
-					"the cluster.\n\n" +
-					"Naming one does not change WHETHER an address is attached — `ingress_scheme = " +
-					"\"public\"` attaches one either way, allocating it for you when you name none — so " +
-					"the gateway ordering this creates applies whether or not you set this. See the " +
-					"ordering note on this resource above.",
-				Optional: true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-			},
-			"ingress_endpoint": schema.StringAttribute{
-				Description: "The address customer traffic reaches the cluster's workloads on: the ingress " +
-					"load balancer's VIP when ingress_scheme is \"internal\", its public IP when \"public\". " +
-					"Point your DNS here — `endpoint` is for kubectl, not for traffic. Null on a cluster with " +
-					"no ingress load balancer.",
-				Computed: true,
-			},
-			"ingress_load_balancer_id": schema.StringAttribute{
-				Description: "The ID of the cluster's worker ingress load balancer. It appears in your " +
-					"load-balancer list and is billed as one, but it is managed by the cluster: changing or " +
-					"deleting it through the load-balancer API is refused. Null on a cluster with no ingress " +
-					"load balancer.",
-				Computed: true,
-			},
 			"public_ip_id": schema.StringAttribute{
 				Description: "The ID of an existing public IP to use for the cluster API endpoint (bring-your-own public IP). " +
 					"Write-only on the API: reads expose only the resolved address (public_ip), so imports cannot recover " +
 					"this value — after importing a cluster created with a BYO public IP, omit this attribute or add " +
 					"`lifecycle { ignore_changes = [public_ip_id] }`, otherwise the next plan will want to replace the " +
-					"cluster. A BYO public IP survives cluster deletion. This is the API endpoint's address — for " +
-					"the worker ingress load balancer's, use ingress_public_ip_id; the same id in both is " +
-					"rejected.\n\n" +
+					"cluster. A BYO public IP survives cluster deletion. This is the API endpoint's address, and " +
+					"the only one this resource takes: the cluster no longer provisions a worker ingress load " +
+					"balancer — expose workloads with a Service of type LoadBalancer, which gets its own.\n\n" +
 					"Where this attribute is accepted at all, the address lands on a port in your own VPC " +
 					"and carries the same gateway dependency as every other attachment — see " +
 					"the ordering note on this resource above. On some accounts this attribute is refused " +
@@ -342,56 +288,6 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 				},
 			},
 		},
-	}
-}
-
-// ValidateConfig rejects, at PLAN time, the two ingress combinations the API would
-// 400 on — so a practitioner learns from `terraform plan` rather than from a failed
-// apply half-way through a cluster create.
-//
-// A ConflictsWith validator is NOT usable for either: the valid bring-your-own case
-// sets both attributes too, so the rule is about the VALUE, not about presence.
-// Unknown (interpolated) values are skipped — the backend stays authoritative.
-func (r *kubernetesClusterResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
-	// Read ONLY the attributes involved — decoding the whole model here would
-	// hard-error on a wholly-unknown initial_node_pool (a *struct target cannot
-	// carry unknown), breaking `terraform validate` for the common
-	// `initial_node_pool = var.pool` module pattern (expert-review Medium).
-	var ingressScheme, ingressPublicIPID, publicIPID types.String
-	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("ingress_scheme"), &ingressScheme)...)
-	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("ingress_public_ip_id"), &ingressPublicIPID)...)
-	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("public_ip_id"), &publicIPID)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// 1) A bring-your-own ingress address needs an explicitly PUBLIC ingress. An
-	// omitted ingress_scheme defaults to internal server-side, so a bare
-	// ingress_public_ip_id would leave the address unused — the practitioner would
-	// believe they had a public ingress on their own IP and get neither.
-	if !ingressPublicIPID.IsUnknown() && !ingressScheme.IsUnknown() &&
-		!ingressPublicIPID.IsNull() && ingressPublicIPID.ValueString() != "" &&
-		(ingressScheme.IsNull() || ingressScheme.ValueString() != "public") {
-		detail := `ingress_public_ip_id requires ingress_scheme = "public".`
-		if ingressScheme.IsNull() {
-			detail += ` ingress_scheme is unset, which defaults to "internal" — an internal ingress has no public IP to attach.`
-		}
-		resp.Diagnostics.AddAttributeError(path.Root("ingress_public_ip_id"), "Unexpected ingress_public_ip_id", detail)
-	}
-
-	// 2) The API endpoint and the ingress are two different load balancers, and one
-	// public IP binds to exactly one Octavia VIP port. The same id in both fields
-	// cannot work, and left to the API it fails asynchronously — a cluster in `error`
-	// with no usable message.
-	if !publicIPID.IsUnknown() && !ingressPublicIPID.IsUnknown() &&
-		!publicIPID.IsNull() && !ingressPublicIPID.IsNull() &&
-		publicIPID.ValueString() != "" && publicIPID.ValueString() == ingressPublicIPID.ValueString() {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("ingress_public_ip_id"),
-			"Duplicate public IP",
-			`public_ip_id and ingress_public_ip_id must be different addresses: one public IP cannot serve `+
-				`both the Kubernetes API endpoint and the worker ingress load balancer.`,
-		)
 	}
 }
 
