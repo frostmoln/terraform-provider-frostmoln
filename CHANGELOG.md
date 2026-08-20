@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.32.0] - 2026-08-20
+
+### 🚀 Features
+
+- *(kubernetes_cluster)* [**breaking**] Remove the worker ingress load balancer attributes (#344)
+
 ## [0.31.0] - 2026-08-18
 
 ### 🚀 Features
