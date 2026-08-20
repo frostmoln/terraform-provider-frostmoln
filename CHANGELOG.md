@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.34.1] - 2026-08-20
+
+### 🐛 Bug Fixes
+
+- *(vpc_route)* Operation-aware diagnostics on the Delete path (#351)
+
 ## [0.34.0] - 2026-08-20
 
 ### 🚀 Features
