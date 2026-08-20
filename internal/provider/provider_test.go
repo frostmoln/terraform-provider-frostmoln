@@ -73,7 +73,7 @@ func TestProviderMetadata(t *testing.T) {
 	// Verify expected resources exist
 	expectedResources := []string{
 		"frostmoln_ssh_key", "frostmoln_bucket", "frostmoln_s3_credential",
-		"frostmoln_vpc", "frostmoln_subnet", "frostmoln_security_group", "frostmoln_security_group_rule",
+		"frostmoln_vpc", "frostmoln_vpc_route", "frostmoln_subnet", "frostmoln_security_group", "frostmoln_security_group_rule",
 		"frostmoln_public_ip", "frostmoln_volume", "frostmoln_volume_attachment", "frostmoln_snapshot",
 		"frostmoln_instance", "frostmoln_api_key", "frostmoln_kubernetes_cluster",
 		"frostmoln_kubernetes_node_pool",

@@ -92,6 +92,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/volume"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/volume_attachment"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/vpc"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/vpc_route"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/webserver_deployment"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/webserver_domain"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/workload_identity_binding"
@@ -522,6 +523,7 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		bucket_lifecycle_configuration.NewResource,
 		s3_credential.NewResource,
 		vpc.NewResource,
+		vpc_route.NewResource,
 		subnet.NewResource,
 		security_group.NewResource,
 		security_group_rule.NewResource,
