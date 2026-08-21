@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.35.0] - 2026-08-21
+
+### 🚀 Features
+
+- *(vpc_route)* Warn at plan time that a default route takes Public IPs down (#353)
+
 ## [0.34.1] - 2026-08-20
 
 ### 🐛 Bug Fixes
