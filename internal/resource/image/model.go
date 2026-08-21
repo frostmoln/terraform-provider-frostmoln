@@ -33,6 +33,7 @@ type ImageModel struct {
 	OSDistro        types.String `tfsdk:"os_distro"`
 	OSVersion       types.String `tfsdk:"os_version"`
 	Architecture    types.String `tfsdk:"architecture"`
+	DefaultUser     types.String `tfsdk:"default_user"`
 	MinDiskGB       types.Int64  `tfsdk:"min_disk_gb"`
 	MinRAMMB        types.Int64  `tfsdk:"min_ram_mb"`
 	Status          types.String `tfsdk:"status"`
@@ -107,6 +108,15 @@ type apiImage struct {
 	OSDistro        string `json:"osDistro,omitempty"`
 	OSVersion       string `json:"osVersion,omitempty"`
 	Architecture    string `json:"architecture,omitempty"`
+	// Metadata carries the image's RAW Glance string properties. It is how
+	// default_user is refreshed, and the reason the response's own `defaultUser`
+	// field is deliberately NOT declared here: that one is DERIVED by compute
+	// (explicit property, else os_admin_user, else its os_distro map), so an
+	// image whose user was never set still reads back e.g. "debian". Refreshing
+	// an Optional attribute from it would write a value the practitioner never
+	// configured into state — a permanent diff, or "provider produced
+	// inconsistent result after apply" on the create that adopted it.
+	Metadata map[string]string `json:"metadata,omitempty"`
 	// ImportFailed is the ONLY way to tell a failed import from an image that
 	// was never uploaded: both sit at status `queued`. See importStateFailed.
 	ImportFailed bool `json:"importFailed,omitempty"`
@@ -136,6 +146,7 @@ type apiCreateImageRequest struct {
 	OSDistro        string `json:"osDistro,omitempty"`
 	OSVersion       string `json:"osVersion,omitempty"`
 	Architecture    string `json:"architecture,omitempty"`
+	DefaultUser     string `json:"defaultUser,omitempty"`
 }
 
 // apiImageUpload mirrors compute domain.ImageUpload: a presigned POST form, not
@@ -169,13 +180,20 @@ type apiCreateImageResponse struct {
 }
 
 // apiUpdateImageRequest mirrors compute domain.UpdateImageRequest, narrowed to
-// the four fields this resource can change in place. Pointers so an unchanged
+// the five fields this resource can change in place. Pointers so an unchanged
 // field is omitted rather than sent as a zero value that would clear it.
+//
+// default_user is one of them: compute updates the property in place
+// (domain.UpdateImageRequest.DefaultUser), so it must NOT be modelled as
+// create-only alongside os_distro — forcing a whole image replacement for a
+// one-word metadata fix is the opposite of the self-service this attribute is
+// for. An empty string IS a meaningful value here: it clears the property.
 type apiUpdateImageRequest struct {
 	Name        *string `json:"name,omitempty"`
 	Description *string `json:"description,omitempty"`
 	MinDisk     *int64  `json:"minDisk,omitempty"`
 	MinRAM      *int64  `json:"minRam,omitempty"`
+	DefaultUser *string `json:"defaultUser,omitempty"`
 }
 
 // toCreateRequest builds the create body from the plan.
@@ -190,6 +208,7 @@ func (m *ImageModel) toCreateRequest() apiCreateImageRequest {
 		OSDistro:        m.OSDistro.ValueString(),
 		OSVersion:       m.OSVersion.ValueString(),
 		Architecture:    m.Architecture.ValueString(),
+		DefaultUser:     m.DefaultUser.ValueString(),
 	}
 }
 
@@ -230,6 +249,15 @@ func (m *ImageModel) fromAPI(img *apiImage) {
 	// render `checksum = (known after apply)` on every subsequent plan and call
 	// Update for a value nothing had changed.
 	m.Checksum = types.StringValue(img.Checksum)
+
+	// default_user is refreshed from the RAW Glance property, never from the
+	// response's derived `defaultUser` — see apiImage.Metadata. Like description
+	// it is Optional and NOT Computed, so an unset one must stay null.
+	if raw := img.Metadata["default_user"]; raw != "" {
+		m.DefaultUser = types.StringValue(raw)
+	} else {
+		m.DefaultUser = types.StringNull()
+	}
 }
 
 // keepPlanned re-asserts the plan's own values for the two attributes a create

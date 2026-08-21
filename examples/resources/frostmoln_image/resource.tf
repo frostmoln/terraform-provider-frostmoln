@@ -102,6 +102,13 @@ resource "frostmoln_image" "golden" {
   os_version   = "24.04"
   architecture = "x86_64"
 
+  # Only needed when the platform cannot work the login user out from
+  # os_distro. For a distribution it does not recognise, an instance cannot be
+  # launched with a console password until this names the user the image
+  # creates. Unlike os_distro it is changeable in place, so fixing it later does
+  # not replace the image.
+  # default_user = "ubuntu"
+
   min_disk_gb = 20
   min_ram_mb  = 2048
 

@@ -3,12 +3,12 @@
 page_title: "frostmoln_image Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a customer custom image (bring-your-own-image). The provider runs the full flow: it creates the image record, uploads the local disk image straight to Frostmoln object storage with the presigned form the platform returns, asks the platform to import it, and waits for the image to reach "active". Custom images require the custom-images entitlement; without it the API refuses the create. Only name, description, min_disk_gb and min_ram_mb can be changed in place — every other attribute, including source_file, replaces the image. Create waits up to 60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import still holds the image; neither budget is configurable.
+  Manages a customer custom image (bring-your-own-image). The provider runs the full flow: it creates the image record, uploads the local disk image straight to Frostmoln object storage with the presigned form the platform returns, asks the platform to import it, and waits for the image to reach "active". Custom images require the custom-images entitlement; without it the API refuses the create. Only name, description, default_user, min_disk_gb and min_ram_mb can be changed in place — every other attribute, including source_file, replaces the image. Create waits up to 60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import still holds the image; neither budget is configurable.
 ---
 
 # frostmoln_image (Resource)
 
-Manages a customer custom image (bring-your-own-image). The provider runs the full flow: it creates the image record, uploads the local disk image straight to Frostmoln object storage with the presigned form the platform returns, asks the platform to import it, and waits for the image to reach "active". Custom images require the custom-images entitlement; without it the API refuses the create. Only name, description, min_disk_gb and min_ram_mb can be changed in place — every other attribute, including source_file, replaces the image. Create waits up to 60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import still holds the image; neither budget is configurable.
+Manages a customer custom image (bring-your-own-image). The provider runs the full flow: it creates the image record, uploads the local disk image straight to Frostmoln object storage with the presigned form the platform returns, asks the platform to import it, and waits for the image to reach "active". Custom images require the custom-images entitlement; without it the API refuses the create. Only name, description, default_user, min_disk_gb and min_ram_mb can be changed in place — every other attribute, including source_file, replaces the image. Create waits up to 60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import still holds the image; neither budget is configurable.
 
 ## Example Usage
 
@@ -117,6 +117,13 @@ resource "frostmoln_image" "golden" {
   os_version   = "24.04"
   architecture = "x86_64"
 
+  # Only needed when the platform cannot work the login user out from
+  # os_distro. For a distribution it does not recognise, an instance cannot be
+  # launched with a console password until this names the user the image
+  # creates. Unlike os_distro it is changeable in place, so fixing it later does
+  # not replace the image.
+  # default_user = "ubuntu"
+
   min_disk_gb = 20
   min_ram_mb  = 2048
 
@@ -149,6 +156,7 @@ resource "frostmoln_instance" "app" {
 
 - `architecture` (String) The CPU architecture the image is built for (e.g. "x86_64"). Recorded as a Glance image property at creation and cannot be changed afterwards.
 - `container_format` (String) The container format of source_file. Customer images must be "bare" (the default).
+- `default_user` (String) The login user this image creates (e.g. "debian"). Only needed when the platform cannot infer it from os_distro: for an unknown distribution, launching an instance with a console password is REFUSED rather than degraded until this is set. Stored as the Glance default_user property and changeable in place — NOT create-only.
 - `description` (String) A human-readable description of the image.
 - `min_disk_gb` (Number) Minimum root disk size in GB an instance must have to boot this image. Can be changed in place. The platform may RAISE this value after an import completes, to match the image's actual expanded size — a configured value is kept in state as written, so a later refresh can surface the platform's larger figure as a diff.
 - `min_ram_mb` (Number) Minimum RAM in MB an instance must have to boot this image. Can be changed in place.

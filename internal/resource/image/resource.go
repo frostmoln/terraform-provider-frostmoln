@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -104,7 +105,8 @@ func (r *imageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"flow: it creates the image record, uploads the local disk image straight to Frostmoln object " +
 			"storage with the presigned form the platform returns, asks the platform to import it, and waits " +
 			"for the image to reach \"active\". Custom images require the custom-images entitlement; without " +
-			"it the API refuses the create. Only name, description, min_disk_gb and min_ram_mb can be changed " +
+			"it the API refuses the create. Only name, description, default_user, min_disk_gb and min_ram_mb " +
+			"can be changed " +
 			"in place — every other attribute, including source_file, replaces the image. Create waits up to " +
 			"60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import " +
 			"still holds the image; neither budget is configurable.",
@@ -196,6 +198,39 @@ func (r *imageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Optional: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"default_user": schema.StringAttribute{
+				Description: "The login user this image creates (e.g. \"debian\"). Only needed when the " +
+					"platform cannot infer it from os_distro: for an unknown distribution, launching an " +
+					"instance with a console password is REFUSED rather than degraded until this is set. " +
+					"Stored as the Glance default_user property and changeable in place — NOT create-only.",
+				Optional: true,
+				Validators: []validator.String{
+					// compute's server-side rule, with ONE deliberate difference:
+					// the empty string is refused here and accepted there.
+					//
+					// On the wire `""` is how "clear the override" is spelled. On
+					// the HCL surface that is spelled by REMOVING the attribute,
+					// which plans as null and which Update already sends as `""`.
+					// So `default_user = ""` buys nothing — and it cannot work:
+					// the create body drops an empty value (`omitempty`), nothing
+					// is stored, and fromAPI reads the absent property back as
+					// NULL. Terraform then compares a planned `""` with an applied
+					// null and hard-fails the apply with "provider produced
+					// inconsistent result after apply", every retry, forever.
+					// Do NOT "restore parity" with the OpenAPI pattern here.
+					//
+					// Padding is refused on both sides, and that half IS parity: a
+					// server that silently trimmed would hand back a value the
+					// configuration did not say, which is the same hard failure by
+					// a different route.
+					stringvalidator.RegexMatches(
+						regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]{0,31}$`),
+						"must be a valid OS username: at most 32 characters, starting with an ASCII letter "+
+							`or "_", containing only ASCII letters, digits, "-" or "_", and with no `+
+							"surrounding whitespace",
+					),
 				},
 			},
 			"min_disk_gb": schema.Int64Attribute{
@@ -478,6 +513,15 @@ func (r *imageResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	if !plan.MinRAMMB.Equal(state.MinRAMMB) {
 		minRAM := plan.MinRAMMB.ValueInt64()
 		updateReq.MinRAM = &minRAM
+		needsUpdate = true
+	}
+	// Removing default_user from the configuration must SEND the clear rather
+	// than leave the stored property behind: compute treats an empty value as
+	// "drop it and go back to the derived user", and ValueString() on a null
+	// String is exactly that empty string.
+	if !plan.DefaultUser.Equal(state.DefaultUser) {
+		defaultUser := plan.DefaultUser.ValueString()
+		updateReq.DefaultUser = &defaultUser
 		needsUpdate = true
 	}
 
