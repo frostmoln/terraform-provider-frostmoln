@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -426,6 +427,8 @@ func TestNonCanonicalValuesAreRefusedAtPlanTime(t *testing.T) {
 	}
 
 	// A default route is canonical and must pass.
+	// SHAPE ONLY. `::/0` parses and is canonical, so this validator accepts it —
+	// the platform refuses it a layer up, which is where that rule belongs.
 	for _, ok := range []string{"0.0.0.0/0", "::/0", "203.0.113.0/24"} {
 		var resp validatorResponse
 		canonicalPrefixValidator{}.ValidateString(context.Background(), stringRequest(ok), &resp.r)
@@ -794,4 +797,134 @@ func TestReadPathNeverReachesTheWriteShapedRouteCopy(t *testing.T) {
 	if opRead.summary() != "Failed to Read VPC Routes" {
 		t.Errorf("read summary drifted: %s", opRead.summary())
 	}
+}
+
+// THE DEFAULT-ROUTE CONSEQUENCE, on the surface a practitioner actually reads.
+//
+// `0.0.0.0/0` captures all egress, and the effect they cannot predict from the
+// route they wrote is that Public IPs in the VPC stop serving — the reply is
+// routed by the same table. MEASURED on prod-fbg 2026-08-20 (Ambix
+// 01a01625-8cd4), and measured CONSISTENT for the shape that ships, so the copy
+// must not hedge it as an intermittent or partial failure.
+func TestDestinationDocumentsTheDefaultRouteConsequence(t *testing.T) {
+	desc := routeSchema(t).Attributes["destination"].GetDescription()
+
+	if !strings.Contains(desc, "Public IPs on instances in this VPC stop serving") {
+		t.Errorf("destination must state the Public IP consequence: %s", desc)
+	}
+	for _, hedge := range []string{"intermittent", "some connections", "may stop", "about half"} {
+		if strings.Contains(strings.ToLower(desc), hedge) {
+			t.Errorf("the consequence is consistent, not a chance of failure; found %q", hedge)
+		}
+	}
+	if !strings.Contains(desc, "counts as TWO") {
+		t.Errorf("destination must say a default route costs two of the route limit: %s", desc)
+	}
+}
+
+// NO SURFACE NAMES A /1. A default route is stored as 0.0.0.0/1 + 128.0.0.0/1
+// and reported back as the 0.0.0.0/0 the practitioner wrote — a diff against a
+// /1 would be a permanent one, and the storage shape must never reach them.
+func TestNoSchemaCopyNamesAStoredHalf(t *testing.T) {
+	half := regexp.MustCompile(`(?:^|[^0-9.])(?:0\.0\.0\.0|128\.0\.0\.0)/1(?:[^0-9]|$)`)
+
+	s := routeSchema(t)
+	texts := []string{s.GetDescription()}
+	for name, attr := range s.Attributes {
+		if half.MatchString(attr.GetDescription()) {
+			t.Errorf("attribute %s names a stored /1 half: %s", name, attr.GetDescription())
+		}
+	}
+	for _, text := range texts {
+		if half.MatchString(text) {
+			t.Errorf("the resource description names a stored /1 half: %s", text)
+		}
+	}
+
+	// And the refusal copy, which is the other place a practitioner reads words
+	// this provider wrote.
+	for _, op := range []routeOp{opCreate, opDelete} {
+		var diags diagCollector
+		addRouteError(&diags.d, op, &client.APIError{
+			Code: errCodeRouteQuotaExceeded, Message: "refused", StatusCode: http.StatusForbidden,
+		})
+		if half.MatchString(diags.text()) {
+			t.Errorf("refusal copy names a stored /1 half: %s", diags.text())
+		}
+	}
+}
+
+// THE CLIENT WHERE NOBODY IS WATCHING. An unattended `terraform apply` takes the
+// VPC's Public IPs down with no human in the loop, and the consequence lived
+// only in the schema description — i.e. only for a practitioner who goes and
+// reads the registry. A plan-time warning is the pattern this provider already
+// uses in public_ip and load_balancer.
+func TestVPCRouteValidateConfigWarnsOnADefaultRoute(t *testing.T) {
+	warn := func(t *testing.T, destination, nextHop string) diag.Diagnostics {
+		t.Helper()
+		s := routeSchema(t)
+		obj := tftypes.NewValue(tftypes.Object{
+			AttributeTypes: map[string]tftypes.Type{
+				"id":          tftypes.String,
+				"vpc_id":      tftypes.String,
+				"destination": tftypes.String,
+				"next_hop":    tftypes.String,
+			},
+		}, map[string]tftypes.Value{
+			"id":          tftypes.NewValue(tftypes.String, "vpc-123/"+destination),
+			"vpc_id":      tftypes.NewValue(tftypes.String, "vpc-123"),
+			"destination": tftypes.NewValue(tftypes.String, destination),
+			"next_hop":    tftypes.NewValue(tftypes.String, nextHop),
+		})
+		resp := &resource.ValidateConfigResponse{}
+		NewResource().(resource.ResourceWithValidateConfig).ValidateConfig(
+			context.Background(),
+			resource.ValidateConfigRequest{Config: tfsdk.Config{Raw: obj, Schema: s}},
+			resp,
+		)
+		return resp.Diagnostics
+	}
+
+	t.Run("a default route warns, and does not fail the plan", func(t *testing.T) {
+		diags := warn(t, "0.0.0.0/0", "10.0.1.10")
+		if diags.HasError() {
+			t.Fatalf("a forced tunnel is legitimate and must not error: %v", diags)
+		}
+		if diags.WarningsCount() != 1 {
+			t.Fatalf("warnings = %d, want 1: %v", diags.WarningsCount(), diags)
+		}
+		detail := diags.Warnings()[0].Detail()
+		for _, want := range []string{
+			"Public IPs in this VPC stop serving",
+			"DNS and managed services keep working",
+			"counts as two",
+			"10.0.1.10",
+		} {
+			if !strings.Contains(detail, want) {
+				t.Errorf("warning must mention %q: %s", want, detail)
+			}
+		}
+		// The ECMP-era hedging describes behaviour that did not ship.
+		for _, hedge := range []string{"intermittent", "some connections", "may stop", "about half"} {
+			if strings.Contains(strings.ToLower(detail), hedge) {
+				t.Errorf("the consequence is consistent, not a chance of failure; found %q", hedge)
+			}
+		}
+	})
+
+	// Always refused by the platform — the gateway already provides it. Warning
+	// and then failing the apply teaches people to ignore warnings.
+	t.Run("silent for the default route via internet", func(t *testing.T) {
+		if diags := warn(t, "0.0.0.0/0", NextHopInternet); len(diags) != 0 {
+			t.Errorf("diags = %v, want none", diags)
+		}
+	})
+
+	t.Run("silent for ordinary routes and near misses", func(t *testing.T) {
+		for _, destination := range []string{"203.0.113.0/24", "0.0.0.0/1", "128.0.0.0/1", "::/0"} {
+			if diags := warn(t, destination, "10.0.1.10"); len(diags) != 0 {
+				t.Errorf("%s: diags = %v, want none", destination, diags)
+			}
+		}
+	})
 }

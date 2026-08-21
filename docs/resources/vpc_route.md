@@ -61,6 +61,10 @@ resource "frostmoln_vpc_route" "partner" {
 # DESTINATION only — a VPC router has no per-source routing — so the exception
 # takes every instance in the VPC off the tunnel for that peer's address, not
 # just the appliance.
+#
+# A default route captures ALL egress from the VPC. Public IPs on instances here
+# stop serving while it exists: the reply is routed by this same table, and its
+# destination is the internet client. DNS and managed services keep working.
 resource "frostmoln_gateway" "main" {
   vpc_id = frostmoln_vpc.main.id
   mode   = "public_ip"
@@ -94,7 +98,9 @@ resource "frostmoln_vpc_route" "tunnel_peer_exception" {
 
 ### Required
 
-- `destination` (String) Destination CIDR, in canonical (masked) form — `203.0.113.0/24`, not `203.0.113.5/24`. A default route (`0.0.0.0/0`, `::/0`) is permitted. A destination that falls inside a platform route, or inside a subnet attached to this VPC, is refused.
+- `destination` (String) Destination CIDR, in canonical (masked) form — `203.0.113.0/24`, not `203.0.113.5/24`. An IPv4 default route (`0.0.0.0/0`) is permitted; an IPv6 one (`::/0`) is NOT offered and is refused. A destination that falls inside a platform route, or inside a subnet attached to this VPC, is refused.
+
+A DEFAULT ROUTE (`0.0.0.0/0`) CAPTURES ALL EGRESS from the VPC, and two consequences follow. Public IPs on instances in this VPC stop serving while it exists — the reply is routed by the same table, and its destination is the internet client — so plan it alongside anything that depends on inbound traffic. DNS and managed services keep working: they ride platform routes that out-specify a default route. And it counts as TWO against the VPC's route limit, because the platform stores it as two equivalent halves and reports it back as the single `0.0.0.0/0` you wrote.
 - `next_hop` (String) Next hop: an address on a subnet attached to this VPC, of the same address family as `destination` — or the reserved token `internet`.
 
 `internet` is resolved by the platform when the route is written and is read back as the token, never as the address it resolved to, so a gateway rebuild cannot leave a stale literal in state. It requires the VPC to have an internet gateway; add a `frostmoln_gateway` and let this route depend on it.

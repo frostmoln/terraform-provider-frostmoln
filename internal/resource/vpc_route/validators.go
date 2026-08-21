@@ -43,7 +43,10 @@ func (v canonicalPrefixValidator) ValidateString(ctx context.Context, req valida
 		resp.Diagnostics.AddAttributeError(
 			req.Path,
 			"Invalid destination",
-			fmt.Sprintf("%q is not a CIDR block, e.g. \"203.0.113.0/24\" or \"::/0\".", value),
+			// NOT `::/0` as the example: this validator only checks the SHAPE, but
+			// offering as an example a value the platform refuses sends the
+			// practitioner to a plan-time success and an apply-time 400.
+			fmt.Sprintf("%q is not a CIDR block, e.g. \"203.0.113.0/24\" or \"2001:db8::/32\".", value),
 		)
 		return
 	}

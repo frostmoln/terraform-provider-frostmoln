@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +23,10 @@ import (
 var (
 	_ resource.Resource                = &vpcRouteResource{}
 	_ resource.ResourceWithImportState = &vpcRouteResource{}
+	// The plan-time default-route warning. A test asserts the same thing, but the
+	// framework resolves this interface at runtime, so a signature drift would
+	// otherwise turn the warning off silently rather than fail to build.
+	_ resource.ResourceWithValidateConfig = &vpcRouteResource{}
 )
 
 // writeConflictRetryInterval and writeConflictRetryTimeout bound the retry of
@@ -43,6 +48,62 @@ type vpcRouteResource struct {
 // NewResource returns a new VPC route resource.
 func NewResource() resource.Resource {
 	return &vpcRouteResource{}
+}
+
+// ValidateConfig warns at PLAN time that a default route takes this VPC's Public
+// IPs down.
+//
+// THIS IS THE CLIENT WHERE NOBODY IS WATCHING. The portal warns while the
+// customer types and the CLI prints before it writes; a `terraform apply` in CI
+// has no human in the loop at all, and the consequence — every Public IP in the
+// VPC stops serving, because the reply is routed by this same table — was
+// documented only in the schema description, i.e. only for a practitioner who
+// goes and reads the registry.
+//
+// A WARNING, NOT AN ERROR: a forced tunnel is a legitimate and wanted setup, and
+// the platform accepts it. This says what it costs.
+//
+// Silent for the `internet` next hop, which the platform always refuses because
+// the VPC's gateway already provides that route — warning about a consequence
+// and then failing the apply is how you teach people to ignore warnings.
+func (r *vpcRouteResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var cfg VPCRouteModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if cfg.Destination.IsUnknown() || cfg.NextHop.IsUnknown() {
+		return
+	}
+	if !isIPv4DefaultRoute(cfg.Destination.ValueString()) ||
+		cfg.NextHop.ValueString() == NextHopInternet {
+		return
+	}
+
+	resp.Diagnostics.AddAttributeWarning(
+		path.Root("destination"),
+		"This default route stops Public IPs in this VPC from serving",
+		"A route to 0.0.0.0/0 captures all traffic leaving the VPC, replies included: an instance "+
+			"with a Public IP still receives inbound traffic, but its reply is routed by this same "+
+			"table — the destination is the internet client — so it goes to "+
+			strconv.Quote(cfg.NextHop.ValueString())+" instead of out the gateway. Public IPs in "+
+			"this VPC stop serving for as long as this route exists, and work again once it is "+
+			"removed.\n\n"+
+			"Platform DNS and managed services keep working: they use routes more specific than a "+
+			"default route.\n\n"+
+			"This route also counts as two against the VPC's route limit.",
+	)
+}
+
+// isIPv4DefaultRoute reports whether a configured destination is the IPv4
+// default route. Parsed rather than compared as a string, so this provider and
+// the other clients agree on what one is.
+func isIPv4DefaultRoute(destination string) bool {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(destination))
+	if err != nil {
+		return false
+	}
+	return prefix.Bits() == 0 && prefix.Addr().Is4()
 }
 
 func (r *vpcRouteResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -86,9 +147,17 @@ func (r *vpcRouteResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			},
 			"destination": schema.StringAttribute{
 				Description: "Destination CIDR, in canonical (masked) form — `203.0.113.0/24`, not " +
-					"`203.0.113.5/24`. A default route (`0.0.0.0/0`, `::/0`) is permitted. A " +
-					"destination that falls inside a platform route, or inside a subnet attached to " +
-					"this VPC, is refused.",
+					"`203.0.113.5/24`. An IPv4 default route (`0.0.0.0/0`) is permitted; an IPv6 " +
+					"one (`::/0`) is NOT offered and is refused. A destination that falls inside a " +
+					"platform route, or inside a subnet attached to this VPC, is refused.\n\n" +
+					"A DEFAULT ROUTE (`0.0.0.0/0`) CAPTURES ALL EGRESS from the VPC, and two " +
+					"consequences follow. Public IPs on instances in this VPC stop serving while it " +
+					"exists — the reply is routed by the same table, and its destination is the " +
+					"internet client — so plan it alongside anything that depends on inbound " +
+					"traffic. DNS and managed services keep working: they ride platform routes that " +
+					"out-specify a default route. And it counts as TWO against the VPC's route " +
+					"limit, because the platform stores it as two equivalent halves and reports it " +
+					"back as the single `0.0.0.0/0` you wrote.",
 				Required: true,
 				Validators: []validator.String{
 					canonicalPrefixValidator{},

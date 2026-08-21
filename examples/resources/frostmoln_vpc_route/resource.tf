@@ -31,6 +31,10 @@ resource "frostmoln_vpc_route" "partner" {
 # DESTINATION only — a VPC router has no per-source routing — so the exception
 # takes every instance in the VPC off the tunnel for that peer's address, not
 # just the appliance.
+#
+# A default route captures ALL egress from the VPC. Public IPs on instances here
+# stop serving while it exists: the reply is routed by this same table, and its
+# destination is the internet client. DNS and managed services keep working.
 resource "frostmoln_gateway" "main" {
   vpc_id = frostmoln_vpc.main.id
   mode   = "public_ip"

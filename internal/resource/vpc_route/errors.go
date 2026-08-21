@@ -243,7 +243,8 @@ func addRouteError(diags *diag.Diagnostics, op routeOp, err error) {
 		diags.AddError(
 			"This VPC's route limit is reached",
 			"The cap counts your own routes only; platform routes do not consume it. It is the same "+
-				"for every VPC on the platform rather than a per-tenant allowance, so remove a route "+
+				"for every VPC on the platform rather than a per-tenant allowance, and a default "+
+				"route (0.0.0.0/0) counts as two — so remove a route "+
 				"you no longer need — or contact support if the cap itself is too low.\n\n"+apiErr.Message,
 		)
 	case errCodeRoutesUnavailable, errCodeRouteInternetUnavailable:
