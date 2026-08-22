@@ -76,7 +76,7 @@ jobs:
         run: |
           set -euo pipefail
           RUN_ID="${{ gitea.run_id }}"
-          EMAIL="tf-acctest-${RUN_ID}@test.nl.cloud"
+          EMAIL="tf-acctest-${RUN_ID}@frostmoln.test"
 
           echo "Registering test user: ${EMAIL}"
           RESP=$(curl -s --fail-with-body -X POST "${API_ENDPOINT}/auth/register" \
