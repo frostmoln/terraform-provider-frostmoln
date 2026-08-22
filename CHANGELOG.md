@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.2] - 2026-08-22
+
+### ⚙️ Miscellaneous Tasks
+
+- Replace the NordicLight WIP name with Frostmoln (#357)
+
 ## [0.36.1] - 2026-08-22
 
 ### 🐛 Bug Fixes
