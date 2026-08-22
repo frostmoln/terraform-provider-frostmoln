@@ -91,6 +91,24 @@ var customerDiskFormats = []string{"qcow2", "raw"}
 // detected format disagrees with the declared one.
 const customerContainerFormat = "bare"
 
+// customerArchitectures are the only architectures compute accepts on an image.
+// It validates them because Nova's legacy property map turns `architecture` into
+// `hw_architecture`, which ImagePropertiesFilter matches against the hypervisor —
+// so a value no host reports is not merely wrong, it schedules NOWHERE, and the
+// failure surfaces at INSTANCE create with nothing pointing back at the image.
+//
+// Declaring it here, rather than leaving the 400 to the server, is what keeps a
+// bad value from costing the image itself: `architecture` is RequiresReplace, so
+// without a plan-time validator Terraform DESTROYS the existing image, then fails
+// the recreate on the server's 400 — leaving the apply dead, the image gone and
+// every instance that referenced it broken. Same reasoning as customerDiskFormats
+// above; the difference is only that this one became a closed set later.
+// It holds x86_64 ALONE, matching compute: prod-fbg has no ARM host class, so an
+// image declaring aarch64 would be accepted and then unlaunchable for ever —
+// the exact failure this validator exists to prevent. Widen it in lockstep with
+// compute's imageArchitectures the day an ARM host exists.
+var customerArchitectures = []string{"x86_64"}
+
 // apiImage mirrors the subset of compute domain.Image this resource tracks.
 type apiImage struct {
 	ID              string `json:"id"`

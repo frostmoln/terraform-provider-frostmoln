@@ -193,9 +193,14 @@ func (r *imageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				},
 			},
 			"architecture": schema.StringAttribute{
-				Description: "The CPU architecture the image is built for (e.g. \"x86_64\"). Recorded as a Glance " +
-					"image property at creation and cannot be changed afterwards.",
+				Description: "The CPU architecture the image is built for. Only \"x86_64\" is accepted: it is " +
+					"the only host class that exists. Recorded as a Glance image property at creation and " +
+					"cannot be changed afterwards — the hypervisor matches it when placing an instance, so a " +
+					"value no host reports cannot be scheduled at all.",
 				Optional: true,
+				Validators: []validator.String{
+					stringvalidator.OneOf(customerArchitectures...),
+				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
