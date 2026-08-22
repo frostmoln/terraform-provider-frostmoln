@@ -83,7 +83,7 @@ func (r *instancePortSecurityGroupsResource) Schema(_ context.Context, _ resourc
 				},
 			},
 			"port_id": schema.StringAttribute{
-				Description: "The Neutron port ID to set security groups on. Port IDs are shown in the " +
+				Description: "The port ID to set security groups on. Port IDs are shown in the " +
 					"instance's per-port security-group breakdown (GET .../security-groups).",
 				Required: true,
 				PlanModifiers: []planmodifier.String{
@@ -91,7 +91,7 @@ func (r *instancePortSecurityGroupsResource) Schema(_ context.Context, _ resourc
 				},
 			},
 			"security_groups": schema.SetAttribute{
-				Description: "The security-group IDs (Neutron UUIDs) to set on the port (replace semantics — any " +
+				Description: "The security-group IDs to set on the port (replace semantics — any " +
 					"security group not listed is removed from the port). An empty set clears all security groups on " +
 					"the port, leaving it on the VPC default-drop (typically no inbound access).",
 				Required:    true,

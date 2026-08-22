@@ -3,12 +3,12 @@
 page_title: "frostmoln_s3_credential Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages an S3 credential in the Frostmoln platform. Credentials are immutable: changing the name, description, or any scope attribute (allowed_buckets/allowed_actions/ip_whitelist) replaces the credential and issues a new secret_access_key, so update any downstream consumers. Per-credential scoping requires the RGW-IAM object-storage backend.
+  Manages an S3 credential in the Frostmoln platform. Credentials are immutable: changing the name, description, or any scope attribute (allowed_buckets/allowed_actions/ip_whitelist) replaces the credential and issues a new secret_access_key, so update any downstream consumers. Per-credential scoping requires an IAM-capable object-storage backend.
 ---
 
 # frostmoln_s3_credential (Resource)
 
-Manages an S3 credential in the Frostmoln platform. Credentials are immutable: changing the name, description, or any scope attribute (allowed_buckets/allowed_actions/ip_whitelist) replaces the credential and issues a new secret_access_key, so update any downstream consumers. Per-credential scoping requires the RGW-IAM object-storage backend.
+Manages an S3 credential in the Frostmoln platform. Credentials are immutable: changing the name, description, or any scope attribute (allowed_buckets/allowed_actions/ip_whitelist) replaces the credential and issues a new secret_access_key, so update any downstream consumers. Per-credential scoping requires an IAM-capable object-storage backend.
 
 ## Example Usage
 

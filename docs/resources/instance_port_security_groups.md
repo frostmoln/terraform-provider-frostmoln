@@ -20,7 +20,7 @@ Manages the security groups on a SINGLE network port of a multi-NIC compute inst
 
 resource "frostmoln_instance_port_security_groups" "frontend_nic" {
   instance_id = frostmoln_instance.example.id
-  port_id     = "b1e0f6c2-1234-4a5b-9c8d-abcdef012345" # Neutron port ID (see the instance's per-port SG breakdown)
+  port_id     = "b1e0f6c2-1234-4a5b-9c8d-abcdef012345" # port ID (see the instance's per-port SG breakdown)
 
   security_groups = [
     frostmoln_security_group.web.id,
@@ -35,8 +35,8 @@ resource "frostmoln_instance_port_security_groups" "frontend_nic" {
 ### Required
 
 - `instance_id` (String) The ID of the instance the port belongs to.
-- `port_id` (String) The Neutron port ID to set security groups on. Port IDs are shown in the instance's per-port security-group breakdown (GET .../security-groups).
-- `security_groups` (Set of String) The security-group IDs (Neutron UUIDs) to set on the port (replace semantics — any security group not listed is removed from the port). An empty set clears all security groups on the port, leaving it on the VPC default-drop (typically no inbound access).
+- `port_id` (String) The port ID to set security groups on. Port IDs are shown in the instance's per-port security-group breakdown (GET .../security-groups).
+- `security_groups` (Set of String) The security-group IDs to set on the port (replace semantics — any security group not listed is removed from the port). An empty set clears all security groups on the port, leaving it on the VPC default-drop (typically no inbound access).
 
 ### Read-Only
 

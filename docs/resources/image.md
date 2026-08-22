@@ -70,7 +70,7 @@ Manages a customer custom image (bring-your-own-image). The provider runs the fu
 # so the same destroy succeeds once the last clone is gone.
 #
 # DESTROY CAN ALSO FAIL WITH 409 invalid_state, while the image is still being
-# imported. Glance holds the image for the lifetime of its import task, so it
+# imported. The platform holds the image for the lifetime of its import task, so it
 # cannot be deleted mid-import. What clears that is the import FINISHING — after
 # which the image is deletable like any other. The platform also expires a
 # STALLED import on its own, and reports how long that has left to run, which is
@@ -154,14 +154,14 @@ resource "frostmoln_instance" "app" {
 
 ### Optional
 
-- `architecture` (String) The CPU architecture the image is built for. Only "x86_64" is accepted: it is the only host class that exists. Recorded as a Glance image property at creation and cannot be changed afterwards — the hypervisor matches it when placing an instance, so a value no host reports cannot be scheduled at all.
+- `architecture` (String) The CPU architecture the image is built for. Only "x86_64" is accepted: it is the only host class that exists. Recorded as an image property at creation and cannot be changed afterwards — the hypervisor matches it when placing an instance, so a value no host reports cannot be scheduled at all.
 - `container_format` (String) The container format of source_file. Customer images must be "bare" (the default).
-- `default_user` (String) The login user this image creates (e.g. "debian"). Only needed when the platform cannot infer it from os_distro: for an unknown distribution, launching an instance with a console password is REFUSED rather than degraded until this is set. Stored as the Glance default_user property and changeable in place — NOT create-only.
+- `default_user` (String) The login user this image creates (e.g. "debian"). Only needed when the platform cannot infer it from os_distro: for an unknown distribution, launching an instance with a console password is REFUSED rather than degraded until this is set. Stored as the default_user image property and changeable in place — NOT create-only.
 - `description` (String) A human-readable description of the image.
 - `min_disk_gb` (Number) Minimum root disk size in GB an instance must have to boot this image. Can be changed in place. The platform may RAISE this value after an import completes, to match the image's actual expanded size — a configured value is kept in state as written, so a later refresh can surface the platform's larger figure as a diff.
 - `min_ram_mb` (Number) Minimum RAM in MB an instance must have to boot this image. Can be changed in place.
-- `os_distro` (String) The OS distribution of the image (e.g. "ubuntu", "debian"). Recorded as a Glance image property at creation and cannot be changed afterwards.
-- `os_version` (String) The OS version of the image (e.g. "24.04"). Recorded as a Glance image property at creation and cannot be changed afterwards.
+- `os_distro` (String) The OS distribution of the image (e.g. "ubuntu", "debian"). Recorded as an image property at creation and cannot be changed afterwards.
+- `os_version` (String) The OS version of the image (e.g. "24.04"). Recorded as an image property at creation and cannot be changed afterwards.
 - `source_file_hash` (String) Optional change trigger for the CONTENTS of source_file, typically filemd5("...") or filesha256("...") over the same path. The provider never computes it itself — hashing a multi-gigabyte disk image on every plan would make every plan read the whole file. Its value is never sent to the API; changing it replaces the image, which re-uploads and re-imports it.
 
 ### Read-Only

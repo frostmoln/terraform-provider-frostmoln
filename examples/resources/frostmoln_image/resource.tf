@@ -55,7 +55,7 @@
 # so the same destroy succeeds once the last clone is gone.
 #
 # DESTROY CAN ALSO FAIL WITH 409 invalid_state, while the image is still being
-# imported. Glance holds the image for the lifetime of its import task, so it
+# imported. The platform holds the image for the lifetime of its import task, so it
 # cannot be deleted mid-import. What clears that is the import FINISHING — after
 # which the image is deletable like any other. The platform also expires a
 # STALLED import on its own, and reports how long that has left to run, which is

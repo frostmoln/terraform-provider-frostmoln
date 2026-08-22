@@ -2,7 +2,7 @@
 #
 # provider_type and flavor_id are ForceNew: there is no in-place migration between
 # the amphora (default; full L7 + TLS) and ovn (L4-only, source-IP preserving,
-# zero VM overhead) Octavia drivers. Switching providers destroys and recreates
+# zero VM overhead) providers. Switching providers destroys and recreates
 # the load balancer. Choose amphora unless you specifically need OVN's
 # source-IP-preserving L4 behaviour.
 # provider_type is named that way because "provider" is a reserved Terraform

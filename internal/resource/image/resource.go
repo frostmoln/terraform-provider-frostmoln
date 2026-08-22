@@ -177,7 +177,7 @@ func (r *imageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				},
 			},
 			"os_distro": schema.StringAttribute{
-				Description: "The OS distribution of the image (e.g. \"ubuntu\", \"debian\"). Recorded as a Glance " +
+				Description: "The OS distribution of the image (e.g. \"ubuntu\", \"debian\"). Recorded as an " +
 					"image property at creation and cannot be changed afterwards.",
 				Optional: true,
 				PlanModifiers: []planmodifier.String{
@@ -185,7 +185,7 @@ func (r *imageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				},
 			},
 			"os_version": schema.StringAttribute{
-				Description: "The OS version of the image (e.g. \"24.04\"). Recorded as a Glance image property " +
+				Description: "The OS version of the image (e.g. \"24.04\"). Recorded as an image property " +
 					"at creation and cannot be changed afterwards.",
 				Optional: true,
 				PlanModifiers: []planmodifier.String{
@@ -194,7 +194,7 @@ func (r *imageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			},
 			"architecture": schema.StringAttribute{
 				Description: "The CPU architecture the image is built for. Only \"x86_64\" is accepted: it is " +
-					"the only host class that exists. Recorded as a Glance image property at creation and " +
+					"the only host class that exists. Recorded as an image property at creation and " +
 					"cannot be changed afterwards — the hypervisor matches it when placing an instance, so a " +
 					"value no host reports cannot be scheduled at all.",
 				Optional: true,
@@ -209,7 +209,7 @@ func (r *imageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Description: "The login user this image creates (e.g. \"debian\"). Only needed when the " +
 					"platform cannot infer it from os_distro: for an unknown distribution, launching an " +
 					"instance with a console password is REFUSED rather than degraded until this is set. " +
-					"Stored as the Glance default_user property and changeable in place — NOT create-only.",
+					"Stored as the default_user image property and changeable in place — NOT create-only.",
 				Optional: true,
 				Validators: []validator.String{
 					// compute's server-side rule, with ONE deliberate difference:

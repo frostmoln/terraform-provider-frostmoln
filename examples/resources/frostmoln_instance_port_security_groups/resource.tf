@@ -5,7 +5,7 @@
 
 resource "frostmoln_instance_port_security_groups" "frontend_nic" {
   instance_id = frostmoln_instance.example.id
-  port_id     = "b1e0f6c2-1234-4a5b-9c8d-abcdef012345" # Neutron port ID (see the instance's per-port SG breakdown)
+  port_id     = "b1e0f6c2-1234-4a5b-9c8d-abcdef012345" # port ID (see the instance's per-port SG breakdown)
 
   security_groups = [
     frostmoln_security_group.web.id,

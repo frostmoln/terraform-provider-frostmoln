@@ -35,7 +35,7 @@ It changes ORDER only: nothing is created and nothing is released. It does not a
 #
 # provider_type and flavor_id are ForceNew: there is no in-place migration between
 # the amphora (default; full L7 + TLS) and ovn (L4-only, source-IP preserving,
-# zero VM overhead) Octavia drivers. Switching providers destroys and recreates
+# zero VM overhead) providers. Switching providers destroys and recreates
 # the load balancer. Choose amphora unless you specifically need OVN's
 # source-IP-preserving L4 behaviour.
 # provider_type is named that way because "provider" is a reserved Terraform
@@ -97,8 +97,8 @@ resource "frostmoln_load_balancer" "public_web" {
 ### Optional
 
 - `description` (String) A description of the load balancer.
-- `flavor_id` (String) The Octavia flavor ID for the load balancer (amphora provider only). Changing this forces a new resource.
-- `provider_type` (String) The Octavia provider driver: amphora (default, full L7 + TLS) or ovn (L4-only, source-IP preserving, zero VM overhead). There is no in-place migration between providers; changing this forces a new resource. (Named provider_type because "provider" is a reserved Terraform attribute name.)
+- `flavor_id` (String) The flavor ID for the load balancer (amphora provider only). Changing this forces a new resource.
+- `provider_type` (String) The load-balancer provider: amphora (default, full L7 + TLS) or ovn (L4-only, source-IP preserving, zero VM overhead). There is no in-place migration between providers; changing this forces a new resource. (Named provider_type because "provider" is a reserved Terraform attribute name.)
 - `public_ip_id` (String) ID of a pre-allocated, tenant-owned, unassociated public IP to attach to the VIP. Required when scheme is public; must be omitted when scheme is internal. Changing this forces a new resource.
 
 Attaching it makes this load balancer depend on the VPC's gateway, which Terraform cannot see — see the ordering note on this resource above.
@@ -110,9 +110,9 @@ Attaching it makes this load balancer depend on the VPC's gateway, which Terrafo
 
 - `created_at` (String) The creation timestamp.
 - `id` (String) The unique identifier of the load balancer.
-- `operating_status` (String) The Octavia operating status of the load balancer.
-- `provisioning_status` (String) The Octavia provisioning status of the load balancer.
+- `operating_status` (String) The operating status of the load balancer.
+- `provisioning_status` (String) The provisioning status of the load balancer.
 - `public_ip_address` (String) The address of the attached public IP (present only when scheme is public).
 - `status` (String) The overall status of the load balancer.
 - `updated_at` (String) The last update timestamp.
-- `vip_port_id` (String) The Neutron port ID backing the load balancer VIP.
+- `vip_port_id` (String) The port ID backing the load balancer VIP.

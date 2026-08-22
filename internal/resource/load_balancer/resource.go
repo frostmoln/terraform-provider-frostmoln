@@ -129,7 +129,7 @@ func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 				},
 			},
 			"provider_type": schema.StringAttribute{
-				Description: "The Octavia provider driver: amphora (default, full L7 + TLS) or ovn (L4-only, source-IP preserving, zero VM overhead). There is no in-place migration between providers; changing this forces a new resource. (Named provider_type because \"provider\" is a reserved Terraform attribute name.)",
+				Description: "The load-balancer provider: amphora (default, full L7 + TLS) or ovn (L4-only, source-IP preserving, zero VM overhead). There is no in-place migration between providers; changing this forces a new resource. (Named provider_type because \"provider\" is a reserved Terraform attribute name.)",
 				Optional:    true,
 				Computed:    true,
 				Default:     stringdefault.StaticString("amphora"),
@@ -141,7 +141,7 @@ func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 				},
 			},
 			"flavor_id": schema.StringAttribute{
-				Description: "The Octavia flavor ID for the load balancer (amphora provider only). Changing this forces a new resource.",
+				Description: "The flavor ID for the load balancer (amphora provider only). Changing this forces a new resource.",
 				Optional:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -156,7 +156,7 @@ func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 				},
 			},
 			"vip_port_id": schema.StringAttribute{
-				Description: "The Neutron port ID backing the load balancer VIP.",
+				Description: "The port ID backing the load balancer VIP.",
 				Computed:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
@@ -167,11 +167,11 @@ func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 				Computed:    true,
 			},
 			"provisioning_status": schema.StringAttribute{
-				Description: "The Octavia provisioning status of the load balancer.",
+				Description: "The provisioning status of the load balancer.",
 				Computed:    true,
 			},
 			"operating_status": schema.StringAttribute{
-				Description: "The Octavia operating status of the load balancer.",
+				Description: "The operating status of the load balancer.",
 				Computed:    true,
 			},
 			"created_at": schema.StringAttribute{
