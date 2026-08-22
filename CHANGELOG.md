@@ -2,7 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.36.0] - 2026-08-21
+## [0.36.1] - 2026-08-22
+
+### 🐛 Bug Fixes
+
+- *(image)* Validate architecture at plan time, x86_64 only (#358)
+
+## [0.36.0] - 2026-08-22
 
 ### 🚀 Features
 
