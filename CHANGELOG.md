@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.0] - 2026-08-21
+
+### 🚀 Features
+
+- *(image)* Add the default_user attribute (#355)
+
 ## [0.35.0] - 2026-08-21
 
 ### 🚀 Features
