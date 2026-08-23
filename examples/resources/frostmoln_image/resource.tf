@@ -5,8 +5,8 @@
 # the file straight to Frostmoln object storage with a presigned form, asks the
 # platform to import it, and waits for it to reach "active".
 #
-# Custom images require the `custom-images` entitlement on the tenant. Without
-# it the API refuses the create.
+# Custom images are available to every tenant. (They were behind the
+# `custom-images` entitlement until 2026-08-22; that gate has been removed.)
 #
 # Terraform cannot see a change to the CONTENTS of source_file under an unchanged
 # path, so pair it with source_file_hash when you rebuild the image in place — a

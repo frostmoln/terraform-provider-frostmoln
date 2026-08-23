@@ -20,11 +20,12 @@ import (
 // disk image and spends one of the tenant's few hourly upload mints, so it
 // requires all three of:
 //
-//  1. An explicit opt-in: FROSTMOLN_TEST_CUSTOM_IMAGES=1. Custom images ship
-//     dark (ADR-0038) — no tenant holds the `custom-images` entitlement and
-//     image staging is disabled — so without the opt-in this test always skips
-//     rather than failing a nightly run against a feature that is off on
-//     purpose.
+//  1. An explicit opt-in: FROSTMOLN_TEST_CUSTOM_IMAGES=1. This is NOT a feature
+//     gate — BYOI opened to every tenant on 2026-08-22 and the `custom-images`
+//     entitlement (ADR-0038) was removed. The opt-in survives because the test
+//     spends real resources: it uploads a disk image and consumes one of the
+//     tenant's few hourly upload mints, which is not something a nightly run
+//     should do by default.
 //  2. FROSTMOLN_TEST_IMAGE_FILE pointing at a local qcow2 to upload. There is no
 //     sensible default: a synthetic file is not a bootable disk image and Glance
 //     would refuse to convert it.
@@ -58,8 +59,9 @@ func testAccPreCheckCustomImages(t *testing.T) {
 	if _, err := c.Get(ctx, "/v1/images", nil); err != nil {
 		var apiErr *client.APIError
 		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden {
-			t.Skipf("SKIPPING custom-image acceptance test: 403 from the image API — the tenant lacks the "+
-				"`custom-images` entitlement (ADR-0038): %s", err)
+			t.Skipf("SKIPPING custom-image acceptance test: 403 from the image API. BYOI is no longer "+
+				"entitlement-gated, so this is a scope/IAM refusal or a staging-quota cap rather than a "+
+				"missing product: %s", err)
 		}
 		t.Fatalf("image-list probe failed with an unexpected error: %s", err)
 	}

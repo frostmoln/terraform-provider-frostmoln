@@ -3,12 +3,12 @@
 page_title: "frostmoln_image Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a customer custom image (bring-your-own-image). The provider runs the full flow: it creates the image record, uploads the local disk image straight to Frostmoln object storage with the presigned form the platform returns, asks the platform to import it, and waits for the image to reach "active". Custom images require the custom-images entitlement; without it the API refuses the create. Only name, description, default_user, min_disk_gb and min_ram_mb can be changed in place — every other attribute, including source_file, replaces the image. Create waits up to 60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import still holds the image; neither budget is configurable.
+  Manages a customer custom image (bring-your-own-image). The provider runs the full flow: it creates the image record, uploads the local disk image straight to Frostmoln object storage with the presigned form the platform returns, asks the platform to import it, and waits for the image to reach "active". Only name, description, default_user, min_disk_gb and min_ram_mb can be changed in place — every other attribute, including source_file, replaces the image. Create waits up to 60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import still holds the image; neither budget is configurable.
 ---
 
 # frostmoln_image (Resource)
 
-Manages a customer custom image (bring-your-own-image). The provider runs the full flow: it creates the image record, uploads the local disk image straight to Frostmoln object storage with the presigned form the platform returns, asks the platform to import it, and waits for the image to reach "active". Custom images require the custom-images entitlement; without it the API refuses the create. Only name, description, default_user, min_disk_gb and min_ram_mb can be changed in place — every other attribute, including source_file, replaces the image. Create waits up to 60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import still holds the image; neither budget is configurable.
+Manages a customer custom image (bring-your-own-image). The provider runs the full flow: it creates the image record, uploads the local disk image straight to Frostmoln object storage with the presigned form the platform returns, asks the platform to import it, and waits for the image to reach "active". Only name, description, default_user, min_disk_gb and min_ram_mb can be changed in place — every other attribute, including source_file, replaces the image. Create waits up to 60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import still holds the image; neither budget is configurable.
 
 ## Example Usage
 
@@ -20,8 +20,8 @@ Manages a customer custom image (bring-your-own-image). The provider runs the fu
 # the file straight to Frostmoln object storage with a presigned form, asks the
 # platform to import it, and waits for it to reach "active".
 #
-# Custom images require the `custom-images` entitlement on the tenant. Without
-# it the API refuses the create.
+# Custom images are available to every tenant. (They were behind the
+# `custom-images` entitlement until 2026-08-22; that gate has been removed.)
 #
 # Terraform cannot see a change to the CONTENTS of source_file under an unchanged
 # path, so pair it with source_file_hash when you rebuild the image in place — a

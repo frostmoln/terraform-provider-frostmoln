@@ -104,8 +104,7 @@ func (r *imageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 		Description: "Manages a customer custom image (bring-your-own-image). The provider runs the full " +
 			"flow: it creates the image record, uploads the local disk image straight to Frostmoln object " +
 			"storage with the presigned form the platform returns, asks the platform to import it, and waits " +
-			"for the image to reach \"active\". Custom images require the custom-images entitlement; without " +
-			"it the API refuses the create. Only name, description, default_user, min_disk_gb and min_ram_mb " +
+			"for the image to reach \"active\". Only name, description, default_user, min_disk_gb and min_ram_mb " +
 			"can be changed " +
 			"in place — every other attribute, including source_file, replaces the image. Create waits up to " +
 			"60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import " +
