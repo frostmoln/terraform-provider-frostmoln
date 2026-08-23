@@ -36,7 +36,7 @@ var mustReplaceOnRealChange = map[string][]string{
 	"frostmoln_instance":              {"zone"},
 	"frostmoln_kubernetes_cluster":    {"version", "control_plane_tier", "region", "addons", "initial_node_pool.name"},
 	"frostmoln_kubernetes_node_pool":  {"name"},
-	"frostmoln_load_balancer":         {"scheme", "provider_type"},
+	"frostmoln_load_balancer":         {"scheme", "type"},
 	"frostmoln_messaging_instance":    {"engine", "version"},
 	"frostmoln_mysql_backup":          {"type"},
 	"frostmoln_mysql_instance":        {"ha_enabled"},

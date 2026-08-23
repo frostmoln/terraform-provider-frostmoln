@@ -52,8 +52,10 @@ func TestLoadBalancerModelFromAPI(t *testing.T) {
 	if model.VPCID.ValueString() != "vpc-1" {
 		t.Errorf("expected VPCID vpc-1, got %s", model.VPCID.ValueString())
 	}
-	if model.Provider.ValueString() != "amphora" {
-		t.Errorf("expected Provider amphora, got %s", model.Provider.ValueString())
+	// The API fixture stores the legacy value; the model must surface the
+	// canonical one, or state would disagree with a current configuration.
+	if model.Type.ValueString() != "l7" {
+		t.Errorf("expected Type l7 (mapped from amphora), got %s", model.Type.ValueString())
 	}
 	if model.VIPAddress.ValueString() != "10.0.0.5" {
 		t.Errorf("expected VIPAddress 10.0.0.5, got %s", model.VIPAddress.ValueString())
@@ -77,7 +79,7 @@ func TestLoadBalancerModelToCreateRequest(t *testing.T) {
 		VPCID:       types.StringValue("vpc-9"),
 		SubnetID:    types.StringValue("subnet-9"),
 		Description: types.StringValue("My LB"),
-		Provider:    types.StringValue("ovn"),
+		Type:        types.StringValue("l4"),
 		FlavorID:    types.StringNull(),
 		VIPAddress:  types.StringNull(),
 		Tags:        tags,
@@ -128,7 +130,7 @@ func planValue(t *testing.T, schemaResp resource.SchemaResponse, ctx context.Con
 		"scheme":              tftypes.NewValue(tftypes.String, "internal"),
 		"public_ip_id":        tftypes.NewValue(tftypes.String, nil),
 		"public_ip_address":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"provider_type":       tftypes.NewValue(tftypes.String, "amphora"),
+		"type":                tftypes.NewValue(tftypes.String, "l7"),
 		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"vip_port_id":         tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -156,7 +158,7 @@ func schemeConfigValue(t *testing.T, schemaResp resource.SchemaResponse, ctx con
 		"scheme":              tftypes.NewValue(tftypes.String, scheme),
 		"public_ip_id":        tftypes.NewValue(tftypes.String, publicIPID),
 		"public_ip_address":   tftypes.NewValue(tftypes.String, nil),
-		"provider_type":       tftypes.NewValue(tftypes.String, nil),
+		"type":                tftypes.NewValue(tftypes.String, nil),
 		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"vip_port_id":         tftypes.NewValue(tftypes.String, nil),
@@ -407,7 +409,7 @@ func TestLoadBalancerDeleteAsyncOperationPoll(t *testing.T) {
 		"scheme":              tftypes.NewValue(tftypes.String, "internal"),
 		"public_ip_id":        tftypes.NewValue(tftypes.String, nil),
 		"public_ip_address":   tftypes.NewValue(tftypes.String, nil),
-		"provider_type":       tftypes.NewValue(tftypes.String, "amphora"),
+		"type":                tftypes.NewValue(tftypes.String, "l7"),
 		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"vip_port_id":         tftypes.NewValue(tftypes.String, "port-1"),

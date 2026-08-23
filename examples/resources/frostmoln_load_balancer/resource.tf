@@ -1,12 +1,10 @@
-# An amphora load balancer.
+# An l7 load balancer.
 #
-# provider_type and flavor_id are ForceNew: there is no in-place migration between
-# the amphora (default; full L7 + TLS) and ovn (L4-only, source-IP preserving,
-# zero VM overhead) providers. Switching providers destroys and recreates
-# the load balancer. Choose amphora unless you specifically need OVN's
-# source-IP-preserving L4 behaviour.
-# provider_type is named that way because "provider" is a reserved Terraform
-# attribute name.
+# type and flavor_id are ForceNew: there is no in-place migration between the
+# l7 (default; terminates HTTP/HTTPS and TLS, can insert headers) and l4
+# (TCP/UDP/SCTP only, preserves the client source IP) types. Switching types
+# destroys and recreates the load balancer. Choose l7 unless you specifically
+# need the source-IP-preserving L4 behaviour.
 #
 # Import IDs for the load balancer and its child resources:
 #   frostmoln_load_balancer:    <lb_id>
@@ -15,10 +13,10 @@
 #   frostmoln_lb_member:        <lb_id>/<pool_id>/<member_id>
 #   frostmoln_lb_health_monitor:<lb_id>/<pool_id>
 resource "frostmoln_load_balancer" "web" {
-  name          = "web-lb"
-  vpc_id        = frostmoln_vpc.main.id
-  subnet_id     = frostmoln_subnet.public.id
-  provider_type = "amphora"
+  name      = "web-lb"
+  vpc_id    = frostmoln_vpc.main.id
+  subnet_id = frostmoln_subnet.public.id
+  type      = "l7"
 
   description = "Internal ingress load balancer (private VIP only — the default scheme)"
 

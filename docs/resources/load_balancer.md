@@ -31,15 +31,13 @@ It changes ORDER only: nothing is created and nothing is released. It does not a
 ## Example Usage
 
 ```terraform
-# An amphora load balancer.
+# An l7 load balancer.
 #
-# provider_type and flavor_id are ForceNew: there is no in-place migration between
-# the amphora (default; full L7 + TLS) and ovn (L4-only, source-IP preserving,
-# zero VM overhead) providers. Switching providers destroys and recreates
-# the load balancer. Choose amphora unless you specifically need OVN's
-# source-IP-preserving L4 behaviour.
-# provider_type is named that way because "provider" is a reserved Terraform
-# attribute name.
+# type and flavor_id are ForceNew: there is no in-place migration between the
+# l7 (default; terminates HTTP/HTTPS and TLS, can insert headers) and l4
+# (TCP/UDP/SCTP only, preserves the client source IP) types. Switching types
+# destroys and recreates the load balancer. Choose l7 unless you specifically
+# need the source-IP-preserving L4 behaviour.
 #
 # Import IDs for the load balancer and its child resources:
 #   frostmoln_load_balancer:    <lb_id>
@@ -48,10 +46,10 @@ It changes ORDER only: nothing is created and nothing is released. It does not a
 #   frostmoln_lb_member:        <lb_id>/<pool_id>/<member_id>
 #   frostmoln_lb_health_monitor:<lb_id>/<pool_id>
 resource "frostmoln_load_balancer" "web" {
-  name          = "web-lb"
-  vpc_id        = frostmoln_vpc.main.id
-  subnet_id     = frostmoln_subnet.public.id
-  provider_type = "amphora"
+  name      = "web-lb"
+  vpc_id    = frostmoln_vpc.main.id
+  subnet_id = frostmoln_subnet.public.id
+  type      = "l7"
 
   description = "Internal ingress load balancer (private VIP only — the default scheme)"
 
@@ -97,13 +95,13 @@ resource "frostmoln_load_balancer" "public_web" {
 ### Optional
 
 - `description` (String) A description of the load balancer.
-- `flavor_id` (String) The flavor ID for the load balancer (amphora provider only). Changing this forces a new resource.
-- `provider_type` (String) The load-balancer provider: amphora (default, full L7 + TLS) or ovn (L4-only, source-IP preserving, zero VM overhead). There is no in-place migration between providers; changing this forces a new resource. (Named provider_type because "provider" is a reserved Terraform attribute name.)
+- `flavor_id` (String) The flavor ID for the load balancer (type l7 only). Changing this forces a new resource.
 - `public_ip_id` (String) ID of a pre-allocated, tenant-owned, unassociated public IP to attach to the VIP. Required when scheme is public; must be omitted when scheme is internal. Changing this forces a new resource.
 
 Attaching it makes this load balancer depend on the VPC's gateway, which Terraform cannot see — see the ordering note on this resource above.
 - `scheme` (String) Reachability scheme: internal (default, private VIP only) or public (a bring-your-own public IP is attached to the VIP for external reachability). When public, public_ip_id is required. There is no in-place change between schemes; changing this forces a new resource.
 - `tags` (Map of String) Key-value tags for the load balancer.
+- `type` (String) The load-balancer type: l7 (default) terminates HTTP/HTTPS and TLS and can insert headers; l4 serves TCP/UDP/SCTP only and preserves the client source IP. There is no in-place migration between types; changing this forces a new resource.
 - `vip_address` (String) The virtual IP address of the load balancer. If omitted, an address is allocated automatically. An explicitly-set VIP is effectively immutable: the backend does not support changing a VIP in place, so a changed vip_address in config is ignored on update. To move to a different VIP, taint the resource (terraform taint / -replace) to force a destroy and recreate.
 
 ### Read-Only

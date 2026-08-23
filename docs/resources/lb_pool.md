@@ -47,7 +47,7 @@ resource "frostmoln_lb_pool" "backend" {
 
 ### Required
 
-- `lb_algorithm` (String) The load balancing algorithm: round_robin, least_connections, source_ip, or source_ip_port (source_ip_port is required for OVN-provider pools).
+- `lb_algorithm` (String) The load balancing algorithm: round_robin, least_connections, source_ip, or source_ip_port (source_ip_port is required on an l4 load balancer, which accepts no other algorithm).
 - `load_balancer_id` (String) The ID of the load balancer this pool belongs to. Changing this forces a new resource.
 - `name` (String) The name of the pool.
 - `protocol` (String) The pool protocol: tcp, udp, sctp, http, https, or terminated_https.

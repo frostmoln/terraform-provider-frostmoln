@@ -24,6 +24,10 @@ var (
 	_ resource.Resource                   = &loadBalancerResource{}
 	_ resource.ResourceWithImportState    = &loadBalancerResource{}
 	_ resource.ResourceWithValidateConfig = &loadBalancerResource{}
+	// Without this, a signature drift would silently drop the state upgrader,
+	// and every customer still on schema version 0 would hit a hard "Unable to
+	// Read Previously Saved State" error on their next plan.
+	_ resource.ResourceWithUpgradeState = &loadBalancerResource{}
 )
 
 type loadBalancerResource struct {
@@ -57,6 +61,7 @@ func (r *loadBalancerResource) Metadata(_ context.Context, req resource.Metadata
 
 func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		Version: 1,
 		Description: "Manages a load balancer in the Frostmoln Cloud Platform. Load balancer creation and " +
 			"deletion are asynchronous, so applies wait on the provisioning operation to complete.\n\n" +
 			schemadoc.GatewayOrderingNote("frostmoln_load_balancer"),
@@ -128,20 +133,39 @@ func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"provider_type": schema.StringAttribute{
-				Description: "The load-balancer provider: amphora (default, full L7 + TLS) or ovn (L4-only, source-IP preserving, zero VM overhead). There is no in-place migration between providers; changing this forces a new resource. (Named provider_type because \"provider\" is a reserved Terraform attribute name.)",
+			"type": schema.StringAttribute{
+				Description: "The load-balancer type: l7 (default) terminates HTTP/HTTPS and TLS and can insert headers; l4 serves TCP/UDP/SCTP only and preserves the client source IP. There is no in-place migration between types; changing this forces a new resource.",
 				Optional:    true,
 				Computed:    true,
-				Default:     stringdefault.StaticString("amphora"),
+				Default:     stringdefault.StaticString("l7"),
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 				Validators: []validator.String{
-					stringvalidator.OneOf("amphora", "ovn"),
+					// CANONICAL VALUES ONLY. Accepting the legacy spellings
+					// here looks lenient and is in fact destructive: a config
+					// value is never replaced by the schema default, and
+					// nothing canonicalises the PLAN value, so `type =
+					// "amphora"` would sit in the plan as "amphora" against a
+					// state the upgrader wrote as "l7" -- unequal, on an
+					// attribute that forces replacement. The practitioner's
+					// most likely edit (rename the attribute, keep the value)
+					// would then destroy and recreate every load balancer,
+					// which is the exact outcome the state upgrader exists to
+					// prevent.
+					//
+					// Rejecting them is strictly safer: removing the old
+					// attribute already forces a config edit in the same
+					// session (Terraform raises "Unsupported argument" during
+					// config evaluation, before any plan), so there is no
+					// window in which a legacy value is useful. A leftover
+					// "amphora" now gets a validation error naming the allowed
+					// values instead of a silent destroy plan.
+					stringvalidator.OneOf("l7", "l4"),
 				},
 			},
 			"flavor_id": schema.StringAttribute{
-				Description: "The flavor ID for the load balancer (amphora provider only). Changing this forces a new resource.",
+				Description: "The flavor ID for the load balancer (type l7 only). Changing this forces a new resource.",
 				Optional:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),

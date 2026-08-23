@@ -77,7 +77,7 @@ func (r *poolResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				},
 			},
 			"lb_algorithm": schema.StringAttribute{
-				Description: "The load balancing algorithm: round_robin, least_connections, source_ip, or source_ip_port (source_ip_port is required for OVN-provider pools).",
+				Description: "The load balancing algorithm: round_robin, least_connections, source_ip, or source_ip_port (source_ip_port is required on an l4 load balancer, which accepts no other algorithm).",
 				Required:    true,
 				Validators: []validator.String{
 					stringvalidator.OneOf("round_robin", "least_connections", "source_ip", "source_ip_port"),

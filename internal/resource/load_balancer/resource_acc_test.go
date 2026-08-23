@@ -10,7 +10,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/acctest"
 )
 
-// TestAccLoadBalancer_basic provisions a full load balancer stack: an amphora
+// TestAccLoadBalancer_basic provisions a full load balancer stack: an l7
 // load balancer, an HTTPS listener with an explicit allowed_cidrs allow-list, a
 // backend pool, a member, and a health monitor.
 func TestAccLoadBalancer_basic(t *testing.T) {
@@ -29,7 +29,7 @@ func TestAccLoadBalancer_basic(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet(resourceName, "id"),
 					resource.TestCheckResourceAttr(resourceName, "name", name),
-					resource.TestCheckResourceAttr(resourceName, "provider_type", "amphora"),
+					resource.TestCheckResourceAttr(resourceName, "type", "l7"),
 					resource.TestCheckResourceAttrSet(resourceName, "vip_address"),
 					resource.TestCheckResourceAttr("frostmoln_lb_listener.test", "protocol", "https"),
 					resource.TestCheckResourceAttr("frostmoln_lb_pool.test", "lb_algorithm", "round_robin"),
@@ -62,13 +62,13 @@ resource "frostmoln_subnet" "test" {
   cidr   = "10.10.1.0/24"
 }
 
-# provider and flavor_id are ForceNew. There is no in-place migration between
-# the amphora and ovn Octavia drivers; switching them destroys and recreates.
+# type and flavor_id are ForceNew. There is no in-place migration between the
+# l7 and l4 types; switching them destroys and recreates.
 resource "frostmoln_load_balancer" "test" {
   name          = %q
   vpc_id        = frostmoln_vpc.test.id
   subnet_id     = frostmoln_subnet.test.id
-  provider_type = "amphora"
+  type          = "l7"
 }
 
 resource "frostmoln_lb_listener" "test" {

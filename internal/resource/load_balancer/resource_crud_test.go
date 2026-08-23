@@ -99,7 +99,7 @@ func TestLoadBalancerNewResource(t *testing.T) {
 
 func TestLoadBalancerSchema(t *testing.T) {
 	schemaResp := getSchema(t)
-	for _, attr := range []string{"id", "name", "vpc_id", "subnet_id", "description", "vip_address", "scheme", "public_ip_id", "public_ip_address", "provider_type", "flavor_id", "tags", "vip_port_id", "status", "provisioning_status", "operating_status", "created_at", "updated_at"} {
+	for _, attr := range []string{"id", "name", "vpc_id", "subnet_id", "description", "vip_address", "scheme", "public_ip_id", "public_ip_address", "type", "flavor_id", "tags", "vip_port_id", "status", "provisioning_status", "operating_status", "created_at", "updated_at"} {
 		if _, ok := schemaResp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %q", attr)
 		}
@@ -165,13 +165,13 @@ func TestLoadBalancerCreateSync201(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(apiLoadBalancer{
 				ID: "lb-sync-1", Name: "test-lb", VPCID: "vpc-1", SubnetID: "subnet-1",
-				Provider: "amphora", Status: "active", ProvisioningStatus: "ACTIVE",
+				Type: "l7", Status: "active", ProvisioningStatus: "ACTIVE",
 				OperatingStatus: "ONLINE", VIPAddress: "10.0.0.9", CreatedAt: "2025-01-01T00:00:00Z",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/load-balancers/lb-sync-1":
 			_ = json.NewEncoder(w).Encode(apiLoadBalancer{
 				ID: "lb-sync-1", Name: "test-lb", VPCID: "vpc-1", SubnetID: "subnet-1",
-				Provider: "amphora", Status: "active", ProvisioningStatus: "ACTIVE",
+				Type: "l7", Status: "active", ProvisioningStatus: "ACTIVE",
 				OperatingStatus: "ONLINE", VIPAddress: "10.0.0.9", CreatedAt: "2025-01-01T00:00:00Z",
 			})
 		default:
@@ -245,7 +245,7 @@ func lbStateValue(t *testing.T, schemaResp resource.SchemaResponse, ctx context.
 		"scheme":              tftypes.NewValue(tftypes.String, "internal"),
 		"public_ip_id":        tftypes.NewValue(tftypes.String, nil),
 		"public_ip_address":   tftypes.NewValue(tftypes.String, nil),
-		"provider_type":       tftypes.NewValue(tftypes.String, "amphora"),
+		"type":                tftypes.NewValue(tftypes.String, "l7"),
 		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"vip_port_id":         tftypes.NewValue(tftypes.String, "port-1"),
@@ -264,7 +264,7 @@ func TestLoadBalancerRead(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": "u-1", "tenantId": "t-123"})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/load-balancers/lb-r-1":
 			_ = json.NewEncoder(w).Encode(apiLoadBalancer{
-				ID: "lb-r-1", Name: "lb", VPCID: "vpc-1", SubnetID: "subnet-1", Provider: "amphora",
+				ID: "lb-r-1", Name: "lb", VPCID: "vpc-1", SubnetID: "subnet-1", Type: "l7",
 				Status: "active", ProvisioningStatus: "ACTIVE", OperatingStatus: "DEGRADED",
 				VIPAddress: "10.0.0.7", CreatedAt: "2025-01-01T00:00:00Z",
 			})
@@ -340,7 +340,7 @@ func TestLoadBalancerUpdate(t *testing.T) {
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-123/load-balancers/lb-u-1":
 			_ = json.NewDecoder(r.Body).Decode(&updated)
 			_ = json.NewEncoder(w).Encode(apiLoadBalancer{
-				ID: "lb-u-1", Name: "renamed", VPCID: "vpc-1", SubnetID: "subnet-1", Provider: "amphora",
+				ID: "lb-u-1", Name: "renamed", VPCID: "vpc-1", SubnetID: "subnet-1", Type: "l7",
 				Status: "active", ProvisioningStatus: "ACTIVE", OperatingStatus: "ONLINE",
 				VIPAddress: "10.0.0.7", CreatedAt: "2025-01-01T00:00:00Z", UpdatedAt: "2025-02-01T00:00:00Z",
 			})
@@ -369,7 +369,7 @@ func TestLoadBalancerUpdate(t *testing.T) {
 		"scheme":              tftypes.NewValue(tftypes.String, "internal"),
 		"public_ip_id":        tftypes.NewValue(tftypes.String, nil),
 		"public_ip_address":   tftypes.NewValue(tftypes.String, nil),
-		"provider_type":       tftypes.NewValue(tftypes.String, "amphora"),
+		"type":                tftypes.NewValue(tftypes.String, "l7"),
 		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"vip_port_id":         tftypes.NewValue(tftypes.String, "port-1"),
