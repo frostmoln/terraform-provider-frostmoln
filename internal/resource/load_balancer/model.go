@@ -32,24 +32,17 @@ type LoadBalancerModel struct {
 
 // apiLoadBalancer is the API representation of a load balancer.
 type apiLoadBalancer struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Description     string `json:"description,omitempty"`
-	VPCID           string `json:"vpcId"`
-	SubnetID        string `json:"subnetId"`
-	VIPAddress      string `json:"vipAddress,omitempty"`
-	VIPPortID       string `json:"vipPortId,omitempty"`
-	Scheme          string `json:"scheme,omitempty"`
-	PublicIPID      string `json:"publicIpId,omitempty"`
-	PublicIPAddress string `json:"publicIpAddress,omitempty"`
-	Type            string `json:"type,omitempty"`
-	// Provider is the pre-rename response field. No released backend ever
-	// emitted it on this response, so this is belt-and-braces rather than
-	// compatibility with a version that exists -- worth keeping only because
-	// the cost of the field being absent is a spurious replacement, not a
-	// spurious diff. Do not treat its presence as evidence such a backend
-	// exists.
-	Provider           string            `json:"provider,omitempty"`
+	ID                 string            `json:"id"`
+	Name               string            `json:"name"`
+	Description        string            `json:"description,omitempty"`
+	VPCID              string            `json:"vpcId"`
+	SubnetID           string            `json:"subnetId"`
+	VIPAddress         string            `json:"vipAddress,omitempty"`
+	VIPPortID          string            `json:"vipPortId,omitempty"`
+	Scheme             string            `json:"scheme,omitempty"`
+	PublicIPID         string            `json:"publicIpId,omitempty"`
+	PublicIPAddress    string            `json:"publicIpAddress,omitempty"`
+	Type               string            `json:"type,omitempty"`
 	FlavorID           string            `json:"flavorId,omitempty"`
 	Status             string            `json:"status"`
 	ProvisioningStatus string            `json:"provisioningStatus"`
@@ -61,21 +54,16 @@ type apiLoadBalancer struct {
 
 // apiCreateLoadBalancerRequest is the API request to create a load balancer.
 type apiCreateLoadBalancerRequest struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	VPCID       string `json:"vpcId"`
-	SubnetID    string `json:"subnetId"`
-	VIPAddress  string `json:"vipAddress,omitempty"`
-	Scheme      string `json:"scheme,omitempty"`
-	PublicIPID  string `json:"publicIpId,omitempty"`
-	// Type is the current field; Provider carries the SAME value in its legacy
-	// spelling. Both are sent for the deprecation window so one provider build
-	// works against a backend binding either field, which keeps the provider
-	// release independent of the backend deploy order.
-	Type     string            `json:"type,omitempty"`
-	Provider string            `json:"provider,omitempty"`
-	FlavorID string            `json:"flavorId,omitempty"`
-	Tags     map[string]string `json:"tags,omitempty"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	VPCID       string            `json:"vpcId"`
+	SubnetID    string            `json:"subnetId"`
+	VIPAddress  string            `json:"vipAddress,omitempty"`
+	Scheme      string            `json:"scheme,omitempty"`
+	PublicIPID  string            `json:"publicIpId,omitempty"`
+	Type        string            `json:"type,omitempty"`
+	FlavorID    string            `json:"flavorId,omitempty"`
+	Tags        map[string]string `json:"tags,omitempty"`
 }
 
 // apiUpdateLoadBalancerRequest is the API request to update a load balancer.
@@ -107,9 +95,7 @@ func (m *LoadBalancerModel) toCreateRequest(ctx context.Context, diags *diag.Dia
 		req.PublicIPID = m.PublicIPID.ValueString()
 	}
 	if !m.Type.IsNull() && !m.Type.IsUnknown() {
-		canon := canonicalLBType(m.Type.ValueString())
-		req.Type = canon
-		req.Provider = legacyLBType(canon)
+		req.Type = m.Type.ValueString()
 	}
 	if !m.FlavorID.IsNull() && !m.FlavorID.IsUnknown() {
 		req.FlavorID = m.FlavorID.ValueString()
@@ -198,15 +184,8 @@ func (m *LoadBalancerModel) fromAPI(ctx context.Context, lb *apiLoadBalancer, di
 		m.PublicIPAddress = types.StringNull()
 	}
 
-	// Prefer the current field, fall back to the legacy one, and canonicalise
-	// either: a load balancer created before the rename has "amphora"/"ovn"
-	// stored server-side, and surfacing that verbatim would both leak the
-	// implementation name into state and, because the attribute forces
-	// replacement, plan a destroy against a config that says l7/l4.
 	if raw := lb.Type; raw != "" {
-		m.Type = types.StringValue(canonicalLBType(raw))
-	} else if raw := lb.Provider; raw != "" {
-		m.Type = types.StringValue(canonicalLBType(raw))
+		m.Type = types.StringValue(raw)
 	} else if m.Type.IsNull() {
 		// Fall back to the server-side default rather than leaving a null.
 		// This attribute forces replacement, and on `terraform import` the
@@ -237,39 +216,5 @@ func (m *LoadBalancerModel) fromAPI(ctx context.Context, lb *apiLoadBalancer, di
 		m.Tags = tagsMap
 	} else {
 		m.Tags = types.MapNull(types.StringType)
-	}
-}
-
-// canonicalLBType maps any accepted spelling of the load-balancer type to the
-// current one. The legacy values are the implementation driver names the API
-// used to expose; they are accepted on input and mapped forward on output, but
-// never written into state.
-func canonicalLBType(v string) string {
-	switch v {
-	case "amphora":
-		return "l7"
-	case "ovn":
-		return "l4"
-	default:
-		return v
-	}
-}
-
-// legacyLBType maps a canonical type back to its pre-rename spelling, for the
-// `provider` field the create request still sends alongside `type`.
-//
-// Unrecognised input returns "" so `omitempty` drops the field entirely. It
-// deliberately does NOT fall back to a spelling: if a third type is ever added,
-// falling back would send `type: "<new>"` alongside `provider: "amphora"`, and
-// the server rejects a disagreeing pair -- turning a new type into a guaranteed
-// 400. Degrading to type-only is the behaviour that keeps working.
-func legacyLBType(v string) string {
-	switch v {
-	case "l4":
-		return "ovn"
-	case "l7":
-		return "amphora"
-	default:
-		return ""
 	}
 }

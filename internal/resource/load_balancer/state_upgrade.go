@@ -98,9 +98,19 @@ func (r *loadBalancerResource) UpgradeState(ctx context.Context) map[int64]resou
 				// Carrying a null through instead would leave state disagreeing
 				// with the new default and plan a replacement -- the exact
 				// outcome this upgrader exists to prevent.
+				// The old spelling is mapped HERE and nowhere else. This is
+				// the only code that reads pre-rename DATA, so it is the only
+				// place the retired values can legitimately appear -- the
+				// request path, the response path and the validator are all
+				// canonical-only. Keeping the mapping local is what stops it
+				// leaking back into live code paths as a general-purpose
+				// "accept either" helper.
 				newType := "l7"
-				if !old.Provider.IsNull() && !old.Provider.IsUnknown() && old.Provider.ValueString() != "" {
-					newType = canonicalLBType(old.Provider.ValueString())
+				if !old.Provider.IsNull() && !old.Provider.IsUnknown() {
+					switch old.Provider.ValueString() {
+					case "ovn", "l4":
+						newType = "l4"
+					}
 				}
 
 				resp.Diagnostics.Append(resp.State.Set(ctx, LoadBalancerModel{

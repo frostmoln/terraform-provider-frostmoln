@@ -26,7 +26,7 @@ func TestLoadBalancerModelFromAPI(t *testing.T) {
 		SubnetID:           "subnet-1",
 		VIPAddress:         "10.0.0.5",
 		VIPPortID:          "port-1",
-		Provider:           "amphora",
+		Type:               "l7",
 		FlavorID:           "flv-1",
 		Status:             "active",
 		ProvisioningStatus: "ACTIVE",
@@ -52,10 +52,8 @@ func TestLoadBalancerModelFromAPI(t *testing.T) {
 	if model.VPCID.ValueString() != "vpc-1" {
 		t.Errorf("expected VPCID vpc-1, got %s", model.VPCID.ValueString())
 	}
-	// The API fixture stores the legacy value; the model must surface the
-	// canonical one, or state would disagree with a current configuration.
 	if model.Type.ValueString() != "l7" {
-		t.Errorf("expected Type l7 (mapped from amphora), got %s", model.Type.ValueString())
+		t.Errorf("expected Type l7, got %s", model.Type.ValueString())
 	}
 	if model.VIPAddress.ValueString() != "10.0.0.5" {
 		t.Errorf("expected VIPAddress 10.0.0.5, got %s", model.VIPAddress.ValueString())
@@ -93,8 +91,8 @@ func TestLoadBalancerModelToCreateRequest(t *testing.T) {
 	if req.Name != "my-lb" || req.VPCID != "vpc-9" || req.SubnetID != "subnet-9" {
 		t.Errorf("unexpected create request: %+v", req)
 	}
-	if req.Provider != "ovn" {
-		t.Errorf("expected provider ovn, got %s", req.Provider)
+	if req.Type != "l4" {
+		t.Errorf("expected type l4, got %s", req.Type)
 	}
 	if req.Tags["env"] != "prod" {
 		t.Errorf("expected tag env=prod, got %v", req.Tags)
@@ -239,7 +237,7 @@ func TestLoadBalancerCreateAsyncOperationPoll(t *testing.T) {
 				Name:               "test-lb",
 				VPCID:              "vpc-1",
 				SubnetID:           "subnet-1",
-				Provider:           "amphora",
+				Type:               "l7",
 				Status:             "active",
 				ProvisioningStatus: "ACTIVE",
 				OperatingStatus:    "ONLINE",
