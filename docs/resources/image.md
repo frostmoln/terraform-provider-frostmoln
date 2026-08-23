@@ -56,10 +56,10 @@ Manages a customer custom image (bring-your-own-image). The provider runs the fu
 #     delete enough to free space, or ask for a higher limit. See the destroy
 #     note below — that delete can itself be refused.
 #
-# DESTROY CAN FAIL WITH 409 resource_in_use. Frostmoln stores images on Ceph
-# RBD and boots instances from copy-on-write clones of them, so an image the
-# storage backend still has clones of cannot be deleted — in practice that means
-# instances launched from it. Terraform destroys `frostmoln_instance.app` before
+# DESTROY CAN FAIL WITH 409 resource_in_use. Frostmoln boots instances from
+# copy-on-write clones of an image, so an image the storage layer still has
+# clones of cannot be deleted — in practice that means instances launched from
+# it. Terraform destroys `frostmoln_instance.app` before
 # `frostmoln_image.golden` here, because the `image_id` reference makes that
 # dependency explicit — but an instance that takes its image by literal id,
 # through a data source, or from another state file carries NO such edge, and
