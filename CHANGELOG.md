@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.37.0] - 2026-08-23
+
+### 🚀 Features
+
+- *(lb)* Rename provider_type to type; values l7/l4; add state upgrader (#363)
+
+### 🐛 Bug Fixes
+
+- *(docs)* Remove internal technology names from published schema descriptions (#361)
+
 ## [0.36.2] - 2026-08-22
 
 ### ⚙️ Miscellaneous Tasks
