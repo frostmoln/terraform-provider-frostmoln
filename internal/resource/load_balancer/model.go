@@ -196,12 +196,24 @@ func (m *LoadBalancerModel) fromAPI(ctx context.Context, lb *apiLoadBalancer, di
 		m.Type = types.StringValue("l7")
 	}
 
+	// PRESERVE a configured flavor when the API omits it -- do NOT null it.
+	//
+	// flavor_id is Optional (not Computed) and forces replacement, so nulling a
+	// value the configuration sets makes the next plan propose a DESTROY AND
+	// RECREATE of a load balancer that has not changed: a new VIP and downtime,
+	// caused by a field missing from a response.
+	//
+	// Nulling is only correct when absence means the value really went away,
+	// which is why public_ip_id above DOES null: an address can be detached
+	// out-of-band, so reflecting that is genuine drift detection. A flavor
+	// cannot -- it is fixed at creation and immutable thereafter -- so an empty
+	// flavorId is an API gap, never a change. There is nothing to detect.
+	//
+	// The two arms this replaces were identical (`else if ... Null()` then
+	// `else`, both assigning null), so the distinction was intended and never
+	// finished.
 	if lb.FlavorID != "" {
 		m.FlavorID = types.StringValue(lb.FlavorID)
-	} else if m.FlavorID.IsNull() {
-		m.FlavorID = types.StringNull()
-	} else {
-		m.FlavorID = types.StringNull()
 	}
 
 	if lb.UpdatedAt != "" {
