@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.37.1] - 2026-08-23
+
+### ⚙️ Miscellaneous Tasks
+
+- *(lb)* Drop the legacy provider compatibility from the live paths (#365)
+
 ## [0.37.0] - 2026-08-23
 
 ### 🚀 Features
