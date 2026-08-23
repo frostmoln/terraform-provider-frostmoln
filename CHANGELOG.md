@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.37.2] - 2026-08-23
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.17 (#368)
+- *(lb)* Stop nulling a configured flavor_id when the API omits it (#371)
+
+### 📚 Documentation
+
+- *(image)* BYOI no longer requires the custom-images entitlement (#367)
+
 ## [0.37.1] - 2026-08-23
 
 ### ⚙️ Miscellaneous Tasks
