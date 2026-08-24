@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.37.3] - 2026-08-24
+
+### 🐛 Bug Fixes
+
+- *(examples)* Stop publishing the storage backend to the Terraform Registry (#373)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.10.0 (#375)
+
 ## [0.37.2] - 2026-08-23
 
 ### 🐛 Bug Fixes
