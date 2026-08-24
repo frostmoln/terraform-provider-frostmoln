@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.37.4] - 2026-08-24
+
+### 🐛 Bug Fixes
+
+- *(vpc_route)* Never drop state on a gateway routing failure (#377)
+
 ## [0.37.3] - 2026-08-24
 
 ### 🐛 Bug Fixes
