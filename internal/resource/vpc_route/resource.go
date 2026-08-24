@@ -3,6 +3,7 @@ package vpc_route
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/netip"
 	"net/url"
@@ -487,6 +488,20 @@ func (r *vpcRouteResource) vpcExists(ctx context.Context, vpcID string) bool {
 		return true
 	}
 	_, err := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf("/vpcs/%s", vpcID)), nil)
+
+	// A DEFINITE 404 MEANS THE SERVICE SAID SO, and only a FLAT envelope is the
+	// service speaking. client.IsNotFound reads the status alone, and the
+	// api-gateway answers 404 (nested under `error`) for any path it does not
+	// route — so a gateway-wide misroute made this report "the VPC is gone",
+	// which is the one answer that lets Delete return success and drop the
+	// resource while the route is still installed. That is the same collision
+	// isRouteNotFound guards, reached one layer further along: the routes DELETE
+	// 404s at the gateway, falls through to the plain-404 arm, and this call
+	// 404s at the gateway too, so both look like "already deleted".
+	var apiErr *client.APIError
+	if errors.As(err, &apiErr) && !apiErr.FlatEnvelope {
+		return true
+	}
 	return !client.IsNotFound(err)
 }
 

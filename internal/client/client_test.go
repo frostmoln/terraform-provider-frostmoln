@@ -946,6 +946,36 @@ func TestGetOperationDoesNotFallBackOnAServiceNotFound(t *testing.T) {
 	}
 }
 
+// THE INVARIANT THAT THE RENAME MADE ONLY PROSE. The fallback allow-lists
+// exactly ONE code, and it is deliberately the OLD one: a gateway new enough to
+// answer PATH_NOT_ROUTED is necessarily new enough to serve the tenant-scoped
+// route, so it never needs the fallback — and the legacy route it would fall
+// back to was removed from the catalog on 2026-08-14 anyway.
+//
+// Without this test a later "finish the rename" sweep could update the constant
+// to PATH_NOT_ROUTED and leave the whole suite green. If the legacy route were
+// ever restored, any catalog fault on the scoped route would then auto-retry the
+// route that skips the ownership check — the exact escalation the allow-list of
+// one exists to prevent.
+func TestGetOperationDoesNotFallBackOnPathNotRouted(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":{"code":"PATH_NOT_ROUTED","message":"no route found for path"}}`))
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	if _, err := c.GetOperation(context.Background(), "op-1"); err == nil {
+		t.Fatal("expected an error: a gateway answering PATH_NOT_ROUTED serves the scoped route, so there is nothing to fall back to")
+	}
+	if len(paths) != 1 || paths[0] != "/v1/tenants/t-1/operations/op-1" {
+		t.Errorf("expected exactly one scoped request and no legacy retry, got %v", paths)
+	}
+}
+
 // A "../" in the id must not collapse the scoped path back onto the legacy route:
 // the URL is assembled with path.Join, which cleans dot segments.
 func TestGetOperationEscapesTheOperationID(t *testing.T) {
@@ -1189,5 +1219,49 @@ func TestServiceQuotaRefusalIsNotRetried(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Errorf("refusal took %s — the rate-limit backoff is still running for a quota cap", elapsed)
+	}
+}
+
+// FlatEnvelope is a security-relevant marker with exactly one setter, so pin it
+// directly rather than only through vpc_route's behaviour. The nested case is
+// the one that matters: it is what a gateway routing failure looks like, and a
+// mutant that sets the marker there re-arms the state-drop bug.
+func TestAPIErrorFlatEnvelopeMarksOnlyFlatRefusalBodies(t *testing.T) {
+	cases := []struct {
+		name     string
+		status   int
+		body     string
+		wantCode string
+		wantFlat bool
+	}{
+		{"flat service refusal", http.StatusNotFound, `{"code":"ROUTE_NOT_FOUND","message":"no route with that destination"}`, "ROUTE_NOT_FOUND", true},
+		{"nested gateway refusal", http.StatusNotFound, `{"error":{"code":"ROUTE_NOT_FOUND","message":"no route found for path"}}`, "ROUTE_NOT_FOUND", false},
+		{"nested service refusal (provisioning shape)", http.StatusNotFound, `{"error":{"code":"NOT_FOUND","message":"operation not found"}}`, "NOT_FOUND", false},
+		{"flat refusal with an object details", http.StatusConflict, `{"code":"ROUTE_WRITE_CONFLICT","message":"busy","details":{"cap":5}}`, "ROUTE_WRITE_CONFLICT", true},
+		{"unparseable body", http.StatusNotFound, `404 page not found`, "ERROR", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+
+			c := NewClient(server.URL, "test-key") // pragma: allowlist secret
+			_, err := c.Get(context.Background(), "/v1/anything", nil)
+
+			var apiErr *APIError
+			if !errors.As(err, &apiErr) {
+				t.Fatalf("want *APIError, got %v", err)
+			}
+			if apiErr.Code != tc.wantCode {
+				t.Errorf("Code = %q, want %q", apiErr.Code, tc.wantCode)
+			}
+			if apiErr.FlatEnvelope != tc.wantFlat {
+				t.Errorf("FlatEnvelope = %v, want %v — this decides whether vpc_route drops the resource from state", apiErr.FlatEnvelope, tc.wantFlat)
+			}
+		})
 	}
 }

@@ -231,6 +231,34 @@ type APIError struct {
 	// RetryAfter is the server-suggested wait in seconds on a 429 (from the
 	// rate-limit body's retry_after or the Retry-After header); 0 when absent.
 	RetryAfter int `json:"retry_after,omitempty"`
+	// FlatEnvelope records that this error was decoded from the FLAT body shape
+	// ({"code":…}) rather than the nested one ({"error":{"code":…}}), because for
+	// one code the two shapes mean opposite things.
+	//
+	// The api-gateway answers an unmatched path NESTED. A refusal rendered by
+	// servicekit — which is how network answers on the VPC-routes surface, via
+	// its handleError → skerrors.HandleHTTP — is FLAT. The gateway's
+	// unmatched-path code was renamed to PATH_NOT_ROUTED so the namespaces are
+	// disjoint going forward, but an older gateway still answers
+	// ROUTE_NOT_FOUND, which is also network's code for an absent VPC static
+	// route, and vpc_route DROPS THE RESOURCE FROM STATE on that one. This
+	// marker is what lets that call site refuse to act on a routing failure.
+	//
+	// SCOPED TO servicekit-RENDERED REFUSALS ON PURPOSE — "flat means a service"
+	// is NOT a platform-wide guarantee. Hand-rolled nested `gin.H{"error": …}`
+	// sites exist today in provisioning's operations handler, identity's
+	// NoRoute, and network's own load-balancer stub. So do NOT copy this marker
+	// to a resource served by one of those: its "resource is gone" branch would
+	// never fire. The producer side of the contract this relies on is pinned in
+	// network by TestRouteRefusalUsesTheFlatEnvelope.
+	//
+	// DELIBERATELY FALSE BY DEFAULT, so the fail-safe direction is the default
+	// one: an APIError not decoded from a flat refusal body is not proven to be
+	// a service's own verdict, and a caller gated on this keeps the resource
+	// rather than dropping it. Constructed errors (the rate-limit branch, the
+	// unparseable-body fallback) are therefore false, which is correct — they
+	// are not decoded refusal envelopes.
+	FlatEnvelope bool `json:"-"`
 }
 
 // Error renders code and message only. Details is machine-readable context for a
@@ -364,12 +392,12 @@ type Operation struct {
 // /v1/operations/{id} skips its check when the caller's signed tenant is empty,
 // so a migrated client must not keep using it.
 //
-// WHY THE FALLBACK IS KEYED ON ROUTE_NOT_FOUND AND NOT ON THE 404 STATUS.
+// WHY THE FALLBACK IS KEYED ON A CODE AND NOT ON THE 404 STATUS.
 // Provisioning answers 404 with code NOT_FOUND for BOTH "no such operation" and
 // "you do not own this one" — deliberately existence-oracle-free, so those two
 // are indistinguishable and must stay that way. But "this gateway has no such
-// route" is a different layer: the gateway itself answers ROUTE_NOT_FOUND before
-// any service is consulted. Keying on the status alone conflates them, and a
+// route" is a different layer: the gateway itself answers its unmatched-path code
+// before any service is consulted. Keying on the status alone conflates them, and a
 // migrated client would then answer its own ownership denial by re-asking the
 // route that does not check ownership — automatically, on every denial, handing
 // exactly the org-invited caller this migration protects an unchecked read of any
@@ -397,7 +425,7 @@ func (c *Client) GetOperation(ctx context.Context, operationID string) (*Operati
 	// legacy route (or any other GET endpoint) carrying the caller's credential.
 	suffix := url.PathEscape(operationID)
 	resp, err := c.Get(ctx, c.TenantPath(fmt.Sprintf("/operations/%s", suffix)), nil)
-	if err != nil && IsRouteNotFound(err) {
+	if err != nil && IsLegacyUnroutedPath(err) {
 		resp, err = c.Get(ctx, fmt.Sprintf("/v1/operations/%s", suffix), nil)
 	}
 	if err != nil {
@@ -406,20 +434,38 @@ func (c *Client) GetOperation(ctx context.Context, operationID string) (*Operati
 	return ParseResponse[Operation](resp)
 }
 
-// RouteNotFoundCode is the api-gateway's code for an unmatched path
-// (internal/gateway/gateway.go). It predates the tenant-scoped operations route,
-// so every gateway old enough to lack that route still answers with it.
-const RouteNotFoundCode = "ROUTE_NOT_FOUND"
+// LegacyUnroutedPathCode is what a PRE-RENAME api-gateway answered for an
+// unmatched path. Current gateways answer PATH_NOT_ROUTED; this constant is not
+// updated to follow them, and that is the whole point — see IsLegacyUnroutedPath.
+//
+// NAMED FOR THE GATEWAY, NOT FOR "ROUTE", because the string is shared. network
+// answers the identical code for an absent VPC static route, and
+// resource/vpc_route acts on THAT sense by dropping the resource from state. Two
+// functions in this repo previously read `ROUTE_NOT_FOUND` under near-identical
+// names and did opposite things with it; the names now say which layer each one
+// is about.
+const LegacyUnroutedPathCode = "ROUTE_NOT_FOUND"
 
-// IsRouteNotFound reports whether err is the api-gateway's "no route found for
-// path" answer — the gateway does not serve this path at all. It is NOT the same
-// as a 404 from the service behind the route, which for operations means either
-// "no such operation" or "not yours" and must never be retried elsewhere.
-func IsRouteNotFound(err error) bool {
+// IsLegacyUnroutedPath reports whether err is an OLD api-gateway's "no route
+// found for path" answer — that gateway does not serve this path at all. It is
+// NOT the same as a 404 from the service behind the route, which for operations
+// means either "no such operation" or "not yours" and must never be retried
+// elsewhere.
+//
+// STILL KEYED ON THE OLD CODE ON PURPOSE. The gateway's unmatched-path code
+// became PATH_NOT_ROUTED, and this is not widened to accept it: the
+// only gateway that needs the fallback is one too old to serve the tenant-scoped
+// operations route, and every such gateway predates the rename and answers the
+// old string. A current gateway that somehow lost that route SHOULD fail here
+// rather than fall back — the legacy /v1/operations route was itself removed on
+// 2026-08-14, so the fallback would 404 anyway, and the allow-list of exactly one
+// code is what keeps an ownership denial from ever auto-retrying the route that
+// skips the ownership check.
+func IsLegacyUnroutedPath(err error) bool {
 	var apiErr *APIError
 	return errors.As(err, &apiErr) &&
 		apiErr.StatusCode == http.StatusNotFound &&
-		apiErr.Code == RouteNotFoundCode
+		apiErr.Code == LegacyUnroutedPathCode
 }
 
 // WaitForOperation polls GET /v1/tenants/{tid}/operations/{id} until the
@@ -710,9 +756,24 @@ func (c *Client) do(ctx context.Context, method, reqPath string, query url.Value
 			return nil, &nested.Error
 		}
 		// Fall back to flat error format: {"code": ..., "message": ...}
+		//
+		// UNGATED ON THE UNMARSHAL ERROR, for the same reason as the nested
+		// branch above and now with a second one. encoding/json fills every
+		// field it can and reports a type mismatch only at the END, so a single
+		// unexpected shape anywhere in the body used to discard a code it had
+		// already decoded perfectly. Since FlatEnvelope is decided here, that
+		// gate would also have handed a benign wire addition the power to make a
+		// service's own verdict unrecognisable: vpc_route would stop believing
+		// network's ROUTE_NOT_FOUND and `terraform destroy` would fail on an
+		// already-absent route. Fail-safe (state is never dropped), but a real
+		// availability regression from a field nobody thought was load-bearing.
 		var apiErr APIError
-		if err := json.Unmarshal(respBody, &apiErr); err == nil && apiErr.Code != "" {
+		_ = json.Unmarshal(respBody, &apiErr)
+		if apiErr.Code != "" {
 			apiErr.StatusCode = httpResp.StatusCode
+			// The only place this is set: the flat refusal decode. See
+			// APIError.FlatEnvelope for why constructed errors stay false.
+			apiErr.FlatEnvelope = true
 			return nil, &apiErr
 		}
 		return nil, &APIError{

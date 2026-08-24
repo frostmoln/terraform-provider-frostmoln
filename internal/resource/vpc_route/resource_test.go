@@ -248,6 +248,59 @@ func TestVPCRouteDeleteTreatsRouteNotFoundAsDone(t *testing.T) {
 	}
 }
 
+// READ MUST NOT DROP STATE ON A ROUTING FAILURE EITHER, and it is the path that
+// runs on every refresh rather than only on destroy. Read reaches the same
+// vpcExists seam Delete does: a gateway-wide misroute 404s both the routes GET
+// and the VPC GET, which without the envelope guard reads as "the VPC is gone"
+// and silently removes the resource.
+func TestVPCRouteReadRejectsNestedRouteNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":{"code":"ROUTE_NOT_FOUND","message":"no route found for path"}}`))
+	}))
+	defer server.Close()
+
+	r := configured(t, server.URL)
+	s := routeSchema(t)
+	state := tfsdk.State{Schema: s, Raw: routeValue("vpc-123/203.0.113.0/24", "vpc-123", "203.0.113.0/24", "internet")}
+	resp := &resource.ReadResponse{State: state}
+	r.Read(context.Background(), resource.ReadRequest{State: state}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a gateway routing failure was treated as parent drift — the resource has silently left state")
+	}
+	if resp.State.Raw.IsNull() {
+		t.Fatal("state was removed on a routing failure")
+	}
+}
+
+// A NESTED ROUTE_NOT_FOUND IS A ROUTING FAILURE, NOT A DELETED ROUTE — and this
+// is the collision the FlatEnvelope marker exists for.
+//
+// A pre-rename api-gateway answered an unmatched path with the SAME code network
+// uses for an absent VPC static route, nested under an `error` key. Treating it
+// as "already gone" made `terraform destroy` print "Destroy complete" and drop
+// the resource while the route stayed installed in Neutron. The delete must fail
+// loudly instead, so the practitioner retries against a working gateway.
+func TestVPCRouteDeleteRejectsNestedRouteNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		// Verbatim api-gateway shape (internal/gateway/gateway.go, pre-rename).
+		_, _ = w.Write([]byte(`{"error":{"code":"ROUTE_NOT_FOUND","message":"no route found for path"}}`))
+	}))
+	defer server.Close()
+
+	r := configured(t, server.URL)
+	s := routeSchema(t)
+	state := tfsdk.State{Schema: s, Raw: routeValue("vpc-123/203.0.113.0/24", "vpc-123", "203.0.113.0/24", "internet")}
+	resp := &resource.DeleteResponse{State: state}
+	r.Delete(context.Background(), resource.DeleteRequest{State: state}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a gateway routing failure was treated as a successful delete — the route is still installed and the resource has left state")
+	}
+}
+
 // --- retry: exactly one code is transient ---
 
 func TestVPCRouteCreateRetriesOnlyWriteConflict(t *testing.T) {

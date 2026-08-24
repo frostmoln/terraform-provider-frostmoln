@@ -83,12 +83,33 @@ func isRouteWriteConflict(err error) bool {
 }
 
 // isRouteNotFound reports a 404 that means THE ROUTE is gone, as opposed to the
-// VPC being gone or the surface not being served.
+// VPC being gone, the surface not being served, or THE PATH NOT BEING ROUTED AT
+// ALL.
+//
+// THE ENVELOPE CHECK IS NOT BELT-AND-BRACES — it is what stops a routing
+// failure from destroying state. Acting on this verdict DROPS THE RESOURCE, and
+// until the PATH_NOT_ROUTED rename the gateway answered an unmatched path with this very
+// code. So a gateway 404 on the VPC-routes path — a bad deploy, a config rule
+// that lost the route, a mid-rollout window — reached `terraform destroy` as
+// "your route no longer exists": it printed "Destroy complete", dropped the
+// resource, and left the route installed in Neutron for nobody to manage.
+//
+// The rename fixed it going forward, but the provider is a CUSTOMER-PINNED
+// artifact run against whatever gateway the estate has, so an older one still
+// emits the collision and this guard has to survive it. The two are separable on
+// the wire even when the code is identical: the gateway answers NESTED
+// ({"error":{…}}), a service answers its own refusal FLAT. Requiring the flat
+// shape means only network can produce this verdict.
+//
+// Deliberately NOT a version check — the provider cannot know the gateway's
+// version at the point of the error, and the body shape is the thing that
+// actually distinguishes the two layers.
 func isRouteNotFound(err error) bool {
 	var apiErr *client.APIError
 	return errors.As(err, &apiErr) &&
 		apiErr.StatusCode == http.StatusNotFound &&
-		apiErr.Code == errCodeRouteNotFound
+		apiErr.Code == errCodeRouteNotFound &&
+		apiErr.FlatEnvelope
 }
 
 // The diagnostic summaries addRouteError is called with, one per CRUD operation.

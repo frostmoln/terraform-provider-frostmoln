@@ -105,9 +105,11 @@ func AddPortResolutionError(diags *diag.Diagnostics, instanceID string, err erro
 	if client.IsNotFound(err) {
 		diags.AddError(summary, fmt.Sprintf(
 			"Instance %s was not found, so the network port to attach the address to could not be "+
-				"resolved. Nothing was changed.", instanceID))
+				"resolved. Nothing was changed.", instanceID,
+		))
 		return
 	}
 	diags.AddError(summary, fmt.Sprintf(
-		"Could not resolve the network port of instance %s: %s", instanceID, err.Error()))
+		"Could not resolve the network port of instance %s: %s", instanceID, err.Error(),
+	))
 }

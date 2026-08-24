@@ -507,10 +507,14 @@ func TestEndpointHint(t *testing.T) {
 		// The OIDC bearer path fails during the token refresh against
 		// <endpoint>/v1/auth/cli-config, where the shared oidc module returns a
 		// plain formatted error rather than an *APIError — the hint must still fire.
-		{"404 from the bearer refresh is not an APIError", "https://api.frostmoln.cloud",
-			fmt.Errorf("refresh access token: fetch cli-config: GET https://api.frostmoln.cloud/v1/auth/cli-config: HTTP 404: not found"), true},
-		{"404 from the bearer refresh on an /api endpoint stays silent", "https://api.frostmoln.cloud/api",
-			fmt.Errorf("refresh access token: fetch cli-config: GET https://api.frostmoln.cloud/api/v1/auth/cli-config: HTTP 404: not found"), false},
+		{
+			"404 from the bearer refresh is not an APIError", "https://api.frostmoln.cloud",
+			fmt.Errorf("refresh access token: fetch cli-config: GET https://api.frostmoln.cloud/v1/auth/cli-config: HTTP 404: not found"), true,
+		},
+		{
+			"404 from the bearer refresh on an /api endpoint stays silent", "https://api.frostmoln.cloud/api",
+			fmt.Errorf("refresh access token: fetch cli-config: GET https://api.frostmoln.cloud/api/v1/auth/cli-config: HTTP 404: not found"), false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -741,7 +745,8 @@ func TestConfigureNamesTheCredentialSourceOnFailure(t *testing.T) {
 		resp, err := providerserver.NewProtocol6(New("test")())().ConfigureProvider(
 			context.Background(), &tfprotov6.ConfigureProviderRequest{
 				Config: newProviderConfig(t, providerConfigValues{}),
-			})
+			},
+		)
 		if err != nil {
 			t.Fatalf("ConfigureProvider: %v", err)
 		}
@@ -765,7 +770,8 @@ contexts:
 		resp, err := providerserver.NewProtocol6(New("test")())().ConfigureProvider(
 			context.Background(), &tfprotov6.ConfigureProviderRequest{
 				Config: newProviderConfig(t, providerConfigValues{}),
-			})
+			},
+		)
 		if err != nil {
 			t.Fatalf("ConfigureProvider: %v", err)
 		}
@@ -855,7 +861,8 @@ func TestEmptyAPIKeyAttributeFallsThroughToTheEnvironment(t *testing.T) {
 	resp, err := providerserver.NewProtocol6(New("test")())().ConfigureProvider(
 		context.Background(), &tfprotov6.ConfigureProviderRequest{
 			Config: newProviderConfig(t, providerConfigValues{apiKey: &empty}),
-		})
+		},
+	)
 	if err != nil {
 		t.Fatalf("ConfigureProvider: %v", err)
 	}
