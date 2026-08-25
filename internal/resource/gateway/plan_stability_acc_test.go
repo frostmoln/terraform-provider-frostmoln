@@ -155,18 +155,14 @@ func (a *gatewayAPI) handler() http.Handler {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/tenants/t-1/gateways/"):
 			if a.mode == "" {
 				w.WriteHeader(http.StatusNotFound)
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"error": map[string]string{"code": "NOT_FOUND", "message": "no gateway"},
-				})
+				_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "no gateway"})
 				return
 			}
 			_ = json.NewEncoder(w).Encode(a.gateway())
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"error": map[string]string{"code": "NOT_FOUND", "message": r.Method + " " + r.URL.Path},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": r.Method + " " + r.URL.Path})
 		}
 	})
 }

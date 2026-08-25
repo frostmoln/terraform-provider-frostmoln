@@ -197,9 +197,7 @@ func TestVPCResourceCRUD(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -351,9 +349,7 @@ func TestVPCResourceAsyncCreate(t *testing.T) {
 func TestVPCReadNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "VPC not found"},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "VPC not found"})
 	}))
 	defer server.Close()
 
@@ -424,9 +420,7 @@ func TestVPCResource_TFSDKCreate(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -507,9 +501,7 @@ func TestVPCResource_TFSDKRead(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -579,9 +571,7 @@ func TestVPCResource_TFSDKReadNotFound(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -656,9 +646,7 @@ func TestVPCResource_TFSDKUpdate(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -746,9 +734,7 @@ func TestVPCResource_TFSDKDelete(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -806,9 +792,7 @@ func TestVPCResource_TFSDKDeleteAlreadyGone(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -902,9 +886,7 @@ func TestVPCResource_TFSDKCreateSync201(t *testing.T) {
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -1081,9 +1063,7 @@ func TestVPCResource_TFSDKCreatePollingErrorState(t *testing.T) {
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -1188,9 +1168,7 @@ func TestVPCResource_TFSDKReadBadJSON(t *testing.T) {
 			_, _ = w.Write([]byte("not json"))
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()

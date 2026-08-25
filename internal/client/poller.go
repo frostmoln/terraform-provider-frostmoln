@@ -57,20 +57,51 @@ func WaitForState(ctx context.Context, cfg PollConfig) (string, error) {
 	ticker := time.NewTicker(cfg.Interval)
 	defer ticker.Stop()
 
+	// The most recent PollFunc error, carried so a timeout can name its CAUSE.
+	// Every poll error is retried to the deadline, so without this the whole
+	// budget elapses and the practitioner is told only "timed out" — the 404, its
+	// code, and the fact that the DELETE already succeeded are all discarded.
+	//
+	// That path became reachable when IsNotFound started requiring a flat
+	// envelope: a delete poll that meets a routing 404 no longer short-circuits to
+	// "deleted", it retries for the full timeout (10 minutes on instances) and
+	// then reports a bare deadline. Naming the cause is what makes that
+	// diagnosable, and it is the difference between "retry, your gateway is
+	// mid-rollout" and a practitioner reaching for `terraform state rm` — which
+	// is the one action that re-creates the orphaning this all exists to prevent.
+	var lastPollErr error
+	timedOut := func(state string) error {
+		switch {
+		case lastPollErr != nil && state != "":
+			return fmt.Errorf("timed out waiting for %s (last state: %s, last poll error: %v): %w",
+				cfg.ResourceName, state, lastPollErr, ctx.Err())
+		case lastPollErr != nil:
+			return fmt.Errorf("timed out waiting for %s (last poll error: %v): %w",
+				cfg.ResourceName, lastPollErr, ctx.Err())
+		case state != "":
+			return fmt.Errorf("timed out waiting for %s (last state: %s): %w",
+				cfg.ResourceName, state, ctx.Err())
+		default:
+			return fmt.Errorf("timed out waiting for %s: %w", cfg.ResourceName, ctx.Err())
+		}
+	}
+
 	for {
 		state, err := cfg.PollFunc(ctx)
 		if err != nil {
+			lastPollErr = err
 			if ctx.Err() != nil {
-				return "", fmt.Errorf("timed out waiting for %s: %w", cfg.ResourceName, ctx.Err())
+				return "", timedOut("")
 			}
 			// Transient errors during polling are retried
 			select {
 			case <-ctx.Done():
-				return "", fmt.Errorf("timed out waiting for %s: %w", cfg.ResourceName, ctx.Err())
+				return "", timedOut("")
 			case <-ticker.C:
 				continue
 			}
 		}
+		lastPollErr = nil
 
 		if targetSet[state] {
 			return state, nil
@@ -82,7 +113,7 @@ func WaitForState(ctx context.Context, cfg PollConfig) (string, error) {
 
 		select {
 		case <-ctx.Done():
-			return state, fmt.Errorf("timed out waiting for %s (last state: %s): %w", cfg.ResourceName, state, ctx.Err())
+			return state, timedOut(state)
 		case <-ticker.C:
 			// continue polling
 		}

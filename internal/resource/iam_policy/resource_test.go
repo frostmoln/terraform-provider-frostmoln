@@ -219,7 +219,7 @@ func TestResource_Create(t *testing.T) {
 func TestResource_Read_NotFound(t *testing.T) {
 	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "NOT_FOUND", "message": "gone"}})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "gone"})
 	})
 	defer server.Close()
 

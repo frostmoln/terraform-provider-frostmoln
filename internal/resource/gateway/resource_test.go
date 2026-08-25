@@ -129,14 +129,16 @@ func configuredResource(t *testing.T, serverURL string) resource.Resource {
 }
 
 // apiErrorHandler serves one error envelope for every request, and records how
-// many requests it saw.
+// many requests it saw. It stands in for the BACKING SERVICE, so it renders servicekit's
+// flat envelope. That is not cosmetic at 404: client.IsNotFound requires the flat
+// shape, because the nested one is what the api-gateway answers for a path it
+// does not route. A nested fixture here would assert a body no service sends and
+// would make the delete-is-idempotent test below pass for the wrong reason.
 func apiErrorHandler(calls *int, status int, code, message string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		*calls++
 		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"error": map[string]string{"code": code, "message": message},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": code, "message": message})
 	}
 }
 
@@ -676,9 +678,7 @@ func TestGatewayReadEmptyListRemovesResource(t *testing.T) {
 		}
 		// The by-id confirmation: this gateway really is gone.
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "gateway not found"},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "gateway not found"})
 	}))
 	defer server.Close()
 
@@ -863,9 +863,7 @@ func TestGatewayReadNeverSendsEmptyVPCID(t *testing.T) {
 func TestGatewayReadByIDNotFoundRemovesResource(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "gateway not found"},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "gateway not found"})
 	}))
 	defer server.Close()
 

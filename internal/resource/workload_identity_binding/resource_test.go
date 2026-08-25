@@ -540,7 +540,7 @@ func TestModifyPlanWarnsOnScopeDrop(t *testing.T) {
 func TestResourceReadNotFound(t *testing.T) {
 	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "NOT_FOUND", "message": "gone"}})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "gone"})
 	})
 	defer server.Close()
 
@@ -617,7 +617,7 @@ func TestResourceUpdatePUT(t *testing.T) {
 func TestResourceDeleteAlreadyGone(t *testing.T) {
 	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "NOT_FOUND", "message": "gone"}})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "gone"})
 	})
 	defer server.Close()
 

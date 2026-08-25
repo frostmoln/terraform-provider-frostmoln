@@ -552,11 +552,9 @@ func TestAPIKeyReadNotFound(t *testing.T) {
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/api-keys/nonexistent":
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{
-					"code":    "NOT_FOUND",
-					"message": "API key not found",
-				},
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"code":    "NOT_FOUND",
+				"message": "API key not found",
 			})
 
 		default:
@@ -669,11 +667,9 @@ func TestAPIKeyDeleteAlreadyGone(t *testing.T) {
 
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/api-keys/gone":
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{
-					"code":    "NOT_FOUND",
-					"message": "API key not found",
-				},
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"code":    "NOT_FOUND",
+				"message": "API key not found",
 			})
 
 		default:
@@ -1004,9 +1000,7 @@ func TestAPIKeyResource_Read_TFSDK(t *testing.T) {
 func TestAPIKeyResource_Read_NotFound_TFSDK(t *testing.T) {
 	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 	})
 	defer server.Close()
 
@@ -1234,9 +1228,7 @@ func TestAPIKeyResource_Delete_TFSDK(t *testing.T) {
 func TestAPIKeyResource_Delete_NotFound_TFSDK(t *testing.T) {
 	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 	})
 	defer server.Close()
 

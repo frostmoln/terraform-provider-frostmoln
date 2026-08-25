@@ -386,11 +386,9 @@ func TestBucketReadNotFound(t *testing.T) {
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/buckets/nonexistent":
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{
-					"code":    "NOT_FOUND",
-					"message": "Bucket not found",
-				},
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"code":    "NOT_FOUND",
+				"message": "Bucket not found",
 			})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -514,9 +512,7 @@ func TestBucketResourceCreate(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 	}))
 	defer server.Close()
 
@@ -574,9 +570,7 @@ func TestBucketResourceRead(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 	}))
 	defer server.Close()
 
@@ -619,9 +613,7 @@ func TestBucketResourceRead(t *testing.T) {
 func TestBucketResourceReadNotFoundRemovesState(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 	}))
 	defer server.Close()
 
@@ -678,9 +670,7 @@ func TestBucketResourceUpdate(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 	}))
 	defer server.Close()
 
@@ -739,9 +729,7 @@ func TestBucketResourceDelete(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 	}))
 	defer server.Close()
 
@@ -778,9 +766,7 @@ func TestBucketResourceDelete(t *testing.T) {
 func TestBucketResourceDeleteAlreadyGone(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 	}))
 	defer server.Close()
 

@@ -126,9 +126,7 @@ func TestVolumeAttachmentResource_Attach(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -198,9 +196,7 @@ func TestVolumeAttachmentResource_Detach(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -256,9 +252,7 @@ func TestVolumeAttachmentResource_ReadNotAttached(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -386,9 +380,7 @@ func TestVolumeAttachment_TFSDKCreate(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -456,9 +448,7 @@ func TestVolumeAttachment_TFSDKRead(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -521,9 +511,7 @@ func TestVolumeAttachment_TFSDKReadDetached(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -589,9 +577,7 @@ func TestVolumeAttachment_TFSDKDelete(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -761,9 +747,7 @@ func TestVolumeAttachment_TFSDKCreateAttachError(t *testing.T) {
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -814,9 +798,7 @@ func TestVolumeAttachment_TFSDKCreatePollErrorState(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiVolume{ID: "vol-pe-1", Status: "error"})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -883,9 +865,7 @@ func TestVolumeAttachment_TFSDKCreateFinalReadError(t *testing.T) {
 			}
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -941,9 +921,7 @@ func TestVolumeAttachment_TFSDKCreateInstanceMismatch(t *testing.T) {
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -987,9 +965,7 @@ func TestVolumeAttachment_TFSDKReadNotFound(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -1083,9 +1059,7 @@ func TestVolumeAttachment_TFSDKReadBadJSON(t *testing.T) {
 			_, _ = w.Write([]byte("not json"))
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -1134,9 +1108,7 @@ func TestVolumeAttachment_TFSDKDeleteDetachError(t *testing.T) {
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -1180,9 +1152,7 @@ func TestVolumeAttachment_TFSDKDeleteNotFound(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -1234,9 +1204,7 @@ func TestVolumeAttachment_TFSDKDeletePollErrorState(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiVolume{ID: "vol-dpe-1", Status: "error"})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()

@@ -248,9 +248,7 @@ func TestPublicIPResourceCRUD(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -324,9 +322,7 @@ func TestPublicIPResourceCRUD(t *testing.T) {
 func TestPublicIPReadNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "public IP not found"},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "public IP not found"})
 	}))
 	defer server.Close()
 
@@ -526,9 +522,7 @@ func TestFIPResourceCreate(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(fipResp)
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -609,9 +603,7 @@ func TestFIPResourceCreateWithAssociation(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(fipAssociated)
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -673,9 +665,7 @@ func TestFIPResourceRead(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 	}))
 	defer server.Close()
 
@@ -776,9 +766,7 @@ func TestFIPResourceReadParsesWireContract(t *testing.T) {
 func TestFIPResourceReadNotFoundRemovesState(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 	}))
 	defer server.Close()
 
@@ -849,9 +837,7 @@ func TestFIPResourceUpdate(t *testing.T) {
 			}
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -918,9 +904,7 @@ func TestFIPResourceDelete(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 	}))
 	defer server.Close()
 
@@ -958,9 +942,7 @@ func TestFIPResourceDelete(t *testing.T) {
 func TestFIPResourceDeleteAlreadyGone(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 	}))
 	defer server.Close()
 
@@ -1096,9 +1078,7 @@ func TestFIPResourceCreateAssociationError(t *testing.T) {
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -1151,9 +1131,7 @@ func TestFIPResourceCreateResolvePortError(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "inst-noport", "networks": []map[string]any{}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -1218,9 +1196,7 @@ func TestFIPResourceCreateAssociationBadResponseThenReread(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(fipAssociated)
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -1289,9 +1265,7 @@ func TestFIPResourceCreateAssocRereadGetError(t *testing.T) {
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -1348,9 +1322,7 @@ func TestFIPResourceCreateAssocRereadBadJSON(t *testing.T) {
 			_, _ = w.Write([]byte("bad json"))
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -1471,9 +1443,7 @@ func TestFIPResourceUpdateDisassociateOnly(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(fipResp)
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -1550,9 +1520,7 @@ func TestFIPResourceUpdateTagsOnly(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(fipResp)
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -2708,9 +2676,7 @@ func TestFIPResourceUpdateDoesNotDetachABindingSomebodyElseHolds(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiPublicIP{ID: "fip-h2-1", PortID: "port-new"})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -2765,9 +2731,7 @@ func TestFIPResourceUpdateWarnsWhenDetachingSomethingAlreadyMoved(t *testing.T) 
 			_ = json.NewEncoder(w).Encode(apiPublicIP{ID: "fip-h2-2"})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -2826,9 +2790,7 @@ func TestFIPResourceUpdateStillDetachesItsOwnBinding(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiPublicIP{ID: "fip-h2-3", PortID: "port-new"})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()

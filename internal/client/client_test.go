@@ -303,6 +303,12 @@ func TestDelete(t *testing.T) {
 	}
 }
 
+// A NESTED 404 is what the api-gateway answers for a path it does not route, and
+// it is deliberately NOT a not-found for IsNotFound's purposes. This is the
+// fail-closed half of the contract: without it a gateway misroute reads as "your
+// resource was deleted" at ~48 call sites that then drop it from state or report
+// a successful destroy. The envelope still decodes — code and message survive —
+// it just does not satisfy the predicate. See ADR-0117.
 func TestAPIErrorNestedFormat(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -320,8 +326,21 @@ func TestAPIErrorNestedFormat(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !IsNotFound(err) {
-		t.Errorf("expected not found error, got %v", err)
+
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("expected *APIError, got %T", err)
+	}
+	if apiErr.Code != "NOT_FOUND" || apiErr.StatusCode != http.StatusNotFound {
+		t.Errorf("the nested envelope must still decode: got code=%q status=%d",
+			apiErr.Code, apiErr.StatusCode)
+	}
+	if apiErr.FlatEnvelope {
+		t.Error("a nested body must not set FlatEnvelope")
+	}
+	if IsNotFound(err) {
+		t.Error("a NESTED 404 is an unrouted path, not a resource verdict — " +
+			"IsNotFound must be false or a gateway misroute drops the resource from state")
 	}
 }
 
@@ -438,8 +457,19 @@ func TestIsNotFound(t *testing.T) {
 	if IsNotFound(&APIError{StatusCode: 500}) {
 		t.Error("expected false for 500 error")
 	}
-	if !IsNotFound(&APIError{StatusCode: 404}) {
-		t.Error("expected true for 404 error")
+	// The status alone is NOT enough, and this is the whole point of the
+	// predicate: a bare 404 could equally be the api-gateway saying it does not
+	// route the path. Only a body that decoded as the flat servicekit envelope
+	// is a service's own verdict.
+	if IsNotFound(&APIError{StatusCode: 404}) {
+		t.Error("a 404 without FlatEnvelope must be false — it may be an unrouted path")
+	}
+	if !IsNotFound(&APIError{StatusCode: 404, FlatEnvelope: true}) {
+		t.Error("a flat-enveloped 404 IS the service saying the resource is gone")
+	}
+	// FlatEnvelope alone does not make a non-404 a not-found.
+	if IsNotFound(&APIError{StatusCode: 409, FlatEnvelope: true}) {
+		t.Error("expected false for a flat 409")
 	}
 }
 
@@ -1239,6 +1269,14 @@ func TestAPIErrorFlatEnvelopeMarksOnlyFlatRefusalBodies(t *testing.T) {
 		{"nested service refusal (provisioning shape)", http.StatusNotFound, `{"error":{"code":"NOT_FOUND","message":"operation not found"}}`, "NOT_FOUND", false},
 		{"flat refusal with an object details", http.StatusConflict, `{"code":"ROUTE_WRITE_CONFLICT","message":"busy","details":{"cap":5}}`, "ROUTE_WRITE_CONFLICT", true},
 		{"unparseable body", http.StatusNotFound, `404 page not found`, "ERROR", false},
+		// The predicate's REAL contract is "a non-empty top-level string code",
+		// not "the body looked flat". servicekit always sets a code today, so the
+		// two coincide — this pins the one that is actually tested, so a future
+		// flat-but-codeless 404 fails closed rather than silently reading as a
+		// service verdict. See the FlatEnvelope doc comment.
+		{"flat shape but NO code", http.StatusNotFound, `{"message":"gone"}`, "ERROR", false},
+		{"top-level code of the wrong type", http.StatusNotFound, `{"code":404,"message":"gone"}`, "ERROR", false},
+		{"empty body", http.StatusNotFound, ``, "ERROR", false},
 	}
 
 	for _, tc := range cases {

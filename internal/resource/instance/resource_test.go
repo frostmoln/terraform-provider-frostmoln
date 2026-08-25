@@ -789,11 +789,9 @@ func TestInstanceReadNotFound(t *testing.T) {
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/nonexistent":
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{
-					"code":    "NOT_FOUND",
-					"message": "Instance not found",
-				},
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"code":    "NOT_FOUND",
+				"message": "Instance not found",
 			})
 
 		default:
@@ -980,11 +978,9 @@ func TestInstanceDelete(t *testing.T) {
 			if n >= 2 {
 				// Instance deleted.
 				w.WriteHeader(http.StatusNotFound)
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"error": map[string]string{
-						"code":    "NOT_FOUND",
-						"message": "Instance not found",
-					},
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"code":    "NOT_FOUND",
+					"message": "Instance not found",
 				})
 			} else {
 				_ = json.NewEncoder(w).Encode(apiInstance{
@@ -1050,11 +1046,9 @@ func TestInstanceDeleteAlreadyGone(t *testing.T) {
 
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-456/instances/gone":
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{
-					"code":    "NOT_FOUND",
-					"message": "Instance not found",
-				},
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"code":    "NOT_FOUND",
+				"message": "Instance not found",
 			})
 
 		default:
@@ -1638,9 +1632,7 @@ func TestInstanceResource_TFSDKRead(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -1787,9 +1779,7 @@ func readWithSGSubresource(t *testing.T, statedSGs []string, sgHandler http.Hand
 			}
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -1904,9 +1894,7 @@ func TestInstanceResource_TFSDKReadNotFound(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -2557,9 +2545,7 @@ func TestInstanceResource_TFSDKDelete(t *testing.T) {
 			n := getCount.Add(1)
 			if n >= 2 {
 				w.WriteHeader(http.StatusNotFound)
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"error": map[string]string{"code": "NOT_FOUND", "message": "Instance not found"},
-				})
+				_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "Instance not found"})
 			} else {
 				_ = json.NewEncoder(w).Encode(apiInstance{
 					ID:     "inst-del-1",
@@ -2629,9 +2615,7 @@ func TestInstanceResource_TFSDKDeleteAlreadyGone(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()

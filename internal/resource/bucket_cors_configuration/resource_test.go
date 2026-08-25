@@ -99,9 +99,7 @@ func configuredResource(t *testing.T, serverURL string) resource.Resource {
 
 func notFound(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusNotFound)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-	})
+	_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 }
 
 // --- model conversion ---

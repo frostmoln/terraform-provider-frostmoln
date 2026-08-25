@@ -185,9 +185,7 @@ func TestSnapshotResource_CreateAndRead(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -255,9 +253,7 @@ func TestSnapshotResource_Delete(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -286,9 +282,7 @@ func TestSnapshotResource_ReadNotFound(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 		}
 	}))
 	defer server.Close()
@@ -597,9 +591,7 @@ func TestSnapshotResource_Read_TFSDK(t *testing.T) {
 func TestSnapshotResource_Read_NotFound_TFSDK(t *testing.T) {
 	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 	})
 	defer server.Close()
 
@@ -744,9 +736,7 @@ func TestSnapshotResource_Delete_TFSDK(t *testing.T) {
 func TestSnapshotResource_Delete_NotFound_TFSDK(t *testing.T) {
 	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]string{"code": "NOT_FOUND", "message": "not found"},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 	})
 	defer server.Close()
 

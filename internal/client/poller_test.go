@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -120,5 +121,61 @@ func TestWaitForStateDefaults(t *testing.T) {
 	}
 	if state != "done" {
 		t.Errorf("expected state done, got %s", state)
+	}
+}
+
+// A timeout must name the CAUSE of the last failed poll. WaitForState retries
+// every poll error to the deadline, so without this the whole budget elapses and
+// the practitioner is told only "timed out" — the 404 and its code are discarded.
+//
+// That path became reachable when IsNotFound started requiring a flat envelope: a
+// delete poll meeting a routing 404 no longer short-circuits to "deleted", it
+// retries for the full timeout and then reports a bare deadline. The difference
+// between naming the cause and not is the difference between "retry, the gateway
+// is mid-rollout" and a practitioner reaching for `terraform state rm`.
+func TestWaitForState_TimeoutNamesTheLastPollError(t *testing.T) {
+	_, err := WaitForState(context.Background(), PollConfig{
+		Interval:     time.Millisecond,
+		Timeout:      20 * time.Millisecond,
+		TargetStates: []string{"deleted"},
+		ResourceName: "instance",
+		PollFunc: func(context.Context) (string, error) {
+			return "", &APIError{
+				Code: "PATH_NOT_ROUTED", Message: "no route found for path", StatusCode: 404,
+			}
+		},
+	})
+	if err == nil {
+		t.Fatal("expected a timeout error")
+	}
+	if !strings.Contains(err.Error(), "PATH_NOT_ROUTED") {
+		t.Errorf("the timeout must name the cause of the last poll failure, got: %v", err)
+	}
+}
+
+// A poll that recovers must not have a stale error attributed to its timeout.
+func TestWaitForState_TimeoutDoesNotReportAStalePollError(t *testing.T) {
+	calls := 0
+	_, err := WaitForState(context.Background(), PollConfig{
+		Interval:     time.Millisecond,
+		Timeout:      30 * time.Millisecond,
+		TargetStates: []string{"deleted"},
+		ResourceName: "instance",
+		PollFunc: func(context.Context) (string, error) {
+			calls++
+			if calls == 1 {
+				return "", &APIError{Code: "TRANSIENT", Message: "blip", StatusCode: 503}
+			}
+			return "building", nil
+		},
+	})
+	if err == nil {
+		t.Fatal("expected a timeout error")
+	}
+	if strings.Contains(err.Error(), "TRANSIENT") {
+		t.Errorf("a recovered poll error must not be attributed to the timeout, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "building") {
+		t.Errorf("the timeout should name the last observed STATE, got: %v", err)
 	}
 }

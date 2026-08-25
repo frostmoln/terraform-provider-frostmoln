@@ -176,7 +176,7 @@ func TestLoadBalancerCreateSync201(t *testing.T) {
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "NOT_FOUND", "message": "nf"}})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "nf"})
 		}
 	}))
 	defer server.Close()
@@ -303,7 +303,7 @@ func TestLoadBalancerReadNotFound(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": "u-1", "tenantId": "t-123"})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "NOT_FOUND", "message": "nf"}})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "nf"})
 		}
 	}))
 	defer server.Close()
@@ -442,7 +442,7 @@ func TestLoadBalancerDeleteAlreadyGone(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": "u-1", "tenantId": "t-123"})
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "NOT_FOUND", "message": "nf"}})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "nf"})
 		}
 	}))
 	defer server.Close()

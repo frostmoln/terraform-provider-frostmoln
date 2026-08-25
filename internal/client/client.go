@@ -235,6 +235,14 @@ type APIError struct {
 	// ({"code":…}) rather than the nested one ({"error":{"code":…}}), because for
 	// one code the two shapes mean opposite things.
 	//
+	// PRECISELY: it is true iff a NON-EMPTY, STRING `code` decoded at the TOP
+	// level. "Flat shape" and "carries a top-level code" happen to coincide today
+	// because servicekit's NotFound/NotFoundMsg always set one — but they are not
+	// the same statement, and the code is the half that is actually tested. A
+	// handler that rendered &skerrors.Error{StatusCode: 404, Message: "..."} with
+	// no Code would come out flat-with-no-code and be read here as "not a service
+	// verdict". Pinned by TestAPIErrorFlatEnvelopeMarksOnlyFlatRefusalBodies.
+	//
 	// The api-gateway answers an unmatched path NESTED. A refusal rendered by
 	// servicekit — which is how network answers on the VPC-routes surface, via
 	// its handleError → skerrors.HandleHTTP — is FLAT. The gateway's
@@ -268,12 +276,83 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
 
-// IsNotFound returns true if the error is a 404 Not Found.
+// IsNotFound reports whether err is a service's own "this resource does not
+// exist" verdict: a 404 whose body decoded as the FLAT refusal envelope.
+//
+// # Why the status alone is not enough
+//
+// The api-gateway answers 404 for ANY path it does not route, and ~48 resource
+// packages in this provider respond to a true IsNotFound by calling
+// resp.State.RemoveResource, or by returning success from Delete. Keyed on the
+// status alone, a gateway-wide misroute — a bad deploy, a lost config rule, a
+// mid-rollout window — therefore reads as "every one of your resources was
+// deleted": state is destroyed on a routine refresh, `terraform destroy` prints
+// success while the infrastructure keeps running and billing, and nothing says
+// otherwise.
+//
+// # Why the discriminator is the envelope and not the code
+//
+// The gateway has two 404 arms. The one inside /api answers PATH_NOT_ROUTED; its
+// sibling, gin's NoRoute for a path outside the /api prefix, answers NOT_FOUND —
+// which is exactly what a backing service answers for a genuinely absent
+// resource. So `code` cannot separate them. Shape can: both gateway arms render
+// NESTED, and a service's own refusal renders FLAT. See APIError.FlatEnvelope.
+//
+// # What a true answer does and does NOT mean
+//
+// It means the service refused to serve this id — the resource is absent, OR it
+// exists and is not visible to this caller. Several surfaces deliberately
+// collapse those two so the endpoint cannot be used to enumerate ids: identity
+// answers the same 404 for an API key owned by another user and for a
+// cross-tenant IAM policy. Both mean "stop managing it"; only the first means
+// "it is gone". A Delete that swallows this therefore reports success for a
+// resource that may still exist — see Ambix 01a037a7-1488, which is a real
+// residual and not closable here.
+//
+// # Which way this fails
+//
+// Fail CLOSED. An ambiguous 404 is now an error on plan/apply rather than a
+// silent state drop. If a resource IS genuinely gone but its producer still
+// renders nested, the customer clears it with `terraform state rm` — annoying,
+// and strictly better than destroying state and orphaning live infrastructure.
+//
+// # Which producers this was verified against
+//
+// The per-service audit in project-docs/product/TERRAFORM-404-FAIL-CLOSED-PLAN.md
+// found identity was the only nested renderer that strands a resource, and it is
+// fixed server-side. provisioning still renders nested not-found bodies, and one
+// of them IS on a path this predicate reaches — be precise about which:
+//
+//   - operations.go and the internal/admin/agent surfaces are NOT behind this
+//     predicate. The operations poll keys on its own IsLegacyUnroutedPath, which
+//     reads the code rather than the envelope.
+//   - lb_ownership_guard.go:138 IS. The gateway routes the bare LB DELETE and
+//     every LB child mutation to provisioning, and the guard is mounted on that
+//     whole group — so load_balancer, lb_listener, lb_pool, lb_member and
+//     lb_health_monitor all reach it from an IsNotFound call site.
+//
+// That is deliberate and must stay nested. The guard lets a GENUINELY MISSING
+// load balancer fall through to the handler; its 404 arm fires only for an
+// OFFER-INTERNAL one, which a customer cannot create and could only reach by
+// importing it. Erroring there is the answer we want — flat would let
+// `terraform destroy` print success against a platform-owned load balancer.
+//
+// Adding a call site on any other nested-rendering path means checking its
+// producer first.
+//
+// Do NOT "fix" a nested 404 that means an unrouted path — the gateway's two arms
+// and identity's NoRoute are what make this predicate work at all. ADR-0118.
 func IsNotFound(err error) bool {
-	if apiErr, ok := err.(*APIError); ok {
-		return apiErr.StatusCode == http.StatusNotFound
-	}
-	return false
+	// errors.As, matching IsLegacyUnroutedPath and vpc_route.isRouteNotFound. A
+	// bare type assertion returns false for a wrapped error — the fail-safe
+	// direction, but it made `fmt.Errorf("...: %w", err)` on any call path
+	// silently permanent (see internal/resource/public_ip/errors.go, which
+	// returns its error unwrapped for exactly this reason). Now that this
+	// predicate gates a destructive action, that trap is not worth keeping.
+	var apiErr *APIError
+	return errors.As(err, &apiErr) &&
+		apiErr.StatusCode == http.StatusNotFound &&
+		apiErr.FlatEnvelope
 }
 
 // IsAlreadyInDesiredState reports whether err is a 409 Conflict whose error code

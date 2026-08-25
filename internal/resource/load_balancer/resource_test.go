@@ -247,7 +247,7 @@ func TestLoadBalancerCreateAsyncOperationPoll(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "NOT_FOUND", "message": "nf"}})
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "nf"})
 		}
 	}))
 	defer server.Close()
