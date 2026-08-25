@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.37.5] - 2026-08-25
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.18 (#379)
+- *(client)* Require a flat envelope for IsNotFound so a routing 404 stops destroying state (#381)
+
 ## [0.37.4] - 2026-08-24
 
 ### 🐛 Bug Fixes
