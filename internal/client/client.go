@@ -341,7 +341,10 @@ func (e *APIError) Error() string {
 // producer first.
 //
 // Do NOT "fix" a nested 404 that means an unrouted path — the gateway's two arms
-// and identity's NoRoute are what make this predicate work at all. ADR-0118.
+// and identity's NoRoute are what make this predicate work at all. The rule is
+// stated in claude-config/conventions.md ("A 404's envelope shape says whether it
+// is routing or a resource verdict") and worked through in
+// project-docs/product/TERRAFORM-404-FAIL-CLOSED-PLAN.md.
 func IsNotFound(err error) bool {
 	// errors.As, matching IsLegacyUnroutedPath and vpc_route.isRouteNotFound. A
 	// bare type assertion returns false for a wrapped error — the fail-safe

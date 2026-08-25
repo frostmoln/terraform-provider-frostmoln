@@ -22,7 +22,7 @@ import (
 // printing success while the key stayed live). Both must now be loud errors.
 //
 // api_key is the representative case because it is identity-backed — one of the
-// four resources the producer half of this change was needed for. See ADR-0117.
+// four resources the producer half of this change was needed for.
 
 func apiKeyStateValue(t *testing.T) tftypes.Value {
 	t.Helper()

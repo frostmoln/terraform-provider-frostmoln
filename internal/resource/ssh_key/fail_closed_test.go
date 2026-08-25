@@ -12,8 +12,9 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/failclosed"
 )
 
-// ssh_key is the COMPUTE-backed instance of the ADR-0118 contract. See
-// internal/failclosed for why the ordinary not-found fixtures cannot pin this.
+// ssh_key is the COMPUTE-backed instance of the fail-closed contract. See
+// internal/failclosed for the rule, and for why the ordinary not-found fixtures
+// cannot pin it.
 
 func sshKeyFailClosedState(t *testing.T) tftypes.Value {
 	t.Helper()

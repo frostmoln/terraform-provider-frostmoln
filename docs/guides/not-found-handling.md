@@ -77,4 +77,4 @@ is the one case where `terraform state rm` is correct.
 
 The discriminator is the shape of the error body, not its status or its code:
 the gateway's routing 404 and a service's resource 404 use the same code, so
-only the envelope separates them. The decision is recorded in ADR-0118.
+only the envelope separates them.

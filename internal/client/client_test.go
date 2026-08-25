@@ -308,7 +308,7 @@ func TestDelete(t *testing.T) {
 // fail-closed half of the contract: without it a gateway misroute reads as "your
 // resource was deleted" at ~48 call sites that then drop it from state or report
 // a successful destroy. The envelope still decodes — code and message survive —
-// it just does not satisfy the predicate. See ADR-0117.
+// it just does not satisfy the predicate.
 func TestAPIErrorNestedFormat(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

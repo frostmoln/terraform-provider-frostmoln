@@ -1,6 +1,7 @@
-// Package failclosed provides the shared assertion for the ADR-0118 contract:
-// a 404 that is a STATEMENT ABOUT ROUTING must never be read as "this resource
-// is gone".
+// Package failclosed provides the shared assertion for the rule that a 404 which
+// is a STATEMENT ABOUT ROUTING must never be read as "this resource is gone".
+// The rule is stated in claude-config/conventions.md; the reasoning is in
+// project-docs/product/TERRAFORM-404-FAIL-CLOSED-PLAN.md.
 //
 // It exists because the natural regression test for that contract has no
 // discriminating power. Before client.IsNotFound required a flat envelope, the
