@@ -27,14 +27,26 @@ const (
 
 	// errCodeBlockedByDefaultRoute (409) means this VPC's OWN routes already
 	// cover the internet in a shape the attach cannot resolve, so the platform
-	// refuses rather than guess which route wins. TWO conditions share the code
+	// refuses rather than guess which route wins. THREE conditions share the code
 	// and their remedies differ — more than one route covering the internet
-	// (leave a single default route), or coverage of only part of it (remove
-	// that route, or add one covering the rest) — which is why the server's own
-	// message is carried through rather than replaced.
+	// (leave a single default route), coverage of only part of it (remove that
+	// route, or add one covering the rest), or an IPv6 route covering the
+	// internet or half of it (remove it and write specific IPv6 destinations;
+	// there is no v6 split to convert it to) — which is why the server's own
+	// message is carried through rather than replaced. All three are cleared by
+	// the practitioner editing their routes and re-applying, which is what makes
+	// one code right for them.
 	//
-	// A single ordinary default route is NOT refused: the attach converts it.
+	// A single ordinary IPv4 default route is NOT refused: the attach converts
+	// it. An IPv6 one IS refused, which is why the copy above says IPv4.
 	errCodeBlockedByDefaultRoute = "GATEWAY_BLOCKED_BY_DEFAULT_ROUTE"
+
+	// A route destination the platform cannot parse. ITS OWN CODE, because it
+	// fails every test the three above share: the practitioner did not write it
+	// (every accepted route write parses the destination first), and no config
+	// change clears it. Mapping it to the routes advice would send them editing
+	// a route table that is not the problem.
+	errCodeRouteTableUnreadable = "GATEWAY_ROUTE_TABLE_UNREADABLE"
 
 	// GATEWAY_MODE_UNAVAILABLE and GATEWAY_PUBLIC_IP_NOT_ALLOWED were mapped
 	// here until ADR-0114. Both existed only to explain the withdrawn `nat`
@@ -138,16 +150,31 @@ func addGatewayError(diags *diag.Diagnostics, fallback string, err error) {
 	case errCodeBlockedByDefaultRoute:
 		diags.AddError(
 			"This VPC's own routes cover the internet, so a gateway cannot be attached yet",
-			"A gateway adds this VPC's route to the internet, and this VPC already has routes of its "+
-				"own covering it — either more than one, or only part of it. The platform will not "+
-				"guess which should win, so nothing was changed.\n\n"+
-				"Fix the routes first, then apply again: the message below says which case this is and "+
-				"what it needs. A VPC with a SINGLE ordinary default route is not refused — that one is "+
-				"converted for you.\n\n"+
+			"A gateway adds this VPC's route to the internet, and this VPC's own routes are already "+
+				"in the way — more than one covers the internet, one covers only part of it, one "+
+				"covers the whole IPv6 internet (or half of it), or one has a destination the "+
+				"platform cannot read. Nothing was changed.\n\n"+
+				"For the first three, fix the routes and apply again: the message below says which "+
+				"case this is and what it needs. A VPC with a SINGLE ordinary IPv4 default route is "+
+				"not refused — that one is converted for you. An IPv6 one is: write the IPv6 ranges "+
+				"you need as more specific destinations instead. The last case is not one you can "+
+				"have created, and not one Terraform can clear — contact support with the VPC id.\n\n"+
 				"The routes are `frostmoln_vpc_route` resources on this VPC; `fm network vpc route list "+
 				"<vpc-id>` shows every one the platform stored, including any you did not declare here.\n\n"+
 				"A forced tunnel needs the gateway as well as the default route — its `<peer>/32` "+
 				"exception route uses it — so this is an ordering problem, not a choice between them.\n\n"+
+				"API said: "+apiErr.Message,
+		)
+	case errCodeRouteTableUnreadable:
+		diags.AddError(
+			"This VPC has a route the platform cannot read, so no gateway was added",
+			"One of this VPC's routes has a destination the platform cannot parse, so it will not "+
+				"risk attaching a gateway beside it. Nothing was changed.\n\n"+
+				"THIS IS NOT SOMETHING YOUR CONFIGURATION CAN FIX. Every route Frostmoln accepts has "+
+				"its destination parsed first, so a row like this can only have been written outside "+
+				"the API. Re-running `terraform apply` will fail the same way.\n\n"+
+				"Contact support with this VPC's id. The VPC itself is unaffected — only the gateway "+
+				"was refused.\n\n"+
 				"API said: "+apiErr.Message,
 		)
 	case errCodePublicIPUnavailable:
