@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.37.7] - 2026-08-26
+
+### 🐛 Bug Fixes
+
+- *(instance)* Resize awaited a status vocabulary the API never speaks, and raced its own workflows (#387)
+
 ## [0.37.6] - 2026-08-26
 
 ### 🐛 Bug Fixes
