@@ -72,7 +72,7 @@ resource "frostmoln_instance" "example" {
 
 ### Required
 
-- `flavor_id` (String) The flavor ID for the instance. Changing this triggers a resize workflow (stop, resize, start).
+- `flavor_id` (String) The flavor ID for the instance. Changing this resizes the instance in place: the platform powers it down for the migration and brings it back up. It does not power on an instance that was already stopped, and a guest that fails to come back up after the migration leaves the instance stopped with the resize still reported as successful — check `status` after a resize.
 - `image_id` (String) The image ID to use for the instance.
 - `name` (String) The name of the instance.
 

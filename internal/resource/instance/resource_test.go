@@ -872,26 +872,12 @@ func TestInstanceUpdate(t *testing.T) {
 
 func TestInstanceResize(t *testing.T) {
 	var actions []string
-	var statusIdx atomic.Int32
-
-	statuses := []string{
-		"running",  // initial GET
-		"stopping", // after stop action
-		"stopped",  // poll -> stopped
-		"stopped",  // after resize action (still stopped)
-		"starting", // after start action
-		"running",  // poll -> running
-	}
+	var opPolls atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			meHandler(w, r)
-
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc/stop":
-			actions = append(actions, "stop")
-			w.WriteHeader(http.StatusAccepted)
-			_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc/resize":
 			var req apiResizeInstanceRequest
@@ -903,26 +889,19 @@ func TestInstanceResize(t *testing.T) {
 				t.Errorf("expected flavor_id flavor-large, got %s", req.FlavorID)
 			}
 			w.WriteHeader(http.StatusAccepted)
-			_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"operationId": "op-resize-1"})
 
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc/start":
-			actions = append(actions, "start")
-			w.WriteHeader(http.StatusAccepted)
-			_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
-
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc":
-			idx := int(statusIdx.Add(1)) - 1
-			status := "running"
-			if idx < len(statuses) {
-				status = statuses[idx]
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-resize-1":
+			// The resize workflow is not instant: report it running once so the
+			// provider is proven to WAIT rather than return on the 202.
+			status := "completed"
+			if opPolls.Add(1) == 1 {
+				status = "running"
 			}
-			_ = json.NewEncoder(w).Encode(apiInstance{
-				ID:        "inst-abc",
-				Name:      "web-1",
-				Status:    status,
-				FlavorID:  "flavor-large",
-				ImageID:   "img-ubuntu",
-				CreatedAt: "2025-06-01T12:00:00Z",
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-resize-1",
+				"status":      status,
+				"resourceId":  "inst-abc",
 			})
 
 		default:
@@ -939,23 +918,190 @@ func TestInstanceResize(t *testing.T) {
 		pollTimeout:  5 * time.Second,
 	}
 
-	err := r.resizeInstance(context.Background(), "inst-abc", "flavor-large")
-	if err != nil {
+	if err := r.resizeInstance(context.Background(), "inst-abc", "flavor-large"); err != nil {
 		t.Fatalf("resize failed: %v", err)
 	}
 
-	// Verify the action sequence: stop -> resize -> start.
-	if len(actions) != 3 {
-		t.Fatalf("expected 3 actions, got %d: %v", len(actions), actions)
+	// The backend workflow owns stop/migrate/confirm/restore-power-state. The
+	// provider must submit exactly one call and await the operation — the old
+	// hand-driven stop -> resize -> start sequence raced its own workflows.
+	if len(actions) != 1 || actions[0] != "resize" {
+		t.Fatalf("expected exactly one resize action, got %v", actions)
 	}
-	if actions[0] != "stop" {
-		t.Errorf("expected first action stop, got %s", actions[0])
+	if opPolls.Load() < 2 {
+		t.Errorf("expected the provider to poll the operation until completion, got %d polls", opPolls.Load())
 	}
-	if actions[1] != "resize" {
-		t.Errorf("expected second action resize, got %s", actions[1])
+}
+
+// TestInstanceResizeFailedOperationErrors proves a resize the backend workflow
+// FAILS is surfaced as an error carrying the workflow's own message. The old
+// code could not report this at all: it never read the operation, so a resize
+// refused for quota or an unlaunchable flavor was indistinguishable from a slow
+// one and surfaced — if at all — as a poll timeout naming a state instead of a
+// reason.
+func TestInstanceResizeFailedOperationErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			meHandler(w, r)
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc/resize":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]string{"operationId": "op-resize-2"})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-resize-2":
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-resize-2",
+				"status":      "failed",
+				"error":       "resize would exceed quota",
+			})
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := newTestClient(t, server)
+	r := &instanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+
+	err := r.resizeInstance(context.Background(), "inst-abc", "flavor-large")
+	if err == nil {
+		t.Fatal("expected an error for a failed resize operation")
 	}
-	if actions[2] != "start" {
-		t.Errorf("expected third action start, got %s", actions[2])
+	if !strings.Contains(err.Error(), "resize would exceed quota") {
+		t.Errorf("expected the operation error message to reach the practitioner, got: %v", err)
+	}
+}
+
+// TestInstanceResizeUnexpectedStatusErrors pins that a 2xx which is NOT 202 is a
+// failure. Resize has exactly one success shape; treating any other 2xx as
+// success is the one branch that would write the new flavor_id into state having
+// waited for, and verified, nothing.
+func TestInstanceResizeUnexpectedStatusErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			meHandler(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc/resize":
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	r := &instanceResource{client: newTestClient(t, server), pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+	err := r.resizeInstance(context.Background(), "inst-abc", "flavor-large")
+	if err == nil {
+		t.Fatal("expected an error for a non-202 resize response")
+	}
+	if !strings.Contains(err.Error(), "202") {
+		t.Errorf("expected the diagnostic to name the expected status, got: %v", err)
+	}
+}
+
+// TestInstanceResizeMissingOperationIDErrors pins that an accepted resize with no
+// operation id fails fast. Polling .../operations/ instead yields 404s the poller
+// retries to its deadline — 45 minutes ending in a bare timeout, for a resize that
+// may well be running.
+func TestInstanceResizeMissingOperationIDErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			meHandler(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc/resize":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	r := &instanceResource{client: newTestClient(t, server), pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+	err := r.resizeInstance(context.Background(), "inst-abc", "flavor-large")
+	if err == nil {
+		t.Fatal("expected an error when the accepted resize carried no operation id")
+	}
+	if !strings.Contains(err.Error(), "no operation id") {
+		t.Errorf("expected the diagnostic to name the missing operation id, got: %v", err)
+	}
+}
+
+// TestInstanceResizeAttachesToInProgressResize pins the RESIZE_IN_PROGRESS
+// recovery. The api-gateway retries a POST whose upstream write timed out and the
+// resize workflow id is deterministic, so a practitioner's FIRST apply can be
+// refused for the resize their own request started. Provisioning puts that run's
+// operation id in the 409 so a client can attach; failing the apply instead leaves
+// state on the old flavor while the platform moves to the new one.
+func TestInstanceResizeAttachesToInProgressResize(t *testing.T) {
+	var polled bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			meHandler(w, r)
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc/resize":
+			w.WriteHeader(http.StatusConflict)
+			// The id is a SIBLING of code/message, which is the shape that used to
+			// drop it on decode.
+			_, _ = w.Write([]byte(`{"error":{"code":"RESIZE_IN_PROGRESS","message":"a resize of this instance is already in progress","operationId":"resize-instance-tenant-456-inst-abc"}}`))
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/resize-instance-tenant-456-inst-abc":
+			polled = true
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "resize-instance-tenant-456-inst-abc",
+				"status":      "completed",
+				"resourceId":  "inst-abc",
+			})
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	r := &instanceResource{client: newTestClient(t, server), pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+	if err := r.resizeInstance(context.Background(), "inst-abc", "flavor-large"); err != nil {
+		t.Fatalf("expected the resize to attach to the running operation, got: %v", err)
+	}
+	if !polled {
+		t.Error("expected the operation named by the 409 to be polled")
+	}
+}
+
+// TestInstanceResizeConflictWithoutOperationIDStillFails guards the other half:
+// only a 409 that actually names an operation is recoverable. Without an id there
+// is nothing to attach to, and reporting success would be a silent no-op resize.
+func TestInstanceResizeConflictWithoutOperationIDStillFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			meHandler(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc/resize":
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":{"code":"RESIZE_IN_PROGRESS","message":"a resize of this instance is already in progress"}}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	r := &instanceResource{client: newTestClient(t, server), pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+	err := r.resizeInstance(context.Background(), "inst-abc", "flavor-large")
+	if err == nil {
+		t.Fatal("expected a 409 without an operation id to fail the apply")
+	}
+	if !strings.Contains(err.Error(), "RESIZE_IN_PROGRESS") {
+		t.Errorf("expected the backend code to reach the practitioner, got: %v", err)
 	}
 }
 
@@ -2154,27 +2300,11 @@ func TestInstanceResource_TFSDKUpdateInstanceAccessRespell(t *testing.T) {
 
 func TestInstanceResource_TFSDKUpdateResize(t *testing.T) {
 	var actions []string
-	var statusIdx atomic.Int32
-
-	// Status sequence for resize workflow: stop -> poll stopped -> resize -> start -> poll running.
-	statuses := []string{
-		"stopping", // after stop action poll
-		"stopped",  // poll -> stopped
-		"stopped",  // after resize action (still stopped)
-		"starting", // after start action
-		"running",  // poll -> running
-		"running",  // final GET after update
-	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
-
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-resize-1/stop":
-			actions = append(actions, "stop")
-			w.WriteHeader(http.StatusAccepted)
-			_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-resize-1/resize":
 			var req apiResizeInstanceRequest
@@ -2184,25 +2314,26 @@ func TestInstanceResource_TFSDKUpdateResize(t *testing.T) {
 				t.Errorf("expected resize to flavor-large, got %s", req.FlavorID)
 			}
 			w.WriteHeader(http.StatusAccepted)
-			_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"operationId": "op-resize-3"})
 
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-resize-1/start":
-			actions = append(actions, "start")
-			w.WriteHeader(http.StatusAccepted)
-			_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-resize-3":
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-resize-3",
+				"status":      "completed",
+				"resourceId":  "inst-resize-1",
+			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-resize-1":
-			idx := int(statusIdx.Add(1)) - 1
-			status := "running"
-			if idx < len(statuses) {
-				status = statuses[idx]
-			}
-			flavorID := "flavor-large"
+			// ACTIVE, not "running" — the vocabulary the API really speaks (Nova
+			// statuses, uppercase). Nothing in the resize path compares statuses any
+			// more, so this pins honesty rather than behaviour: the old fixture said
+			// "running", and a fixture asserting a shape the server never sends is
+			// what let a resize wait forever on a state the platform never reports.
 			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:        "inst-resize-1",
 				Name:      "resize-vm",
-				Status:    status,
-				FlavorID:  flavorID,
+				Status:    "ACTIVE",
+				FlavorID:  "flavor-large",
 				ImageID:   "img-ubuntu",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
@@ -2273,15 +2404,10 @@ func TestInstanceResource_TFSDKUpdateResize(t *testing.T) {
 		t.Fatalf("Update failed: %v", updateResp.Diagnostics.Errors())
 	}
 
-	// Verify resize workflow: stop -> resize -> start.
-	if len(actions) != 3 {
-		t.Fatalf("expected 3 actions, got %d: %v", len(actions), actions)
-	}
-	expected := []string{"stop", "resize", "start"}
-	for i, exp := range expected {
-		if actions[i] != exp {
-			t.Errorf("expected action[%d] = %s, got %s", i, exp, actions[i])
-		}
+	// One call: the backend workflow owns stop/migrate/confirm and restoring the
+	// instance's power state.
+	if len(actions) != 1 || actions[0] != "resize" {
+		t.Fatalf("expected exactly one resize action, got %v", actions)
 	}
 
 	var model InstanceModel

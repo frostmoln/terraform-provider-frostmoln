@@ -231,6 +231,15 @@ type APIError struct {
 	// RetryAfter is the server-suggested wait in seconds on a 429 (from the
 	// rate-limit body's retry_after or the Retry-After header); 0 when absent.
 	RetryAfter int `json:"retry_after,omitempty"`
+	// OperationID is the async operation a refusal points at, when the service
+	// wants the client to attach to work that is already running rather than
+	// treat the refusal as final. Provisioning's 409 RESIZE_IN_PROGRESS carries
+	// it for exactly that reason (its handler says so): the gateway retries a
+	// POST whose write timed out, the workflow id is deterministic, so the retry
+	// is refused for the run its own first attempt started. It sits as a SIBLING
+	// of code/message in the envelope, not inside details, so without this field
+	// encoding/json dropped it and the affordance was unreachable.
+	OperationID string `json:"operationId,omitempty"`
 	// FlatEnvelope records that this error was decoded from the FLAT body shape
 	// ({"code":…}) rather than the nested one ({"error":{"code":…}}), because for
 	// one code the two shapes mean opposite things.

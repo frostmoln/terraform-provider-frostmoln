@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -50,6 +51,25 @@ func (r *instanceResource) getPollTimeout() time.Duration {
 	return 10 * time.Minute
 }
 
+// getResizeTimeout is the budget for a resize operation specifically. A resize is
+// the longest instance operation there is and the generic 10-minute instance
+// timeout is smaller than the backend's own worst case: provisioning waits up to
+// 10 minutes for VERIFY_RESIZE inside a 30-minute LongRunning activity with
+// retries, then another 5 for the confirm to settle — a cross-host cold migration
+// of a large VM legitimately outruns 10 minutes. Declaring failure early is not
+// free: the workflow completes anyway, so Terraform keeps the OLD flavor_id while
+// the platform (and the quota ledger) moves to the new one, and a re-apply against
+// a stale plan is refused with "cannot resize to the same flavor". The portal made
+// the same correction for the same endpoint (services/compute.ts resizeInstance,
+// 20 min); this is sized against the server budget rather than matched to it.
+// Overridden by pollTimeout when a test sets one.
+func (r *instanceResource) getResizeTimeout() time.Duration {
+	if r.pollTimeout > 0 {
+		return r.pollTimeout
+	}
+	return 45 * time.Minute
+}
+
 func (r *instanceResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_instance"
 }
@@ -70,7 +90,7 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Required:    true,
 			},
 			"flavor_id": schema.StringAttribute{
-				Description: "The flavor ID for the instance. Changing this triggers a resize workflow (stop, resize, start).",
+				Description: "The flavor ID for the instance. Changing this resizes the instance in place: the platform powers it down for the migration and brings it back up. It does not power on an instance that was already stopped, and a guest that fails to come back up after the migration leaves the instance stopped with the resize still reported as successful — check `status` after a resize.",
 				Required:    true,
 			},
 			"image_id": schema.StringAttribute{
@@ -513,74 +533,72 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// resizeInstance performs the stop -> resize -> start workflow.
+// resizeInstance submits the flavor change and waits for it to complete.
+//
+// The whole stop/migrate/confirm dance belongs to the backend's Temporal resize
+// workflow, which also returns the guest to the power state it was in. The
+// provider previously drove it by hand — POST /stop, poll for "stopped", POST
+// /resize, POST /start, poll for "running" — and that could never work: the
+// three POSTs each start their OWN async workflow and were never awaited (so
+// /start raced the resize that had not begun, and was refused: compute allows
+// start only from SHUTOFF, never from RESIZE), and the poller compared against
+// lowercase "stopped"/"running" while the API returns Nova's uppercase
+// SHUTOFF/ACTIVE, so the very first wait ran out its budget on a VM that had
+// already stopped. The reported symptom was exactly that: the VM stops and
+// nothing further happens.
 func (r *instanceResource) resizeInstance(ctx context.Context, id, newFlavorID string) error {
-	base := r.client.TenantPath(fmt.Sprintf("/instances/%s", id))
-
-	// 1. Stop the instance (discrete route; the backend has no /action endpoint).
-	_, err := r.client.Post(ctx, base+"/stop", nil)
+	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/instances/"+id+"/resize"), apiResizeInstanceRequest{FlavorID: newFlavorID})
 	if err != nil {
-		return fmt.Errorf("failed to stop instance for resize: %w", err)
+		// A 409 RESIZE_IN_PROGRESS is not necessarily someone else's resize — it is
+		// most often OUR OWN. The api-gateway retries a POST whose upstream write
+		// timed out, the resize workflow id is deterministic, and the conflict policy
+		// is FAIL, so a retried request is refused for the run its own first attempt
+		// started. Provisioning carries that run's operation id in the refusal
+		// precisely so a client can attach instead of failing an apply over a resize
+		// that is running and will succeed.
+		//
+		// Attaching is safe even when the in-flight resize is NOT ours: it may target
+		// a different flavor (which is why the policy is FAIL rather than
+		// USE_EXISTING), and Update's read-back writes the observed flavor into
+		// state — so a mismatch surfaces as an apply error rather than a green apply
+		// claiming a size the VM does not have.
+		var apiErr *client.APIError
+		if errors.As(err, &apiErr) && apiErr.Code == resizeInProgressCode && apiErr.OperationID != "" {
+			tflog.Info(ctx, "a resize of this instance is already running; attaching to it instead of failing", map[string]any{
+				"instance_id":  id,
+				"operation_id": apiErr.OperationID,
+			})
+			return r.awaitResizeOperation(ctx, apiErr.OperationID)
+		}
+		return err
 	}
-
-	// 2. Wait for stopped state.
-	_, err = client.WaitForState(ctx, client.PollConfig{
-		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
-		TargetStates: []string{"stopped"},
-		ErrorStates:  []string{"error"},
-		ResourceName: "instance",
-		PollFunc: func(pollCtx context.Context) (string, error) {
-			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/instances/"+id), nil)
-			if pollErr != nil {
-				return "", pollErr
-			}
-			inst, parseErr := client.ParseResponse[apiInstance](pollResp)
-			if parseErr != nil {
-				return "", parseErr
-			}
-			return inst.Status, nil
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("instance failed to reach stopped state: %w", err)
+	// Resize has exactly one success shape: 202 + an Operation. Treating any other
+	// 2xx as success is the one branch that would write the new flavor_id into state
+	// having verified nothing at all.
+	if !apiResp.IsAccepted() {
+		return fmt.Errorf("unexpected status %d from instance resize; expected 202 Accepted", apiResp.StatusCode)
 	}
-
-	// 3. Resize the instance.
-	_, err = r.client.Post(ctx, base+"/resize", apiResizeInstanceRequest{FlavorID: newFlavorID})
-	if err != nil {
-		return fmt.Errorf("failed to resize instance: %w", err)
+	op, opErr := client.ParseResponse[client.Operation](apiResp)
+	if opErr != nil {
+		return fmt.Errorf("parse resize operation response: %w", opErr)
 	}
+	return r.awaitResizeOperation(ctx, op.OperationID)
+}
 
-	// 4. Start the instance.
-	_, err = r.client.Post(ctx, base+"/start", nil)
-	if err != nil {
-		return fmt.Errorf("failed to start instance after resize: %w", err)
+// resizeInProgressCode is provisioning's refusal when a resize of this instance is
+// already running (instance_handler.go ResizeInstance).
+const resizeInProgressCode = "RESIZE_IN_PROGRESS"
+
+// awaitResizeOperation waits for a resize operation to reach a terminal state.
+func (r *instanceResource) awaitResizeOperation(ctx context.Context, operationID string) error {
+	// An empty id would poll .../operations/ — a 404 the poller retries to the
+	// deadline, reporting a bare timeout for a resize that may well have started.
+	if operationID == "" {
+		return fmt.Errorf("instance resize was accepted but returned no operation id; the resize may be running — check `fm compute instance show` before retrying")
 	}
-
-	// 5. Wait for running state.
-	_, err = client.WaitForState(ctx, client.PollConfig{
-		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
-		TargetStates: []string{"running"},
-		ErrorStates:  []string{"error"},
-		ResourceName: "instance",
-		PollFunc: func(pollCtx context.Context) (string, error) {
-			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/instances/"+id), nil)
-			if pollErr != nil {
-				return "", pollErr
-			}
-			inst, parseErr := client.ParseResponse[apiInstance](pollResp)
-			if parseErr != nil {
-				return "", parseErr
-			}
-			return inst.Status, nil
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("instance failed to reach running state after resize: %w", err)
+	if _, err := r.client.WaitForOperation(ctx, operationID, r.getPollInterval(), r.getResizeTimeout()); err != nil {
+		return fmt.Errorf("resize did not complete: %w", err)
 	}
-
 	return nil
 }
 
@@ -635,7 +653,12 @@ func (r *instanceResource) Delete(ctx context.Context, req resource.DeleteReques
 		Interval:     r.getPollInterval(),
 		Timeout:      r.getPollTimeout(),
 		TargetStates: []string{"deleted"},
-		ErrorStates:  []string{"error"},
+		// No ErrorStates. This read "error", which could never match compute's
+		// uppercase ERROR — the same vocabulary bug the resize path had. Correcting
+		// the case would be a REGRESSION, not a fix: destroying an instance that is
+		// already in ERROR is the most ordinary thing anyone does with a broken VM,
+		// and making ERROR terminal here would fail that destroy instead of waiting
+		// for the 404 that is the real terminal signal.
 		ResourceName: "instance",
 		PollFunc: func(pollCtx context.Context) (string, error) {
 			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/instances/"+id), nil)
