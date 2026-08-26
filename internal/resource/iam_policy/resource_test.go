@@ -166,7 +166,7 @@ func policyStateValue(tfType tftypes.Type, id, name, doc string) tftypes.Value {
 
 func TestResource_Create(t *testing.T) {
 	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.URL.Path == "/v1/iam/policies" {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-1/iam/policies" {
 			var req apiCreatePolicyRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			w.WriteHeader(http.StatusCreated)
@@ -240,7 +240,7 @@ func TestResource_Read_NotFound(t *testing.T) {
 
 func TestResource_Update(t *testing.T) {
 	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/v1/iam/policies/pol-1" {
+		if r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/tenant-1/iam/policies/pol-1" {
 			var req apiUpdatePolicyRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			_ = json.NewEncoder(w).Encode(apiPolicy{
@@ -293,7 +293,7 @@ func TestResource_Update(t *testing.T) {
 func TestResource_Delete(t *testing.T) {
 	deleted := false
 	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete && r.URL.Path == "/v1/iam/policies/pol-1" {
+		if r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-1/iam/policies/pol-1" {
 			deleted = true
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -338,5 +338,64 @@ func TestResource_Metadata_Import(t *testing.T) {
 	iResp.State.Get(context.Background(), &m)
 	if m.ID.ValueString() != "pol-imported" {
 		t.Errorf("imported id = %s", m.ID.ValueString())
+	}
+}
+
+// The regression this whole change exists for: with a provider-level tenant_id
+// selecting a NON-HOME tenant, the create must be addressed to that tenant. The
+// untenanted /v1/iam/policies form resolved the tenant server-side from the OIDC
+// token's home tenant, so provider.tenant_id was silently ignored and every
+// policy landed in the caller's default tenant however the provider was
+// configured. Asserting the request PATH is the only way to see it: the response
+// body is written by the fake, so a body-level tenant assertion would pass even
+// with the bug present.
+func TestResource_CreateUsesSelectedTenant(t *testing.T) {
+	const selected = "tenant-staging"
+
+	var gotPath string
+	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			gotPath = r.URL.Path
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(apiPolicy{
+				ID: "pol-new", Name: "p", Document: json.RawMessage(sampleDoc), TenantID: selected,
+				AuthoredBy: "user-1", Version: 1, CreatedAt: "2026-07-08T00:00:00Z", UpdatedAt: "2026-07-08T00:00:00Z",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	defer server.Close()
+
+	r := configuredResource(t, server.URL)
+	// /v1/me still reports tenant-1 as the home tenant — exactly the situation
+	// the bug hid in.
+	r.client.SetTenantIDForTest(selected)
+
+	sch := policySchema(t)
+	tfType := sch.Type().TerraformType(context.Background())
+	resp := resource.CreateResponse{State: tfsdk.State{Schema: sch}}
+	r.Create(context.Background(), resource.CreateRequest{
+		Plan: tfsdk.Plan{
+			Schema: sch,
+			Raw: tftypes.NewValue(tfType, map[string]tftypes.Value{
+				"id":          tftypes.NewValue(tftypes.String, nil),
+				"name":        tftypes.NewValue(tftypes.String, "p"),
+				"description": tftypes.NewValue(tftypes.String, nil),
+				"document":    tftypes.NewValue(tftypes.String, sampleDoc),
+				"tenant_id":   tftypes.NewValue(tftypes.String, nil),
+				"authored_by": tftypes.NewValue(tftypes.String, nil),
+				"version":     tftypes.NewValue(tftypes.Number, nil),
+				"created_at":  tftypes.NewValue(tftypes.String, nil),
+				"updated_at":  tftypes.NewValue(tftypes.String, nil),
+			}),
+		},
+	}, &resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("create: %v", resp.Diagnostics.Errors())
+	}
+	if want := "/v1/tenants/" + selected + "/iam/policies"; gotPath != want {
+		t.Fatalf("policy created at %q, want %q — the selected tenant was ignored", gotPath, want)
 	}
 }

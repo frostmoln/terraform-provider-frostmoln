@@ -3,12 +3,15 @@
 page_title: "frostmoln_workload_identity_binding Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a Workload Identity Federation binding, mapping a managed Kubernetes (namespace, service account) to a least-privilege Frostmoln grant. A pod running as that service account can exchange its projected token for a short-lived, scoped Frostmoln credential. The grant is either flat scopes or an access policy attached with frostmoln_iam_policy_attachment — a policy expresses far narrower least privilege (per-resource targets, constraints, explicit denies), so prefer it for new bindings. The binding is owned by the tenant resolved from the provider credential (API key or OIDC session), not by a provider tenant_id override.
+  Manages a Workload Identity Federation binding, mapping a managed Kubernetes (namespace, service account) to a least-privilege Frostmoln grant. A pod running as that service account can exchange its projected token for a short-lived, scoped Frostmoln credential. The grant is either flat scopes or an access policy attached with frostmoln_iam_policy_attachment — a policy expresses far narrower least privilege (per-resource targets, constraints, explicit denies), so prefer it for new bindings. The binding is owned by the provider's selected tenant (tenant_id, else the credential's default), and its cluster_id must belong to that same tenant.
+  ~> Upgrade note. Before provider v0.38.0 this resource ignored tenant_id and always acted on the credential's home tenant — a binding for a non-home cluster failed at apply rather than landing in the wrong place. A configuration that sets a non-home tenant_id and previously applied has its bindings in the HOME tenant: the first plan after upgrading reads a 404, drops them from state and proposes a create in the selected tenant. terraform state rm + re-import against the selected tenant, or point tenant_id at the home tenant.
 ---
 
 # frostmoln_workload_identity_binding (Resource)
 
-Manages a Workload Identity Federation binding, mapping a managed Kubernetes (namespace, service account) to a least-privilege Frostmoln grant. A pod running as that service account can exchange its projected token for a short-lived, scoped Frostmoln credential. The grant is either flat `scopes` or an access policy attached with `frostmoln_iam_policy_attachment` — a policy expresses far narrower least privilege (per-resource targets, constraints, explicit denies), so prefer it for new bindings. The binding is owned by the tenant resolved from the provider credential (API key or OIDC session), not by a provider `tenant_id` override.
+Manages a Workload Identity Federation binding, mapping a managed Kubernetes (namespace, service account) to a least-privilege Frostmoln grant. A pod running as that service account can exchange its projected token for a short-lived, scoped Frostmoln credential. The grant is either flat `scopes` or an access policy attached with `frostmoln_iam_policy_attachment` — a policy expresses far narrower least privilege (per-resource targets, constraints, explicit denies), so prefer it for new bindings. The binding is owned by the provider's selected tenant (`tenant_id`, else the credential's default), and its `cluster_id` must belong to that same tenant.
+
+~> **Upgrade note.** Before provider v0.38.0 this resource ignored `tenant_id` and always acted on the credential's home tenant — a binding for a non-home cluster failed at apply rather than landing in the wrong place. A configuration that sets a non-home `tenant_id` and previously applied has its bindings in the HOME tenant: the first plan after upgrading reads a 404, drops them from state and proposes a create in the selected tenant. `terraform state rm` + re-`import` against the selected tenant, or point `tenant_id` at the home tenant.
 
 ## Example Usage
 
@@ -79,7 +82,7 @@ resource "frostmoln_iam_policy_attachment" "reaper" {
 
 ### Required
 
-- `cluster_id` (String) The managed cluster the binding applies to. The cluster must belong to the caller's tenant.
+- `cluster_id` (String) The managed cluster the binding applies to. The cluster must belong to the selected tenant (the provider's tenant_id).
 - `namespace` (String) The Kubernetes namespace (DNS-1123 label).
 - `service_account` (String) The Kubernetes service account name (DNS-1123 subdomain).
 
@@ -98,7 +101,7 @@ Notes on the policy-granted path:
 
 - `created_at` (String) The timestamp when the binding was created.
 - `id` (String) The unique identifier of the binding.
-- `tenant_id` (String) The owning tenant (server-set from the auth context).
+- `tenant_id` (String) The owning tenant (server-set; the provider's tenant_id selects it).
 - `updated_at` (String) The timestamp when the binding was last updated.
 
 ## Import

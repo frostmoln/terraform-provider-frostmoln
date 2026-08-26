@@ -45,10 +45,12 @@ type iamPolicyAttachmentResource struct {
 	client *client.Client
 }
 
-// attachmentsPath is the (non-tenant-scoped) collection path for a policy's
-// attachments; the tenant is resolved from the caller's auth context.
-func attachmentsPath(policyID string) string {
-	return "/v1/iam/policies/" + url.PathEscape(policyID) + "/attachments"
+// attachmentsPath is the tenant-scoped collection path for a policy's
+// attachments. Tenant-scoped for the same reason as the policy itself: the
+// untenanted form resolves the tenant from the caller's auth context (their HOME
+// tenant), which silently ignored the provider's tenant_id.
+func attachmentsPath(c *client.Client, policyID string) string {
+	return c.TenantPath("/iam/policies/" + url.PathEscape(policyID) + "/attachments")
 }
 
 // composeID / parseID map between the synthetic Terraform id and its parts. The
@@ -136,7 +138,7 @@ func (r *iamPolicyAttachmentResource) Create(ctx context.Context, req resource.C
 	attacheeType := plan.AttacheeType.ValueString()
 	attacheeID := plan.AttacheeID.ValueString()
 
-	_, err := r.client.Post(ctx, attachmentsPath(policyID), apiAttachRequest{
+	_, err := r.client.Post(ctx, attachmentsPath(r.client, policyID), apiAttachRequest{
 		AttacheeType: attacheeType,
 		AttacheeID:   attacheeID,
 	})
@@ -215,7 +217,7 @@ func (r *iamPolicyAttachmentResource) Delete(ctx context.Context, req resource.D
 	q.Set("attacheeType", state.AttacheeType.ValueString())
 	q.Set("attacheeId", state.AttacheeID.ValueString())
 
-	_, err := r.client.DeleteWithQuery(ctx, attachmentsPath(state.PolicyID.ValueString()), q)
+	_, err := r.client.DeleteWithQuery(ctx, attachmentsPath(r.client, state.PolicyID.ValueString()), q)
 	if err != nil {
 		if client.IsNotFound(err) {
 			return
@@ -299,7 +301,7 @@ func (r *iamPolicyAttachmentResource) findAttachment(ctx context.Context, policy
 		}
 		q.Set("limit", strconv.Itoa(listPageLimit))
 
-		apiResp, err := r.client.Get(ctx, attachmentsPath(policyID), q)
+		apiResp, err := r.client.Get(ctx, attachmentsPath(r.client, policyID), q)
 		if err != nil {
 			return nil, false, err
 		}

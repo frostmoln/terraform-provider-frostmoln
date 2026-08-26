@@ -285,7 +285,7 @@ func TestResourceMetadata(t *testing.T) {
 
 func TestResourceCreate(t *testing.T) {
 	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.URL.Path == "/v1/workload-identity/bindings" {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/workload-identity/bindings" {
 			var req apiCreateWorkloadIdentityBindingRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatalf("decode: %v", err)
@@ -329,7 +329,7 @@ func TestResourceCreate(t *testing.T) {
 // keeps the plan's order so Terraform doesn't error "inconsistent result".
 func TestResourceCreatePreservesPlanScopeOrder(t *testing.T) {
 	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.URL.Path == "/v1/workload-identity/bindings" {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/workload-identity/bindings" {
 			var req apiCreateWorkloadIdentityBindingRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			w.WriteHeader(http.StatusCreated)
@@ -373,7 +373,7 @@ func TestResourceCreatePreservesPlanScopeOrder(t *testing.T) {
 func TestResourceCreatePolicyGranted(t *testing.T) {
 	var gotBody []byte
 	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.URL.Path == "/v1/workload-identity/bindings" {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/workload-identity/bindings" {
 			gotBody, _ = io.ReadAll(r.Body)
 			w.WriteHeader(http.StatusCreated)
 			// Echo an EMPTY ARRAY — the shape a Go service that never returns
@@ -420,7 +420,7 @@ func TestResourceCreatePolicyGranted(t *testing.T) {
 func TestResourceUpdateDropsScopes(t *testing.T) {
 	var gotBody []byte
 	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPut && r.URL.Path == "/v1/workload-identity/bindings/b-9" {
+		if r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/tenant-456/workload-identity/bindings/b-9" {
 			gotBody, _ = io.ReadAll(r.Body)
 			_ = json.NewEncoder(w).Encode(apiWorkloadIdentityBinding{
 				ID: "b-9", ClusterID: "cl-1", TenantID: "tenant-456",
@@ -565,7 +565,7 @@ func TestResourceReadNotFound(t *testing.T) {
 func TestResourceUpdatePUT(t *testing.T) {
 	putCalled := false
 	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPut && r.URL.Path == "/v1/workload-identity/bindings/b-9" {
+		if r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/tenant-456/workload-identity/bindings/b-9" {
 			putCalled = true
 			var req apiUpdateWorkloadIdentityBindingRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

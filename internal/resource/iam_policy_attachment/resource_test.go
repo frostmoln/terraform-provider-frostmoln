@@ -61,7 +61,7 @@ func TestComposeID(t *testing.T) {
 
 func TestFindAttachment_Paginates(t *testing.T) {
 	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/iam/policies/pol-1/attachments" {
+		if r.URL.Path != "/v1/tenants/tenant-1/iam/policies/pol-1/attachments" {
 			t.Errorf("unexpected path %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -96,7 +96,7 @@ func TestFindAttachment_FilterFastPath(t *testing.T) {
 	var listCalls int
 	var gotType, gotID string
 	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/iam/policies/pol-1/attachments" {
+		if r.URL.Path != "/v1/tenants/tenant-1/iam/policies/pol-1/attachments" {
 			t.Errorf("unexpected path %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -133,7 +133,7 @@ func TestCreate_AttachesAndReadsBack(t *testing.T) {
 	attached := false
 	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/iam/policies/pol-1/attachments":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-1/iam/policies/pol-1/attachments":
 			var req apiAttachRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			if req.AttacheeType != "api_key" || req.AttacheeID != "ak-1" {
@@ -141,7 +141,7 @@ func TestCreate_AttachesAndReadsBack(t *testing.T) {
 			}
 			attached = true
 			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/iam/policies/pol-1/attachments":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/iam/policies/pol-1/attachments":
 			_ = json.NewEncoder(w).Encode(apiAttachmentList{
 				Attachments: []apiAttachment{{PolicyID: "pol-1", AttacheeType: "api_key", AttacheeID: "ak-1", AttachedAt: "t1"}},
 			})
@@ -208,7 +208,7 @@ func TestRead_GoneRemovesResource(t *testing.T) {
 func TestDelete_UsesQueryParams(t *testing.T) {
 	var gotType, gotID string
 	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete && r.URL.Path == "/v1/iam/policies/pol-1/attachments" {
+		if r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-1/iam/policies/pol-1/attachments" {
 			gotType = r.URL.Query().Get("attacheeType")
 			gotID = r.URL.Query().Get("attacheeId")
 			w.WriteHeader(http.StatusNoContent)

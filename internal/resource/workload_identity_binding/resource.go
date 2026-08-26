@@ -50,15 +50,20 @@ func (emptyListNotAllowed) ValidateList(_ context.Context, req validator.ListReq
 	)
 }
 
-// basePath is NOT tenant-scoped: the binding endpoints resolve the tenant from
-// the API key, so we must not use client.TenantPath here (it would inject
-// /v1/tenants/{id}/, which these routes reject).
-const basePath = "/v1/workload-identity/bindings"
+// basePath is tenant-scoped, like every other resource in this provider. The
+// untenanted form resolves the tenant from the caller's auth context — their
+// HOME tenant — so under it the provider's tenant_id was silently ignored and a
+// binding could never be created in another tenant. That mattered more here than
+// elsewhere: a binding also requires its cluster to be in the same tenant, so
+// the mismatch surfaced as an apply-time failure rather than a quiet misplace.
+func basePath(c *client.Client) string {
+	return c.TenantPath("/workload-identity/bindings")
+}
 
 // bindingPath returns the path for a single binding, escaping the id so it can
 // only ever be a single path segment.
-func bindingPath(id string) string {
-	return basePath + "/" + url.PathEscape(id)
+func bindingPath(c *client.Client, id string) string {
+	return basePath(c) + "/" + url.PathEscape(id)
 }
 
 // NewResource returns a new workload identity binding resource factory.
@@ -82,8 +87,15 @@ func (r *workloadIdentityBindingResource) Schema(_ context.Context, _ resource.S
 			"scoped Frostmoln credential. The grant is either flat `scopes` or an access policy attached " +
 			"with `frostmoln_iam_policy_attachment` — a policy expresses far narrower least privilege " +
 			"(per-resource targets, constraints, explicit denies), so prefer it for new bindings. " +
-			"The binding is owned by the tenant resolved from the " +
-			"provider credential (API key or OIDC session), not by a provider `tenant_id` override.",
+			"The binding is owned by the provider's selected tenant (`tenant_id`, else the " +
+			"credential's default), and its `cluster_id` must belong to that same tenant.\n\n" +
+			"~> **Upgrade note.** Before provider v0.38.0 this resource ignored `tenant_id` and " +
+			"always acted on the credential's home tenant — a binding for a non-home cluster " +
+			"failed at apply rather than landing in the wrong place. A configuration that sets " +
+			"a non-home `tenant_id` and previously applied has its bindings in the HOME tenant: " +
+			"the first plan after upgrading reads a 404, drops them from state and proposes a " +
+			"create in the selected tenant. `terraform state rm` + re-`import` against the " +
+			"selected tenant, or point `tenant_id` at the home tenant.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the binding.",
@@ -93,7 +105,7 @@ func (r *workloadIdentityBindingResource) Schema(_ context.Context, _ resource.S
 				},
 			},
 			"cluster_id": schema.StringAttribute{
-				Description: "The managed cluster the binding applies to. The cluster must belong to the caller's tenant.",
+				Description: "The managed cluster the binding applies to. The cluster must belong to the selected tenant (the provider's tenant_id).",
 				Required:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -148,7 +160,7 @@ func (r *workloadIdentityBindingResource) Schema(_ context.Context, _ resource.S
 				},
 			},
 			"tenant_id": schema.StringAttribute{
-				Description: "The owning tenant (server-set from the auth context).",
+				Description: "The owning tenant (server-set; the provider's tenant_id selects it).",
 				Computed:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
@@ -234,7 +246,7 @@ func (r *workloadIdentityBindingResource) Create(ctx context.Context, req resour
 		return
 	}
 
-	apiResp, err := r.client.Post(ctx, basePath, apiReq)
+	apiResp, err := r.client.Post(ctx, basePath(r.client), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create workload identity binding", err.Error())
 		return
@@ -263,7 +275,7 @@ func (r *workloadIdentityBindingResource) Read(ctx context.Context, req resource
 		return
 	}
 
-	apiResp, err := r.client.Get(ctx, bindingPath(state.ID.ValueString()), nil)
+	apiResp, err := r.client.Get(ctx, bindingPath(r.client, state.ID.ValueString()), nil)
 	if err != nil {
 		if client.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
@@ -298,7 +310,7 @@ func (r *workloadIdentityBindingResource) Update(ctx context.Context, req resour
 		return
 	}
 
-	apiResp, err := r.client.Put(ctx, bindingPath(state.ID.ValueString()), updateReq)
+	apiResp, err := r.client.Put(ctx, bindingPath(r.client, state.ID.ValueString()), updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to update workload identity binding", err.Error())
 		return
@@ -326,7 +338,7 @@ func (r *workloadIdentityBindingResource) Delete(ctx context.Context, req resour
 		return
 	}
 
-	_, err := r.client.Delete(ctx, bindingPath(state.ID.ValueString()))
+	_, err := r.client.Delete(ctx, bindingPath(r.client, state.ID.ValueString()))
 	if err != nil {
 		if client.IsNotFound(err) {
 			return

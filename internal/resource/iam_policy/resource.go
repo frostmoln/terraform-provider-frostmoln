@@ -19,15 +19,20 @@ var (
 	_ resource.ResourceWithImportState = &iamPolicyResource{}
 )
 
-// basePath is NOT tenant-scoped: the IAM endpoints resolve the tenant from the
-// caller's auth context, so client.TenantPath must not be used here (it would
-// inject /v1/tenants/{id}/, which these routes reject).
-const basePath = "/v1/iam/policies"
+// basePath is tenant-scoped, exactly like every other resource in this provider.
+// It must be: the untenanted /v1/iam/policies form resolves the tenant from the
+// caller's auth context, which is the OIDC token's HOME tenant — so under that
+// form the provider's tenant_id was silently ignored and every policy landed in
+// the caller's home tenant. The /v1/tenants/{id}/ form makes the gateway
+// re-scope the auth context to the selected tenant before identity sees it.
+func basePath(c *client.Client) string {
+	return c.TenantPath("/iam/policies")
+}
 
 // policyPath returns the path for a single policy, escaping the id so it can only
 // ever be one path segment.
-func policyPath(id string) string {
-	return basePath + "/" + url.PathEscape(id)
+func policyPath(c *client.Client, id string) string {
+	return basePath(c) + "/" + url.PathEscape(id)
 }
 
 // NewResource returns a new IAM policy resource factory.
@@ -48,8 +53,16 @@ func (r *iamPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 		Description: "Manages a reusable IAM access policy. A policy is a set of " +
 			"allow/deny rules over operations, targets (FRNs) and constraints; attach it to an " +
 			"API key, workload identity, or group with `frostmoln_iam_policy_attachment`. The " +
-			"policy is owned by the tenant resolved from the provider credential. Authoring " +
-			"requires an fm CLI / OIDC session — a machine token may not author or attach a policy.",
+			"policy is owned by the provider's selected tenant (`tenant_id`, else the " +
+			"credential's default). Authoring requires an fm CLI / OIDC session — a machine " +
+			"token may not author or attach a policy.\n\n" +
+			"~> **Upgrade note.** Before provider v0.38.0 this resource ignored `tenant_id` and " +
+			"always acted on the credential's home tenant. If your configuration sets a " +
+			"non-home `tenant_id`, existing policies live in the HOME tenant: the first plan " +
+			"after upgrading reads a 404, drops them from state and proposes a create in the " +
+			"selected tenant, leaving the originals orphaned and no longer managed. Either " +
+			"`terraform state rm` + re-`import` them against the selected tenant, or point " +
+			"`tenant_id` at the home tenant to keep managing them where they are.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the policy.",
@@ -78,7 +91,7 @@ func (r *iamPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				Required: true,
 			},
 			"tenant_id": schema.StringAttribute{
-				Description: "The owning tenant (server-set from the auth context).",
+				Description: "The owning tenant (server-set; the provider's tenant_id selects it).",
 				Computed:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
@@ -137,7 +150,7 @@ func (r *iamPolicyResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
-	apiResp, err := r.client.Post(ctx, basePath, apiReq)
+	apiResp, err := r.client.Post(ctx, basePath(r.client), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create IAM policy", err.Error())
 		return
@@ -160,7 +173,7 @@ func (r *iamPolicyResource) Read(ctx context.Context, req resource.ReadRequest, 
 		return
 	}
 
-	apiResp, err := r.client.Get(ctx, policyPath(state.ID.ValueString()), nil)
+	apiResp, err := r.client.Get(ctx, policyPath(r.client, state.ID.ValueString()), nil)
 	if err != nil {
 		if client.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
@@ -194,7 +207,7 @@ func (r *iamPolicyResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 
-	apiResp, err := r.client.Patch(ctx, policyPath(state.ID.ValueString()), apiReq)
+	apiResp, err := r.client.Patch(ctx, policyPath(r.client, state.ID.ValueString()), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to update IAM policy", err.Error())
 		return
@@ -217,7 +230,7 @@ func (r *iamPolicyResource) Delete(ctx context.Context, req resource.DeleteReque
 		return
 	}
 
-	_, err := r.client.Delete(ctx, policyPath(state.ID.ValueString()))
+	_, err := r.client.Delete(ctx, policyPath(r.client, state.ID.ValueString()))
 	if err != nil {
 		if client.IsNotFound(err) {
 			return
