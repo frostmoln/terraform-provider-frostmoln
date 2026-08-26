@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.37.9] - 2026-08-26
+
+### 🐛 Bug Fixes
+
+- *(iam)* Honour provider tenant_id for policies, attachments and bindings (#391)
+
 ## [0.37.8] - 2026-08-26
 
 ### 🐛 Bug Fixes
