@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.37.6] - 2026-08-26
+
+### 🐛 Bug Fixes
+
+- *(vpc_route)* ValidateConfig was inert for the config it exists to warn about (#385)
+
+### 📚 Documentation
+
+- Drop references to a withdrawn ADR (#383)
+
 ## [0.37.5] - 2026-08-25
 
 ### 🐛 Bug Fixes
