@@ -25,12 +25,27 @@ const (
 	// serving another VPC's outbound path.
 	errCodePublicIPUnavailable = "GATEWAY_PUBLIC_IP_UNAVAILABLE"
 
+	// errCodeBlockedByDefaultRoute (409) means this VPC's OWN routes already
+	// cover the internet in a shape the attach cannot resolve, so the platform
+	// refuses rather than guess which route wins. TWO conditions share the code
+	// and their remedies differ — more than one route covering the internet
+	// (leave a single default route), or coverage of only part of it (remove
+	// that route, or add one covering the rest) — which is why the server's own
+	// message is carried through rather than replaced.
+	//
+	// A single ordinary default route is NOT refused: the attach converts it.
+	errCodeBlockedByDefaultRoute = "GATEWAY_BLOCKED_BY_DEFAULT_ROUTE"
+
 	// GATEWAY_MODE_UNAVAILABLE and GATEWAY_PUBLIC_IP_NOT_ALLOWED were mapped
 	// here until ADR-0114. Both existed only to explain the withdrawn `nat`
-	// mode, and network no longer defines either — the codes it can emit are
-	// exactly the ones above plus the two acknowledgement codes. A branch for a
-	// code the server cannot send is untestable against reality, and the prose
-	// it carried described a mode no customer ever used.
+	// mode, and network no longer defines either. A branch for a code the server
+	// cannot send is untestable against reality, and the prose it carried
+	// described a mode no customer ever used.
+	//
+	// THIS LIST WAS NEVER EXHAUSTIVE, and a comment here used to say it was.
+	// GATEWAY_BLOCKED_BY_DEFAULT_ROUTE has been in network's domain since
+	// ADR-0114's amendment and was unmapped the whole time, which is exactly the
+	// generic "API said: <code>" outcome the mapping exists to avoid.
 )
 
 // addGatewayError appends the best diagnostic available for err. fallback is the
@@ -118,6 +133,21 @@ func addGatewayError(diags *diag.Diagnostics, fallback string, err error) {
 				"once an address frees — re-run `terraform apply`.\n\n"+
 				"Only a VPC that needs NO outbound path at all escapes this limit, and that is the "+
 				"absence of this resource rather than a different mode.\n\n"+
+				"API said: "+apiErr.Message,
+		)
+	case errCodeBlockedByDefaultRoute:
+		diags.AddError(
+			"This VPC's own routes cover the internet, so a gateway cannot be attached yet",
+			"A gateway adds this VPC's route to the internet, and this VPC already has routes of its "+
+				"own covering it — either more than one, or only part of it. The platform will not "+
+				"guess which should win, so nothing was changed.\n\n"+
+				"Fix the routes first, then apply again: the message below says which case this is and "+
+				"what it needs. A VPC with a SINGLE ordinary default route is not refused — that one is "+
+				"converted for you.\n\n"+
+				"The routes are `frostmoln_vpc_route` resources on this VPC; `fm network vpc route list "+
+				"<vpc-id>` shows every one the platform stored, including any you did not declare here.\n\n"+
+				"A forced tunnel needs the gateway as well as the default route — its `<peer>/32` "+
+				"exception route uses it — so this is an ordering problem, not a choice between them.\n\n"+
 				"API said: "+apiErr.Message,
 		)
 	case errCodePublicIPUnavailable:

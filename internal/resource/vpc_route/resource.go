@@ -24,9 +24,9 @@ import (
 var (
 	_ resource.Resource                = &vpcRouteResource{}
 	_ resource.ResourceWithImportState = &vpcRouteResource{}
-	// The plan-time default-route warning. A test asserts the same thing, but the
-	// framework resolves this interface at runtime, so a signature drift would
-	// otherwise turn the warning off silently rather than fail to build.
+	// The plan-time warnings. Tests assert the same thing, but the framework
+	// resolves this interface at runtime, so a signature drift would otherwise
+	// turn them off silently rather than fail to build.
 	_ resource.ResourceWithValidateConfig = &vpcRouteResource{}
 )
 
@@ -51,48 +51,90 @@ func NewResource() resource.Resource {
 	return &vpcRouteResource{}
 }
 
-// ValidateConfig warns at PLAN time that a default route takes this VPC's Public
-// IPs down.
+// ValidateConfig warns at PLAN time about the two things a route costs that are
+// invisible in the configuration: a default route takes this VPC's Public IPs
+// down, and ANY route to an instance lets that instance spoof the whole VPC.
 //
 // THIS IS THE CLIENT WHERE NOBODY IS WATCHING. The portal warns while the
 // customer types and the CLI prints before it writes; a `terraform apply` in CI
-// has no human in the loop at all, and the consequence — every Public IP in the
-// VPC stops serving, because the reply is routed by this same table — was
-// documented only in the schema description, i.e. only for a practitioner who
-// goes and reads the registry.
+// has no human in the loop at all.
 //
 // A WARNING, NOT AN ERROR: a forced tunnel is a legitimate and wanted setup, and
 // the platform accepts it. This says what it costs.
 //
-// Silent for the `internet` next hop, which the platform always refuses because
-// the VPC's gateway already provides that route — warning about a consequence
-// and then failing the apply is how you teach people to ignore warnings.
+// UNKNOWN IS NOT `internet`, and getting that wrong made this whole function
+// inert for the one configuration it exists for. `next_hop =
+// frostmoln_instance.appliance.private_ip` is the idiomatic spelling of the
+// forced-tunnel recipe, and a reference to a managed resource attribute is
+// UNKNOWN on the validate walk whatever state holds — so the old
+// `if cfg.NextHop.IsUnknown() { return }` guard produced ZERO diagnostics for it.
+// Measured, not reasoned: that config emitted no warning at all, Public-IP one
+// included. Only a next hop KNOWN to be `internet` may silence these.
+//
+// TWO CONDITIONS, NOT ONE. The Public-IP warning is about a default route
+// specifically, so it needs the destination. The forwarding grant is not: the
+// platform derives it from every route whose next hop is an address in the VPC,
+// and the attached-subnet half of what it grants does not depend on the
+// destination at all. Riding the default-route condition would leave the
+// ordinary case — which is the common one — unwarned.
 func (r *vpcRouteResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 	var cfg VPCRouteModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if cfg.Destination.IsUnknown() || cfg.NextHop.IsUnknown() {
-		return
-	}
-	if !isIPv4DefaultRoute(cfg.Destination.ValueString()) ||
-		cfg.NextHop.ValueString() == NextHopInternet {
+
+	// Silent for the `internet` next hop, which the platform always refuses for a
+	// default route because the VPC's gateway already provides that route, and
+	// which is not an instance so it earns no forwarding grant. Warning about a
+	// consequence and then failing the apply is how you teach people to ignore
+	// warnings.
+	knownHop := !cfg.NextHop.IsUnknown() && !cfg.NextHop.IsNull()
+	if knownHop && cfg.NextHop.ValueString() == NextHopInternet {
 		return
 	}
 
+	// Named when we can, described when we cannot. A warning that says nothing
+	// because the address is a reference is worth less than one that says it
+	// about "this route's next hop".
+	hop := "this route's next hop"
+	if knownHop {
+		hop = strconv.Quote(cfg.NextHop.ValueString())
+	}
+
+	if !cfg.Destination.IsUnknown() && isIPv4DefaultRoute(cfg.Destination.ValueString()) {
+		resp.Diagnostics.AddAttributeWarning(
+			path.Root("destination"),
+			"This default route stops Public IPs in this VPC from serving",
+			"A route to 0.0.0.0/0 captures all traffic leaving the VPC, replies included: an instance "+
+				"with a Public IP still receives inbound traffic, but its reply is routed by this same "+
+				"table — the destination is the internet client — so it goes to "+hop+" instead of out "+
+				"the gateway. Public IPs in this VPC stop serving for as long as this route exists, and "+
+				"work again once it is removed.\n\n"+
+				"Platform DNS and managed services keep working: they use routes more specific than a "+
+				"default route.\n\n"+
+				"This route also counts as two against the VPC's route limit.",
+		)
+	}
+
 	resp.Diagnostics.AddAttributeWarning(
-		path.Root("destination"),
-		"This default route stops Public IPs in this VPC from serving",
-		"A route to 0.0.0.0/0 captures all traffic leaving the VPC, replies included: an instance "+
-			"with a Public IP still receives inbound traffic, but its reply is routed by this same "+
-			"table — the destination is the internet client — so it goes to "+
-			strconv.Quote(cfg.NextHop.ValueString())+" instead of out the gateway. Public IPs in "+
-			"this VPC stop serving for as long as this route exists, and work again once it is "+
-			"removed.\n\n"+
-			"Platform DNS and managed services keep working: they use routes more specific than a "+
-			"default route.\n\n"+
-			"This route also counts as two against the VPC's route limit.",
+		path.Root("next_hop"),
+		"This route lets the next-hop instance source addresses it does not own",
+		"The platform permits it automatically when this route is written — there is nothing to "+
+			"configure and nothing to request.\n\n"+
+			"It covers every subnet attached to this VPC plus the destination of every route pointing "+
+			"at "+hop+", and it is not limited to a default route. A default route's destination is the "+
+			"whole address space, so an instance holding this VPC's default route may source ANY "+
+			"address, not only addresses inside the VPC. Security group rules that match on a source "+
+			"address or a source security group no longer constrain that instance, and it can also "+
+			"claim another instance's address on the subnet.\n\n"+
+			"Removing the last route naming "+hop+" is the only thing that withdraws this. It is NOT "+
+			"bounded by the instance's lifetime: it is re-derived onto whichever port holds the "+
+			"address, normally within ten minutes — so replacing the instance behind it restores "+
+			"forwarding by itself, and giving that address to a different instance hands that instance "+
+			"the permission.\n\n"+
+			"Who holds this: the next hops in `fm network vpc route list`. What to do about it: "+
+			"https://docs.frostmoln.se/network/vpc-routes#sending-a-vpc-through-your-own-appliance",
 	)
 }
 

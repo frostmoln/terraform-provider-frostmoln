@@ -938,17 +938,62 @@ func TestVPCRouteValidateConfigWarnsOnADefaultRoute(t *testing.T) {
 		return resp.Diagnostics
 	}
 
+	warnUnknownHop := func(t *testing.T, destination string) diag.Diagnostics {
+		t.Helper()
+		s := routeSchema(t)
+		obj := tftypes.NewValue(tftypes.Object{
+			AttributeTypes: map[string]tftypes.Type{
+				"id":          tftypes.String,
+				"vpc_id":      tftypes.String,
+				"destination": tftypes.String,
+				"next_hop":    tftypes.String,
+			},
+		}, map[string]tftypes.Value{
+			"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+			"vpc_id":      tftypes.NewValue(tftypes.String, "vpc-123"),
+			"destination": tftypes.NewValue(tftypes.String, destination),
+			"next_hop":    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		})
+		resp := &resource.ValidateConfigResponse{}
+		NewResource().(resource.ResourceWithValidateConfig).ValidateConfig(
+			context.Background(),
+			resource.ValidateConfigRequest{Config: tfsdk.Config{Raw: obj, Schema: s}},
+			resp,
+		)
+		return resp.Diagnostics
+	}
+
+	// detailMentioning returns the one warning whose detail contains marker, so
+	// the assertions below do not depend on the order the two warnings are added.
+	detailMentioning := func(t *testing.T, diags diag.Diagnostics, marker string) string {
+		t.Helper()
+		found := ""
+		for _, w := range diags.Warnings() {
+			if strings.Contains(w.Detail(), marker) {
+				if found != "" {
+					t.Fatalf("two warnings mention %q: %v", marker, diags)
+				}
+				found = w.Detail()
+			}
+		}
+		if found == "" {
+			t.Fatalf("no warning mentions %q: %v", marker, diags)
+		}
+		return found
+	}
+
 	t.Run("a default route warns, and does not fail the plan", func(t *testing.T) {
 		diags := warn(t, "0.0.0.0/0", "10.0.1.10")
 		if diags.HasError() {
 			t.Fatalf("a forced tunnel is legitimate and must not error: %v", diags)
 		}
-		if diags.WarningsCount() != 1 {
-			t.Fatalf("warnings = %d, want 1: %v", diags.WarningsCount(), diags)
+		// Two, and they say different things: the Public-IP consequence of a
+		// DEFAULT route, and the forwarding grant that ANY instance next hop earns.
+		if diags.WarningsCount() != 2 {
+			t.Fatalf("warnings = %d, want 2: %v", diags.WarningsCount(), diags)
 		}
-		detail := diags.Warnings()[0].Detail()
+		detail := detailMentioning(t, diags, "Public IPs in this VPC stop serving")
 		for _, want := range []string{
-			"Public IPs in this VPC stop serving",
 			"DNS and managed services keep working",
 			"counts as two",
 			"10.0.1.10",
@@ -973,11 +1018,80 @@ func TestVPCRouteValidateConfigWarnsOnADefaultRoute(t *testing.T) {
 		}
 	})
 
-	t.Run("silent for ordinary routes and near misses", func(t *testing.T) {
-		for _, destination := range []string{"203.0.113.0/24", "0.0.0.0/1", "128.0.0.0/1", "::/0"} {
-			if diags := warn(t, destination, "10.0.1.10"); len(diags) != 0 {
+	// THE TRAP THIS TEST EXISTS FOR. The platform derives the forwarding grant
+	// from EVERY route whose next hop is an address in the VPC, and the
+	// attached-subnet half of it does not depend on the destination — so a
+	// warning that rode isIPv4DefaultRoute would leave the ordinary case, which
+	// is the common one, silent. An ordinary route must warn about the grant and
+	// must NOT warn about Public IPs.
+	t.Run("every instance next hop warns about the forwarding grant", func(t *testing.T) {
+		for _, destination := range []string{"203.0.113.0/24", "0.0.0.0/1", "128.0.0.0/1", "::/0", "0.0.0.0/0"} {
+			diags := warn(t, destination, "10.0.1.10")
+			if diags.HasError() {
+				t.Fatalf("%s: must not error: %v", destination, diags)
+			}
+			detail := detailMentioning(t, diags, "not limited to a default route")
+			for _, want := range []string{
+				"10.0.1.10",
+				"Removing the last route naming",
+				"NOT bounded by the instance's lifetime",
+				"may source ANY address",
+				"claim another instance's address",
+				"source security group",
+				"fm network vpc route list",
+			} {
+				if !strings.Contains(detail, want) {
+					t.Errorf("%s: grant warning must mention %q: %s", destination, want, detail)
+				}
+			}
+			if destination != "0.0.0.0/0" && diags.WarningsCount() != 1 {
+				t.Errorf("%s: warnings = %d, want only the grant warning: %v", destination, diags.WarningsCount(), diags)
+			}
+		}
+	})
+
+	// The grant is the platform's, derived from the route rows; the `internet`
+	// token is not an instance and earns nothing.
+	t.Run("silent for every destination via internet", func(t *testing.T) {
+		for _, destination := range []string{"203.0.113.0/24", "0.0.0.0/1", "::/0"} {
+			if diags := warn(t, destination, NextHopInternet); len(diags) != 0 {
 				t.Errorf("%s: diags = %v, want none", destination, diags)
 			}
+		}
+	})
+
+	// THE BUG THIS TEST EXISTS FOR, and it made the whole function inert.
+	//
+	// `next_hop = frostmoln_instance.appliance.private_ip` is how the recipe is
+	// actually written, and a reference to a managed resource attribute is
+	// UNKNOWN on the validate walk whatever state holds. The old guard returned
+	// on ANY unknown, so that configuration — the one both warnings exist for —
+	// produced ZERO diagnostics. Measured before the fix, not reasoned.
+	//
+	// Only a next hop KNOWN to be `internet` may silence them.
+	t.Run("an unknown next hop still warns, because it is not known to be internet", func(t *testing.T) {
+		for _, destination := range []string{"0.0.0.0/0", "203.0.113.0/24"} {
+			diags := warnUnknownHop(t, destination)
+			if diags.HasError() {
+				t.Fatalf("%s: must not error: %v", destination, diags)
+			}
+			detail := detailMentioning(t, diags, "not limited to a default route")
+			// Described, since it cannot be named.
+			if !strings.Contains(detail, "this route's next hop") {
+				t.Errorf("%s: an unnamed hop must still be described: %s", destination, detail)
+			}
+			if strings.Contains(detail, `""`) {
+				t.Errorf("%s: an unknown hop must not render as an empty quoted string: %s", destination, detail)
+			}
+		}
+		// A default route with an unknown next hop still owes the Public-IP
+		// warning: that consequence is a property of the DESTINATION.
+		diags := warnUnknownHop(t, "0.0.0.0/0")
+		if diags.WarningsCount() != 2 {
+			t.Errorf("warnings = %d, want both: %v", diags.WarningsCount(), diags)
+		}
+		if diags := warnUnknownHop(t, "203.0.113.0/24"); diags.WarningsCount() != 1 {
+			t.Errorf("warnings = %d, want only the grant warning: %v", diags.WarningsCount(), diags)
 		}
 	})
 }

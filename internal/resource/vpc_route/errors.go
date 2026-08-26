@@ -48,8 +48,17 @@ const (
 	// tell "create frostmoln_gateway first" from "your input is malformed" to
 	// order its graph, and cannot from a generic invalid_input.
 	errCodeRouteNoInternetGateway = "ROUTE_NO_INTERNET_GATEWAY"
-	// errCodeRouteQuotaExceeded — the per-VPC route cap, counting the tenant's
-	// own routes only. A 403, never a 429.
+	// errCodeRouteQuotaExceeded — TWO limits, one code, different remedies.
+	//
+	// The per-VPC route cap, counting the tenant's own routes only; and
+	// network's ten-ranges-per-next-hop ceiling on the derived forwarding grant,
+	// which `routerService` deliberately answers with this existing code rather
+	// than a new one. Which one fired is not inferable from the code, so the
+	// copy names both and carries the server's message through — and it must
+	// keep doing so: "remove a route you no longer need" is unreachable advice
+	// for a VPC whose attached subnets alone fill the forwarding ceiling.
+	//
+	// A 403, never a 429.
 	errCodeRouteQuotaExceeded = "ROUTE_QUOTA_EXCEEDED"
 	// errCodeRouteNotFound — no route with that destination on this VPC.
 	//
@@ -262,11 +271,18 @@ func addRouteError(diags *diag.Diagnostics, op routeOp, err error) {
 			return
 		}
 		diags.AddError(
-			"This VPC's route limit is reached",
-			"The cap counts your own routes only; platform routes do not consume it. It is the same "+
-				"for every VPC on the platform rather than a per-tenant allowance, and a default "+
-				"route (0.0.0.0/0) counts as two — so remove a route "+
-				"you no longer need — or contact support if the cap itself is too low.\n\n"+apiErr.Message,
+			"A limit refused this route",
+			"TWO limits answer with this code, and their remedies differ. The message below says "+
+				"which one this was.\n\n"+
+				"The VPC ROUTE limit counts your own routes only; platform routes do not consume it. "+
+				"It is the same for every VPC on the platform rather than a per-tenant allowance, and a "+
+				"default route (0.0.0.0/0) counts as two — so remove a route you no longer need, or "+
+				"contact support if the cap itself is too low.\n\n"+
+				"The FORWARDING limit is ten address ranges per next-hop address: the VPC's attached "+
+				"subnets of the same address family are counted first and a default route counts as "+
+				"two, so a VPC with many subnets can reach it on a single route. Past that point "+
+				"removing routes does not help — point some of them at a second appliance address "+
+				"instead.\n\n"+apiErr.Message,
 		)
 	case errCodeRoutesUnavailable, errCodeRouteInternetUnavailable:
 		diags.AddError(
