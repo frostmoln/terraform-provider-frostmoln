@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.37.8] - 2026-08-26
+
+### 🐛 Bug Fixes
+
+- *(gateway)* Name every cause of the default-route refusal diagnostic (#389)
+
 ## [0.37.7] - 2026-08-26
 
 ### 🐛 Bug Fixes
