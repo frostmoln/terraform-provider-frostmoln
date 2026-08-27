@@ -20,7 +20,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
-	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
 )
 
 // Cluster and node-pool statuses (kubernetes service vocabulary). Deletes are
@@ -38,8 +37,9 @@ const (
 const kubeconfigFetchAttempts = 3
 
 var (
-	_ resource.Resource                = &kubernetesClusterResource{}
-	_ resource.ResourceWithImportState = &kubernetesClusterResource{}
+	_ resource.ResourceWithValidateConfig = &kubernetesClusterResource{}
+	_ resource.Resource                   = &kubernetesClusterResource{}
+	_ resource.ResourceWithImportState    = &kubernetesClusterResource{}
 )
 
 // NewResource returns a new kubernetes_cluster resource factory.
@@ -67,16 +67,58 @@ func (r *kubernetesClusterResource) getPollTimeout() time.Duration {
 	return 30 * time.Minute
 }
 
+// ValidateConfig refuses `public_ip_id` at PLAN time.
+//
+// 🔴 A DeprecationMessage IS NOT ENOUGH HERE, and the difference is a destroyed
+// cluster. A deprecation is a plan-time WARNING: the plan succeeds, the apply
+// starts, and the backend answers 400. That is survivable on a create. It is not
+// survivable on a REPLACEMENT — `public_ip_id` carries RequiresReplace, so a
+// replacement triggered by any other attribute (a version change, a vpc_id change,
+// an import diff) destroys the cluster FIRST and then issues the create the
+// backend refuses. The practitioner is left with no cluster and a configuration
+// that cannot be applied until they edit it.
+//
+// Refusing in ValidateConfig moves that to `terraform plan`, before anything is
+// destroyed, and matches what `fm-cli` does with --public-ip.
+func (r *kubernetesClusterResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var cfg KubernetesClusterModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	// Unknown (interpolated) values are skipped — the backend stays authoritative,
+	// and a value that is not yet resolved cannot be judged here.
+	if cfg.PublicIPID.IsNull() || cfg.PublicIPID.IsUnknown() || cfg.PublicIPID.ValueString() == "" {
+		return
+	}
+	resp.Diagnostics.AddAttributeError(
+		path.Root("public_ip_id"),
+		"public_ip_id is no longer supported",
+		"The Kubernetes API endpoint takes no customer-provided address, and any value is "+
+			"rejected by the API. Remove public_ip_id from this resource.\n\n"+
+			"To expose a workload, create a Kubernetes Service of type LoadBalancer inside the "+
+			"cluster; the platform provisions a load balancer for it and the address is chosen "+
+			"there, not on the cluster.\n\n"+
+			"If removing the attribute makes the plan want to REPLACE an existing cluster, add "+
+			"lifecycle { ignore_changes = [public_ip_id] } as well — the existing cluster keeps "+
+			"the address it was created with.",
+	)
+}
+
 func (r *kubernetesClusterResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_kubernetes_cluster"
 }
 
 func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		// NO gateway-ordering note. The cluster stopped being an attaching surface
+		// when its API endpoint stopped taking a public address (public_ip_id is
+		// refused now) — there is no attach left to order, and a note telling a
+		// reader to sequence one would send them looking for a dependency that
+		// cannot arise. See schemadoc.NotAttaching for the recorded reason.
 		Description: "Manages a managed Kubernetes cluster in the Frostmoln platform. " +
 			"The cluster owns its initial node pool (created embedded, scaled in-place). " +
-			"Additional node pools are managed with the frostmoln_kubernetes_node_pool resource.\n\n" +
-			schemadoc.GatewayOrderingNote("frostmoln_kubernetes_cluster"),
+			"Additional node pools are managed with the frostmoln_kubernetes_node_pool resource.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the cluster.",
@@ -133,18 +175,22 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 				},
 			},
 			"public_ip_id": schema.StringAttribute{
-				Description: "The ID of an existing public IP to use for the cluster API endpoint (bring-your-own public IP). " +
-					"Write-only on the API: reads expose only the resolved address (public_ip), so imports cannot recover " +
-					"this value — after importing a cluster created with a BYO public IP, omit this attribute or add " +
-					"`lifecycle { ignore_changes = [public_ip_id] }`, otherwise the next plan will want to replace the " +
-					"cluster. A BYO public IP survives cluster deletion. This is the API endpoint's address, and " +
-					"the only one this resource takes: the cluster no longer provisions a worker ingress load " +
-					"balancer — expose workloads with a Service of type LoadBalancer, which gets its own.\n\n" +
-					"Where this attribute is accepted at all, the address lands on a port in your own VPC " +
-					"and carries the same gateway dependency as every other attachment — see " +
-					"the ordering note on this resource above. On some accounts this attribute is refused " +
-					"outright (400) — the cluster API endpoint takes no address of yours there — so if you " +
-					"get that refusal, the ordering it describes does not arise for the API endpoint.",
+				DeprecationMessage: "public_ip_id is no longer supported and any value is rejected with a 400. " +
+					"Remove it from your configuration. The Kubernetes API endpoint takes no customer-provided " +
+					"address; expose workloads with a Service of type LoadBalancer, which gets its own.",
+				Description: "REMOVED. Any value is rejected by the API with a 400, on every account — remove this " +
+					"attribute from your configuration.\n\n" +
+					"It supplied a bring-your-own address for the cluster API endpoint's public load balancer. " +
+					"Clusters no longer have one: the API endpoint takes no address of yours, and workload " +
+					"exposure is chosen per Service — create a Kubernetes Service of type LoadBalancer and the " +
+					"platform provisions a load balancer for it.\n\n" +
+					"An existing cluster created with a BYO public IP is unaffected and keeps its address; only " +
+					"CREATE refuses the attribute.\n\n" +
+					"🔴 REMOVING IT CAN PLAN A REPLACEMENT. This attribute forces replacement and is never read " +
+					"back from the API, so deleting the line is itself the change that makes Terraform want to " +
+					"destroy and recreate the cluster. Add `lifecycle { ignore_changes = [public_ip_id] }` " +
+					"**as well as** removing it — the two are not alternatives, and only the pair is " +
+					"non-destructive.",
 				Optional: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),

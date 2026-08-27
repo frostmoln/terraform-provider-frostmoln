@@ -159,13 +159,17 @@ func (m *KubernetesClusterModel) toCreateRequest() apiCreateClusterRequest {
 	if !m.Region.IsNull() && !m.Region.IsUnknown() {
 		req.Region = m.Region.ValueString()
 	}
-	if !m.PublicIPID.IsNull() && !m.PublicIPID.IsUnknown() {
-		req.PublicIPID = m.PublicIPID.ValueString()
-	}
-	// Never send `scheme`, `ingressScheme` or `ingressPublicIpId`: all three are
-	// retired and the backend answers 400 to any of them, so a body carrying one
-	// could only turn a valid configuration into a failed apply. Guarded on the wire
-	// bytes by TestToCreateRequestRetiredKeysNeverSent.
+	// Never send `publicIpId`, `scheme`, `ingressScheme` or `ingressPublicIpId`:
+	// all four are retired and the backend answers 400 to any of them, so a body
+	// carrying one could only turn a valid configuration into a failed apply.
+	// Guarded on the wire bytes by TestToCreateRequestRetiredKeysNeverSent.
+	//
+	// 🔴 publicIpId JOINED THAT SET on 2026-08-27 and it is the DANGEROUS one,
+	// because the attribute is RequiresReplace. Sending it would not merely fail an
+	// apply: a replacement triggered by ANY other attribute destroys the cluster
+	// first and only then issues the create that the backend refuses — leaving the
+	// practitioner with no cluster and a configuration that cannot be applied.
+	// ValidateConfig refuses it at PLAN time instead, before anything is destroyed.
 
 	// Addons: only send the field when the practitioner set it (known value).
 	// When unset (null/unknown, i.e. Computed-not-yet-resolved), leave req.Addons

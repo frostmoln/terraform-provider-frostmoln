@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -72,8 +73,12 @@ func TestToCreateRequestFull(t *testing.T) {
 	if req.KubernetesVersion != "1.35" || req.ControlPlaneTier != "standard" || req.Region != "falkenberg" {
 		t.Errorf("unexpected optional fields: %+v", req)
 	}
-	if req.PublicIPID != "11111111-2222-3333-4444-555555555555" {
-		t.Errorf("unexpected publicIpId: %s", req.PublicIPID)
+	// 🔴 INVERTED. publicIpId is retired and the API answers 400 to any value, so
+	// the model must NEVER put it on the wire even when the practitioner set it —
+	// ValidateConfig refuses it at plan time first. Sending it would turn a
+	// replacement into a destroy-with-no-recreate.
+	if req.PublicIPID != "" {
+		t.Errorf("publicIpId is retired and must never be sent, got %s", req.PublicIPID)
 	}
 	if req.InitialNodePool.Name != "workers" || req.InitialNodePool.NodeCount != 3 {
 		t.Errorf("unexpected initial pool: %+v", req.InitialNodePool)
@@ -141,8 +146,10 @@ func TestFromAPINulls(t *testing.T) {
 
 // TestToCreateRequestRetiredKeysNeverSent is the guard that stops a retired key
 // silently coming back on the wire. It started as the `scheme` guard, gained
-// `ingressScheme` / `ingressPublicIpId` when those were introduced, and KEEPS all
-// three now that the worker ingress load balancer is retired too — a Service of
+// `ingressScheme` / `ingressPublicIpId` when those were introduced, KEEPS all
+// three now that the worker ingress load balancer is retired too, and gained
+// `publicIpId` on 2026-08-27 when the API endpoint stopped taking a customer
+// address at all — a Service of
 // type=LoadBalancer produces a per-Service load balancer instead, and the
 // kubernetes service answers 400 to any of the three keys. A create body carrying
 // one could only turn a valid configuration into a failed apply.
@@ -202,7 +209,7 @@ func TestToCreateRequestRetiredKeysNeverSent(t *testing.T) {
 			if err != nil {
 				t.Fatalf("marshal failed: %v", err)
 			}
-			for _, key := range []string{`"scheme"`, `"ingressScheme"`, `"ingressPublicIpId"`} {
+			for _, key := range []string{`"publicIpId"`, `"scheme"`, `"ingressScheme"`, `"ingressPublicIpId"`} {
 				if bytes.Contains(b, []byte(key)) {
 					t.Errorf("the retired key %s must never reach the wire, got %s", key, b)
 				}
@@ -413,20 +420,93 @@ func TestSchema(t *testing.T) {
 	}
 }
 
-// TestKubernetesClusterHasNoValidateConfig documents a deliberate removal.
+// TestKubernetesClusterValidateConfigRefusesPublicIPID pins the validator's ONE
+// job, and replaces TestKubernetesClusterHasNoValidateConfig.
 //
-// The resource implemented ValidateConfig for exactly two plan-time cross-field
-// checks, both about the retired worker ingress load balancer: an
-// ingress_public_ip_id without ingress_scheme = "public", and the same address in
-// public_ip_id and ingress_public_ip_id. Neither combination is expressible any
-// more — the attributes are gone — so the method would have nothing left to read.
-// The unknown-initial_node_pool regression it also carried (a *struct target
-// cannot hold an unknown, so the validator read single attributes via
-// GetAttribute) cannot recur without a validator to hit.
-func TestKubernetesClusterHasNoValidateConfig(t *testing.T) {
-	if _, ok := NewResource().(resource.ResourceWithValidateConfig); ok {
-		t.Error("both checks this validated were about the retired ingress load balancer; a " +
-			"ValidateConfig here would have no cross-field invariant left to enforce")
+// That test recorded a deliberate REMOVAL: ValidateConfig existed for exactly two
+// plan-time CROSS-FIELD checks, both about the retired worker ingress load
+// balancer (an ingress_public_ip_id without ingress_scheme="public", and the same
+// address in both public_ip_id and ingress_public_ip_id). Neither combination is
+// expressible any more, so the method had nothing left to read. That reasoning was
+// about CROSS-FIELD invariants and it still stands — do not bring those back.
+//
+// What changed on 2026-08-27 is that a SINGLE-attribute refusal became necessary,
+// which the old rationale never spoke to. public_ip_id is retired and the API
+// answers 400 to any value. A DeprecationMessage alone only WARNS, so the failure
+// would land at apply — and because the attribute is RequiresReplace, a
+// replacement destroys the cluster before issuing the create that then gets
+// refused, leaving no cluster and an unappliable config. Refusing at plan time is
+// what stops that, and it is why this validator exists at all.
+func TestKubernetesClusterValidateConfigRefusesPublicIPID(t *testing.T) {
+	ctx := context.Background()
+	r := NewResource()
+	v, ok := r.(resource.ResourceWithValidateConfig)
+	if !ok {
+		t.Fatal("the resource must implement ValidateConfig to refuse public_ip_id at plan time")
+	}
+	var schemaResp resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
+
+	cfgWith := func(publicIPID interface{}) tfsdk.Config {
+		tfType := schemaResp.Schema.Type().TerraformType(ctx)
+		nullStr := func() tftypes.Value { return tftypes.NewValue(tftypes.String, nil) }
+		vals := map[string]tftypes.Value{
+			"name":         tftypes.NewValue(tftypes.String, "my-cluster"),
+			"vpc_id":       tftypes.NewValue(tftypes.String, "vpc-1"),
+			"subnet_id":    tftypes.NewValue(tftypes.String, "sn-1"),
+			"public_ip_id": tftypes.NewValue(tftypes.String, publicIPID),
+		}
+		for name := range schemaResp.Schema.Attributes {
+			if _, done := vals[name]; done {
+				continue
+			}
+			switch name {
+			case "addons":
+				vals[name] = tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, nil)
+			case "initial_node_pool":
+				vals[name] = tftypes.NewValue(
+					schemaResp.Schema.Attributes[name].GetType().TerraformType(ctx), nil)
+			case "ha_enabled":
+				vals[name] = tftypes.NewValue(tftypes.Bool, nil)
+			default:
+				vals[name] = nullStr()
+			}
+		}
+		return tfsdk.Config{Schema: schemaResp.Schema, Raw: tftypes.NewValue(tfType, vals)}
+	}
+
+	for name, tc := range map[string]struct {
+		publicIPID interface{}
+		wantError  bool
+	}{
+		"unset is fine":        {nil, false},
+		"empty string is fine": {"", false},
+		"a real id is refused": {"3f2504e0-4f89-41d3-9a0c-0305e82c3301", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resp := &resource.ValidateConfigResponse{}
+			v.ValidateConfig(ctx, resource.ValidateConfigRequest{Config: cfgWith(tc.publicIPID)}, resp)
+			if tc.wantError && !resp.Diagnostics.HasError() {
+				t.Fatal("expected public_ip_id to be refused at plan time")
+			}
+			if !tc.wantError && resp.Diagnostics.HasError() {
+				t.Fatalf("expected no error, got: %v", resp.Diagnostics.Errors())
+			}
+			if !tc.wantError {
+				return
+			}
+			// The diagnostic has to be actionable: it must name the replacement,
+			// and it must warn about the removal-triggers-replacement trap.
+			var joined string
+			for _, d := range resp.Diagnostics.Errors() {
+				joined += d.Summary() + " " + d.Detail()
+			}
+			for _, want := range []string{"type LoadBalancer", "ignore_changes"} {
+				if !strings.Contains(joined, want) {
+					t.Errorf("the refusal must mention %q so the practitioner knows what to do; got: %s", want, joined)
+				}
+			}
+		})
 	}
 }
 
@@ -554,8 +634,11 @@ func TestCreate(t *testing.T) {
 			if err := json.Unmarshal(rawBody, &body); err != nil {
 				t.Errorf("failed to decode request: %v", err)
 			}
-			if body.PublicIPID != "11111111-2222-3333-4444-555555555555" {
-				t.Errorf("expected publicIpId in create request, got %q", body.PublicIPID)
+			// 🔴 INVERTED, and asserted on the WIRE: publicIpId is retired and the
+			// API answers 400 to it, so it must be absent from the create body even
+			// though the plan carried a value.
+			if body.PublicIPID != "" {
+				t.Errorf("publicIpId is retired and must not reach the wire, got %q", body.PublicIPID)
 			}
 			// addons was left unset in the plan → the field must be OMITTED so
 			// the server applies its catalog defaults (nil pointer, no "addons"

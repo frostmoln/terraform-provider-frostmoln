@@ -110,15 +110,6 @@ var AttachingSurfaces = []AttachingSurface{
 		Why: "the saga attaches the address to the VIP port in the vpc_id/subnet_id this resource names (provisioning create_load_balancer.go -> AssociatePublicIPResource)",
 	},
 	{
-		// Re-keyed from `ingress_public_ip_id` when the platform-provisioned worker
-		// ingress load balancer was retired. The cluster is STILL a surface — the API
-		// endpoint's address is the one that remains — so the row moves rather than
-		// going away, and `public_ip_id` stops needing a NotAttaching exemption.
-		TypeName: "frostmoln_kubernetes_cluster", Attribute: "public_ip_id",
-		When: "for the API endpoint, on accounts where it takes a public address", Placement: OnResource,
-		Why: "the API endpoint's load-balancer VIP is built in the customer's own VPC and subnet, and the address is associated to that VIP port (provisioning create_kubernetes_cluster.go -> AssociatePublicIPResource); the address is platform-allocated when the configuration names none, which is why the note goes on the resource",
-	},
-	{
 		TypeName: "frostmoln_nginx_instance", Attribute: "public",
 		When: "when `public` is true", Placement: OnResource,
 		Why: "the expose saga attaches a platform-allocated address to the instance's engine port, in the vpc_id/subnet_id this resource names (provisioning expose_webserver.go -> AssociatePublicIPResource)",
@@ -142,6 +133,13 @@ var NotAttaching = map[string]string{
 		"depends_on here would be the cycle the note warns about.",
 	"frostmoln_public_ip_association.public_ip_id": "The whole resource is the attachment and carries the " +
 		"note; a second copy on the attribute would render it twice on one page.",
+	"frostmoln_kubernetes_cluster.public_ip_id": "It attaches NOTHING any more. It was re-keyed here from " +
+		"`ingress_public_ip_id` when the worker ingress load balancer was retired, on the grounds that the API " +
+		"endpoint's own address remained — that address is now gone too. Every new cluster's apiserver is a " +
+		"private VIP with no public address (kubernetes, ADR-0017 amended 2026-08-27), the API refuses any " +
+		"value with a 400, and no create can associate one. The attribute is retained, deprecated, purely so a " +
+		"stale configuration is told so rather than having the value silently dropped. Do NOT restore the " +
+		"ordering note: there is no attach to order.",
 }
 
 // surfacesOtherThan renders the set for the note's prose, excluding the page it
