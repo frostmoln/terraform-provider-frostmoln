@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.37.10] - 2026-08-27
+
+### 🐛 Bug Fixes
+
+- *(network)* In-place updates are PUT, not PATCH — nothing routes PATCH (#393)
+
 ## [0.37.9] - 2026-08-26
 
 ### 🐛 Bug Fixes
