@@ -201,7 +201,8 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 					"frostmoln_kubernetes_addons data source for available keys). Addons are applied ONCE, at " +
 					"cluster creation, from first-boot manifests — they cannot be changed on an existing cluster, so " +
 					"changing this set REPLACES the cluster. Leave it unset to apply the platform default addons " +
-					"(currently external-secrets); set it to an explicit empty set ([]) to install no addons.",
+					"(the frostmoln_kubernetes_addons data source reports which are defaulted); set it to an " +
+					"explicit empty set ([]) to select none.",
 				Optional:    true,
 				Computed:    true,
 				ElementType: types.StringType,

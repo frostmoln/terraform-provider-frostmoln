@@ -66,7 +66,7 @@ output "kubeconfig" {
 
 ### Optional
 
-- `addons` (Set of String) The set of cluster-addon catalog keys to install at cluster creation (see the frostmoln_kubernetes_addons data source for available keys). Addons are applied ONCE, at cluster creation, from first-boot manifests — they cannot be changed on an existing cluster, so changing this set REPLACES the cluster. Leave it unset to apply the platform default addons (currently external-secrets); set it to an explicit empty set ([]) to install no addons.
+- `addons` (Set of String) The set of cluster-addon catalog keys to install at cluster creation (see the frostmoln_kubernetes_addons data source for available keys). Addons are applied ONCE, at cluster creation, from first-boot manifests — they cannot be changed on an existing cluster, so changing this set REPLACES the cluster. Leave it unset to apply the platform default addons (the frostmoln_kubernetes_addons data source reports which are defaulted); set it to an explicit empty set ([]) to select none.
 - `control_plane_tier` (String) The control-plane tier key (see the frostmoln_kubernetes_tiers data source for canonical keys). Defaults to the platform default tier.
 - `public_ip_id` (String, Deprecated) REMOVED. Any value is rejected by the API with a 400, on every account — remove this attribute from your configuration.
 
