@@ -30,6 +30,15 @@ repos:
         language: system
         pass_filenames: false
         types: [go]
+      # The mirror guard's skip path only fires on a rerun of an older tag, which
+      # normal CI never does -- so nothing but this would notice it breaking, and
+      # the breakage is silent (public main quietly rewinds).
+      - id: mirror-guard
+        name: goreleaser mirror guard never rewinds public main
+        entry: scripts/test-mirror-guard.sh
+        language: system
+        pass_filenames: false
+        files: ^(\.gitea/workflows/goreleaser\.yml|scripts/test-mirror-guard\.sh)$
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.5.0
     hooks:

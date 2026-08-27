@@ -139,7 +139,53 @@ jobs:
           git remote add github "$remote"
           # GitHub main is a downstream-only public mirror (no PRs land there), so a
           # force push is safe. The registry reads docs/LICENSE/manifest from this tag.
-          git push github "HEAD:refs/heads/main" --force
+          #
+          # "Safe" was reasoned about FORWARD pushes only. A RERUN of an older tag's
+          # run checks out that older tree, and an unguarded --force then REWINDS
+          # public main to it -- silently un-publishing every later commit until the
+          # next release pushes forward again. Reruns are the normal repair path when
+          # a release dies mid-flight (both v0.37.8 and v0.37.10 died on runner disk
+          # exhaustion), so this is reachable, not theoretical.
+          #
+          # Guard on the invariant itself -- never rewind -- rather than on a proxy
+          # like "is this the newest tag": a version-sort proxy mis-ranks a prerelease
+          # train (git sorts v1.0.0-rc.1 AFTER v1.0.0 without versionsort.suffix), and
+          # this workflow gets copied between repos, one of which already has one.
+          #
+          # Skip ONLY when HEAD is strictly an ancestor of the mirror's main, i.e. the
+          # push would move it backwards. Ahead, equal, diverged or first-ever-push all
+          # still force, so Gitea stays authoritative and behaviour is unchanged for
+          # every normal release. cat-file -e guards a remote tip absent from our object
+          # store (a diverged mirror), where "ancestor" is unanswerable and force is right.
+          # Decide from a LOCAL ref, not a network snapshot. The earlier form
+          # asked `cat-file -e` whether we happened to hold the mirror's tip and
+          # read "missing" as "diverged, forcing is fine" -- which a SHALLOW
+          # checkout is indistinguishable from, so narrowing fetch-depth (the most
+          # ordinary CI-speed edit there is) would have silently disarmed the guard
+          # while every case still looked green. Fetching removes that coupling.
+          git fetch -q --no-tags github "+refs/heads/main:refs/remotes/github/main" || true
+          remote_main="$(git rev-parse -q --verify refs/remotes/github/main || true)"
+          head_sha="$(git rev-parse HEAD)"
+          if [ -z "$remote_main" ] || [ "$remote_main" = "$head_sha" ] \
+             || git merge-base --is-ancestor "$remote_main" "$head_sha"; then
+            # Absent, equal, or a fast-forward: advancing the mirror is safe.
+            # Deliberately NOT --force. Every case that reaches here is a
+            # fast-forward, so a plain push succeeds -- and if the mirror moved
+            # between the fetch above and this line, it fails loudly instead of
+            # clobbering whatever arrived in between.
+            git push github "HEAD:refs/heads/main"
+          elif git merge-base --is-ancestor "$head_sha" "$remote_main"; then
+            # Strictly behind: a rerun of an older tag's run. Never rewind public
+            # main. The tag push below still happens, and the tag is what the
+            # registry ingests, so the release still publishes.
+            echo "::notice::${TAG} is behind the GitHub mirror's main (${remote_main}); leaving main alone. The tag below is what the registry ingests."
+          else
+            # Neither ancestor nor descendant. Unreachable while tags are only cut
+            # from main, so treat it as a bug rather than quietly force-pushing
+            # over a public repository.
+            echo "::error::${TAG} has diverged from the GitHub mirror's main (${remote_main}); refusing to rewrite it."
+            exit 1
+          fi
           # No --force on the tag: re-publishing an already-released version must fail
           # loudly, not silently overwrite an ingested tag.
           git push github "refs/tags/${TAG}"
