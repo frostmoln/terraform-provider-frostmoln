@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.38.0] - 2026-08-27
+
+### 🚀 Features
+
+- *(kubernetes_cluster)* [**breaking**] Refuse public_ip_id at plan time; stop sending it (#395)
+
 ## [0.37.10] - 2026-08-27
 
 ### 🐛 Bug Fixes
