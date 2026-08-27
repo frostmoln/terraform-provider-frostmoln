@@ -56,7 +56,7 @@ func (r *iamPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			"policy is owned by the provider's selected tenant (`tenant_id`, else the " +
 			"credential's default). Authoring requires an fm CLI / OIDC session — a machine " +
 			"token may not author or attach a policy.\n\n" +
-			"~> **Upgrade note.** Before provider v0.38.0 this resource ignored `tenant_id` and " +
+			"~> **Upgrade note.** Before provider v0.37.9 this resource ignored `tenant_id` and " +
 			"always acted on the credential's home tenant. If your configuration sets a " +
 			"non-home `tenant_id`, existing policies live in the HOME tenant: the first plan " +
 			"after upgrading reads a 404, drops them from state and proposes a create in the " +

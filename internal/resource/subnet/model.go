@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // SubnetModel is the Terraform state model for a subnet.
@@ -55,9 +57,23 @@ type apiCreateSubnetRequest struct {
 	Tags        map[string]string `json:"tags,omitempty"`
 }
 
-// apiUpdateSubnetRequest is the API request to update a subnet (tags only).
+// apiUpdateSubnetRequest is the API request to update a subnet.
+//
+// Name and Description are NOT optional extras. `name` is Required in the schema
+// and neither attribute carries RequiresReplace, so a change to either routes to
+// Update — and while this struct carried only Tags, that update sent nothing,
+// network kept the old value, fromAPI wrote the OLD value back into state, and
+// the apply died with "Provider produced inconsistent result after apply". It
+// went unnoticed because the subnet update path was unroutable at the gateway,
+// so no subnet update ever got far enough to expose it.
+//
+// Pointers with omitempty, matching apiUpdateVPCRequest: network merges on
+// `if req.X != nil`, so an omitted field means "leave it", and description is
+// sent as an explicit "" to clear it.
 type apiUpdateSubnetRequest struct {
-	Tags map[string]string `json:"tags,omitempty"`
+	Name        *string           `json:"name,omitempty"`
+	Description *string           `json:"description,omitempty"`
+	Tags        map[string]string `json:"tags"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -99,11 +115,20 @@ func (m *SubnetModel) toCreateRequest(ctx context.Context, diags *diag.Diagnosti
 func (m *SubnetModel) toUpdateRequest(ctx context.Context, diags *diag.Diagnostics) apiUpdateSubnetRequest {
 	req := apiUpdateSubnetRequest{}
 
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		tags := make(map[string]string)
-		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		req.Tags = tags
+	if !m.Name.IsNull() && !m.Name.IsUnknown() {
+		name := m.Name.ValueString()
+		req.Name = &name
 	}
+
+	if !m.Description.IsNull() && !m.Description.IsUnknown() {
+		desc := m.Description.ValueString()
+		req.Description = &desc
+	} else if m.Description.IsNull() {
+		empty := ""
+		req.Description = &empty
+	}
+
+	req.Tags = tftags.ForUpdate(ctx, m.Tags, diags)
 
 	return req
 }

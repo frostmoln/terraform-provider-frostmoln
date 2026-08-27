@@ -260,7 +260,19 @@ func (r *vpcResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		return
 	}
 
-	apiResp, err := r.client.Patch(ctx, r.client.TenantPath(fmt.Sprintf("/vpcs/%s", state.ID.ValueString())), updateReq)
+	// PUT, not PATCH. The network service registers PUT /vpcs/{id} for the
+	// in-place name/description/tags update (vpc_handler.go), and the gateway
+	// routes it there — `network-vpcs`, methods GET/PUT/OPTIONS. PATCH is
+	// registered by NOBODY: not by network, and not by provisioning, which owns
+	// only the POST/DELETE lifecycle. So the PATCH this used to send matched no
+	// gateway rule at all and came back PATH_NOT_ROUTED, which made
+	// frostmoln_vpc a create/delete-only resource — any name, description or
+	// tag change was unappliable, and combined with a description the platform
+	// did not persist, unrecoverable without a destroy/recreate.
+	//
+	// The same split applies to subnets, security groups and public IPs: their
+	// in-place update is a synchronous PUT on network, never a workflow write.
+	apiResp, err := r.client.Put(ctx, r.client.TenantPath(fmt.Sprintf("/vpcs/%s", state.ID.ValueString())), updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Update VPC", err.Error())
 		return

@@ -235,7 +235,7 @@ func TestPublicIPResourceCRUD(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(fipDisassociated)
 
-		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-test-1":
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-test-1":
 			w.WriteHeader(http.StatusOK)
 			if associated {
 				_ = json.NewEncoder(w).Encode(fipAssociated)
@@ -1502,6 +1502,12 @@ func TestFIPResourceUpdateDisassociateOnly(t *testing.T) {
 }
 
 func TestFIPResourceUpdateTagsOnly(t *testing.T) {
+	// The in-place update MUST be PUT. network registers PUT /public-ips/{id};
+	// NOBODY registers PATCH — not network, not provisioning — so a PATCH
+	// matches no api-gateway rule and comes back PATH_NOT_ROUTED. The fake
+	// answers on ANY verb so a regression reads as "wrong verb", not as a 404.
+	var updateMethod string
+
 	fipResp := apiPublicIP{
 		ID:        "fip-tags-1",
 		Address:   "203.0.113.50",
@@ -1513,8 +1519,9 @@ func TestFIPResourceUpdateTagsOnly(t *testing.T) {
 	var patchCalled bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-tags-1":
+		case r.Method != http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-tags-1":
 			patchCalled = true
+			updateMethod = r.Method
 			_ = json.NewEncoder(w).Encode(fipResp)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-tags-1":
 			_ = json.NewEncoder(w).Encode(fipResp)
@@ -1571,7 +1578,11 @@ func TestFIPResourceUpdateTagsOnly(t *testing.T) {
 	}
 
 	if !patchCalled {
-		t.Error("expected PATCH to be called for tags update")
+		t.Error("expected the tag update call to be made")
+	}
+
+	if updateMethod != http.MethodPut {
+		t.Fatalf("in-place public-IP tag update sent %s, want PUT (PATCH is routed nowhere)", updateMethod)
 	}
 }
 
@@ -1705,7 +1716,7 @@ func TestFIPResourceUpdateAssociateError(t *testing.T) {
 func TestFIPResourceUpdatePatchError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-pe-1":
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-pe-1":
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "patch failed"},

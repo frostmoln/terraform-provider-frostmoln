@@ -89,7 +89,7 @@ func (r *workloadIdentityBindingResource) Schema(_ context.Context, _ resource.S
 			"(per-resource targets, constraints, explicit denies), so prefer it for new bindings. " +
 			"The binding is owned by the provider's selected tenant (`tenant_id`, else the " +
 			"credential's default), and its `cluster_id` must belong to that same tenant.\n\n" +
-			"~> **Upgrade note.** Before provider v0.38.0 this resource ignored `tenant_id` and " +
+			"~> **Upgrade note.** Before provider v0.37.9 this resource ignored `tenant_id` and " +
 			"always acted on the credential's home tenant — a binding for a non-home cluster " +
 			"failed at apply rather than landing in the wrong place. A configuration that sets " +
 			"a non-home `tenant_id` and previously applied has its bindings in the HOME tenant: " +

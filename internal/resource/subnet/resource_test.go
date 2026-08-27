@@ -237,7 +237,7 @@ func TestSubnetResourceCRUD(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(subnetData)
 
-		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/subnets/subnet-test-1":
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-123/subnets/subnet-test-1":
 			subnetData.Tags = map[string]string{"env": "updated"}
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(subnetData)
@@ -296,7 +296,7 @@ func TestSubnetResourceCRUD(t *testing.T) {
 	updateReq := apiUpdateSubnetRequest{
 		Tags: map[string]string{"env": "updated"},
 	}
-	patchResp, err := c.Patch(ctx, c.TenantPath("/subnets/subnet-test-1"), updateReq)
+	patchResp, err := c.Put(ctx, c.TenantPath("/subnets/subnet-test-1"), updateReq)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -599,7 +599,85 @@ func TestSubnetResourceReadNotFoundRemovesState(t *testing.T) {
 	}
 }
 
+// The subnet update must actually CARRY the name.
+//
+// apiUpdateSubnetRequest was tags-only, while `name` is Required with no
+// RequiresReplace — so a rename sent nothing, network kept the old name,
+// fromAPI wrote the old name back into state, and the apply failed with
+// "Provider produced inconsistent result after apply". Nobody saw it because
+// the update never reached network: the api-gateway sent PUT /subnets/{id} to
+// provisioning, which has no handler for it.
+func TestSubnetUpdateSendsTheName(t *testing.T) {
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/tenants/t-123/subnets/subnet-upd-1" && r.Method == http.MethodPut {
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			_ = json.NewEncoder(w).Encode(apiSubnet{
+				ID: "subnet-upd-1", Name: "upd-subnet", CIDR: "10.0.1.0/24",
+				VPCID: "vpc-1", Status: "available", AvailableIPs: 250,
+				CreatedAt: "2025-06-01T12:00:00Z",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := subnetSchemaHelper(t)
+	mk := func(name string) tftypes.Value {
+		return tftypes.NewValue(subnetObjectType(), map[string]tftypes.Value{
+			"id":            tftypes.NewValue(tftypes.String, "subnet-upd-1"),
+			"name":          tftypes.NewValue(tftypes.String, name),
+			"description":   tftypes.NewValue(tftypes.String, nil),
+			"cidr":          tftypes.NewValue(tftypes.String, "10.0.1.0/24"),
+			"vpc_id":        tftypes.NewValue(tftypes.String, "vpc-1"),
+			"zone":          tftypes.NewValue(tftypes.String, nil),
+			"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
+			"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+			"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+			"status":        tftypes.NewValue(tftypes.String, "available"),
+			"available_ips": tftypes.NewValue(tftypes.Number, 250),
+			"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		})
+	}
+
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s}}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: s, Raw: mk("upd-subnet")},
+		State: tfsdk.State{Schema: s, Raw: mk("old-subnet")},
+	}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	if got, ok := body["name"]; !ok || got != "upd-subnet" {
+		t.Fatalf("update body carried name=%v (present=%v); a rename that sends no name is silently dropped", got, ok)
+	}
+	// tags removed from config must CLEAR, so the field is present and empty —
+	// never omitted, which the backend reads as "keep".
+	tags, ok := body["tags"]
+	if !ok {
+		t.Fatal("update body omitted tags entirely — the backend reads that as KEEP, so tags can never be cleared")
+	}
+	if m, isMap := tags.(map[string]any); !isMap || len(m) != 0 {
+		t.Fatalf("tags = %v, want an empty object", tags)
+	}
+}
+
 func TestSubnetResourceUpdate(t *testing.T) {
+	// The in-place update MUST be PUT. network registers PUT /subnets/{id};
+	// NOBODY registers PATCH — not network, not provisioning — so a PATCH
+	// matches no api-gateway rule and comes back PATH_NOT_ROUTED. The fake
+	// answers on ANY verb so a regression reads as "wrong verb", not as a 404.
+	var updateMethod string
+
 	subnetResp := apiSubnet{
 		ID:           "subnet-upd-1",
 		Name:         "upd-subnet",
@@ -612,7 +690,8 @@ func TestSubnetResourceUpdate(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/subnets/subnet-upd-1" {
+		if r.URL.Path == "/v1/tenants/t-123/subnets/subnet-upd-1" {
+			updateMethod = r.Method
 			_ = json.NewEncoder(w).Encode(subnetResp)
 			return
 		}
@@ -668,6 +747,10 @@ func TestSubnetResourceUpdate(t *testing.T) {
 
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	if updateMethod != http.MethodPut {
+		t.Fatalf("in-place subnet update sent %s, want PUT (PATCH is routed nowhere)", updateMethod)
 	}
 
 	var model SubnetModel

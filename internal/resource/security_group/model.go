@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // SecurityGroupModel is the Terraform state model for a security group.
@@ -42,7 +44,7 @@ type apiCreateSecurityGroupRequest struct {
 type apiUpdateSecurityGroupRequest struct {
 	Name        *string           `json:"name,omitempty"`
 	Description *string           `json:"description,omitempty"`
-	Tags        map[string]string `json:"tags,omitempty"`
+	Tags        map[string]string `json:"tags"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -85,11 +87,7 @@ func (m *SecurityGroupModel) toUpdateRequest(ctx context.Context, diags *diag.Di
 		req.Description = &empty
 	}
 
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		tags := make(map[string]string)
-		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		req.Tags = tags
-	}
+	req.Tags = tftags.ForUpdate(ctx, m.Tags, diags)
 
 	return req
 }

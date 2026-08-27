@@ -18,6 +18,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 var (
@@ -660,16 +661,15 @@ func (r *publicIPResource) Update(ctx context.Context, req resource.UpdateReques
 
 	// Handle tags update
 	if !plan.Tags.Equal(state.Tags) {
-		updateReq := apiUpdatePublicIPRequest{}
-		if !plan.Tags.IsNull() && !plan.Tags.IsUnknown() {
-			tags := make(map[string]string)
-			resp.Diagnostics.Append(plan.Tags.ElementsAs(ctx, &tags, false)...)
-			if resp.Diagnostics.HasError() {
-				return
-			}
-			updateReq.Tags = tags
+		updateReq := apiUpdatePublicIPRequest{
+			Tags: tftags.ForUpdate(ctx, plan.Tags, &resp.Diagnostics),
 		}
-		_, err := r.client.Patch(ctx, r.client.TenantPath(fmt.Sprintf("/public-ips/%s", fipID)), updateReq)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		// PUT, not PATCH — network registers PUT for the in-place update and
+		// nothing registers PATCH. See the frostmoln_vpc Update for the full note.
+		_, err := r.client.Put(ctx, r.client.TenantPath(fmt.Sprintf("/public-ips/%s", fipID)), updateReq)
 		if err != nil {
 			resp.Diagnostics.AddError("Failed to Update Public IP Tags", err.Error())
 			return

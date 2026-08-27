@@ -178,7 +178,7 @@ func TestSecurityGroupResourceCRUD(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(sgCreated)
 
-		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-test-1":
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-test-1":
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(sgUpdated)
 
@@ -235,7 +235,7 @@ func TestSecurityGroupResourceCRUD(t *testing.T) {
 	updateReq := apiUpdateSecurityGroupRequest{}
 	name := "updated-sg"
 	updateReq.Name = &name
-	patchResp, err := c.Patch(ctx, c.TenantPath("/security-groups/sg-test-1"), updateReq)
+	patchResp, err := c.Put(ctx, c.TenantPath("/security-groups/sg-test-1"), updateReq)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -511,6 +511,12 @@ func TestResourceReadNotFoundRemovesState(t *testing.T) {
 }
 
 func TestResourceUpdate(t *testing.T) {
+	// The in-place update MUST be PUT. network registers PUT /security-groups/{id};
+	// NOBODY registers PATCH — not network, not provisioning — so a PATCH
+	// matches no api-gateway rule and comes back PATH_NOT_ROUTED. The fake
+	// answers on ANY verb so a regression reads as "wrong verb", not as a 404.
+	var updateMethod string
+
 	sgResp := apiSecurityGroup{
 		ID:          "sg-upd-1",
 		Name:        "updated-name",
@@ -520,7 +526,8 @@ func TestResourceUpdate(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-upd-1" {
+		if r.URL.Path == "/v1/tenants/t-123/security-groups/sg-upd-1" {
+			updateMethod = r.Method
 			_ = json.NewEncoder(w).Encode(sgResp)
 			return
 		}
@@ -563,6 +570,10 @@ func TestResourceUpdate(t *testing.T) {
 
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	if updateMethod != http.MethodPut {
+		t.Fatalf("in-place security-group update sent %s, want PUT (PATCH is routed nowhere)", updateMethod)
 	}
 
 	var model SecurityGroupModel

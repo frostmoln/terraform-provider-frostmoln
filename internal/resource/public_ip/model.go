@@ -206,7 +206,10 @@ type apiInstanceForPort struct {
 
 // apiUpdatePublicIPRequest is the API request to update tags on a public IP.
 type apiUpdatePublicIPRequest struct {
-	Tags map[string]string `json:"tags,omitempty"`
+	// No `omitempty`: see tftags.ForUpdate. network merges on
+	// `if req.Tags != nil`, and omitempty drops an empty non-nil map, so the two
+	// together made clearing tags impossible.
+	Tags map[string]string `json:"tags"`
 }
 
 // toAllocateRequest converts the Terraform model to an API allocate request.

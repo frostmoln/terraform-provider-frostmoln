@@ -188,7 +188,7 @@ func TestVPCResourceCRUD(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(vpcCreated)
 
-		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-123/vpcs/vpc-test-1":
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-123/vpcs/vpc-test-1":
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(vpcUpdated)
 
@@ -245,7 +245,7 @@ func TestVPCResourceCRUD(t *testing.T) {
 	updateReq := apiUpdateVPCRequest{}
 	name := "updated-vpc"
 	updateReq.Name = &name
-	patchResp, err := c.Patch(ctx, c.TenantPath("/vpcs/vpc-test-1"), updateReq)
+	patchResp, err := c.Put(ctx, c.TenantPath("/vpcs/vpc-test-1"), updateReq)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -625,12 +625,21 @@ func TestVPCResource_TFSDKReadNotFound(t *testing.T) {
 }
 
 func TestVPCResource_TFSDKUpdate(t *testing.T) {
+	// The in-place update MUST be PUT. network registers PUT /vpcs/{id};
+	// NOBODY registers PATCH — not network, not provisioning — so a PATCH
+	// matches no api-gateway rule and comes back PATH_NOT_ROUTED. This fake
+	// answers the update path on ANY verb and the assertion below names the
+	// one that must be sent, so a regression reads as "wrong verb" rather
+	// than as an unexplained 404.
+	var updateMethod string
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
 
-		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/tenant-456/vpcs/vpc-upd-1":
+		case r.URL.Path == "/v1/tenants/tenant-456/vpcs/vpc-upd-1":
+			updateMethod = r.Method
 			_ = json.NewEncoder(w).Encode(apiVPC{
 				ID:          "vpc-upd-1",
 				Name:        "updated-vpc",
@@ -702,6 +711,10 @@ func TestVPCResource_TFSDKUpdate(t *testing.T) {
 
 	if updateResp.Diagnostics.HasError() {
 		t.Fatalf("Update failed: %v", updateResp.Diagnostics.Errors())
+	}
+
+	if updateMethod != http.MethodPut {
+		t.Fatalf("in-place VPC update sent %s, want PUT (PATCH is routed nowhere)", updateMethod)
 	}
 
 	var model VPCModel
@@ -1216,7 +1229,7 @@ func TestVPCResource_TFSDKUpdateAPIError(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
-		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/tenant-456/vpcs/vpc-ue-1":
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/tenant-456/vpcs/vpc-ue-1":
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "update failed"},
@@ -1284,7 +1297,7 @@ func TestVPCResource_TFSDKUpdateBadJSON(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
-		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/tenant-456/vpcs/vpc-ubj-1":
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/tenant-456/vpcs/vpc-ubj-1":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("not json"))
 		default:

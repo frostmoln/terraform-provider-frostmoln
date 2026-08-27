@@ -262,7 +262,9 @@ func (r *subnetResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	apiResp, err := r.client.Patch(ctx, r.client.TenantPath(fmt.Sprintf("/subnets/%s", state.ID.ValueString())), updateReq)
+	// PUT, not PATCH — network registers PUT for the in-place update and
+	// nothing registers PATCH. See the frostmoln_vpc Update for the full note.
+	apiResp, err := r.client.Put(ctx, r.client.TenantPath(fmt.Sprintf("/subnets/%s", state.ID.ValueString())), updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Update Subnet", err.Error())
 		return
