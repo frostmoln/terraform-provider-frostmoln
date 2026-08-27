@@ -30,6 +30,11 @@ var internalNamePatterns = func() []*regexp.Regexp {
 		"openstack", "novalocal", "amphora", "octavia", "neutron", "ovn",
 		"ceph", "rbd", "rgw", "kolla", "libvirt", "qemu", "rke2", "minio",
 		"keycloak", "zitadel", "barbican", "gophercloud",
+		// The Application Gateway data plane. The appgw docs name two of these
+		// as forbidden on customer surfaces, and the appgw Registry pages are
+		// the first place in this provider they could leak: a WAF page is
+		// exactly where someone reaches for the engine's name.
+		"coraza", "haproxy", "modsecurity", "crowdsec", "seclang",
 	}
 	ambiguousEnglish := []string{
 		"Nova", "Glance", "Cinder", "Designate", "Ironic", "Magnum",

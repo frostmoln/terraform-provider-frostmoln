@@ -119,6 +119,19 @@ var AttachingSurfaces = []AttachingSurface{
 		When: "when `public` is true", Placement: OnResource,
 		Why: "as frostmoln_nginx_instance — the same expose saga",
 	},
+	{
+		TypeName: "frostmoln_application_gateway", Attribute: "public_ip_id",
+		// ALWAYS, not only for a bring-your-own address. An Application Gateway
+		// is an ingress product: it gets a public address in both public_ip_mode
+		// values, and the pool-allocated case is the DEFAULT — so a note keyed
+		// to the bring-your-own attribute would hide the hazard from almost
+		// everyone who hits it. This is the failure that missed nginx and apache
+		// on the first pass.
+		When: "", Placement: OnResource,
+		Why: "the create saga attaches the address to the appliance's port in the vpc_id/subnet_id " +
+			"this resource names, in both public_ip_mode values (provisioning appgw_public_ip.go " +
+			"-> AssociatePublicIPResource)",
+	},
 }
 
 // NotAttaching records attributes that LOOK like a surface to the drift guard's

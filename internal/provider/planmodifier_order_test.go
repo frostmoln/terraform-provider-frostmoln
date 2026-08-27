@@ -29,26 +29,39 @@ import (
 // attribute is never marked unknown from a null config, so it cannot hit the
 // ordering trap and is out of the walk's scope.
 var mustReplaceOnRealChange = map[string][]string{
-	"frostmoln_api_key":               {"expires_at"},
-	"frostmoln_apache_instance":       {"php_enabled", "php_version"},
-	"frostmoln_bucket":                {"region", "storage_class"},
-	"frostmoln_image":                 {"container_format"},
-	"frostmoln_instance":              {"zone"},
-	"frostmoln_kubernetes_cluster":    {"version", "control_plane_tier", "region", "addons", "initial_node_pool.name"},
-	"frostmoln_kubernetes_node_pool":  {"name"},
-	"frostmoln_load_balancer":         {"scheme", "type"},
-	"frostmoln_messaging_instance":    {"engine", "version"},
-	"frostmoln_mysql_backup":          {"type"},
-	"frostmoln_mysql_instance":        {"ha_enabled"},
-	"frostmoln_mysql_read_replica":    {"flavor_id"},
-	"frostmoln_nginx_instance":        {"php_enabled", "php_version"},
-	"frostmoln_postgres_backup":       {"type"},
-	"frostmoln_postgres_instance":     {"ha_enabled"},
-	"frostmoln_postgres_read_replica": {"flavor_id"},
-	"frostmoln_subnet":                {"zone", "gateway_ip", "dns_servers"},
-	"frostmoln_volume":                {"volume_type", "zone", "encrypted"},
-	"frostmoln_volume_attachment":     {"device_path"},
-	"frostmoln_webserver_domain":      {"tls_enabled", "is_default"},
+	"frostmoln_api_key": {"expires_at"},
+	// Application Gateway. Almost everything here is create-only because the
+	// API has no update for a listener, route, pool or backend -- the server
+	// registers POST, GET and DELETE and nothing else -- so the whole child
+	// surface is replace-on-change by construction, not by choice.
+	"frostmoln_application_gateway": {"version", "public_ip_mode"},
+	"frostmoln_appgw_listener":      {"tls_min_version", "tls_cipher_profile", "geo_block_mode", "redirect_to_https"},
+	"frostmoln_appgw_route":         {"priority", "path_match_type", "path", "action"},
+	"frostmoln_appgw_backend_pool":  {"protocol", "algorithm", "session_affinity", "tls_verify_backend", "timeout_connect_ms", "timeout_response_ms"},
+	"frostmoln_appgw_backend":       {"source_kind", "address", "weight"},
+	// adopt_existing decides whether this resource may take over an ingress
+	// rule that already exists. Changing it changes what a destroy will do to
+	// other backends, so it is create-only rather than flippable in place.
+	"frostmoln_appgw_backend_authorization": {"adopt_existing"},
+	"frostmoln_apache_instance":             {"php_enabled", "php_version"},
+	"frostmoln_bucket":                      {"region", "storage_class"},
+	"frostmoln_image":                       {"container_format"},
+	"frostmoln_instance":                    {"zone"},
+	"frostmoln_kubernetes_cluster":          {"version", "control_plane_tier", "region", "addons", "initial_node_pool.name"},
+	"frostmoln_kubernetes_node_pool":        {"name"},
+	"frostmoln_load_balancer":               {"scheme", "type"},
+	"frostmoln_messaging_instance":          {"engine", "version"},
+	"frostmoln_mysql_backup":                {"type"},
+	"frostmoln_mysql_instance":              {"ha_enabled"},
+	"frostmoln_mysql_read_replica":          {"flavor_id"},
+	"frostmoln_nginx_instance":              {"php_enabled", "php_version"},
+	"frostmoln_postgres_backup":             {"type"},
+	"frostmoln_postgres_instance":           {"ha_enabled"},
+	"frostmoln_postgres_read_replica":       {"flavor_id"},
+	"frostmoln_subnet":                      {"zone", "gateway_ip", "dns_servers"},
+	"frostmoln_volume":                      {"volume_type", "zone", "encrypted"},
+	"frostmoln_volume_attachment":           {"device_path"},
+	"frostmoln_webserver_domain":            {"tls_enabled", "is_default"},
 }
 
 // TestOptionalComputedAttributesReplaceOnlyOnRealChange asserts, for every

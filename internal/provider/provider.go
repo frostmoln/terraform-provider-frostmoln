@@ -23,6 +23,9 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	apacheinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/apache_instance"
 	apikeyscopesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/api_key_scopes"
+	appgwflavorsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/appgw_flavors"
+	appgwversionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/appgw_versions"
+	appgwwafrulesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/appgw_waf_rules"
 	databaseenginesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/database_engines"
 	dnszoneds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/dns_zone"
 	flavords "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/flavor"
@@ -50,6 +53,18 @@ import (
 	vpcds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/vpc"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/apache_instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/api_key"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_backend"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_backend_authorization"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_backend_pool"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_certificate"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_health_check"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_listener"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_route"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_waf_exclusion"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_waf_policy"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_waf_policy_publication"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_waf_rule"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/application_gateway"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/bucket"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/bucket_cors_configuration"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/bucket_lifecycle_configuration"
@@ -534,6 +549,22 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		dns_record.NewResource,
 		load_balancer.NewResource,
 		lb_listener.NewResource,
+
+		// Application Gateway. Ordered parent-first so the family reads as the
+		// object graph it is: a gateway, its listeners and their routes, its
+		// pools and their backends, and the WAF policy over all of it.
+		application_gateway.NewResource,
+		appgw_listener.NewResource,
+		appgw_route.NewResource,
+		appgw_backend_pool.NewResource,
+		appgw_backend.NewResource,
+		appgw_backend_authorization.NewResource,
+		appgw_health_check.NewResource,
+		appgw_certificate.NewResource,
+		appgw_waf_policy.NewResource,
+		appgw_waf_rule.NewResource,
+		appgw_waf_exclusion.NewResource,
+		appgw_waf_policy_publication.NewResource,
 		lb_pool.NewResource,
 		lb_member.NewResource,
 		lb_health_monitor.NewResource,
@@ -571,6 +602,13 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		imageds.NewDataSource,
+		appgwflavorsds.NewDataSource,
+		appgwversionsds.NewDataSource,
+		// Two sources rather than one with an owner argument: a tenant's rules
+		// and the platform's are managed by entirely different means, and a
+		// forgotten filter argument would silently iterate the wrong set.
+		appgwwafrulesds.NewTenantDataSource,
+		appgwwafrulesds.NewPlatformDataSource,
 		imagesds.NewDataSource,
 		flavords.NewDataSource,
 		flavorsds.NewDataSource,
