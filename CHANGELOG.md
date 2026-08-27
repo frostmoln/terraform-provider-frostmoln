@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.38.1] - 2026-08-27
+
+### 🐛 Bug Fixes
+
+- *(ci)* Never let a release rerun rewind the public GitHub mirror (#397)
+
+### 📚 Documentation
+
+- *(k8s)* Stop naming external-secrets as the platform default addon (#399)
+
 ## [0.38.0] - 2026-08-27
 
 ### 🚀 Features
