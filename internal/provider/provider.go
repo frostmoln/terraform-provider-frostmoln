@@ -26,6 +26,7 @@ import (
 	appgwflavorsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/appgw_flavors"
 	appgwversionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/appgw_versions"
 	appgwwafrulesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/appgw_waf_rules"
+	dscontainerregistry "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/container_registry"
 	databaseenginesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/database_engines"
 	dnszoneds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/dns_zone"
 	flavords "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/flavor"
@@ -68,6 +69,8 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/bucket"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/bucket_cors_configuration"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/bucket_lifecycle_configuration"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/container_registry"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/container_registry_credential"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_record"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_zone"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/gateway"
@@ -537,6 +540,8 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		bucket_cors_configuration.NewResource,
 		bucket_lifecycle_configuration.NewResource,
 		s3_credential.NewResource,
+		container_registry.NewResource,
+		container_registry_credential.NewResource,
 		vpc.NewResource,
 		vpc_route.NewResource,
 		subnet.NewResource,
@@ -602,6 +607,10 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		imageds.NewDataSource,
+		// Read-only: the RESOURCE of the same name opts the tenant in and starts
+		// billable storage, so a config that only consumes a registry someone
+		// else owns needs a path that cannot create one.
+		dscontainerregistry.NewDataSource,
 		appgwflavorsds.NewDataSource,
 		appgwversionsds.NewDataSource,
 		// Two sources rather than one with an owner argument: a tenant's rules
