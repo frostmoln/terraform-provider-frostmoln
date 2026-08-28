@@ -72,7 +72,6 @@ type apiGateway struct {
 type apiCreateGatewayRequest struct {
 	Name         string `json:"name"`
 	FlavorID     string `json:"flavorId"`
-	Version      string `json:"version,omitempty"`
 	VPCID        string `json:"vpcId"`
 	SubnetID     string `json:"subnetId"`
 	PublicIPMode string `json:"publicIpMode"`

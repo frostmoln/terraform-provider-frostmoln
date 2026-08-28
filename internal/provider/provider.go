@@ -24,7 +24,6 @@ import (
 	apacheinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/apache_instance"
 	apikeyscopesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/api_key_scopes"
 	appgwflavorsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/appgw_flavors"
-	appgwversionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/appgw_versions"
 	appgwwafrulesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/appgw_waf_rules"
 	dscontainerregistry "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/container_registry"
 	databaseenginesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/database_engines"
@@ -612,7 +611,6 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		// else owns needs a path that cannot create one.
 		dscontainerregistry.NewDataSource,
 		appgwflavorsds.NewDataSource,
-		appgwversionsds.NewDataSource,
 		// Two sources rather than one with an owner argument: a tenant's rules
 		// and the platform's are managed by entirely different means, and a
 		// forgotten filter argument would silently iterate the wrong set.

@@ -89,7 +89,6 @@ See the gateway ordering note on this resource: an Application Gateway attaches 
 * `selected` — use an address you already hold, named by `public_ip_id`. It is used as-is and is **never released** when the gateway is destroyed.
 
 Changing this forces a new resource.
-- `version` (String) The data-plane engine version. Omit to use the catalog default. Changing this forces a new resource.
 
 ### Read-Only
 
@@ -103,5 +102,6 @@ Changing this forces a new resource.
 - `public_ip` (String) The gateway's public address.
 - `status` (String) The gateway's lifecycle state.
 - `updated_at` (String) The last update timestamp.
+- `version` (String) The appliance version this gateway runs. Read-only: the version is platform-managed and chosen by the server at create. You author routes, backends and WAF rules, never the data-plane configuration, so there is no version contract to pin here. WAF ruleset versions, which you do control, are on the WAF policy.
 - `vpc_cidr` (String) The gateway's VPC range. Backend addresses are validated against it.
 - `waf_policy_id` (String) The WAF policy attached to this gateway, if any.

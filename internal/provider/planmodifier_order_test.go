@@ -34,7 +34,10 @@ var mustReplaceOnRealChange = map[string][]string{
 	// API has no update for a listener, route, pool or backend -- the server
 	// registers POST, GET and DELETE and nothing else -- so the whole child
 	// surface is replace-on-change by construction, not by choice.
-	"frostmoln_application_gateway": {"version", "public_ip_mode"},
+	// `version` is NOT here: it is Computed-only now (platform-managed, chosen
+	// by the server at create), so it is not an Optional+Computed attribute and
+	// there is no practitioner-set value that could force a replacement.
+	"frostmoln_application_gateway": {"public_ip_mode"},
 	"frostmoln_appgw_listener":      {"tls_min_version", "tls_cipher_profile", "geo_block_mode", "redirect_to_https"},
 	"frostmoln_appgw_route":         {"priority", "path_match_type", "path", "action"},
 	"frostmoln_appgw_backend_pool":  {"protocol", "algorithm", "session_affinity", "tls_verify_backend", "timeout_connect_ms", "timeout_response_ms"},

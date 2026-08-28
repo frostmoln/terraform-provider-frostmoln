@@ -63,8 +63,11 @@ func body() string {
 // re-deciding.
 func TestTheCatalogIsReturnedAsTheServerSentIt(t *testing.T) {
 	d, cfg, st := harness(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/application-gateways/flavors" {
-			t.Errorf("unexpected path %s -- the catalog is NOT tenant-scoped", r.URL.Path)
+		// TENANT-SCOPED. The sizes are identical for every tenant, but the
+		// entitlement that decides whether you may SEE them is per tenant, and
+		// only a path naming one lets the gateway resolve it (ADR-0052).
+		if r.URL.Path != "/v1/tenants/t-1/application-gateways/catalog/flavors" {
+			t.Errorf("unexpected path %s -- the catalog must be read per tenant", r.URL.Path)
 		}
 		_, _ = w.Write([]byte(body()))
 	})

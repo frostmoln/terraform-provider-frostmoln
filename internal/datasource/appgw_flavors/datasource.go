@@ -132,8 +132,12 @@ func (d *flavorsDataSource) Read(ctx context.Context, req datasource.ReadRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// NOT tenant-scoped: there is nothing tenant-specific about a size ladder.
-	apiResp, err := d.client.Get(ctx, "/v1/application-gateways/flavors", nil)
+	// TENANT-SCOPED, though the sizes are the same for every tenant. The offer is
+	// entitlement-gated and an entitlement is held per tenant, so only a path
+	// naming a tenant lets the gateway resolve the entitlement of the tenant this
+	// provider is configured for (ADR-0052). Read from a path naming no tenant it
+	// refused every org-invited user, whose home entitlement set is empty.
+	apiResp, err := d.client.Get(ctx, d.client.TenantPath("/application-gateways/catalog/flavors"), nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Read Application Gateway Flavors", err.Error())
 		return

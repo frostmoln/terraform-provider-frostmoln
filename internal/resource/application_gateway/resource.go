@@ -79,13 +79,19 @@ func (r *gatewayResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				},
 			},
 			"version": schema.StringAttribute{
-				Description: "The data-plane engine version. Omit to use the catalog default. " +
-					"Changing this forces a new resource.",
-				Optional: true,
+				Description: "The appliance version this gateway runs. Read-only: the " +
+					"version is platform-managed and chosen by the server at create. You " +
+					"author routes, backends and WAF rules, never the data-plane " +
+					"configuration, so there is no version contract to pin here. WAF " +
+					"ruleset versions, which you do control, are on the WAF policy.",
 				Computed: true,
 				PlanModifiers: []planmodifier.String{
+					// Keep the known value across an in-place update. Without it
+					// every `name` change renders `version = "x" -> (known after
+					// apply)` for a value that is not changing. RequiresReplace is
+					// deliberately NOT here: the practitioner cannot set this
+					// attribute any more, so no configured value can force one.
 					stringplanmodifier.UseStateForUnknown(),
-					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"vpc_id": schema.StringAttribute{
@@ -255,9 +261,6 @@ func (r *gatewayResource) Create(ctx context.Context, req resource.CreateRequest
 		VPCID:        plan.VPCID.ValueString(),
 		SubnetID:     plan.SubnetID.ValueString(),
 		PublicIPMode: mode,
-	}
-	if !plan.Version.IsNull() && !plan.Version.IsUnknown() {
-		createReq.Version = plan.Version.ValueString()
 	}
 	if !plan.PublicIPID.IsNull() && !plan.PublicIPID.IsUnknown() {
 		createReq.PublicIPID = plan.PublicIPID.ValueString()
