@@ -2,7 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.39.0] - 2026-08-27
+## [0.40.0] - 2026-08-28
+
+### 🚀 Features
+
+- *(registry)* Container registry resources and data source (#403)
+
+## [0.39.0] - 2026-08-28
 
 ### 🚀 Features
 
