@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.39.0] - 2026-08-27
+
+### 🚀 Features
+
+- *(appgw)* Add the Application Gateway resources and data sources (#401)
+
 ## [0.38.1] - 2026-08-27
 
 ### 🐛 Bug Fixes
