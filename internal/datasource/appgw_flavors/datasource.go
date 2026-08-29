@@ -28,15 +28,14 @@ type FlavorModel struct {
 	ID          types.String `tfsdk:"id"`
 	Name        types.String `tfsdk:"name"`
 	Description types.String `tfsdk:"description"`
-	VCPUs       types.Int64  `tfsdk:"vcpus"`
-	RAMMb       types.Int64  `tfsdk:"ram_mb"`
-	DiskGb      types.Int64  `tfsdk:"disk_gb"`
 
 	MaxListeners types.Int64 `tfsdk:"max_listeners"`
 	MaxRoutes    types.Int64 `tfsdk:"max_routes"`
 	MaxBackends  types.Int64 `tfsdk:"max_backends"`
 	MaxWafRules  types.Int64 `tfsdk:"max_waf_rules"`
-	MaxRPS       types.Int64 `tfsdk:"max_requests_per_second"`
+
+	MaxRPS         types.Int64 `tfsdk:"max_requests_per_second"`
+	MaxConnections types.Int64 `tfsdk:"max_concurrent_connections"`
 
 	PricingTier types.String `tfsdk:"pricing_tier"`
 	Active      types.Bool   `tfsdk:"active"`
@@ -46,15 +45,14 @@ type apiFlavor struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	VCPUs       int    `json:"vcpus"`
-	RAMMb       int    `json:"ramMb"`
-	DiskGb      int    `json:"diskGb"`
 
 	MaxListeners int `json:"maxListeners"`
 	MaxRoutes    int `json:"maxRoutes"`
 	MaxBackends  int `json:"maxBackends"`
 	MaxWafRules  int `json:"maxWafRules"`
-	MaxRPS       int `json:"maxRequestsPerSecond"`
+
+	MaxRPS         int `json:"maxRequestsPerSecond"`
+	MaxConnections int `json:"maxConcurrentConnections"`
 
 	PricingTier string `json:"pricingTier"`
 	Active      bool   `json:"active"`
@@ -78,9 +76,12 @@ func (d *flavorsDataSource) Metadata(_ context.Context, req datasource.MetadataR
 func (d *flavorsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "The Application Gateway size catalog.\n\n" +
-			"The `max_*` values are **structural caps, not guidance**: creating more listeners, " +
-			"routes, backends or WAF rules than the size allows is refused. Size for the ruleset you " +
-			"intend to write, not only for the traffic.",
+			"A size is described by what the appliance carries, not by the virtual machine it runs " +
+			"on: `vcpus`, `ram_mb` and `disk_gb` are no longer exposed, because they describe the " +
+			"substrate rather than the service.\n\n" +
+			"`max_listeners`, `max_routes`, `max_backends` and `max_waf_rules` are **structural " +
+			"caps, not guidance**: exceeding one is refused. Size for the ruleset you intend to " +
+			"write, not only for the traffic.",
 		Attributes: map[string]schema.Attribute{
 			"include_inactive": schema.BoolAttribute{
 				Description: "Deprecated and inert. The customer catalog endpoint returns only " +
@@ -93,19 +94,27 @@ func (d *flavorsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 				Computed:    true,
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
-						"id":                      schema.StringAttribute{Description: "The flavor id, e.g. `agw.gp1.small`.", Computed: true},
-						"name":                    schema.StringAttribute{Description: "The display name.", Computed: true},
-						"description":             schema.StringAttribute{Description: "What this size is for.", Computed: true},
-						"vcpus":                   schema.Int64Attribute{Description: "vCPUs on the appliance.", Computed: true},
-						"ram_mb":                  schema.Int64Attribute{Description: "Memory in MB.", Computed: true},
-						"disk_gb":                 schema.Int64Attribute{Description: "Disk in GB.", Computed: true},
-						"max_listeners":           schema.Int64Attribute{Description: "Maximum listeners. Enforced.", Computed: true},
-						"max_routes":              schema.Int64Attribute{Description: "Maximum routes. Enforced.", Computed: true},
-						"max_backends":            schema.Int64Attribute{Description: "Maximum backends. Enforced.", Computed: true},
-						"max_waf_rules":           schema.Int64Attribute{Description: "Maximum WAF rules. Enforced.", Computed: true},
-						"max_requests_per_second": schema.Int64Attribute{Description: "Rated throughput.", Computed: true},
-						"pricing_tier":            schema.StringAttribute{Description: "The pricing category this size bills under.", Computed: true},
-						"active":                  schema.BoolAttribute{Description: "Whether new gateways may be created on this size.", Computed: true},
+						"id":            schema.StringAttribute{Description: "The flavor id, e.g. `agw.gp1.small`.", Computed: true},
+						"name":          schema.StringAttribute{Description: "The display name.", Computed: true},
+						"description":   schema.StringAttribute{Description: "What this size is for.", Computed: true},
+						"max_listeners": schema.Int64Attribute{Description: "Maximum listeners. Enforced.", Computed: true},
+						"max_routes":    schema.Int64Attribute{Description: "Maximum routes. Enforced.", Computed: true},
+						"max_backends":  schema.Int64Attribute{Description: "Maximum backends. Enforced.", Computed: true},
+						"max_waf_rules": schema.Int64Attribute{Description: "Maximum WAF rules. Enforced.", Computed: true},
+						"max_concurrent_connections": schema.Int64Attribute{
+							Description: "Concurrent connections this size is rated for, and the limit the " +
+								"appliance is built with by default. NOT a hard cap — a listener with a " +
+								"larger `max_connections` raises the appliance's global limit to meet it.",
+							Computed: true,
+						},
+						"max_requests_per_second": schema.Int64Attribute{
+							Description: "Rated throughput. NOT enforced and not a guarantee — real throughput " +
+								"depends on your rules, TLS settings and backends. It is the basis " +
+								"`max_concurrent_connections` is derived from.",
+							Computed: true,
+						},
+						"pricing_tier": schema.StringAttribute{Description: "The pricing category this size bills under.", Computed: true},
+						"active":       schema.BoolAttribute{Description: "Whether new gateways may be created on this size.", Computed: true},
 					},
 				},
 			},
@@ -154,19 +163,17 @@ func (d *flavorsDataSource) Read(ctx context.Context, req datasource.ReadRequest
 	cfg.Flavors = make([]FlavorModel, 0, len(list.Flavors))
 	for _, f := range list.Flavors {
 		cfg.Flavors = append(cfg.Flavors, FlavorModel{
-			ID:           types.StringValue(f.ID),
-			Name:         types.StringValue(f.Name),
-			Description:  types.StringValue(f.Description),
-			VCPUs:        types.Int64Value(int64(f.VCPUs)),
-			RAMMb:        types.Int64Value(int64(f.RAMMb)),
-			DiskGb:       types.Int64Value(int64(f.DiskGb)),
-			MaxListeners: types.Int64Value(int64(f.MaxListeners)),
-			MaxRoutes:    types.Int64Value(int64(f.MaxRoutes)),
-			MaxBackends:  types.Int64Value(int64(f.MaxBackends)),
-			MaxWafRules:  types.Int64Value(int64(f.MaxWafRules)),
-			MaxRPS:       types.Int64Value(int64(f.MaxRPS)),
-			PricingTier:  types.StringValue(f.PricingTier),
-			Active:       types.BoolValue(f.Active),
+			ID:             types.StringValue(f.ID),
+			Name:           types.StringValue(f.Name),
+			Description:    types.StringValue(f.Description),
+			MaxListeners:   types.Int64Value(int64(f.MaxListeners)),
+			MaxRoutes:      types.Int64Value(int64(f.MaxRoutes)),
+			MaxBackends:    types.Int64Value(int64(f.MaxBackends)),
+			MaxWafRules:    types.Int64Value(int64(f.MaxWafRules)),
+			MaxRPS:         types.Int64Value(int64(f.MaxRPS)),
+			MaxConnections: types.Int64Value(int64(f.MaxConnections)),
+			PricingTier:    types.StringValue(f.PricingTier),
+			Active:         types.BoolValue(f.Active),
 		})
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &cfg)...)

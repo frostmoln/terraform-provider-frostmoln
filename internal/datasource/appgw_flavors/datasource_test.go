@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -41,13 +42,53 @@ func harness(t *testing.T, h http.HandlerFunc) (*flavorsDataSource, tfsdk.Config
 	return d, tfsdk.Config{Schema: sr.Schema}, tfsdk.State{Schema: sr.Schema}
 }
 
+// The fixture still carries vcpus/ramMb/diskGb because the SERVER still sends
+// them: the substrate fields are being withdrawn from the catalog in a later
+// wave, and this data source must ignore them in the meantime rather than fail
+// on them. It is also the shape a practitioner on an older provider sees.
 func body() string {
 	return `{"flavors":[
 	  {"id":"agw.gp1.small","name":"Small","vcpus":2,"ramMb":4096,"diskGb":40,
 	   "maxListeners":5,"maxRoutes":50,"maxBackends":50,"maxWafRules":100,
-	   "maxRequestsPerSecond":5000,"pricingTier":"app_gateway_gp1","active":true},
+	   "maxRequestsPerSecond":5000,"maxConcurrentConnections":20000,
+	   "pricingTier":"app_gateway_gp1","active":true},
 	  {"id":"agw.gp1.legacy","name":"Legacy","vcpus":1,"active":false}
 	],"totalCount":2}`
+}
+
+// An Application Gateway is a managed appliance, so its catalog describes what
+// the appliance carries — throughput, connections, and the object and rule caps
+// — not the virtual machine underneath it. Operator decision, 2026-08-29:
+// "Of course behind the scenes it is a VM, so the VM needs vCPU, RAM and disk.
+// But that is not what we sell to the customer."
+//
+// This asserts the schema itself, because that is the practitioner-visible
+// contract: an attribute here is one a customer can interpolate and will then
+// depend on.
+func TestTheSchemaSellsCapacityNotSubstrate(t *testing.T) {
+	d, _, _ := harness(t, func(http.ResponseWriter, *http.Request) {})
+	var sr datasource.SchemaResponse
+	d.Schema(context.Background(), datasource.SchemaRequest{}, &sr)
+
+	nested, ok := sr.Schema.Attributes["flavors"].(schema.ListNestedAttribute)
+	if !ok {
+		t.Fatalf("flavors is not a ListNestedAttribute")
+	}
+	attrs := nested.NestedObject.Attributes
+
+	for _, substrate := range []string{"vcpus", "ram_mb", "disk_gb"} {
+		if _, present := attrs[substrate]; present {
+			t.Errorf("the catalog exposes %q — that describes the VM, not the service", substrate)
+		}
+	}
+	for _, capacity := range []string{
+		"max_requests_per_second", "max_concurrent_connections",
+		"max_listeners", "max_routes", "max_backends", "max_waf_rules",
+	} {
+		if _, present := attrs[capacity]; !present {
+			t.Errorf("the catalog is missing %q, which is what a size is chosen on", capacity)
+		}
+	}
 }
 
 // TestTheCatalogIsReturnedAsTheServerSentIt.

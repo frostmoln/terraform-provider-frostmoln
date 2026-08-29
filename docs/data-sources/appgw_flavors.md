@@ -4,14 +4,17 @@ page_title: "frostmoln_appgw_flavors Data Source - Frostmoln"
 subcategory: ""
 description: |-
   The Application Gateway size catalog.
-  The max_* values are structural caps, not guidance: creating more listeners, routes, backends or WAF rules than the size allows is refused. Size for the ruleset you intend to write, not only for the traffic.
+  A size is described by what the appliance carries, not by the virtual machine it runs on: vcpus, ram_mb and disk_gb are no longer exposed, because they describe the substrate rather than the service.
+  max_listeners, max_routes, max_backends and max_waf_rules are structural caps, not guidance: exceeding one is refused. Size for the ruleset you intend to write, not only for the traffic.
 ---
 
 # frostmoln_appgw_flavors (Data Source)
 
 The Application Gateway size catalog.
 
-The `max_*` values are **structural caps, not guidance**: creating more listeners, routes, backends or WAF rules than the size allows is refused. Size for the ruleset you intend to write, not only for the traffic.
+A size is described by what the appliance carries, not by the virtual machine it runs on: `vcpus`, `ram_mb` and `disk_gb` are no longer exposed, because they describe the substrate rather than the service.
+
+`max_listeners`, `max_routes`, `max_backends` and `max_waf_rules` are **structural caps, not guidance**: exceeding one is refused. Size for the ruleset you intend to write, not only for the traffic.
 
 ## Example Usage
 
@@ -53,14 +56,12 @@ Read-Only:
 
 - `active` (Boolean) Whether new gateways may be created on this size.
 - `description` (String) What this size is for.
-- `disk_gb` (Number) Disk in GB.
 - `id` (String) The flavor id, e.g. `agw.gp1.small`.
 - `max_backends` (Number) Maximum backends. Enforced.
+- `max_concurrent_connections` (Number) Concurrent connections this size is rated for, and the limit the appliance is built with by default. NOT a hard cap — a listener with a larger `max_connections` raises the appliance's global limit to meet it.
 - `max_listeners` (Number) Maximum listeners. Enforced.
-- `max_requests_per_second` (Number) Rated throughput.
+- `max_requests_per_second` (Number) Rated throughput. NOT enforced and not a guarantee — real throughput depends on your rules, TLS settings and backends. It is the basis `max_concurrent_connections` is derived from.
 - `max_routes` (Number) Maximum routes. Enforced.
 - `max_waf_rules` (Number) Maximum WAF rules. Enforced.
 - `name` (String) The display name.
 - `pricing_tier` (String) The pricing category this size bills under.
-- `ram_mb` (Number) Memory in MB.
-- `vcpus` (Number) vCPUs on the appliance.
