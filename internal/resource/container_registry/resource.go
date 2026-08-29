@@ -76,6 +76,14 @@ func (r *containerRegistryResource) Schema(_ context.Context, _ resource.SchemaR
 					"rename does not strand image references you have pinned.",
 				Computed: true,
 			},
+			"storage_limit_bytes": schema.Int64Attribute{
+				Description: "The hard storage cap enforced on this namespace, in bytes. A push that would cross it is refused with a 403 that carries no number, so this is the value that explains such a failure. Null when the registry is not enabled, and in the rare window where the API reports no cap — null means the limit was not reported, and never that it is unlimited.",
+				Computed:    true,
+			},
+			"storage_used_bytes": schema.Int64Attribute{
+				Description: "Storage currently counted against that cap, in bytes. OBSERVATIONAL: it changes with every push, so expect it to differ on each refresh. It counts deduplicated stored bytes as the registry measures them, which does not equal the sum of your local image sizes — do not use it for billing reconciliation.",
+				Computed:    true,
+			},
 		},
 	}
 }

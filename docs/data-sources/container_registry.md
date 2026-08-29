@@ -48,3 +48,5 @@ output "image_prefix" {
 - `endpoint` (String) The host to `docker login` to. Present whether or not the registry is enabled.
 - `id` (String) The tenant id. A tenant has exactly one registry and its id is the tenant's.
 - `namespace` (String) The tenant's namespace at that endpoint — the first path segment of every image reference. Null while the registry is not enabled, because advertising a pull path that 404s reads as a working registry.
+- `storage_limit_bytes` (Number) The hard storage cap enforced on this namespace, in bytes. A push that would cross it is refused with a 403 that carries no number, so this is the value that explains such a failure. Null when the registry is not enabled, and in the rare window where the API reports no cap — null means the limit was not reported, and never that it is unlimited.
+- `storage_used_bytes` (Number) Storage currently counted against that cap, in bytes. OBSERVATIONAL: it changes with every push, so expect it to differ on each read. It counts deduplicated stored bytes as the registry measures them, which does not equal the sum of your local image sizes — do not use it for billing reconciliation.

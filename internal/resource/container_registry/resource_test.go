@@ -56,6 +56,10 @@ func registryState(t *testing.T) tftypes.Value {
 		"enabled":   tftypes.NewValue(tftypes.Bool, true),
 		"endpoint":  tftypes.NewValue(tftypes.String, "registry.sweden.frostmoln.cloud"),
 		"namespace": tftypes.NewValue(tftypes.String, "t-abc"),
+		// Null, not zero: prior state may predate these attributes, and null is
+		// also what a registry with no reported cap holds.
+		"storage_limit_bytes": tftypes.NewValue(tftypes.Number, nil),
+		"storage_used_bytes":  tftypes.NewValue(tftypes.Number, nil),
 	})
 }
 
@@ -335,5 +339,57 @@ func TestReadRefusesABodyWithNoEnabledField(t *testing.T) {
 	}
 	if !resp.Diagnostics.HasError() {
 		t.Error("the unreadable body was accepted silently")
+	}
+}
+
+// 🔴 A CAP THE API DID NOT REPORT MUST BE NULL, NEVER 0.
+//
+// The API omits the storage numbers while the registry is disabled and, for the
+// limit, in the window where it has no cap to report. Terraform has a real null,
+// so use it: a practitioner reading `storage_limit_bytes == 0` would conclude
+// their registry may hold nothing, and any `coalesce` around it would silently
+// treat "unknown" as "none".
+func TestStorageAttrsDistinguishesUnreportedFromZero(t *testing.T) {
+	for name, tc := range map[string]struct {
+		in              apiRegistrySettings
+		wantLimitNull   bool
+		wantUsedNull    bool
+		wantLimit, want int64
+	}{
+		"nothing reported": {
+			in: apiRegistrySettings{}, wantLimitNull: true, wantUsedNull: true,
+		},
+		"cap and usage": {
+			in:        apiRegistrySettings{StorageLimitBytes: 10 << 30, StorageUsedBytes: 3 << 30},
+			wantLimit: 10 << 30, want: 3 << 30,
+		},
+		// Zero used against a real cap is a FACT, not an absence: a fresh registry
+		// sits there, and reporting null would hide the cap the customer needs.
+		"cap with zero usage": {
+			in: apiRegistrySettings{StorageLimitBytes: 10 << 30}, wantLimit: 10 << 30, want: 0,
+		},
+		// The API CAN send this: registry reads the hard and used quota entries
+		// independently, so a quota carrying usage and no hard limit yields exactly
+		// this body. Usage with nothing to judge it against is reported as unknown
+		// rather than as a bare number.
+		"usage but no cap": {
+			in: apiRegistrySettings{StorageUsedBytes: 5 << 20}, wantLimitNull: true, wantUsedNull: true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			limit, used := storageAttrs(&tc.in)
+			if limit.IsNull() != tc.wantLimitNull {
+				t.Errorf("limit null = %v, want %v", limit.IsNull(), tc.wantLimitNull)
+			}
+			if used.IsNull() != tc.wantUsedNull {
+				t.Errorf("used null = %v, want %v", used.IsNull(), tc.wantUsedNull)
+			}
+			if !tc.wantLimitNull && limit.ValueInt64() != tc.wantLimit {
+				t.Errorf("limit = %d, want %d", limit.ValueInt64(), tc.wantLimit)
+			}
+			if !tc.wantUsedNull && used.ValueInt64() != tc.want {
+				t.Errorf("used = %d, want %d", used.ValueInt64(), tc.want)
+			}
+		})
 	}
 }

@@ -41,14 +41,35 @@ type containerRegistryModel struct {
 	Enabled   types.Bool   `tfsdk:"enabled"`
 	Endpoint  types.String `tfsdk:"endpoint"`
 	Namespace types.String `tfsdk:"namespace"`
+	// Null when the API omits them. Null means "not reported" — never
+	// "unlimited" and never zero.
+	StorageLimitBytes types.Int64 `tfsdk:"storage_limit_bytes"`
+	StorageUsedBytes  types.Int64 `tfsdk:"storage_used_bytes"`
 }
 
 // apiRegistrySettings mirrors the resource's decoding, including the pointer on
 // Enabled: an absent field must not read as "no".
 type apiRegistrySettings struct {
-	Enabled   *bool  `json:"enabled"`
-	Endpoint  string `json:"endpoint"`
-	Namespace string `json:"namespace,omitempty"`
+	Enabled           *bool  `json:"enabled"`
+	Endpoint          string `json:"endpoint"`
+	Namespace         string `json:"namespace,omitempty"`
+	StorageLimitBytes int64  `json:"storageLimitBytes,omitempty"`
+	StorageUsedBytes  int64  `json:"storageUsedBytes,omitempty"`
+}
+
+// storageAttrs maps the reported storage numbers onto Terraform values, with a
+// non-positive value becoming NULL rather than 0 — the API omits a cap it cannot
+// report, and 0 would read as "this registry may hold nothing". Mirrors the
+// resource's helper of the same name; the two decode the same body.
+func storageAttrs(s *apiRegistrySettings) (limit, used types.Int64) {
+	limit, used = types.Int64Null(), types.Int64Null()
+	if s.StorageLimitBytes > 0 {
+		limit = types.Int64Value(s.StorageLimitBytes)
+		// Legitimately zero on a fresh registry, so it is reported whenever a cap
+		// was — zero included.
+		used = types.Int64Value(s.StorageUsedBytes)
+	}
+	return limit, used
 }
 
 func (d *containerRegistryDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -82,6 +103,14 @@ func (d *containerRegistryDataSource) Schema(_ context.Context, _ datasource.Sch
 					"image reference. Null while the registry is not enabled, because advertising a pull " +
 					"path that 404s reads as a working registry.",
 				Computed: true,
+			},
+			"storage_limit_bytes": schema.Int64Attribute{
+				Description: "The hard storage cap enforced on this namespace, in bytes. A push that would cross it is refused with a 403 that carries no number, so this is the value that explains such a failure. Null when the registry is not enabled, and in the rare window where the API reports no cap — null means the limit was not reported, and never that it is unlimited.",
+				Computed:    true,
+			},
+			"storage_used_bytes": schema.Int64Attribute{
+				Description: "Storage currently counted against that cap, in bytes. OBSERVATIONAL: it changes with every push, so expect it to differ on each read. It counts deduplicated stored bytes as the registry measures them, which does not equal the sum of your local image sizes — do not use it for billing reconciliation.",
+				Computed:    true,
 			},
 		},
 	}
@@ -136,6 +165,7 @@ func (d *containerRegistryDataSource) Read(ctx context.Context, req datasource.R
 	} else {
 		state.Namespace = types.StringValue(settings.Namespace)
 	}
+	state.StorageLimitBytes, state.StorageUsedBytes = storageAttrs(settings)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
