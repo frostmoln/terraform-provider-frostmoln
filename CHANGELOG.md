@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.42.0] - 2026-08-29
+
+### 🚀 Features
+
+- *(appgw)* Make terraform apply actually apply the gateway configuration (#409)
+
 ## [0.41.0] - 2026-08-29
 
 ### 🚀 Features
