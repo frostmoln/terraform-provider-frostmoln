@@ -337,6 +337,40 @@ func (r *gatewayResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 	state.fromAPI(gw)
+
+	// 🔴 SAY SO WHEN THE GATEWAY IS NOT SERVING WHAT WAS AUTHORED.
+	//
+	// config_generation is what has been written; config_revision is what the
+	// appliance acknowledged. When they differ there is a change the gateway is
+	// not serving, and the most common cause is a configuration with no
+	// frostmoln_appgw_config_apply resource in it — Terraform records listeners
+	// and routes, reports success, and nothing reaches the appliance.
+	//
+	// A warning rather than an error: the gap is legitimate mid-change, and an
+	// error would break a plan for a state the practitioner may be about to fix
+	// in the same apply. But it must not be SILENT, because silence here reads
+	// as convergence.
+	// Not while an apply is in flight, and not for a gateway with nothing
+	// authored yet: a freshly created gateway sits at generation 0 with a NULL
+	// revision, and warning there tells the practitioner to add a resource that
+	// would dispatch an empty bootstrap config. Both would train the reader to
+	// skip the warning, which costs exactly the signal it exists for.
+	unconverged := gw.ConfigRevision == nil || *gw.ConfigRevision != gw.ConfigGeneration
+	if unconverged && gw.ConfigGeneration > 0 && gw.ConfigStatus != "applying" {
+		ack := "nothing"
+		if gw.ConfigRevision != nil {
+			ack = fmt.Sprintf("revision %d", *gw.ConfigRevision)
+		}
+		resp.Diagnostics.AddWarning(
+			"Application Gateway Is Not Serving Its Authored Configuration",
+			fmt.Sprintf("Gateway %s has authored generation %d but the appliance has acknowledged "+
+				"%s (status %q).\n\nAuthoring a listener, route, backend, certificate or WAF "+
+				"publication records it; it does not dispatch it. Declare a "+
+				"frostmoln_appgw_config_apply resource for this gateway so `terraform apply` "+
+				"makes the change take effect.",
+				gw.ID, gw.ConfigGeneration, ack, gw.ConfigStatus))
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 

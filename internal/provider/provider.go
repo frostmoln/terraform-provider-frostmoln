@@ -57,6 +57,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_backend_authorization"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_backend_pool"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_certificate"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_config_apply"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_health_check"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_listener"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_route"
@@ -557,6 +558,7 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		// Application Gateway. Ordered parent-first so the family reads as the
 		// object graph it is: a gateway, its listeners and their routes, its
 		// pools and their backends, and the WAF policy over all of it.
+		appgw_config_apply.NewResource,
 		application_gateway.NewResource,
 		appgw_listener.NewResource,
 		appgw_route.NewResource,
