@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.41.0] - 2026-08-29
+
+### 🚀 Features
+
+- *(appgw)* [**breaking**] The flavor catalog describes the appliance, not its VM (#407)
+
+### 🐛 Bug Fixes
+
+- *(appgw)* [**breaking**] Read the flavor catalog per tenant; version becomes read-only (#405)
+
 ## [0.40.0] - 2026-08-28
 
 ### 🚀 Features
