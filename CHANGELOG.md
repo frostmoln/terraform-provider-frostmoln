@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.43.0] - 2026-08-29
+
+### 🚀 Features
+
+- *(registry)* Show the storage cap a push is refused against (#411)
+
 ## [0.42.0] - 2026-08-29
 
 ### 🚀 Features
