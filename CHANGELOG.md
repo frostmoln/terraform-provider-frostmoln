@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.43.1] - 2026-08-31
+
+### 🐛 Bug Fixes
+
+- *(image)* Call the tenant-scoped image API and validate the image id (#413)
+
 ## [0.43.0] - 2026-08-29
 
 ### 🚀 Features
