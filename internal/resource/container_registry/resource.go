@@ -77,7 +77,7 @@ func (r *containerRegistryResource) Schema(_ context.Context, _ resource.SchemaR
 				Computed: true,
 			},
 			"storage_limit_bytes": schema.Int64Attribute{
-				Description: "The hard storage cap enforced on this namespace, in bytes. A push that would cross it is refused with a 403 that carries no number, so this is the value that explains such a failure. Null when the registry is not enabled, and in the rare window where the API reports no cap — null means the limit was not reported, and never that it is unlimited.",
+				Description: "The hard storage cap enforced on this namespace, in bytes. A push that would cross it is refused with a 403 whose message states the cap, the usage and the size that would not fit — as prose, and only once the push has failed. This attribute is the machine-readable form of the cap. Null when the registry is not enabled, and in the rare window where the API reports no cap — null means the limit was not reported, and never that it is unlimited.",
 				Computed:    true,
 			},
 			"storage_used_bytes": schema.Int64Attribute{
