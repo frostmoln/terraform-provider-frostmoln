@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -81,7 +84,11 @@ func TestConfigureWrongType(t *testing.T) {
 func newTestServer(t *testing.T, images []apiImage) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/images", func(w http.ResponseWriter, _ *http.Request) {
+	// Only the TENANT-SCOPED route is served. The api-gateway re-scopes the
+	// signed auth context only on a /tenants/{id}/ path, so a bare /v1/images
+	// request would silently read the caller's home tenant — here it 404s
+	// instead, which is what makes that regression visible.
+	mux.HandleFunc("/v1/tenants/tenant-1/images", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(apiImageList{Images: images})
 	})
@@ -108,7 +115,7 @@ func TestReadAll(t *testing.T) {
 		t.Fatalf("Configure failed: %v", err)
 	}
 
-	apiResp, err := c.Get(context.Background(), "/v1/images", nil)
+	apiResp, err := c.Get(context.Background(), c.TenantPath("/images"), nil)
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
@@ -376,5 +383,79 @@ func TestImageItemAttrTypes(t *testing.T) {
 		if _, ok := imageItemAttrTypes[key]; !ok {
 			t.Errorf("expected key %q in imageItemAttrTypes", key)
 		}
+	}
+}
+
+// TestImagesListIsTenantScoped is the regression guard for the data source's one
+// API call.
+//
+// The api-gateway's EffectiveTenant middleware re-scopes and re-signs the
+// auth-context JWT only for paths matching /tenants/{id}/. Listed from the bare
+// /v1/images the signed context keeps naming the caller's HOME tenant, so
+// compute lists Glance images from the wrong OpenStack project — silently, with
+// a 200. The client here is Configured against a /v1/me reporting a different
+// home tenant and then pointed at the configured tenant, the way the provider's
+// tenant_id selector does, so a bare-path regression lists the wrong tenant and
+// is caught here.
+func TestImagesListIsTenantScoped(t *testing.T) {
+	const homeTenant = "tenant-home"
+	const configuredTenant = "tenant-other"
+
+	var mu sync.Mutex
+	var paths []string
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		mu.Lock()
+		paths = append(paths, req.URL.Path)
+		mu.Unlock()
+		// The list is answered at ANY path shape — matched on the "/images"
+		// SUFFIX — so a bare /v1/images read succeeds exactly as it does in
+		// production, where the gateway also answers 200, just against the wrong
+		// tenant. The recorded path, asserted below, is the whole test.
+		switch {
+		case req.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(client.UserProfile{ID: "user-1", TenantID: homeTenant})
+		case strings.HasSuffix(req.URL.Path, "/images"):
+			_ = json.NewEncoder(w).Encode(apiImageList{Images: []apiImage{
+				{ID: "img-1", Name: "Ubuntu 22.04", OSDistro: "ubuntu", Status: "active"},
+			}})
+		default:
+			t.Errorf("unexpected request %s", req.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+	c.SetTenantIDForTest(configuredTenant)
+
+	ds := NewDataSource()
+	configureImagesDS(t, ds, c)
+	schemaResp := getImagesDSSchema(t)
+
+	ctx := context.Background()
+	configVal := tftypes.NewValue(schemaResp.Schema.Type().TerraformType(ctx), map[string]tftypes.Value{
+		"os_distro":  tftypes.NewValue(tftypes.String, nil),
+		"name_regex": tftypes.NewValue(tftypes.String, nil),
+		"images":     tftypes.NewValue(schemaResp.Schema.Attributes["images"].GetType().TerraformType(ctx), nil),
+	})
+	readResp := datasource.ReadResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	ds.Read(ctx, datasource.ReadRequest{Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal}}, &readResp)
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := "/v1/tenants/" + configuredTenant + "/images"
+	if !slices.Contains(paths, want) {
+		t.Errorf("the image list requested %v; it must name the configured tenant (%s). "+
+			"The gateway re-scopes the signed auth context only on a /tenants/{id}/ path, so any "+
+			"other path lists the home tenant %q instead", paths, want, homeTenant)
 	}
 }

@@ -149,7 +149,12 @@ func (d *imagesDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		return
 	}
 
-	apiResp, err := d.client.Get(ctx, "/v1/images", nil)
+	// TENANT-SCOPED. The api-gateway re-scopes and re-signs the auth-context JWT
+	// only for paths matching /tenants/{id}/; listed from the bare /v1/images the
+	// signed context still names the caller's HOME tenant, so this returns the
+	// home tenant's images rather than those of the tenant the provider is
+	// configured for.
+	apiResp, err := d.client.Get(ctx, d.client.TenantPath("/images"), nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to list images", err.Error())
 		return

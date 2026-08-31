@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
-	"github.com/hashicorp/terraform-plugin-testing/terraform"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/acctest"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
@@ -56,7 +55,7 @@ func testAccPreCheckCustomImages(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if _, err := c.Get(ctx, "/v1/images", nil); err != nil {
+	if _, err := c.Get(ctx, c.TenantPath("/images"), nil); err != nil {
 		var apiErr *client.APIError
 		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden {
 			t.Skipf("SKIPPING custom-image acceptance test: 403 from the image API. BYOI is no longer "+
@@ -112,25 +111,8 @@ resource "frostmoln_image" "test" {
 `, name, description, sourceFile)
 }
 
-// testAccCheckImageDestroy verifies the image is gone. Images are NOT
-// tenant-scoped (compute serves no /v1/tenants/{id}/images write routes), so the
-// shared CheckDestroyByTenantPath helper does not apply here.
-func testAccCheckImageDestroy(s *terraform.State) error {
-	c, err := acctest.TestClient()
-	if err != nil {
-		return err
-	}
-	for _, rs := range s.RootModule().Resources {
-		if rs.Type != "frostmoln_image" {
-			continue
-		}
-		_, err := c.Get(context.Background(), "/v1/images/"+rs.Primary.ID, nil)
-		if err == nil {
-			return fmt.Errorf("image %s still exists", rs.Primary.ID)
-		}
-		if !client.IsNotFound(err) {
-			return fmt.Errorf("unexpected error checking image %s: %s", rs.Primary.ID, err)
-		}
-	}
-	return nil
-}
+// testAccCheckImageDestroy verifies the image is gone. Images ARE tenant-scoped
+// — compute serves the full /v1/tenants/{id}/images surface, and only that path
+// makes the gateway re-scope the signed auth context onto the tenant the
+// provider is configured for — so this is the shared helper.
+var testAccCheckImageDestroy = acctest.CheckDestroyByTenantPath("frostmoln_image", "/images")

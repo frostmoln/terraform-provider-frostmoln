@@ -357,7 +357,13 @@ func (r *imageResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	createResp, err := r.client.Post(ctx, "/v1/images", plan.toCreateRequest())
+	// TENANT-SCOPED, and so is every other call in this resource. The api-gateway
+	// re-scopes and re-signs the auth-context JWT only for paths matching
+	// /tenants/{id}/; on the bare /v1/images the signed context keeps naming the
+	// caller's HOME tenant, so compute talks to Glance in the wrong OpenStack
+	// project. The whole create -> mint -> upload -> import -> poll flow has to
+	// name the same tenant, or the image is created in one and polled in another.
+	createResp, err := r.client.Post(ctx, r.client.TenantPath("/images"), plan.toCreateRequest())
 	if err != nil {
 		detail := imageErrorDetail(err)
 		// A transport-level failure — timeout, connection reset, EOF — is not an
@@ -461,7 +467,13 @@ func (r *imageResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	apiResp, err := r.client.Get(ctx, "/v1/images/"+state.ID.ValueString(), nil)
+	readPath, pathErr := r.imagePath(state.ID.ValueString(), "")
+	if pathErr != nil {
+		resp.Diagnostics.AddError("Invalid image ID", pathErr.Error())
+		return
+	}
+
+	apiResp, err := r.client.Get(ctx, readPath, nil)
 	if err != nil {
 		if client.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
@@ -544,7 +556,13 @@ func (r *imageResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 
-	apiResp, err := r.client.Put(ctx, "/v1/images/"+imageID, updateReq)
+	updatePath, pathErr := r.imagePath(imageID, "")
+	if pathErr != nil {
+		resp.Diagnostics.AddError("Invalid image ID", pathErr.Error())
+		return
+	}
+
+	apiResp, err := r.client.Put(ctx, updatePath, updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to update image", imageErrorDetail(err))
 		return
@@ -573,7 +591,17 @@ func (r *imageResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		return
 	}
 
-	if err := r.deleteImage(ctx, state.ID.ValueString()); err != nil {
+	// Checked HERE as well as inside deleteImage so the refusal is reported as
+	// what it is. deleteImage's error goes through the IsNotFound arm and the
+	// "Failed to delete image" title, which would describe a refused id as a
+	// platform failure.
+	imageID := state.ID.ValueString()
+	if pathErr := validImageID(imageID); pathErr != nil {
+		resp.Diagnostics.AddError("Invalid image ID", pathErr.Error())
+		return
+	}
+
+	if err := r.deleteImage(ctx, imageID); err != nil {
 		// Already gone — including the case a failed create left a queued image
 		// the practitioner deleted by hand. The end state is what was asked for.
 		if client.IsNotFound(err) {
@@ -614,9 +642,17 @@ func (r *imageResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 // loop spends about a hundred requests over an hour rather than the several
 // hundred a ten-second interval would.
 func (r *imageResource) deleteImage(ctx context.Context, imageID string) error {
+	// Built ONCE, outside the loop, and refused rather than escaped — see
+	// imagePath. This is the call the guard exists for: a dot-segment id turns
+	// this DELETE into the destruction of a sibling resource in the same tenant.
+	deletePath, pathErr := r.imagePath(imageID, "")
+	if pathErr != nil {
+		return pathErr
+	}
+
 	deadline := time.Now().Add(r.getPollTimeout())
 	for {
-		_, err := r.client.Delete(ctx, "/v1/images/"+imageID)
+		_, err := r.client.Delete(ctx, deletePath)
 		if err == nil {
 			return nil
 		}
@@ -745,7 +781,12 @@ func (r *imageResource) resolveUploadForm(ctx context.Context, created *apiCreat
 		return created.Upload, nil
 	}
 
-	mintResp, err := r.client.Post(ctx, "/v1/images/"+created.ID+"/upload", nil)
+	mintPath, pathErr := r.imagePath(created.ID, "/upload")
+	if pathErr != nil {
+		return nil, pathErr
+	}
+
+	mintResp, err := r.client.Post(ctx, mintPath, nil)
 	if err != nil {
 		return nil, fmt.Errorf("image %s was created but no upload form could be minted for it: %w", created.ID, err)
 	}
@@ -778,9 +819,14 @@ func (r *imageResource) resolveUploadForm(ctx context.Context, created *apiCreat
 // gateway rate limit, which client.Do has already retried properly — is
 // returned, because a wait is not its remedy.
 func (r *imageResource) startImport(ctx context.Context, imageID string) error {
+	importPath, pathErr := r.imagePath(imageID, "/import")
+	if pathErr != nil {
+		return pathErr
+	}
+
 	deadline := time.Now().Add(r.getPollTimeout())
 	for {
-		_, err := r.client.Post(ctx, "/v1/images/"+imageID+"/import", nil)
+		_, err := r.client.Post(ctx, importPath, nil)
 		if err == nil || !isConcurrentImportRefusal(err) || !time.Now().Before(deadline) {
 			return err
 		}
@@ -929,6 +975,15 @@ func isMD5ETag(etag string) bool {
 // to `queued`, so a loop keyed on `active` (and even one that also watches
 // `killed`) polls a permanently-failed image until it times out.
 func (r *imageResource) waitForImport(ctx context.Context, imageID string) (*apiImage, error) {
+	// Refused BEFORE the poll starts, not inside PollFunc: WaitForState retries
+	// every PollFunc error until the deadline, so a refusal returned from in
+	// there would hold the apply open for the whole timeout and then surface as
+	// a wrapped one.
+	pollPath, pathErr := r.imagePath(imageID, "")
+	if pathErr != nil {
+		return nil, pathErr
+	}
+
 	var last *apiImage
 	gone := false
 	_, err := client.WaitForState(ctx, client.PollConfig{
@@ -941,7 +996,7 @@ func (r *imageResource) waitForImport(ctx context.Context, imageID string) (*api
 		},
 		ResourceName: "image " + imageID,
 		PollFunc: func(pollCtx context.Context) (string, error) {
-			pollResp, pollErr := r.client.Get(pollCtx, "/v1/images/"+imageID, nil)
+			pollResp, pollErr := r.client.Get(pollCtx, pollPath, nil)
 			if pollErr != nil {
 				// An unambiguous 404 is terminal, not transient: the image was
 				// deleted out of band and no amount of further polling brings it
@@ -1134,3 +1189,56 @@ const (
 	reasonImportRunning     = "import_running"
 	detailRetryAfterSeconds = "retryAfterSeconds"
 )
+
+// imagePath builds the tenant-scoped path for one image, refusing an id that
+// cannot safely be a single path segment.
+//
+// 🔴 THE ID IS VALIDATED, NOT MERELY ESCAPED, AND THE DIFFERENCE IS A DESTROYED
+// VM. url.PathEscape leaves "." and ".." untouched — they are unreserved
+// characters, so there is nothing for it to escape — and client.do finishes the
+// URL with path.Join, which CLEANS dot segments. While these routes were the
+// untenanted /v1/images/{id} that was harmless: "/v1/images/../instances/x"
+// collapsed to "/v1/instances/x", which the api-gateway deliberately does not
+// route, so it 404'd. Moving them under /v1/tenants/{tenant}/images/{id} changed
+// the outcome entirely, because the collapse now lands INSIDE the caller's own
+// tenant namespace, where every other resource lives:
+//
+//	imageID "../instances/i-1" -> DELETE /v1/tenants/T/instances/i-1
+//	imageID "../sshkeys/prod"  -> DELETE /v1/tenants/T/sshkeys/prod
+//
+// Both are registered routes with the same method, so neither 404s: a destroy of
+// frostmoln_image would destroy an instance or an SSH key instead. It is not a
+// cross-tenant escalation — the signed auth context still refuses a tenant the
+// practitioner is not a member of — but it is a destructive write under their
+// own credentials from a resource that named an image.
+//
+// The api-gateway's PathCanonicalization middleware answers 400 on a literal dot
+// segment, which is why the portal is not exposed; it is this client's own
+// path.Join that defeats that guard, so the refusal has to happen here.
+// Escaping cannot prevent it, refusing the value can — the same conclusion
+// client.ParseImportID and the fm CLI's client.ValidatePathID reached for this
+// class, and the same one that already bit the Application Gateway resources.
+//
+// The id reaching here is the one in Terraform STATE. This resource implements
+// no ImportState, so `terraform import` is not the way in today; a hand-edited
+// or externally-generated state file, or a future import passthrough, is — and
+// a guard that only exists once import is added is a guard added too late.
+func (r *imageResource) imagePath(imageID, subpath string) (string, error) {
+	if err := validImageID(imageID); err != nil {
+		return "", err
+	}
+	return r.client.TenantPath("/images/" + imageID + subpath), nil
+}
+
+// validImageID refuses an id that cannot safely be one path segment. Same shape
+// as vpc_route's validVPCID, for the same reason.
+func validImageID(imageID string) error {
+	if imageID == "" {
+		return fmt.Errorf("an image ID is required")
+	}
+	if imageID == "." || imageID == ".." || strings.ContainsAny(imageID, `/\?#%`) {
+		return fmt.Errorf("invalid image ID %q: it would not be a single path segment, so the request "+
+			"would address a different resource", imageID)
+	}
+	return nil
+}

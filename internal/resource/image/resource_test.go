@@ -9,7 +9,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +25,23 @@ import (
 )
 
 // --- helpers -----------------------------------------------------------------
+
+// testTenantID is the tenant every mock in this package is scoped to — the
+// tenant the provider is configured for, which is NOT necessarily the caller's
+// home tenant.
+const testTenantID = "tenant-456"
+
+// newTestImageClient builds a client already scoped to testTenantID, the way a
+// configured provider is. Every image call has to name the tenant in the path:
+// the api-gateway re-scopes and re-signs the auth-context JWT only for
+// /tenants/{id}/ paths, so a bare /v1/images request would be served against the
+// caller's home tenant instead. The mocks below route only the tenant-scoped
+// paths, so a regression to a bare path shows up as an unexpected request.
+func newTestImageClient(server *httptest.Server) *client.Client {
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest(testTenantID)
+	return c
+}
 
 func newTestImageResource(c *client.Client, upload *http.Client) *imageResource {
 	return &imageResource{
@@ -163,7 +182,7 @@ func TestCreateUploadImportOrder(t *testing.T) {
 	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		p := req.URL.Path
 		switch {
-		case req.Method == http.MethodPost && p == "/v1/images":
+		case req.Method == http.MethodPost && p == "/v1/tenants/tenant-456/images":
 			calls = append(calls, "create")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(apiCreateImageResponse{
@@ -194,11 +213,11 @@ func TestCreateUploadImportOrder(t *testing.T) {
 				_ = f.Close()
 			}
 			w.WriteHeader(http.StatusNoContent)
-		case req.Method == http.MethodPost && p == "/v1/images/img-1/import":
+		case req.Method == http.MethodPost && p == "/v1/tenants/tenant-456/images/img-1/import":
 			calls = append(calls, "import")
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(apiImage{ID: "img-1", Status: "importing"})
-		case req.Method == http.MethodGet && p == "/v1/images/img-1":
+		case req.Method == http.MethodGet && p == "/v1/tenants/tenant-456/images/img-1":
 			calls = append(calls, "poll")
 			_ = json.NewEncoder(w).Encode(apiImage{
 				ID: "img-1", Name: "custom-ubuntu", Status: "active", Visibility: "private",
@@ -212,7 +231,7 @@ func TestCreateUploadImportOrder(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c := newTestImageClient(server)
 	r := newTestImageResource(c, server.Client())
 
 	createResp := runCreate(t, r, source)
@@ -264,13 +283,13 @@ func TestCreateWithoutUploadFormPersistsIDOn503(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		switch {
-		case req.Method == http.MethodPost && req.URL.Path == "/v1/images":
+		case req.Method == http.MethodPost && req.URL.Path == "/v1/tenants/tenant-456/images":
 			// 201 with the image at the top level and NO upload form.
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(apiCreateImageResponse{
 				apiImage: apiImage{ID: "img-dark", Name: "custom-ubuntu", Status: "queued", Visibility: "private"},
 			})
-		case req.Method == http.MethodPost && req.URL.Path == "/v1/images/img-dark/upload":
+		case req.Method == http.MethodPost && req.URL.Path == "/v1/tenants/tenant-456/images/img-dark/upload":
 			mintAttempts++
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_ = json.NewEncoder(w).Encode(map[string]string{
@@ -284,7 +303,7 @@ func TestCreateWithoutUploadFormPersistsIDOn503(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c := newTestImageClient(server)
 	r := newTestImageResource(c, server.Client())
 
 	createResp := runCreate(t, r, source)
@@ -322,7 +341,7 @@ func TestCreateRefusesOversizedFileBeforeUploading(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		switch {
-		case req.Method == http.MethodPost && req.URL.Path == "/v1/images":
+		case req.Method == http.MethodPost && req.URL.Path == "/v1/tenants/tenant-456/images":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(apiCreateImageResponse{
 				apiImage: apiImage{ID: "img-big", Name: "custom-ubuntu", Status: "queued", Visibility: "private"},
@@ -344,7 +363,7 @@ func TestCreateRefusesOversizedFileBeforeUploading(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c := newTestImageClient(server)
 	r := newTestImageResource(c, server.Client())
 
 	createResp := runCreate(t, r, source)
@@ -390,7 +409,7 @@ func TestCreateRefusesImportWhenTheStorageEdgeChecksumDisagrees(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		switch {
-		case req.Method == http.MethodPost && req.URL.Path == "/v1/images":
+		case req.Method == http.MethodPost && req.URL.Path == "/v1/tenants/tenant-456/images":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(apiCreateImageResponse{
 				apiImage: apiImage{ID: "img-bad", Name: "custom-ubuntu", Status: "queued", Visibility: "private"},
@@ -407,7 +426,7 @@ func TestCreateRefusesImportWhenTheStorageEdgeChecksumDisagrees(t *testing.T) {
 			// object that arrived damaged, not of an edge that cannot answer.
 			w.Header().Set("ETag", `"00000000000000000000000000000000"`)
 			w.WriteHeader(http.StatusNoContent)
-		case req.URL.Path == "/v1/images/img-bad/import":
+		case req.URL.Path == "/v1/tenants/tenant-456/images/img-bad/import":
 			importHit = true
 			w.WriteHeader(http.StatusAccepted)
 		default:
@@ -418,7 +437,7 @@ func TestCreateRefusesImportWhenTheStorageEdgeChecksumDisagrees(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c := newTestImageClient(server)
 	r := newTestImageResource(c, server.Client())
 
 	createResp := runCreate(t, r, source)
@@ -448,7 +467,7 @@ func TestCreateRefusesImportWhenTheStorageEdgeChecksumDisagrees(t *testing.T) {
 func TestWaitForImportTerminatesOnImportFailed(t *testing.T) {
 	polls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.Method != http.MethodGet || req.URL.Path != "/v1/images/img-fail" {
+		if req.Method != http.MethodGet || req.URL.Path != "/v1/tenants/tenant-456/images/img-fail" {
 			t.Errorf("unexpected request %s %s", req.Method, req.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -461,7 +480,7 @@ func TestWaitForImportTerminatesOnImportFailed(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c := newTestImageClient(server)
 	r := newTestImageResource(c, server.Client())
 	r.pollTimeout = time.Minute // long enough that a hang is a hang, not a timeout
 
@@ -499,7 +518,7 @@ func TestWaitForImportSucceedsOnActive(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c := newTestImageClient(server)
 	r := newTestImageResource(c, server.Client())
 
 	img, err := r.waitForImport(context.Background(), "img-ok")
@@ -526,7 +545,7 @@ func TestDeleteTolerates404(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c := newTestImageClient(server)
 	r := newTestImageResource(c, server.Client())
 
 	ctx := context.Background()
@@ -593,7 +612,7 @@ func accept() func(http.ResponseWriter) {
 // number, so a test that measures requests-per-budget has to set it.
 func deleteResource(t *testing.T, server *httptest.Server, pollTimeout, retryInterval time.Duration) *imageResource {
 	t.Helper()
-	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c := newTestImageClient(server)
 	r := newTestImageResource(c, server.Client())
 	r.pollTimeout, r.deleteRetryInterval = pollTimeout, retryInterval
 	return r
@@ -980,7 +999,7 @@ func TestReadRemovesResourceOn404(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c := newTestImageClient(server)
 	r := newTestImageResource(c, server.Client())
 
 	ctx := context.Background()
@@ -1147,7 +1166,7 @@ func TestCreateFailuresAfterCreatePersistID(t *testing.T) {
 				switch req.URL.Path {
 				case "/staging":
 					w.WriteHeader(http.StatusNoContent)
-				case "/v1/images/img-import-refused/import":
+				case "/v1/tenants/tenant-456/images/img-import-refused/import":
 					w.WriteHeader(http.StatusServiceUnavailable)
 					_ = json.NewEncoder(w).Encode(map[string]string{
 						"code": "internal_error", "message": "image upload is not available in this environment",
@@ -1164,10 +1183,10 @@ func TestCreateFailuresAfterCreatePersistID(t *testing.T) {
 				switch req.URL.Path {
 				case "/staging":
 					w.WriteHeader(http.StatusNoContent)
-				case "/v1/images/img-timeout/import":
+				case "/v1/tenants/tenant-456/images/img-timeout/import":
 					w.WriteHeader(http.StatusAccepted)
 					_ = json.NewEncoder(w).Encode(apiImage{ID: "img-timeout", Status: "importing"})
-				case "/v1/images/img-timeout":
+				case "/v1/tenants/tenant-456/images/img-timeout":
 					// Never reaches a terminal state — the poll timeout wins.
 					_ = json.NewEncoder(w).Encode(apiImage{ID: "img-timeout", Status: "importing"})
 				default:
@@ -1183,7 +1202,7 @@ func TestCreateFailuresAfterCreatePersistID(t *testing.T) {
 
 			mux := http.NewServeMux()
 			mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
-				if req.Method == http.MethodPost && req.URL.Path == "/v1/images" {
+				if req.Method == http.MethodPost && req.URL.Path == "/v1/tenants/tenant-456/images" {
 					w.WriteHeader(http.StatusCreated)
 					_ = json.NewEncoder(w).Encode(apiCreateImageResponse{
 						apiImage: apiImage{ID: tc.imageID, Name: "custom-ubuntu", Status: "queued", Visibility: "private"},
@@ -1200,7 +1219,7 @@ func TestCreateFailuresAfterCreatePersistID(t *testing.T) {
 			server := httptest.NewServer(mux)
 			defer server.Close()
 
-			c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+			c := newTestImageClient(server)
 			r := newTestImageResource(c, server.Client())
 			r.pollTimeout = 150 * time.Millisecond // only the timeout case reaches this
 
@@ -1237,7 +1256,7 @@ func TestWaitForImportTerminatesOn404(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c := newTestImageClient(server)
 	r := newTestImageResource(c, server.Client())
 	r.pollTimeout = time.Minute // long enough that a hang is a hang, not a timeout
 
@@ -1277,7 +1296,7 @@ func TestWaitForImportTerminatesOnOutOfBandStatuses(t *testing.T) {
 			}))
 			defer server.Close()
 
-			c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+			c := newTestImageClient(server)
 			r := newTestImageResource(c, server.Client())
 			r.pollTimeout = time.Minute
 
@@ -1316,7 +1335,7 @@ func TestCreateKeepsPlannedDescriptionAndMinDisk(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		switch {
-		case req.Method == http.MethodPost && req.URL.Path == "/v1/images":
+		case req.Method == http.MethodPost && req.URL.Path == "/v1/tenants/tenant-456/images":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(apiCreateImageResponse{
 				apiImage: apiImage{ID: "img-rb", Name: "custom-ubuntu", Status: "queued", Visibility: "private"},
@@ -1328,10 +1347,10 @@ func TestCreateKeepsPlannedDescriptionAndMinDisk(t *testing.T) {
 			})
 		case req.URL.Path == "/staging":
 			w.WriteHeader(http.StatusNoContent)
-		case req.URL.Path == "/v1/images/img-rb/import":
+		case req.URL.Path == "/v1/tenants/tenant-456/images/img-rb/import":
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(apiImage{ID: "img-rb", Status: "importing"})
-		case req.Method == http.MethodGet && req.URL.Path == "/v1/images/img-rb":
+		case req.Method == http.MethodGet && req.URL.Path == "/v1/tenants/tenant-456/images/img-rb":
 			// The hostile read-back: description dropped entirely (pre-#582
 			// compute) and min_disk raised by the reclaim watcher.
 			_ = json.NewEncoder(w).Encode(apiImage{
@@ -1345,7 +1364,7 @@ func TestCreateKeepsPlannedDescriptionAndMinDisk(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c := newTestImageClient(server)
 	r := newTestImageResource(c, server.Client())
 
 	ctx := context.Background()
@@ -1389,7 +1408,7 @@ func TestUpdateSendsOnlyChangedFields(t *testing.T) {
 	var puts int
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.Method != http.MethodPut || req.URL.Path != "/v1/images/img-1" {
+		if req.Method != http.MethodPut || req.URL.Path != "/v1/tenants/tenant-456/images/img-1" {
 			t.Errorf("unexpected request %s %s", req.Method, req.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -1403,7 +1422,7 @@ func TestUpdateSendsOnlyChangedFields(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c := newTestImageClient(server)
 	r := newTestImageResource(c, server.Client())
 
 	ctx := context.Background()
@@ -1460,7 +1479,7 @@ func TestUpdateWithNoChangesSkipsTheRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c := newTestImageClient(server)
 	r := newTestImageResource(c, server.Client())
 
 	ctx := context.Background()
@@ -1573,4 +1592,306 @@ func TestJitterSeparatesWaitersDeterministically(t *testing.T) {
 			t.Errorf("wait %s is outside [%s, %s) — the interval is no longer the floor", w, interval, interval*3/2)
 		}
 	}
+}
+
+// --- tenant scoping ----------------------------------------------------------
+
+// TestEveryImageCallIsTenantScoped is the regression guard for the whole
+// resource: every request the provider makes must name the tenant it is
+// CONFIGURED for.
+//
+// The api-gateway's EffectiveTenant middleware re-scopes and re-signs the
+// auth-context JWT only for paths matching /tenants/{id}/. On a bare /v1/images
+// path the signed context keeps naming the caller's HOME tenant, so compute
+// talks to Glance in the wrong OpenStack project — silently, with a 200. It
+// bites the OIDC / fm CLI session path, where the configured tenant and the home
+// tenant genuinely differ; an API key is bound to a single tenant, so the home
+// context happens to be right for it and hides the bug.
+//
+// The client here is Configured against a /v1/me that reports a DIFFERENT home
+// tenant, then pointed at testTenantID the way the provider's tenant_id
+// selector does. The mux serves only testTenantID's routes, so any call that
+// slipped back to the bare path (or to the home tenant) is recorded and fails
+// the test rather than quietly succeeding.
+//
+// The create flow is covered end to end on purpose: create, mint, import and
+// poll must move together, or an apply creates the image in one tenant and polls
+// for it in another.
+func TestEveryImageCallIsTenantScoped(t *testing.T) {
+	const homeTenant = "tenant-home"
+	source := writeImageFile(t, 256)
+
+	var mu sync.Mutex
+	var gatewayPaths []string
+
+	tenantPrefix := "/v1/tenants/" + testTenantID + "/images"
+
+	// The mock answers the image routes at ANY path shape — it matches on the
+	// "/images..." SUFFIX, so a bare /v1/images call is served exactly as
+	// happily as a tenant-scoped one. That is the point: in production the
+	// gateway answers the bare path with a 200 too, just against the wrong
+	// tenant, so a mock that 404'd the bare path would prove the fix only by
+	// accident. The recorded paths, asserted at the end, are the whole test.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		p := req.URL.Path
+		if p != "/staging" {
+			mu.Lock()
+			gatewayPaths = append(gatewayPaths, req.Method+" "+p)
+			mu.Unlock()
+		}
+		route := p
+		if i := strings.Index(p, "/images"); i >= 0 {
+			route = p[i:]
+		}
+		switch {
+		case req.Method == http.MethodGet && p == "/v1/me":
+			_ = json.NewEncoder(w).Encode(client.UserProfile{ID: "user-1", TenantID: homeTenant})
+
+		// Answered WITHOUT an upload form, so the create flow also has to mint
+		// one — that POST is part of the flow and must be tenant-scoped too.
+		case req.Method == http.MethodPost && route == "/images":
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(apiCreateImageResponse{
+				apiImage: apiImage{ID: "img-1", Name: "custom-ubuntu", Status: "queued", Visibility: "private", Owner: "proj-1"},
+			})
+
+		case req.Method == http.MethodPost && route == "/images/img-1/upload":
+			_ = json.NewEncoder(w).Encode(apiImageUpload{
+				URL:      "http://" + req.Host + "/staging",
+				Fields:   map[string]string{"key": "staging/img-1"},
+				MaxBytes: 1 << 30,
+			})
+
+		case req.Method == http.MethodPost && p == "/staging":
+			w.WriteHeader(http.StatusNoContent)
+
+		case req.Method == http.MethodPost && route == "/images/img-1/import":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(apiImage{ID: "img-1", Status: "importing"})
+
+		case req.Method == http.MethodGet && route == "/images/img-1":
+			_ = json.NewEncoder(w).Encode(apiImage{
+				ID: "img-1", Name: "custom-ubuntu", Status: "active", Visibility: "private",
+				Owner: "proj-1", Size: 256, VirtualSize: 4096, Checksum: "abc123", CreatedAt: "2026-08-07T10:00:00Z",
+			})
+
+		case req.Method == http.MethodPut && route == "/images/img-1":
+			_ = json.NewEncoder(w).Encode(apiImage{
+				ID: "img-1", Name: "renamed", Status: "active", Visibility: "private",
+				Owner: "proj-1", CreatedAt: "2026-08-07T10:00:00Z",
+			})
+
+		case req.Method == http.MethodDelete && route == "/images/img-1":
+			w.WriteHeader(http.StatusNoContent)
+
+		default:
+			t.Errorf("unexpected request %s %s", req.Method, p)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("configure failed: %v", err)
+	}
+	if c.TenantID() != homeTenant {
+		t.Fatalf("home tenant = %q, want %q", c.TenantID(), homeTenant)
+	}
+	// What the provider's tenant_id selector does: operate on a tenant that is
+	// NOT the caller's home tenant.
+	c.SetTenantIDForTest(testTenantID)
+
+	r := newTestImageResource(c, server.Client())
+	ctx := context.Background()
+	s := resourceSchema(t)
+
+	createResp := runCreate(t, r, source)
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("Create failed: %v", createResp.Diagnostics.Errors())
+	}
+
+	stateVal := stateValue(t, s, "img-1")
+
+	readResp := &resource.ReadResponse{State: tfsdk.State{Schema: s, Raw: stateVal}}
+	r.Read(ctx, resource.ReadRequest{State: tfsdk.State{Schema: s, Raw: stateVal}}, readResp)
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	renamed := stateAttrs("img-1")
+	renamed["name"] = tftypes.NewValue(tftypes.String, "renamed")
+	updateResp := &resource.UpdateResponse{State: tfsdk.State{Schema: s, Raw: stateVal}}
+	r.Update(ctx, resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: s, Raw: objectValue(s, renamed)},
+		State: tfsdk.State{Schema: s, Raw: stateVal},
+	}, updateResp)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("Update failed: %v", updateResp.Diagnostics.Errors())
+	}
+
+	deleteResp := &resource.DeleteResponse{State: tfsdk.State{Schema: s, Raw: stateVal}}
+	r.Delete(ctx, resource.DeleteRequest{State: tfsdk.State{Schema: s, Raw: stateVal}}, deleteResp)
+	if deleteResp.Diagnostics.HasError() {
+		t.Fatalf("Delete failed: %v", deleteResp.Diagnostics.Errors())
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	for _, call := range gatewayPaths {
+		p := strings.SplitN(call, " ", 2)[1]
+		if p == "/v1/me" {
+			continue
+		}
+		if !strings.HasPrefix(p, tenantPrefix) {
+			t.Errorf("image call %q does not name the configured tenant. The gateway re-scopes the "+
+				"signed auth context only on a /tenants/{id}/ path, so this one acted on the caller's "+
+				"home tenant %q instead of %q", call, homeTenant, testTenantID)
+		}
+	}
+
+	// Every step of the flow has to be present — a missing one would mean the
+	// loop above passed only because the call was never made.
+	for _, want := range []string{
+		http.MethodPost + " " + tenantPrefix,                   // create
+		http.MethodPost + " " + tenantPrefix + "/img-1/upload", // mint upload form
+		http.MethodPost + " " + tenantPrefix + "/img-1/import", // import
+		http.MethodGet + " " + tenantPrefix + "/img-1",         // poll + read
+		http.MethodPut + " " + tenantPrefix + "/img-1",         // update
+		http.MethodDelete + " " + tenantPrefix + "/img-1",      // delete
+	} {
+		if !slices.Contains(gatewayPaths, want) {
+			t.Errorf("no %q request was made; calls were %v", want, gatewayPaths)
+		}
+	}
+}
+
+// --- dot-segment ids ---------------------------------------------------------
+
+// TestDotSegmentImageIDsAreRefusedNotEscaped is a REGRESSION test for a
+// destructive shape, not a hypothetical one.
+//
+// 🔴 url.PathEscape does NOT protect a path segment from "." or "..": they are
+// unreserved characters, so there is nothing for it to escape — and client.do
+// finishes the URL with path.Join, which CLEANS dot segments. While the image
+// routes were the untenanted /v1/images/{id} that was harmless, because
+// "/v1/images/../instances/x" collapsed to "/v1/instances/x" and the api-gateway
+// deliberately routes nothing there. Under /v1/tenants/{tenant}/images/{id} the
+// same collapse lands inside the practitioner's OWN tenant namespace, where
+// every other resource lives. Measured against the unguarded code:
+//
+//	Delete with id "../instances/i-1" -> DELETE /v1/tenants/T/instances/i-1
+//
+// which is a registered DELETE route, so it does not 404: destroying a
+// frostmoln_image destroys an instance instead. The gateway's
+// PathCanonicalization middleware would answer 400 on a literal dot segment —
+// it is this client's own path.Join that defeats it, so the refusal has to
+// happen provider-side.
+//
+// The assertion is "NO REQUEST WAS ISSUED", not merely "a diagnostic came back":
+// a server-side rejection would satisfy an error-only check while still putting
+// the destructive request on the wire.
+func TestDotSegmentImageIDsAreRefusedNotEscaped(t *testing.T) {
+	var (
+		mu               sync.Mutex
+		gotMethod, gotAt string
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		mu.Lock()
+		gotMethod, gotAt = req.Method, req.URL.Path
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "img-1", "status": "active"})
+	}))
+	defer server.Close()
+
+	c := newTestImageClient(server)
+	r := newTestImageResource(c, server.Client())
+	ctx := context.Background()
+	s := resourceSchema(t)
+
+	seen := func() (string, string) {
+		mu.Lock()
+		defer mu.Unlock()
+		return gotMethod, gotAt
+	}
+	reset := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		gotMethod, gotAt = "", ""
+	}
+
+	cases := []struct {
+		name string
+		// call returns an error, or nil when the entry point reports through
+		// diagnostics instead.
+		call func(bad string) error
+	}{
+		{"read", func(bad string) error {
+			stateVal := stateValue(t, s, bad)
+			readResp := &resource.ReadResponse{State: tfsdk.State{Schema: s, Raw: stateVal}}
+			r.Read(ctx, resource.ReadRequest{State: tfsdk.State{Schema: s, Raw: stateVal}}, readResp)
+			return diagError(readResp.Diagnostics.HasError())
+		}},
+		{"update", func(bad string) error {
+			stateVal := stateValue(t, s, bad)
+			// A plan that actually differs, or Update returns before it would
+			// build any path and the test would prove nothing.
+			planAttrs := stateAttrs(bad)
+			planAttrs["name"] = tftypes.NewValue(tftypes.String, "renamed")
+			updateResp := &resource.UpdateResponse{State: tfsdk.State{Schema: s, Raw: stateVal}}
+			r.Update(ctx, resource.UpdateRequest{
+				Plan:  tfsdk.Plan{Schema: s, Raw: objectValue(s, planAttrs)},
+				State: tfsdk.State{Schema: s, Raw: stateVal},
+			}, updateResp)
+			return diagError(updateResp.Diagnostics.HasError())
+		}},
+		{"delete", func(bad string) error {
+			stateVal := stateValue(t, s, bad)
+			deleteResp := &resource.DeleteResponse{State: tfsdk.State{Schema: s, Raw: stateVal}}
+			r.Delete(ctx, resource.DeleteRequest{State: tfsdk.State{Schema: s, Raw: stateVal}}, deleteResp)
+			return diagError(deleteResp.Diagnostics.HasError())
+		}},
+		{"deleteImage", func(bad string) error { return r.deleteImage(ctx, bad) }},
+		{"mint upload form", func(bad string) error {
+			created := &apiCreateImageResponse{}
+			created.ID = bad
+			_, err := r.resolveUploadForm(ctx, created)
+			return err
+		}},
+		{"startImport", func(bad string) error { return r.startImport(ctx, bad) }},
+		{"waitForImport", func(bad string) error { _, err := r.waitForImport(ctx, bad); return err }},
+	}
+
+	// "." and ".." collapse onto a sibling or the parent; a slash or an escape
+	// character builds a different path outright. One guard refuses them all.
+	for _, bad := range []string{"..", ".", "../instances/i-1", "../..", "a/b", "a%2Fb", ""} {
+		for _, tc := range cases {
+			reset()
+			err := tc.call(bad)
+			method, at := seen()
+			if err == nil {
+				t.Errorf("image %s with id %q was ACCEPTED and issued %s %s", tc.name, bad, method, at)
+				continue
+			}
+			// The refusal must happen before any request leaves the provider.
+			if at != "" {
+				t.Errorf("image %s with id %q was refused but had already issued %s %s",
+					tc.name, bad, method, at)
+			}
+		}
+	}
+}
+
+// diagError turns a diagnostics-reporting entry point's outcome into the error
+// the table above compares against, so a framework entry point and a plain
+// helper can share one assertion.
+func diagError(hasError bool) error {
+	if hasError {
+		return errors.New("the operation reported an error diagnostic")
+	}
+	return nil
 }

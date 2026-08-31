@@ -15,8 +15,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
-
-	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
 
 // TestFromAPIRefreshesDefaultUserFromTheRawProperty is the trap this attribute
@@ -180,7 +178,7 @@ func TestUpdateClearsDefaultUser(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c := newTestImageClient(server)
 	r := newTestImageResource(c, server.Client())
 	s := resourceSchema(t)
 

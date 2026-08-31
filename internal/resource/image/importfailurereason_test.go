@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
 
 // waitForImportError runs a failing import against a server that answers with
@@ -21,7 +19,7 @@ func waitForImportError(t *testing.T, img apiImage) string {
 	}))
 	defer server.Close()
 
-	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c := newTestImageClient(server)
 	r := newTestImageResource(c, server.Client())
 	r.pollTimeout = time.Minute
 
