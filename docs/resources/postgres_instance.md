@@ -55,6 +55,7 @@ output "postgres_endpoint" {
 
 - `admin_username` (String) The admin username for the PostgreSQL instance.
 - `created_at` (String) The timestamp when the instance was created.
+- `ha_status` (String) Availability state of the instance: disabled, provisioning, healthy, degraded, failing_over or no_standby. This is what the platform actually has, as opposed to ha_enabled, which records what was requested at create time. An instance created before high availability was built reports ha_enabled = true with ha_status = no_standby.
 - `id` (String) The unique identifier of the PostgreSQL instance.
 - `port` (Number) The port number the PostgreSQL instance is listening on.
 - `private_ip` (String) The private IP address of the PostgreSQL instance.

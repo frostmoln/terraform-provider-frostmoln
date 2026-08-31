@@ -156,6 +156,14 @@ func (r *postgresInstanceResource) Schema(_ context.Context, _ resource.SchemaRe
 					boolplanmodifier.RequiresReplace(),
 				},
 			},
+			"ha_status": schema.StringAttribute{
+				Description: "Availability state of the instance: disabled, provisioning, healthy, " +
+					"degraded, failing_over or no_standby. This is what the platform actually has, " +
+					"as opposed to ha_enabled, which records what was requested at create time. An " +
+					"instance created before high availability was built reports ha_enabled = true " +
+					"with ha_status = no_standby.",
+				Computed: true,
+			},
 			"backup_enabled": schema.BoolAttribute{
 				Description: "Whether automated backups are enabled.",
 				Optional:    true,

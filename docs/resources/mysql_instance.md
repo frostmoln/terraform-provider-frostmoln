@@ -48,13 +48,14 @@ output "mysql_endpoint" {
 - `backup_enabled` (Boolean) Whether automated backups are enabled.
 - `backup_retention_days` (Number) Number of days to retain backups. Minimum 35 (backups are immutably object-locked for 35 days); maximum 90. Defaults to 35 server-side.
 - `backup_schedule` (String) Cron expression for the backup schedule. Defaults to "0 2 * * *" server-side.
-- `ha_enabled` (Boolean) Whether high availability is enabled with a standby replica.
+- `ha_enabled` (Boolean, Deprecated) Not supported for MySQL. High availability is available for PostgreSQL only; setting this to true is rejected.
 - `parameter_group_id` (String) The ID of the parameter group to apply to the instance.
 
 ### Read-Only
 
 - `admin_username` (String) The admin username for the MySQL instance.
 - `created_at` (String) The timestamp when the instance was created.
+- `ha_status` (String) Availability state of the instance. Always "disabled" for MySQL, which does not support high availability.
 - `id` (String) The unique identifier of the MySQL instance.
 - `port` (Number) The port number the MySQL instance is listening on.
 - `private_ip` (String) The private IP address of the MySQL instance.

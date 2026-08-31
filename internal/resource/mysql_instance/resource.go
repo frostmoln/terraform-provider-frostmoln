@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/boolvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -147,14 +148,40 @@ func (r *mysqlInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
+			// NOT SUPPORTED FOR MySQL. High availability needs a different mechanism end to
+			// end here -- semi-synchronous replication or Group Replication, with different
+			// promote and fence semantics -- so the API refuses engine=mysql with haEnabled.
+			//
+			// The attribute is KEPT rather than removed: removing it turns every existing config
+			// that carries it into an "Unsupported argument" error at parse time, which is a
+			// harder break than a validator. The validator moves the refusal from apply time
+			// (mid-graph, after the VPC and subnet in the same plan are already created) to plan
+			// time, where it costs nothing.
+			//
+			// Note this DOES newly fail `terraform plan` for a config already carrying
+			// ha_enabled = true -- a value the API accepted for months and the platform never
+			// honoured. That is deliberate and is called out in the changelog.
 			"ha_enabled": schema.BoolAttribute{
-				Description: "Whether high availability is enabled with a standby replica.",
-				Optional:    true,
-				Computed:    true,
+				Description: "Not supported for MySQL. High availability is available for " +
+					"PostgreSQL only; setting this to true is rejected.",
+				DeprecationMessage: "High availability is not available for MySQL. This attribute " +
+					"is rejected when set to true and will be removed in a future major version.",
+				Optional: true,
+				Computed: true,
+				Validators: []validator.Bool{
+					// Equals(false), not None(): None is a COMPOSITION validator meaning "none of
+					// these sub-validators may pass". What we want is a value constraint.
+					boolvalidator.Equals(false),
+				},
 				PlanModifiers: []planmodifier.Bool{
 					boolplanmodifier.UseStateForUnknown(),
 					boolplanmodifier.RequiresReplace(),
 				},
+			},
+			"ha_status": schema.StringAttribute{
+				Description: "Availability state of the instance. Always \"disabled\" for MySQL, " +
+					"which does not support high availability.",
+				Computed: true,
 			},
 			"backup_enabled": schema.BoolAttribute{
 				Description: "Whether automated backups are enabled.",

@@ -21,14 +21,18 @@ const (
 
 // MysqlInstanceModel is the Terraform state model for a managed MySQL instance.
 type MysqlInstanceModel struct {
-	ID                  types.String `tfsdk:"id"`
-	Name                types.String `tfsdk:"name"`
-	Version             types.String `tfsdk:"version"`
-	FlavorID            types.String `tfsdk:"flavor_id"`
-	StorageGB           types.Int64  `tfsdk:"storage_gb"`
-	VPCID               types.String `tfsdk:"vpc_id"`
-	SubnetID            types.String `tfsdk:"subnet_id"`
-	HAEnabled           types.Bool   `tfsdk:"ha_enabled"`
+	ID        types.String `tfsdk:"id"`
+	Name      types.String `tfsdk:"name"`
+	Version   types.String `tfsdk:"version"`
+	FlavorID  types.String `tfsdk:"flavor_id"`
+	StorageGB types.Int64  `tfsdk:"storage_gb"`
+	VPCID     types.String `tfsdk:"vpc_id"`
+	SubnetID  types.String `tfsdk:"subnet_id"`
+	HAEnabled types.Bool   `tfsdk:"ha_enabled"`
+	// HAStatus is read-only. ha_enabled records what was REQUESTED and is RequiresReplace;
+	// ha_status records what the platform actually has, and the two disagree for instances
+	// created before high availability was built (ha_enabled true, ha_status no_standby).
+	HAStatus            types.String `tfsdk:"ha_status"`
 	BackupEnabled       types.Bool   `tfsdk:"backup_enabled"`
 	BackupSchedule      types.String `tfsdk:"backup_schedule"`
 	BackupRetentionDays types.Int64  `tfsdk:"backup_retention_days"`
@@ -54,6 +58,7 @@ type apiMysqlInstance struct {
 	VPCID               string `json:"vpcId"`
 	SubnetID            string `json:"subnetId"`
 	HAEnabled           bool   `json:"haEnabled"`
+	HAStatus            string `json:"haStatus"`
 	BackupEnabled       bool   `json:"backupEnabled"`
 	BackupSchedule      string `json:"backupSchedule,omitempty"`
 	BackupRetentionDays int    `json:"backupRetentionDays,omitempty"`
@@ -193,6 +198,7 @@ func (m *MysqlInstanceModel) fromAPI(_ context.Context, inst *apiMysqlInstance, 
 	m.VPCID = types.StringValue(inst.VPCID)
 	m.SubnetID = types.StringValue(inst.SubnetID)
 	m.HAEnabled = types.BoolValue(inst.HAEnabled)
+	m.HAStatus = types.StringValue(inst.HAStatus)
 	m.BackupEnabled = types.BoolValue(inst.BackupEnabled)
 	m.Status = types.StringValue(inst.Status)
 	m.CreatedAt = types.StringValue(inst.CreatedAt)
