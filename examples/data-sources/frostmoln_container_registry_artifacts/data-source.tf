@@ -44,3 +44,16 @@ output "artifact_sizes_by_digest" {
     a.digest => a.size_bytes
   }
 }
+
+# WHAT TO DO WITH THE ANSWER. There is no artifact RESOURCE and there will not
+# be one: Terraform never pushed these images, so wrapping them in a resource
+# would give it a Delete with no Create — and turn any `terraform destroy` into
+# the silent removal of content a pipeline produced. Use the list to decide, and
+# delete deliberately, with a tool that knows it is destroying something:
+#
+#   fm registry image delete web/api sha256:<digest>
+#
+# Every untagged manifest in the repository, ready to pipe:
+output "untagged_digests" {
+  value = [for a in data.frostmoln_container_registry_artifacts.api_server.artifacts : a.digest if length(a.tags) == 0]
+}

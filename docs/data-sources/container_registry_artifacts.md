@@ -7,6 +7,11 @@ description: |-
   The whole repository is returned: this data source follows the API's pagination itself and assembles every page, because Terraform has no notion of a partial list and a truncated one would silently plan against a registry that is missing images.
   OBSERVATIONAL, like storage_used_bytes on frostmoln_container_registry: artifacts appear on docker push, tags move between them, and pulled_at advances whenever anything pulls. Expect the values to differ on every refresh, and do not build a configuration that plans a change from them.
   A tenant that has NOT enabled its registry is an error here, not an empty list — an empty list would make "this tenant has no registry" and "this repository holds no images" indistinguishable. A repository that does not exist is an error for the same reason.
+  THERE IS NO ARTIFACT RESOURCE, AND THAT IS DELIBERATE. The API can delete an artifact — fm registry image delete <repository> <digest>, the Remove button in the portal, or DELETE /registry/artifacts — but Terraform is not where that belongs, for three reasons.
+  FIRST, THIS PROVIDER IS ALREADY NON-DESTRUCTIVE FOR REGISTRY CONTENT. frostmoln_container_registry's own Delete removes the registry from state and destroys nothing, warning that the namespace and its images survive. An artifact resource would be the single exception — the one registry object a terraform destroy in an unrelated module could actually annihilate, and it would annihilate content a pipeline pushed and Terraform never made.
+  SECOND, THE DIGEST IS MINTED BY A BUILD OUTSIDE TERRAFORM. Hardcode one and it is stale on the next push; compute it from this data source and the resource is keyed off a value this very schema documents as observational and expected to change on every refresh — a perpetual destroy/create plan.
+  THIRD, DRIFT IS GUARANTEED AND ONE-DIRECTIONAL. A fm registry image delete, a portal Remove or a tag overwrite makes the object vanish underneath state, and every later plan proposes recreating something Terraform cannot create.
+  If declarative cleanup is ever genuinely wanted, the object to model is the RETENTION POLICY on the tenant's namespace — a real desired-state object — never the artifact. Meanwhile: use this data source to FIND what to remove, and remove it with a tool that knows it is destroying content.
 ---
 
 # frostmoln_container_registry_artifacts (Data Source)
@@ -18,6 +23,16 @@ The whole repository is returned: this data source follows the API's pagination 
 OBSERVATIONAL, like `storage_used_bytes` on `frostmoln_container_registry`: artifacts appear on `docker push`, tags move between them, and `pulled_at` advances whenever anything pulls. Expect the values to differ on every refresh, and do not build a configuration that plans a change from them.
 
 A tenant that has NOT enabled its registry is an error here, not an empty list — an empty list would make "this tenant has no registry" and "this repository holds no images" indistinguishable. A repository that does not exist is an error for the same reason.
+
+THERE IS NO ARTIFACT RESOURCE, AND THAT IS DELIBERATE. The API can delete an artifact — `fm registry image delete <repository> <digest>`, the Remove button in the portal, or `DELETE /registry/artifacts` — but Terraform is not where that belongs, for three reasons.
+
+FIRST, THIS PROVIDER IS ALREADY NON-DESTRUCTIVE FOR REGISTRY CONTENT. `frostmoln_container_registry`'s own Delete removes the registry from state and destroys nothing, warning that the namespace and its images survive. An artifact resource would be the single exception — the one registry object a `terraform destroy` in an unrelated module could actually annihilate, and it would annihilate content a pipeline pushed and Terraform never made.
+
+SECOND, THE DIGEST IS MINTED BY A BUILD OUTSIDE TERRAFORM. Hardcode one and it is stale on the next push; compute it from this data source and the resource is keyed off a value this very schema documents as observational and expected to change on every refresh — a perpetual destroy/create plan.
+
+THIRD, DRIFT IS GUARANTEED AND ONE-DIRECTIONAL. A `fm registry image delete`, a portal Remove or a tag overwrite makes the object vanish underneath state, and every later plan proposes recreating something Terraform cannot create.
+
+If declarative cleanup is ever genuinely wanted, the object to model is the RETENTION POLICY on the tenant's namespace — a real desired-state object — never the artifact. Meanwhile: use this data source to FIND what to remove, and remove it with a tool that knows it is destroying content.
 
 ## Example Usage
 
@@ -67,6 +82,19 @@ output "artifact_sizes_by_digest" {
     for a in data.frostmoln_container_registry_artifacts.api_server.artifacts :
     a.digest => a.size_bytes
   }
+}
+
+# WHAT TO DO WITH THE ANSWER. There is no artifact RESOURCE and there will not
+# be one: Terraform never pushed these images, so wrapping them in a resource
+# would give it a Delete with no Create — and turn any `terraform destroy` into
+# the silent removal of content a pipeline produced. Use the list to decide, and
+# delete deliberately, with a tool that knows it is destroying something:
+#
+#   fm registry image delete web/api sha256:<digest>
+#
+# Every untagged manifest in the repository, ready to pipe:
+output "untagged_digests" {
+  value = [for a in data.frostmoln_container_registry_artifacts.api_server.artifacts : a.digest if length(a.tags) == 0]
 }
 ```
 

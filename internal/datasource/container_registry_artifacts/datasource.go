@@ -147,7 +147,28 @@ func (d *artifactsDataSource) Schema(_ context.Context, _ datasource.SchemaReque
 			"A tenant that has NOT enabled its registry is an error here, not an empty list — an " +
 			"empty list would make \"this tenant has no registry\" and \"this repository holds no " +
 			"images\" indistinguishable. A repository that does not exist is an error for the same " +
-			"reason.",
+			"reason.\n\n" +
+			"THERE IS NO ARTIFACT RESOURCE, AND THAT IS DELIBERATE. The API can delete an artifact " +
+			"— `fm registry image delete <repository> <digest>`, the Remove button in the portal, " +
+			"or `DELETE /registry/artifacts` — but Terraform is not where that belongs, for three " +
+			"reasons.\n\n" +
+			"FIRST, THIS PROVIDER IS ALREADY NON-DESTRUCTIVE FOR REGISTRY CONTENT. " +
+			"`frostmoln_container_registry`'s own Delete removes the registry from state and " +
+			"destroys nothing, warning that the namespace and its images survive. An artifact " +
+			"resource would be the single exception — the one registry object a `terraform " +
+			"destroy` in an unrelated module could actually annihilate, and it would annihilate " +
+			"content a pipeline pushed and Terraform never made.\n\n" +
+			"SECOND, THE DIGEST IS MINTED BY A BUILD OUTSIDE TERRAFORM. Hardcode one and it is " +
+			"stale on the next push; compute it from this data source and the resource is keyed " +
+			"off a value this very schema documents as observational and expected to change on " +
+			"every refresh — a perpetual destroy/create plan.\n\n" +
+			"THIRD, DRIFT IS GUARANTEED AND ONE-DIRECTIONAL. A `fm registry image delete`, a " +
+			"portal Remove or a tag overwrite makes the object vanish underneath state, and every " +
+			"later plan proposes recreating something Terraform cannot create.\n\n" +
+			"If declarative cleanup is ever genuinely wanted, the object to model is the RETENTION " +
+			"POLICY on the tenant's namespace — a real desired-state object — never the artifact. " +
+			"Meanwhile: use this data source to FIND what to remove, and remove it with a tool " +
+			"that knows it is destroying content.",
 		Attributes: map[string]schema.Attribute{
 			"repository": schema.StringAttribute{
 				Description: "The repository to list, RELATIVE to the tenant's namespace — the `name` of " +
