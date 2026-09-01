@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.44.0] - 2026-09-01
+
+### 🚀 Features
+
+- *(database)* Expose ha_status, and reject MySQL ha_enabled at plan time (#418)
+- *(registry)* Add repositories and artifacts data sources (#417)
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.19 (#421)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.20 (#425)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.20 (#425)
+
+### 📚 Documentation
+
+- Correct the "403 carries no number" claim — it carries the figures (#415)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.10.2 (#420)
+
 ## [0.43.1] - 2026-08-31
 
 ### 🐛 Bug Fixes
