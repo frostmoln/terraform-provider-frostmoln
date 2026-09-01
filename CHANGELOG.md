@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.44.1] - 2026-09-01
+
+### 📚 Documentation
+
+- *(registry)* Say why there is no artifact resource (#427)
+
 ## [0.44.0] - 2026-09-01
 
 ### 🚀 Features
