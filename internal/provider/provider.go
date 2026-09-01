@@ -26,6 +26,8 @@ import (
 	appgwflavorsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/appgw_flavors"
 	appgwwafrulesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/appgw_waf_rules"
 	dscontainerregistry "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/container_registry"
+	dscontainerregistryartifacts "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/container_registry_artifacts"
+	dscontainerregistryrepositories "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/container_registry_repositories"
 	databaseenginesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/database_engines"
 	dnszoneds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/dns_zone"
 	flavords "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/flavor"
@@ -612,6 +614,12 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		// billable storage, so a config that only consumes a registry someone
 		// else owns needs a path that cannot create one.
 		dscontainerregistry.NewDataSource,
+		// The registry's image inventory, read-only in both directions: which
+		// repositories exist, and what is inside one of them. Neither has a
+		// resource counterpart — a `docker push` owns that lifecycle, not
+		// Terraform.
+		dscontainerregistryrepositories.NewDataSource,
+		dscontainerregistryartifacts.NewDataSource,
 		appgwflavorsds.NewDataSource,
 		// Two sources rather than one with an owner argument: a tenant's rules
 		// and the platform's are managed by entirely different means, and a
