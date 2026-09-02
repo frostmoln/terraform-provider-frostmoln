@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
 )
 
 var _ resource.Resource = &credentialResource{}
@@ -100,7 +101,7 @@ func (r *credentialResource) Schema(_ context.Context, _ resource.SchemaRequest,
 			},
 			"secret": schema.StringAttribute{
 				Description: "The `docker login` password. Returned only when the credential is first " +
-					"created, and stored in Terraform state thereafter — it cannot be fetched again.",
+					"created, and it cannot be fetched again. " + docs.StateSecretNote,
 				Computed:  true,
 				Sensitive: true,
 				PlanModifiers: []planmodifier.String{

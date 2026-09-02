@@ -52,7 +52,7 @@ output "s3_secret_key" {
 
 - `created_at` (String) The timestamp when the S3 credential was created.
 - `id` (String) The access key ID of the S3 credential — the identifier used with secret_access_key when talking to the S3 endpoint, and the value to pass to terraform import.
-- `secret_access_key` (String, Sensitive) The secret access key. Only returned when the credential is first created.
+- `secret_access_key` (String, Sensitive) The secret access key. Only returned when the credential is first created. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide.
 - `status` (String) The status of the S3 credential.
 
 ## Import

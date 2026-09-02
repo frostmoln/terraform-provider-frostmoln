@@ -35,7 +35,7 @@ resource "frostmoln_secret" "database_password" {
 ### Required
 
 - `name` (String) The name of the secret. Cannot be changed after creation.
-- `secret_value` (String, Sensitive) The secret value. This is sensitive and will not be shown in plan output.
+- `secret_value` (String, Sensitive) The secret value. Terraform persists every configured attribute, so this one is stored in state in plaintext no matter where the value came from — minting it out of band and passing it through a variable does not change that. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide.
 
 ### Optional
 

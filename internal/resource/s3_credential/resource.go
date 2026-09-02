@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
 )
 
 var (
@@ -103,9 +104,10 @@ func (r *s3CredentialResource) Schema(_ context.Context, _ resource.SchemaReques
 				},
 			},
 			"secret_access_key": schema.StringAttribute{
-				Description: "The secret access key. Only returned when the credential is first created.",
-				Computed:    true,
-				Sensitive:   true,
+				Description: "The secret access key. Only returned when the credential is first created. " +
+					docs.StateSecretNote,
+				Computed:  true,
+				Sensitive: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},

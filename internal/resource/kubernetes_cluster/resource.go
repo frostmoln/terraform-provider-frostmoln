@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
 )
 
 // Cluster and node-pool statuses (kubernetes service vocabulary). Deletes are
@@ -308,8 +309,11 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 				},
 			},
 			"kubeconfig": schema.StringAttribute{
-				Description: "A kubeconfig for the cluster. Stored in the Terraform state in plaintext — protect " +
-					"the state file accordingly.",
+				Description: "A kubeconfig for the cluster, re-fetched from the platform on every refresh while " +
+					"the cluster is running. " + docs.StateSecretNote + " Because it is re-fetchable, state is " +
+					"not the only place it can come from: if you do not need it in Terraform, leave the " +
+					"attribute unreferenced and take it out of band with " +
+					"`fm kubernetes cluster kubeconfig <cluster-id>`.",
 				Computed:  true,
 				Sensitive: true,
 				PlanModifiers: []planmodifier.String{

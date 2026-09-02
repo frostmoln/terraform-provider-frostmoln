@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
 )
 
 var (
@@ -149,8 +150,9 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			},
 			"user_data": schema.StringAttribute{
 				Description: "User data to provide to the instance at launch — typically a cloud-init " +
-					"document. This is write-only; the API does not return it. A SHA256 hash is stored " +
-					"in state for change detection.\n\n" +
+					"document. The API does not return it, so the value you configure is preserved from " +
+					"state on refresh and a SHA256 hash is stored alongside it for change detection. " +
+					docs.UserDataStateNote + "\n\n" +
 					"**Write the document as plain text — `file(\"cloud-init.yaml\")`, not " +
 					"`base64encode(file(...))`.** Base64 is accepted by the API, but it must NOT be " +
 					"used on an instance that also sets `ssh_key_names`, `console_password` or " +
@@ -177,9 +179,11 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				},
 			},
 			"console_password": schema.StringAttribute{
-				Description: "Password for the default OS user, usable only at the VNC console; SSH stays key-only. Changing forces replacement.",
-				Optional:    true,
-				Sensitive:   true,
+				Description: "Password for the default OS user, usable only at the VNC console; SSH stays key-only. " +
+					"Changing forces replacement — so this is not an attribute you can rotate in place; a new " +
+					"value destroys and recreates the instance. " + docs.StateSecretNote,
+				Optional:  true,
+				Sensitive: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},

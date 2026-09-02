@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
 )
 
 var (
@@ -101,8 +102,13 @@ func (r *certificateResource) Schema(_ context.Context, _ resource.SchemaRequest
 			"~> **The private key is written to Terraform state.** The platform never returns it, " +
 			"so Terraform is the only place it can be kept for a refresh — which means your state " +
 			"file holds key material and must be treated as a secret: a remote backend with " +
-			"encryption at rest and restricted access. Reference it from a variable or a secret " +
-			"store rather than committing the PEM to your configuration.\n\n" +
+			"encryption at rest and restricted access. Keeping the PEM out of your `.tf` files does " +
+			"not keep it out of state — a value read from a variable or a secret store is persisted " +
+			"exactly like a literal once it is assigned to `private_key_pem`. The only way to keep a " +
+			"key out of Terraform entirely is not to hand it one: a platform-issued ACME certificate " +
+			"(`source` = `acmeDns01`, obtained out of band — this resource only uploads) is attached " +
+			"to a listener by ID and never carries key material. See the " +
+			"[Secrets in Terraform state](" + docs.StateSecretsGuide + ") guide.\n\n" +
 			"The certificate API has no update operation, so every attribute forces a new resource. " +
 			"Rotating a certificate therefore creates a new one and destroys the old — attach it to " +
 			"the listener via `create_before_destroy` if you cannot take the interruption.",
@@ -128,8 +134,8 @@ func (r *certificateResource) Schema(_ context.Context, _ resource.SchemaRequest
 				PlanModifiers: replaceStr,
 			},
 			"private_key_pem": schema.StringAttribute{
-				Description: "The PEM private key for `chain_pem`. Write-only at the API: the " +
-					"platform never returns it, so it is preserved from state on every refresh.",
+				Description: "The PEM private key for `chain_pem`. The platform never returns it, so it is " +
+					"preserved from state on every refresh. " + docs.StateSecretNote,
 				Required:      true,
 				Sensitive:     true,
 				PlanModifiers: replaceStr,

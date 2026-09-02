@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
 )
 
 var (
@@ -88,9 +89,10 @@ func (r *apiKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				},
 			},
 			"key": schema.StringAttribute{
-				Description: "The API key value. Only available after creation; not returned on subsequent reads.",
-				Computed:    true,
-				Sensitive:   true,
+				Description: "The API key value. Only available after creation; not returned on subsequent reads. " +
+					docs.StateSecretNote,
+				Computed:  true,
+				Sensitive: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},

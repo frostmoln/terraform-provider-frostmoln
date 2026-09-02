@@ -73,5 +73,5 @@ output "registry_password" {
 - `endpoint` (String) The host to `docker login` to.
 - `id` (String) The credential's id.
 - `namespaces` (List of String) The namespaces this credential reaches — the tenant's repository namespace and each of its pull-through caches. One credential covers all of them, because `docker login` is per host.
-- `secret` (String, Sensitive) The `docker login` password. Returned only when the credential is first created, and stored in Terraform state thereafter — it cannot be fetched again.
+- `secret` (String, Sensitive) The `docker login` password. Returned only when the credential is first created, and it cannot be fetched again. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide.
 - `username` (String) The `docker login` username, including its `robot$` prefix.

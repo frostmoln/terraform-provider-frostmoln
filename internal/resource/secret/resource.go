@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
 )
 
 var (
@@ -58,9 +59,11 @@ func (r *secretResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Optional:    true,
 			},
 			"secret_value": schema.StringAttribute{
-				Description: "The secret value. This is sensitive and will not be shown in plan output.",
-				Required:    true,
-				Sensitive:   true,
+				Description: "The secret value. Terraform persists every configured attribute, so this one is " +
+					"stored in state in plaintext no matter where the value came from — minting it out of band " +
+					"and passing it through a variable does not change that. " + docs.StateSecretNote,
+				Required:  true,
+				Sensitive: true,
 			},
 			"content_type": schema.StringAttribute{
 				Description: "The content type of the secret value. Defaults to \"text/plain\".",

@@ -4,7 +4,7 @@ page_title: "frostmoln_appgw_certificate Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a TLS certificate on a Frostmoln Application Gateway.
-  ~> The private key is written to Terraform state. The platform never returns it, so Terraform is the only place it can be kept for a refresh — which means your state file holds key material and must be treated as a secret: a remote backend with encryption at rest and restricted access. Reference it from a variable or a secret store rather than committing the PEM to your configuration.
+  ~> The private key is written to Terraform state. The platform never returns it, so Terraform is the only place it can be kept for a refresh — which means your state file holds key material and must be treated as a secret: a remote backend with encryption at rest and restricted access. Keeping the PEM out of your .tf files does not keep it out of state — a value read from a variable or a secret store is persisted exactly like a literal once it is assigned to private_key_pem. The only way to keep a key out of Terraform entirely is not to hand it one: a platform-issued ACME certificate (source = acmeDns01, obtained out of band — this resource only uploads) is attached to a listener by ID and never carries key material. See the Secrets in Terraform state https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets guide.
   The certificate API has no update operation, so every attribute forces a new resource. Rotating a certificate therefore creates a new one and destroys the old — attach it to the listener via create_before_destroy if you cannot take the interruption.
 ---
 
@@ -12,7 +12,7 @@ description: |-
 
 Manages a TLS certificate on a Frostmoln Application Gateway.
 
-~> **The private key is written to Terraform state.** The platform never returns it, so Terraform is the only place it can be kept for a refresh — which means your state file holds key material and must be treated as a secret: a remote backend with encryption at rest and restricted access. Reference it from a variable or a secret store rather than committing the PEM to your configuration.
+~> **The private key is written to Terraform state.** The platform never returns it, so Terraform is the only place it can be kept for a refresh — which means your state file holds key material and must be treated as a secret: a remote backend with encryption at rest and restricted access. Keeping the PEM out of your `.tf` files does not keep it out of state — a value read from a variable or a secret store is persisted exactly like a literal once it is assigned to `private_key_pem`. The only way to keep a key out of Terraform entirely is not to hand it one: a platform-issued ACME certificate (`source` = `acmeDns01`, obtained out of band — this resource only uploads) is attached to a listener by ID and never carries key material. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide.
 
 The certificate API has no update operation, so every attribute forces a new resource. Rotating a certificate therefore creates a new one and destroys the old — attach it to the listener via `create_before_destroy` if you cannot take the interruption.
 
@@ -52,7 +52,7 @@ variable "www_certificate_key" {
 - `chain_pem` (String) The PEM certificate chain, leaf first.
 - `gateway_id` (String) The Application Gateway this certificate belongs to.
 - `name` (String) The name of the certificate.
-- `private_key_pem` (String, Sensitive) The PEM private key for `chain_pem`. Write-only at the API: the platform never returns it, so it is preserved from state on every refresh.
+- `private_key_pem` (String, Sensitive) The PEM private key for `chain_pem`. The platform never returns it, so it is preserved from state on every refresh. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide.
 
 ### Read-Only
 

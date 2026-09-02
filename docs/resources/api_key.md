@@ -47,6 +47,6 @@ output "api_key_prefix" {
 
 - `created_at` (String) The timestamp when the API key was created.
 - `id` (String) The unique identifier of the API key.
-- `key` (String, Sensitive) The API key value. Only available after creation; not returned on subsequent reads.
+- `key` (String, Sensitive) The API key value. Only available after creation; not returned on subsequent reads. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide.
 - `key_prefix` (String) The prefix of the API key for identification.
 - `status` (String) The current status of the API key.

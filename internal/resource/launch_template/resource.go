@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
 )
 
 var (
@@ -79,7 +80,8 @@ func (r *launchTemplateResource) Schema(_ context.Context, _ resource.SchemaRequ
 			},
 			"user_data": schema.StringAttribute{
 				Description: "User data to provide to instances at launch — typically a cloud-init " +
-					"document. This is write-only; the API does not return it.\n\n" +
+					"document. The API does not return it, so the value you configure is preserved from " +
+					"state on refresh. " + docs.UserDataStateNote + "\n\n" +
 					"**Write the document as plain text — `file(\"cloud-init.yaml\")`, not " +
 					"`base64encode(file(...))`.** Base64 is accepted by the API, but it must NOT be " +
 					"used when instances launched from this template also get SSH keys, a console " +

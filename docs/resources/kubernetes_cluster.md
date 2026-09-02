@@ -85,7 +85,7 @@ An existing cluster created with a BYO public IP is unaffected and keeps its add
 - `endpoint` (String) The Kubernetes API endpoint URL.
 - `ha_enabled` (Boolean) Whether the control plane is highly available (derived from the control-plane tier).
 - `id` (String) The unique identifier of the cluster.
-- `kubeconfig` (String, Sensitive) A kubeconfig for the cluster. Stored in the Terraform state in plaintext — protect the state file accordingly.
+- `kubeconfig` (String, Sensitive) A kubeconfig for the cluster, re-fetched from the platform on every refresh while the cluster is running. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide. Because it is re-fetchable, state is not the only place it can come from: if you do not need it in Terraform, leave the attribute unreferenced and take it out of band with `fm kubernetes cluster kubeconfig <cluster-id>`.
 - `load_balancer_id` (String) The ID of the load balancer fronting the Kubernetes API.
 - `pod_cidr` (String) The server-allocated pod network CIDR.
 - `public_ip` (String) The public IP address of the cluster API endpoint.
