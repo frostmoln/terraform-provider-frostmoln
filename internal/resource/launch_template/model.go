@@ -18,6 +18,8 @@ type LaunchTemplateModel struct {
 	SSHKeyIDs        types.Set    `tfsdk:"ssh_key_ids"`
 	SecurityGroupIDs types.Set    `tfsdk:"security_group_ids"`
 	UserData         types.String `tfsdk:"user_data"`
+	UserDataWO       types.String `tfsdk:"user_data_wo"`
+	UserDataWOVer    types.String `tfsdk:"user_data_wo_version"`
 	Metadata         types.Map    `tfsdk:"metadata"`
 	Tags             types.Map    `tfsdk:"tags"`
 	CreatedAt        types.String `tfsdk:"created_at"`
@@ -33,7 +35,6 @@ type apiLaunchTemplate struct {
 	VPCID            string            `json:"vpcId"`
 	SSHKeyIDs        []string          `json:"sshKeyIds,omitempty"`
 	SecurityGroupIDs []string          `json:"securityGroupIds,omitempty"`
-	UserData         string            `json:"userData,omitempty"`
 	Metadata         map[string]string `json:"metadata,omitempty"`
 	Tags             map[string]string `json:"tags,omitempty"`
 	CreatedAt        string            `json:"createdAt"`
@@ -244,13 +245,23 @@ func (m *LaunchTemplateModel) fromAPI(ctx context.Context, lt *apiLaunchTemplate
 		m.Tags = types.MapNull(types.StringType)
 	}
 
-	// user_data is preserved from state in Read/Update. NOT because the API
-	// withholds it: compute's LaunchTemplate READ model carries userData
-	// (compute/internal/domain/launch_template.go) and apiLaunchTemplate above
-	// has a field to decode it into — this function simply does not assign it.
-	// So when this resource gains user_data_wo (stage 3 of
-	// TF-PROVIDER-WRITE-ONLY-SECRETS-PLAN) it needs frostmoln_secret's read-path
-	// guard — adopt the API value only when user_data is already non-null — and
-	// NOT frostmoln_instance's argument, whose safety rests on the response type
-	// having no such field at all.
+	// user_data is deliberately absent from this function, and userData is
+	// deliberately absent from apiLaunchTemplate above.
+	//
+	// The API DOES return the document: compute's LaunchTemplate read model
+	// carries userData (compute/internal/domain/launch_template.go) and its GET
+	// handler serialises that type directly. So the response body holds the
+	// document on every refresh, and anything that decodes and adopts it puts in
+	// state exactly what user_data_wo exists to keep out. Not decoding it makes
+	// that a compile error rather than a rule someone has to remember — the same
+	// shape frostmoln_instance has, arrived at deliberately here rather than by
+	// accident. TestReadIgnoresUserDataFromTheAPI feeds a response that does
+	// return the document and pins the outcome.
+	//
+	// The legacy user_data therefore keeps its configured value across a refresh:
+	// this function mutates the model in place, and the model already carries it.
+	// That is the behaviour it has always had. Giving it real drift detection is
+	// a separate change from the write-only work, and not a free one — user_data
+	// is Optional and not Computed, so writing an API-normalised value back over
+	// the configured one would make Terraform reject the apply.
 }

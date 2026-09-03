@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -11,7 +12,11 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
@@ -80,8 +85,11 @@ func (r *launchTemplateResource) Schema(_ context.Context, _ resource.SchemaRequ
 			},
 			"user_data": schema.StringAttribute{
 				Description: "User data to provide to instances at launch — typically a cloud-init " +
-					"document. The API does not return it, so the value you configure is preserved from " +
-					"state on refresh. " + docs.UserDataStateNote + "\n\n" +
+					"document. The platform returns the stored document on every read, but the provider " +
+					"does not decode it, so the value you configure is preserved from state on refresh and a " +
+					"change made outside Terraform is not detected. " +
+					docs.UserDataStateNote + " Prefer `user_data_wo`, which carries the same document but is " +
+					"never written to state; the two are mutually exclusive.\n\n" +
 					"**Write the document as plain text — `file(\"cloud-init.yaml\")`, not " +
 					"`base64encode(file(...))`.** Base64 is accepted by the API, but it must NOT be " +
 					"used when instances launched from this template also get SSH keys, a console " +
@@ -100,8 +108,55 @@ func (r *launchTemplateResource) Schema(_ context.Context, _ resource.SchemaRequ
 					"on first boot with no internet and no name resolution.",
 				Optional:  true,
 				Sensitive: true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
+				Validators: []validator.String{
+					stringvalidator.PreferWriteOnlyAttribute(path.MatchRoot("user_data_wo")),
+				},
+			},
+			"user_data_wo": schema.StringAttribute{
+				Description: "User data to provide to instances at launch, as a [write-only argument]" +
+					"(https://developer.hashicorp.com/terraform/language/resources/ephemeral/write-only): the " +
+					"document reaches the provider on apply and is never written to the plan or to state, so " +
+					"anything embedded in it stays out of the state file. Requires Terraform 1.11 or later. " +
+					"Mutually exclusive with `user_data`, and `user_data_wo_version` is required whenever this " +
+					"one is set. Everything `user_data` says about the document itself applies here unchanged: " +
+					"write it as plain text rather than `base64encode(...)`, and give the launched instance's " +
+					"VPC an outbound path if cloud-init reaches the network. Terraform cannot see a write-only " +
+					"value, so it cannot detect a change to this document in either direction: changing " +
+					"`user_data_wo_version` is what makes the next apply send the current document, and it " +
+					"updates the template in place. Editing the document without touching the version does " +
+					"nothing.",
+				Optional:  true,
+				Sensitive: true,
+				WriteOnly: true,
+				// No plan modifiers: a write-only attribute is null in prior state,
+				// the plan and the final state, so one here would compare null
+				// against null and could never fire. The version companion carries
+				// the change signal.
+				Validators: []validator.String{
+					// Omit the attribute for "no user data". An empty value here
+					// is always a mistake — an unset variable, a template that
+					// rendered to nothing — and on the write-only path it clears
+					// the stored document with no plan line to show it, unlike
+					// the legacy attribute where "" is at least a visible diff.
+					stringvalidator.LengthAtLeast(1),
+					stringvalidator.ConflictsWith(path.MatchRoot("user_data")),
+					stringvalidator.AlsoRequires(path.MatchRoot("user_data_wo_version")),
+				},
+			},
+			"user_data_wo_version": schema.StringAttribute{
+				Description: "Change tracker for `user_data_wo`, required whenever that attribute is set. " +
+					"Any change to this value makes the next apply send the current `user_data_wo` to the " +
+					"platform, updating the template in place; leaving it alone leaves the stored document " +
+					"untouched however much the write-only value changes. Instances already launched from the " +
+					"template keep the user data they were created with either way. Its content is arbitrary " +
+					"— a counter or a date is typical — and unlike the document it is stored in state, so do " +
+					"not derive it from the document or from anything in it: a digest of the document is a " +
+					"digest of whatever the document carries, and it is printed verbatim in `terraform plan` " +
+					"output. `terraform import` leaves this unset, so the first apply against an imported " +
+					"template sends the configured document again as a normal in-place update.",
+				Optional: true,
+				Validators: []validator.String{
+					stringvalidator.AlsoRequires(path.MatchRoot("user_data_wo")),
 				},
 			},
 			"metadata": schema.MapAttribute{
@@ -157,13 +212,20 @@ func (r *launchTemplateResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
-	apiReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
+	// A write-only attribute is null in the plan by construction; its value only
+	// ever reaches the provider through the config.
+	userDataWO := writeOnlyUserData(ctx, req.Config, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	// Preserve user_data before fromAPI (which doesn't touch it).
-	savedUserData := plan.UserData
+	apiReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !userDataWO.IsNull() {
+		apiReq.UserData = userDataWO.ValueString()
+	}
 
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/launch-templates"), apiReq)
 	if err != nil {
@@ -178,10 +240,6 @@ func (r *launchTemplateResource) Create(ctx context.Context, req resource.Create
 	}
 
 	plan.fromAPI(ctx, lt, &resp.Diagnostics)
-
-	// Restore write-only field.
-	plan.UserData = savedUserData
-
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -191,9 +249,6 @@ func (r *launchTemplateResource) Read(ctx context.Context, req resource.ReadRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
-
-	// Preserve write-only fields before refreshing from API.
-	savedUserData := state.UserData
 
 	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/launch-templates/"+state.ID.ValueString()), nil)
 	if err != nil {
@@ -211,11 +266,11 @@ func (r *launchTemplateResource) Read(ctx context.Context, req resource.ReadRequ
 		return
 	}
 
+	// fromAPI leaves both user_data and the write-only pair alone, so the
+	// configured document and the version companion carry over from prior state
+	// untouched. See the note at the end of fromAPI for why the response's
+	// document is not decoded at all.
 	state.fromAPI(ctx, lt, &resp.Diagnostics)
-
-	// Restore write-only fields.
-	state.UserData = savedUserData
-
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -228,14 +283,23 @@ func (r *launchTemplateResource) Update(ctx context.Context, req resource.Update
 		return
 	}
 
-	id := state.ID.ValueString()
+	userDataWO := writeOnlyUserData(ctx, req.Config, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
-	// Save write-only field from the plan before fromAPI overwrites model fields.
-	savedUserData := plan.UserData
+	id := state.ID.ValueString()
 
 	updateReq := plan.toUpdateRequest(ctx, &state, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+	// user_data_wo is null on both sides of the diff, so toUpdateRequest can
+	// never see it change. The practitioner-set version companion is the only
+	// signal that a new document should be sent.
+	if !userDataWO.IsNull() && !plan.UserDataWOVer.Equal(state.UserDataWOVer) {
+		v := userDataWO.ValueString()
+		updateReq.UserData = &v
 	}
 
 	_, err := r.client.Patch(ctx, r.client.TenantPath("/launch-templates/"+id), updateReq)
@@ -258,10 +322,6 @@ func (r *launchTemplateResource) Update(ctx context.Context, req resource.Update
 	}
 
 	plan.fromAPI(ctx, lt, &resp.Diagnostics)
-
-	// Restore write-only field that the API does not return.
-	plan.UserData = savedUserData
-
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -283,4 +343,27 @@ func (r *launchTemplateResource) Delete(ctx context.Context, req resource.Delete
 
 func (r *launchTemplateResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// writeOnlyUserData reads user_data_wo out of the configuration. It is read
+// straight from the config rather than through LaunchTemplateModel because a
+// write-only attribute is null everywhere else — prior state, plan and final
+// state. The config still carries the value at this point: the framework nulls
+// write-only attributes in the planned and final state, never in the config.
+//
+// It fails CLOSED on an unknown value. Config is fully resolved by apply so this
+// should be unreachable, but treating unknown as "no document" would send the
+// template without one and report success.
+func writeOnlyUserData(ctx context.Context, config tfsdk.Config, diags *diag.Diagnostics) types.String {
+	var v types.String
+	diags.Append(config.GetAttribute(ctx, path.Root("user_data_wo"), &v)...)
+	if v.IsUnknown() {
+		diags.AddError(
+			"user_data_wo Is Unknown At Apply",
+			"The write-only user_data_wo value was still unknown when the launch template was processed, "+
+				"so no request was sent to the platform and nothing was changed. This is a bug in the "+
+				"provider or in Terraform — please report it.",
+		)
+	}
+	return v
 }

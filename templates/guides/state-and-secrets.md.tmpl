@@ -15,8 +15,8 @@ Terraform writes **every** attribute of **every** managed resource to state —
 data source results too, and regardless of where the value came from. The only
 exception is [write-only
 arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral/write-only),
-which this provider offers for `frostmoln_secret.secret_value` and
-`frostmoln_instance.user_data` — see
+which this provider offers for `frostmoln_secret.secret_value`,
+`frostmoln_instance.user_data` and `frostmoln_launch_template.user_data` — see
 [Write-only arguments](#write-only-arguments) below.
 
 Marking an attribute `sensitive` does not change that. It redacts the value from
@@ -72,7 +72,7 @@ $ fm kubernetes cluster kubeconfig <cluster-id>
 | Resource | Attribute | Write-only form |
 |---|---|---|
 | `frostmoln_instance` | `user_data`, `console_password` | `user_data_wo`; `console_password` not yet |
-| `frostmoln_launch_template` | `user_data` | not yet |
+| `frostmoln_launch_template` | `user_data` | `user_data_wo` |
 | `frostmoln_secret` | `secret_value` | `secret_value_wo` |
 | `frostmoln_appgw_certificate` | `private_key_pem` | not yet |
 
@@ -113,6 +113,15 @@ satisfy an auditor, that is the boundary it moves: out of the durable artifacts,
 not out of the request. The platform edge redacts these fields from its own
 request logging.
 
+~> **`_wo` keeps a value out of *your state*, not out of the *platform*.** Where
+the API returns the stored value on read — `frostmoln_secret` and
+`frostmoln_launch_template` both do — anyone with read access to the tenant can
+still fetch it through the portal, `fm`, or an API key, and it is in the HTTPS
+*response* body on every `plan` and `refresh`, so `TF_LOG=DEBUG` or above
+captures it on every run rather than only on applies. The provider does not
+decode or store it, but the bytes cross the wire. `frostmoln_instance.user_data`
+is the exception: compute's instance response carries no user data at all.
+
 ## Protecting the state file
 
 **Use a remote backend with encryption at rest and access control**, rather than
@@ -150,7 +159,10 @@ destructive.
 - **`kubeconfig`:** there is no self-service revocation for a cluster-admin
   kubeconfig. Open a support case.
 - **Values you supplied:** rotate the credential **at its source**, not the
-  attribute. Editing `user_data` or `console_password` replaces the instance —
+  attribute. On a `frostmoln_launch_template`, note that editing `user_data`
+  changes only the template: every instance already launched from it keeps — and
+  keeps running — the leaked document. Editing `user_data` or `console_password`
+  on an instance replaces it —
   ephemeral disk contents gone, new addresses — and a new `private_key_pem`
   replaces the certificate and interrupts the listener unless you attach it with
   `create_before_destroy`.
@@ -160,8 +172,9 @@ destructive.
 
 ## Keeping secrets out of state in the first place
 
-- **Use `user_data_wo`** so the cloud-init document never reaches state at all.
-  That covers the document; the next bullet still applies to what is *in* it.
+- **Use `user_data_wo`** — on `frostmoln_instance` and on
+  `frostmoln_launch_template` — so the cloud-init document never reaches state at
+  all. That covers the document; the next bullet still applies to what is *in* it.
 - **Don't put long-lived secrets in `user_data`.** Put a narrowly scoped,
   short-lived `frostmoln_api_key` there instead — one that can read the single
   `frostmoln_secret` the instance needs at boot, and nothing else. Scope it with
@@ -183,9 +196,9 @@ are never persisted to the plan or the state. They are the mechanism for keeping
 the third table above out of state; they cannot help the first, because a
 credential the platform mints once has to be stored somewhere for you to use it.
 
-Two attributes have a write-only form today: `frostmoln_secret.secret_value` and
-`frostmoln_instance.user_data`. Each is set instead of the legacy attribute and
-paired with a `_wo_version` companion.
+Three attributes have a write-only form today: `frostmoln_secret.secret_value`,
+`frostmoln_instance.user_data` and `frostmoln_launch_template.user_data`. Each is
+set instead of the legacy attribute and paired with a `_wo_version` companion.
 
 ### `frostmoln_secret.secret_value_wo`
 
@@ -228,7 +241,7 @@ is what makes the next apply send the current `secret_value_wo` to the platform
 as a new secret version. Rotating the value without touching the version is a
 no-op.
 
-### What you give up
+### What you give up with `secret_value_wo`
 
 Terraform cannot see a write-only value at all — not just when *you* change it.
 A secret rotated in the portal, by `fm`, or by any other client is invisible to
@@ -237,6 +250,11 @@ companion is a one-way signal from your configuration to the platform, not
 two-way reconciliation. If you need Terraform to notice out-of-band edits, the
 legacy `secret_value` is the attribute that does that, and the price is the
 value in your state file.
+
+That last trade-off is specific to `frostmoln_secret`. Neither `user_data`
+attribute detects drift in *either* form — the provider never reads the document
+back — so on those two there is nothing to give up: staying on the legacy
+attribute buys you the state exposure and no drift detection at all.
 
 Bumping `secret_value_wo_version` without changing the value writes a new secret
 version regardless; versions count against `max_versions`, so a value rolled
@@ -304,6 +322,61 @@ with the secret, switching the attribute does not un-expose the old document: it
 remains in `terraform.tfstate.backup`, in prior remote-state versions and in
 archived plan files. Treat anything it embedded as disclosed and rotate it at its
 source.
+
+### `frostmoln_launch_template.user_data_wo`
+
+The same pair again, and this one updates **in place** — the version companion
+sends the new document without destroying anything.
+
+```terraform
+resource "frostmoln_launch_template" "worker" {
+  name      = "worker-template"
+  flavor_id = data.frostmoln_flavor.medium.id
+  image_id  = data.frostmoln_image.ubuntu.id
+  vpc_id    = frostmoln_vpc.example.id
+
+  user_data_wo         = file("${path.module}/cloud-init.yaml")
+  user_data_wo_version = "1"
+}
+```
+
+`user_data` and `user_data_wo` are mutually exclusive, and setting neither is
+fine — a template does not need user data. Everything `user_data` documents
+about the document itself still applies, including writing it as plain text
+rather than `base64encode(...)`.
+
+Changing `user_data_wo_version` updates the template in place and nothing else
+happens: **instances already launched from the template keep the user data they
+were created with**, exactly as they do when you edit `user_data`. A new document
+reaches a guest only when a new instance is launched from the template.
+
+~> **Do not derive the version from the document.** `user_data_wo_version =
+filemd5("cloud-init.yaml")` looks like it gives you automatic change detection,
+and it does — at the cost of printing a digest of the document verbatim in
+`terraform plan` output, CI job logs and PR plan comments. The version companion
+is deliberately not `sensitive`, because it is the signal telling you why an
+update is happening. A digest is also an offline confirmation oracle: it lets
+someone test a guessed document, and correlate the same document across
+environments. Use a counter, a date or a release tag.
+
+`terraform import` leaves both `user_data` and `user_data_wo_version` unset, so
+the first apply against an imported template sends the configured document again
+as an ordinary in-place update. Harmless here — unlike `frostmoln_instance`,
+where the same gap plans a replacement — but it does mean the plan shows an
+update you did not ask for.
+
+~> **Removing the attribute does not remove the document.** Deleting
+`user_data`, or the write-only pair, sends nothing — a null value means "not the
+source here", never "clear it" — so the apply is clean, state goes to null, and
+the platform keeps serving the old document to every instance launched from the
+template afterwards. To actually clear it, set `user_data = ""`, or destroy the
+template. The same is true of `frostmoln_secret` and `frostmoln_instance`.
+
+Migrating an existing template means removing `user_data` and adding the pair.
+That plans a normal in-place update, and as with the others it does not un-expose
+the old document: it remains in `terraform.tfstate.backup`, in prior remote-state
+versions and in archived plan files. Treat anything it embedded as disclosed and
+rotate it at its source.
 
 The other attributes in the tables above do not have a write-only form yet. If
 the exposure matters for one of them in your setup, raise it with support — it

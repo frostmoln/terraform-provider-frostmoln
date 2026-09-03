@@ -43,7 +43,9 @@ resource "frostmoln_launch_template" "web" {
   # fails on first boot with nothing in the Terraform plan to explain it.
   #
   # Editing this updates the template; instances already launched from it keep the
-  # user data they were created with.
+  # user data they were created with. Prefer user_data_wo (see the second block
+  # below) when the document carries anything secret: user_data is written to
+  # Terraform state in plaintext.
   user_data = file("${path.module}/cloud-init.yaml")
 
   metadata = {
@@ -53,6 +55,32 @@ resource "frostmoln_launch_template" "web" {
   tags = {
     environment = "production"
   }
+}
+
+# Prefer the write-only form when the document carries anything you would not
+# want in the state file. user_data_wo never reaches the plan or state; it needs
+# Terraform 1.11 or later. Because Terraform cannot see a write-only value
+# change, bumping user_data_wo_version is what sends the current document — and
+# unlike frostmoln_instance, that is an in-place update of the template.
+resource "frostmoln_launch_template" "bootstrap" {
+  name      = "worker-template"
+  flavor_id = data.frostmoln_flavor.medium.id
+  image_id  = data.frostmoln_image.ubuntu.id
+  vpc_id    = frostmoln_vpc.example.id
+
+  # The document is rendered from a template with a secret injected into it.
+  # Neither var.bootstrap_token nor the rendered document reaches state — which
+  # is the point: where a value is CONSUMED decides whether it is stored, so
+  # passing a secret through a variable into user_data would store it in full.
+  user_data_wo = templatefile("${path.module}/cloud-init.yaml.tftpl", {
+    bootstrap_token = var.bootstrap_token
+  })
+
+  # Bumping this sends the current document and updates the template in place.
+  # Instances already launched from it keep the user data they were created
+  # with. Do not derive it from the document: it is not sensitive, so it is
+  # printed verbatim in plan output, CI logs and PR plan comments.
+  user_data_wo_version = "1"
 }
 ```
 
@@ -68,15 +96,19 @@ resource "frostmoln_launch_template" "web" {
 
 ### Optional
 
+> **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
+
 - `metadata` (Map of String) Key-value metadata for the launch template.
 - `security_group_ids` (Set of String) The security group IDs to attach to instances launched from this template.
 - `ssh_key_ids` (Set of String) The SSH key IDs to inject into instances launched from this template.
 - `tags` (Map of String) Key-value tags for the launch template.
-- `user_data` (String, Sensitive) User data to provide to instances at launch — typically a cloud-init document. The API does not return it, so the value you configure is preserved from state on refresh. The document is written to Terraform state in plaintext, so anything embedded in it — credentials, tokens, private keys — is readable by anyone who can read the state; `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide.
+- `user_data` (String, Sensitive) User data to provide to instances at launch — typically a cloud-init document. The platform returns the stored document on every read, but the provider does not decode it, so the value you configure is preserved from state on refresh and a change made outside Terraform is not detected. The document is written to Terraform state in plaintext, so anything embedded in it — credentials, tokens, private keys — is readable by anyone who can read the state; `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide. Prefer `user_data_wo`, which carries the same document but is never written to state; the two are mutually exclusive.
 
 **Write the document as plain text — `file("cloud-init.yaml")`, not `base64encode(file(...))`.** Base64 is accepted by the API, but it must NOT be used when instances launched from this template also get SSH keys, a console password or `instance_access`. In those cases the platform merges its own cloud-config into the document, and the merge dispatches on the literal `#cloud-config` prefix: a base64 blob does not carry it, so the blob is treated as a shell script and combined alongside the platform's cloud-config instead of into it. The launch succeeds and nothing surfaces in Terraform, but the document never runs as cloud-config. Plain text is correct in both directions: a `#cloud-config` document is merged in place, and a `#!` script is combined as intended. See the example below.
 
 Changing this updates the template in place; instances already launched from it keep the user data they were created with. A cloud-init step that installs packages or calls an external endpoint needs the launched instance's VPC to have an outbound path — declare a `frostmoln_gateway` for the VPC, or the step fails on first boot with no internet and no name resolution.
+- `user_data_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) User data to provide to instances at launch, as a [write-only argument](https://developer.hashicorp.com/terraform/language/resources/ephemeral/write-only): the document reaches the provider on apply and is never written to the plan or to state, so anything embedded in it stays out of the state file. Requires Terraform 1.11 or later. Mutually exclusive with `user_data`, and `user_data_wo_version` is required whenever this one is set. Everything `user_data` says about the document itself applies here unchanged: write it as plain text rather than `base64encode(...)`, and give the launched instance's VPC an outbound path if cloud-init reaches the network. Terraform cannot see a write-only value, so it cannot detect a change to this document in either direction: changing `user_data_wo_version` is what makes the next apply send the current document, and it updates the template in place. Editing the document without touching the version does nothing.
+- `user_data_wo_version` (String) Change tracker for `user_data_wo`, required whenever that attribute is set. Any change to this value makes the next apply send the current `user_data_wo` to the platform, updating the template in place; leaving it alone leaves the stored document untouched however much the write-only value changes. Instances already launched from the template keep the user data they were created with either way. Its content is arbitrary — a counter or a date is typical — and unlike the document it is stored in state, so do not derive it from the document or from anything in it: a digest of the document is a digest of whatever the document carries, and it is printed verbatim in `terraform plan` output. `terraform import` leaves this unset, so the first apply against an imported template sends the configured document again as a normal in-place update.
 
 ### Read-Only
 
