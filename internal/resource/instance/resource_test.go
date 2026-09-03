@@ -660,6 +660,13 @@ func TestInstanceCreate(t *testing.T) {
 				CreatedAt:  "2025-06-01T12:00:00Z",
 			})
 
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -745,6 +752,13 @@ func TestInstanceRead(t *testing.T) {
 				CreatedAt:      "2025-06-01T12:00:00Z",
 			})
 
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -793,6 +807,13 @@ func TestInstanceReadNotFound(t *testing.T) {
 				"code":    "NOT_FOUND",
 				"message": "Instance not found",
 			})
+
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
 
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -846,6 +867,13 @@ func TestInstanceUpdate(t *testing.T) {
 				ImageID:   "img-ubuntu",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
+
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
 
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -904,6 +932,13 @@ func TestInstanceResize(t *testing.T) {
 				"resourceId":  "inst-abc",
 			})
 
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -956,6 +991,13 @@ func TestInstanceResizeFailedOperationErrors(t *testing.T) {
 				"error":       "resize would exceed quota",
 			})
 
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -987,6 +1029,14 @@ func TestInstanceResizeUnexpectedStatusErrors(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc/resize":
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1016,6 +1066,14 @@ func TestInstanceResizeMissingOperationIDErrors(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc/resize":
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1061,6 +1119,13 @@ func TestInstanceResizeAttachesToInProgressResize(t *testing.T) {
 				"resourceId":  "inst-abc",
 			})
 
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1088,6 +1153,14 @@ func TestInstanceResizeConflictWithoutOperationIDStillFails(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc/resize":
 			w.WriteHeader(http.StatusConflict)
 			_, _ = w.Write([]byte(`{"error":{"code":"RESIZE_IN_PROGRESS","message":"a resize of this instance is already in progress"}}`))
+
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1135,6 +1208,13 @@ func TestInstanceDelete(t *testing.T) {
 					Status: "deleting",
 				})
 			}
+
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
 
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -1196,6 +1276,13 @@ func TestInstanceDeleteAlreadyGone(t *testing.T) {
 				"code":    "NOT_FOUND",
 				"message": "Instance not found",
 			})
+
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
 
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -1414,6 +1501,13 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 				CreatedAt:      "2025-06-01T12:00:00Z",
 			})
 
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1526,6 +1620,13 @@ func TestInstanceResource_TFSDKCreateMinimal(t *testing.T) {
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1622,6 +1723,13 @@ func TestInstanceResource_TFSDKCreateZoneless(t *testing.T) {
 				Zone:      "falkenberg",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
+
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
 
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -2125,6 +2233,13 @@ func TestInstanceResource_TFSDKUpdateNameChange(t *testing.T) {
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -2237,6 +2352,13 @@ func TestInstanceResource_TFSDKUpdateInstanceAccessRespell(t *testing.T) {
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -2337,6 +2459,13 @@ func TestInstanceResource_TFSDKUpdateResize(t *testing.T) {
 				ImageID:   "img-ubuntu",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
+
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
 
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -2474,6 +2603,13 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 				CreatedAt:      "2025-06-01T12:00:00Z",
 			})
 
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -2593,6 +2729,14 @@ func TestInstanceResource_TFSDKClearSecurityGroups(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-clr-1", Status: "completed", ResourceType: "instance", ResourceID: "inst-clear-1"})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-clear-1":
 			_ = json.NewEncoder(w).Encode(apiInstance{ID: "inst-clear-1", Name: "clr-vm", Status: "running", FlavorID: "flavor-small", ImageID: "img-ubuntu", CreatedAt: "2025-06-01T12:00:00Z"})
+
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -2679,6 +2823,13 @@ func TestInstanceResource_TFSDKDelete(t *testing.T) {
 					Status: "deleting",
 				})
 			}
+
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
 
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)

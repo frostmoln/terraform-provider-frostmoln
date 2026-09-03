@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -584,6 +585,13 @@ func TestCreate(t *testing.T) {
 				PrivateIP: "10.0.1.5", Port: 5432, AdminUsername: "frostadmin",
 				CreatedAt: "2025-01-01T00:00:00Z",
 			})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -771,6 +779,13 @@ func TestUpdate(t *testing.T) {
 				StorageGB: 100, VPCID: "vpc-1", SubnetID: "sn-1", Status: "running",
 				Port: 5432, CreatedAt: "2025-01-01T00:00:00Z",
 			})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -832,6 +847,13 @@ func TestUpdateStorageOnlySkipsPut(t *testing.T) {
 				StorageGB: 100, VPCID: "vpc-1", SubnetID: "sn-1", Status: "running",
 				Port: 5432, CreatedAt: "2025-01-01T00:00:00Z",
 			})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -949,6 +971,13 @@ func TestDelete(t *testing.T) {
 			} else {
 				_ = json.NewEncoder(w).Encode(apiPostgresInstance{ID: "pg-123", Status: "deleting"})
 			}
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)

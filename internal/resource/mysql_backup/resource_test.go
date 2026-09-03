@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -247,6 +248,13 @@ func TestCreate(t *testing.T) {
 				StartedAt:   "2025-01-01T02:00:00Z",
 				CompletedAt: "2025-01-01T02:10:00Z",
 			})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)

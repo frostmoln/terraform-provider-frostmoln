@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -195,6 +196,13 @@ func TestCreate(t *testing.T) {
 				PrivateIP:  "10.0.1.10",
 				Port:       3306,
 			})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -291,6 +299,13 @@ func TestDelete(t *testing.T) {
 					ID: "rep-456", Status: "deleting",
 				})
 			}
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -344,6 +359,13 @@ func TestDeleteRetriesOnConflict(t *testing.T) {
 			} else {
 				_ = json.NewEncoder(w).Encode(apiMysqlReadReplica{ID: "rep-456", Status: "deleting"})
 			}
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)

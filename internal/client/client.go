@@ -559,16 +559,39 @@ func IsLegacyUnroutedPath(err error) bool {
 		apiErr.Code == LegacyUnroutedPathCode
 }
 
-// WaitForOperation polls GET /v1/tenants/{tid}/operations/{id} until the
-// operation reaches a
-// terminal state. On "completed" it returns the operation (whose ResourceID is
-// the affected resource's ID). On "failed"/"cancelled" it returns an error that
-// includes the operation's error message. It reuses the generic WaitForState
-// poller for interval/timeout/retry behavior.
+// WaitForOperation waits for an operation to reach a terminal state. On
+// "completed" it returns the operation (whose ResourceID is the affected
+// resource's ID). On "failed"/"cancelled" it returns an error that includes the
+// operation's error message. It reuses the generic WaitForState poller for
+// timeout/retry behaviour.
+//
+// It is EVENT-DRIVEN where it can be. The gateway's tenant SSE stream wakes the
+// poller when anything in the tenant changes, and `interval` stops being the
+// cadence: it becomes the cadence used only while the stream is NOT established,
+// with pushHeartbeat as the backstop while it is. The operation endpoint is
+// still the record and is still what decides -- ADR-0014 is explicit that the
+// stream is a signal and nothing more, and events.go says why at length.
+//
+// This matters most for the waits that are long enough to hurt. An HA database
+// pair is a two-VM provision with a replica seed between them; at a 5-second
+// timer that is hundreds of GETs to learn one fact, and the fact arrives up to
+// 5 seconds late at the end.
 func (c *Client) WaitForOperation(ctx context.Context, operationID string, interval, timeout time.Duration) (*Operation, error) {
+	if interval == 0 {
+		interval = 2 * time.Second
+	}
+	if timeout == 0 {
+		timeout = 5 * time.Minute
+	}
+	// Bound the watcher by the same deadline as the wait, so its goroutines and
+	// its open stream go away with it rather than outliving the apply.
+	watchCtx, stopWatch := context.WithTimeout(ctx, timeout)
+	defer stopWatch()
+
 	var lastOp *Operation
 	_, err := WaitForState(ctx, PollConfig{
-		Interval:     interval,
+		Interval:     pushHeartbeat,
+		Wake:         c.newEventWatcher(watchCtx, interval),
 		Timeout:      timeout,
 		TargetStates: []string{OperationStatusCompleted},
 		ErrorStates:  []string{OperationStatusFailed, OperationStatusCancelled},

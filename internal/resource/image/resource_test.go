@@ -223,6 +223,13 @@ func TestCreateUploadImportOrder(t *testing.T) {
 				ID: "img-1", Name: "custom-ubuntu", Status: "active", Visibility: "private",
 				Owner: "proj-1", Size: 1024, VirtualSize: 4096, Checksum: "abc123", CreatedAt: "2026-08-07T10:00:00Z",
 			})
+		case strings.HasSuffix(req.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request %s %s", req.Method, p)
 			w.WriteHeader(http.StatusNotFound)
@@ -295,6 +302,13 @@ func TestCreateWithoutUploadFormPersistsIDOn503(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"code": "internal_error", "message": serverMessage,
 			})
+		case strings.HasSuffix(req.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request %s %s", req.Method, req.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -355,6 +369,13 @@ func TestCreateRefusesOversizedFileBeforeUploading(t *testing.T) {
 		case req.URL.Path == "/staging":
 			uploadHit = true
 			w.WriteHeader(http.StatusNoContent)
+		case strings.HasSuffix(req.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request %s %s", req.Method, req.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -429,6 +450,13 @@ func TestCreateRefusesImportWhenTheStorageEdgeChecksumDisagrees(t *testing.T) {
 		case req.URL.Path == "/v1/tenants/tenant-456/images/img-bad/import":
 			importHit = true
 			w.WriteHeader(http.StatusAccepted)
+		case strings.HasSuffix(req.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request %s %s", req.Method, req.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1684,6 +1712,13 @@ func TestEveryImageCallIsTenantScoped(t *testing.T) {
 
 		case req.Method == http.MethodDelete && route == "/images/img-1":
 			w.WriteHeader(http.StatusNoContent)
+
+		case strings.HasSuffix(req.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
 
 		default:
 			t.Errorf("unexpected request %s %s", req.Method, p)

@@ -633,6 +633,13 @@ func TestCreate(t *testing.T) {
 				CreatedAt:     "2025-01-01T00:00:00Z",
 				TenantID:      "t-1",
 			})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -863,6 +870,13 @@ func TestUpdate(t *testing.T) {
 				Port:          443,
 				CreatedAt:     "2025-01-01T00:00:00Z",
 			})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -930,6 +944,13 @@ func TestUpdateConfigUsesConfigRoute(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{"id":"nginx-123","name":"my-nginx","engine":"nginx","engineVersion":"1.27",`+
 				`"flavorId":"web.gp1.small","storageGb":20,"vpcId":"vpc-1","subnetId":"sn-1","tlsEnabled":true,`+
 				`"engineConfig":{"gzip":"true"},"status":"running","port":443,"createdAt":"2025-01-01T00:00:00Z"}`)
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -992,6 +1013,13 @@ func TestUpdateConfigEmptyMapResets(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{"id":"nginx-123","name":"my-nginx","engine":"nginx","engineVersion":"1.27",`+
 				`"flavorId":"web.gp1.small","storageGb":20,"vpcId":"vpc-1","subnetId":"sn-1","tlsEnabled":true,`+
 				`"status":"running","port":443,"createdAt":"2025-01-01T00:00:00Z"}`)
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1055,6 +1083,13 @@ func TestUpdateConfigSupersededByAnotherClient(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{"id":"nginx-123","name":"my-nginx","engine":"nginx","engineVersion":"1.27",`+
 				`"flavorId":"web.gp1.small","storageGb":20,"vpcId":"vpc-1","subnetId":"sn-1","tlsEnabled":true,`+
 				`"engineConfig":{"spaFallback":"true"},"status":"running","port":443,"createdAt":"2025-01-01T00:00:00Z"}`)
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1105,6 +1140,13 @@ func TestUpdateConfigApplyFailed(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{"id":"nginx-123","name":"renamed-nginx","engine":"nginx","engineVersion":"1.27",`+
 				`"flavorId":"web.gp1.small","storageGb":20,"vpcId":"vpc-1","subnetId":"sn-1","tlsEnabled":true,`+
 				`"status":"running","port":443,"createdAt":"2025-01-01T00:00:00Z"}`)
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1181,6 +1223,13 @@ func TestUpdateStorageResize(t *testing.T) {
 				Port:          443,
 				CreatedAt:     "2025-01-01T00:00:00Z",
 			})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1298,6 +1347,13 @@ func TestDelete(t *testing.T) {
 			} else {
 				_ = json.NewEncoder(w).Encode(apiWebserverInstance{ID: "nginx-123", Status: "deleting"})
 			}
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)

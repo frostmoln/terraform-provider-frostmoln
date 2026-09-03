@@ -684,6 +684,13 @@ func TestCreate(t *testing.T) {
 				return
 			}
 			writeJSON(t, w, apiKubeconfig{Endpoint: "https://203.0.113.10:6443", Kubeconfig: "kubeconfig-yaml"})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -773,6 +780,13 @@ func TestCreateClusterErrorStatus(t *testing.T) {
 			c := runningCluster()
 			c.Status = statusError
 			writeJSON(t, w, c)
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -826,6 +840,13 @@ func TestCreateKubeconfigExhaustedIsWarning(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/kubernetes-clusters/c-1/kubeconfig":
 			w.WriteHeader(http.StatusInternalServerError)
 			writeJSON(t, w, map[string]any{"code": "INTERNAL_ERROR", "message": "vault down"})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -886,6 +907,13 @@ func TestCreateInitialPoolErrorStatus(t *testing.T) {
 				p.Status = statusError
 			}
 			writeJSON(t, w, p)
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -953,6 +981,13 @@ func TestRead(t *testing.T) {
 			writeJSON(t, w, apiNodePoolList{NodePools: []apiNodePool{p}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/kubernetes-clusters/c-1/kubeconfig":
 			writeJSON(t, w, apiKubeconfig{Endpoint: "https://203.0.113.10:6443", Kubeconfig: "fresh-kubeconfig"})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1043,6 +1078,13 @@ func TestReadInitialPoolDeletedOutOfBand(t *testing.T) {
 			writeJSON(t, w, apiNodePoolList{NodePools: []apiNodePool{initialPool(statusDeleted)}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/kubernetes-clusters/c-1/kubeconfig":
 			writeJSON(t, w, apiKubeconfig{Kubeconfig: "fresh-kubeconfig"})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1081,6 +1123,13 @@ func TestReadKubeconfigConflictKeepsPrior(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/kubernetes-clusters/c-1/kubeconfig":
 			w.WriteHeader(http.StatusConflict)
 			writeJSON(t, w, map[string]any{"code": "CONFLICT", "message": "cluster not ready"})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1128,6 +1177,13 @@ func TestUpdateName(t *testing.T) {
 		case r.Method == http.MethodPost:
 			t.Errorf("unexpected POST during name-only update: %s", r.URL.Path)
 			w.WriteHeader(http.StatusBadRequest)
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1184,6 +1240,13 @@ func TestUpdateScaleInitialPool(t *testing.T) {
 			p := initialPool(statusActive)
 			p.NodeCount = 4
 			writeJSON(t, w, apiNodePoolList{NodePools: []apiNodePool{p}})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1228,6 +1291,13 @@ func TestUpdateScaleStalePoolErrors(t *testing.T) {
 		case r.Method == http.MethodPost:
 			t.Errorf("scale must not be POSTed for a stale pool: %s", r.URL.Path)
 			w.WriteHeader(http.StatusBadRequest)
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1270,6 +1340,13 @@ func TestCreateKubeconfig4xxNotRetried(t *testing.T) {
 			kubeconfigGets.Add(1)
 			w.WriteHeader(http.StatusForbidden)
 			writeJSON(t, w, map[string]any{"code": "feature_not_enabled", "message": "kubernetes not enabled"})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1327,6 +1404,13 @@ func TestDeleteSoftDeletePoll(t *testing.T) {
 				c.Status = statusDeleted
 			}
 			writeJSON(t, w, c)
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)

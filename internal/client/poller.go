@@ -21,6 +21,14 @@ type PollConfig struct {
 	ErrorStates []string
 	// ResourceName is used in error messages.
 	ResourceName string
+	// Wake is an OPTIONAL push signal. When non-nil, a receive on it polls
+	// immediately instead of waiting out Interval, which lets a caller drive the
+	// poll from the gateway's tenant event stream and leave Interval as a
+	// backstop rather than the mechanism (see events.go).
+	//
+	// A nil channel blocks forever, so leaving this unset is exactly the old
+	// timer-only behaviour with no branch to get wrong.
+	Wake <-chan struct{}
 }
 
 // DefaultPollConfig returns a PollConfig with sensible defaults.
@@ -97,6 +105,8 @@ func WaitForState(ctx context.Context, cfg PollConfig) (string, error) {
 			select {
 			case <-ctx.Done():
 				return "", timedOut("")
+			case <-cfg.Wake:
+				continue
 			case <-ticker.C:
 				continue
 			}
@@ -114,6 +124,9 @@ func WaitForState(ctx context.Context, cfg PollConfig) (string, error) {
 		select {
 		case <-ctx.Done():
 			return state, timedOut(state)
+		case <-cfg.Wake:
+			// Something changed in this tenant; re-read now rather than waiting
+			// out the backstop interval.
 		case <-ticker.C:
 			// continue polling
 		}

@@ -171,6 +171,13 @@ func TestRunDeployFlow(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiDeploy{ID: "dep-1", InstanceID: "inst-1", Status: "deploying"})
 		case req.Method == http.MethodGet && strings.HasSuffix(p, "/deploys/dep-1"):
 			_ = json.NewEncoder(w).Encode(apiDeploy{ID: "dep-1", InstanceID: "inst-1", Status: "succeeded", SHA256: sum})
+		case strings.HasSuffix(req.URL.Path, "/events"):
+			// The client waits on the tenant SSE stream instead of a timer
+			// (internal/client/events.go). A 404 stands in for a gateway that does
+			// not serve it -- an explicitly supported degradation back to timer
+			// polling -- so this mock stays hermetic and exercises that path.
+			w.WriteHeader(http.StatusNotFound)
+
 		default:
 			t.Errorf("unexpected request %s %s", req.Method, p)
 			w.WriteHeader(http.StatusNotFound)
