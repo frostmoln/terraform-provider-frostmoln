@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.46.0] - 2026-09-03
+
+### 🚀 Features
+
+- *(secret)* Write-only secret_value_wo with a version companion (#431)
+- *(instance)* Write-only user_data_wo with a version companion (#440)
+- *(launch_template)* Write-only user_data_wo with a version companion (#443)
+- *(appgw)* Scope, inherit and effective_mode on WAF policies (#445)
+
+### 🐛 Bug Fixes
+
+- *(provider)* Converge the write-only contract and pin it across every resource (#447)
+
+### 📚 Documentation
+
+- *(container_registry)* List every cause of a null storage cap (#439)
+
 ## [0.45.0] - 2026-09-03
 
 ### 🚀 Features
