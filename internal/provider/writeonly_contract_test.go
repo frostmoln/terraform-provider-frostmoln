@@ -45,9 +45,10 @@ const (
 //     uses. checkUnknownFailsClosed drives Create only; a second, separate
 //     reader in Update would ship unguarded with this suite green.
 var writeOnlyAttributes = map[string][]string{
-	"frostmoln_secret":          {"secret_value_wo"},
-	"frostmoln_instance":        {"user_data_wo"},
-	"frostmoln_launch_template": {"user_data_wo"},
+	"frostmoln_secret":            {"secret_value_wo"},
+	"frostmoln_instance":          {"console_password_wo", "user_data_wo"},
+	"frostmoln_launch_template":   {"user_data_wo"},
+	"frostmoln_appgw_certificate": {"private_key_pem_wo"},
 }
 
 // TestWriteOnlyAttributeContract asserts, for every WriteOnly attribute of every
@@ -97,6 +98,7 @@ func TestWriteOnlyAttributeContract(t *testing.T) {
 			t.Run(mdResp.TypeName+"."+name, func(t *testing.T) {
 				checkWriteOnlyTriple(ctx, t, r, s, name)
 				checkUnknownFailsClosed(ctx, t, newResource, s, name)
+				checkNeitherFormAgreesWithExactlyOneOf(ctx, t, newResource, r, s, name)
 			})
 		}
 	}
@@ -337,6 +339,67 @@ func checkUnknownFailsClosed(ctx context.Context, t *testing.T, newResource func
 		t.Errorf("%s: an unknown write-only value must fail the apply with the diagnostic %q; the read has to "+
 			"fail CLOSED, not fall through to \"no value supplied\". Got: %v",
 			woName, want, createResp.Diagnostics.Errors())
+	}
+}
+
+// checkNeitherFormAgreesWithExactlyOneOf ties the two halves of the
+// "a value is required" rule together, so neither can drift from the other.
+//
+// The rule is spelled twice by necessity, in two layers that cannot see each
+// other: as a resource-level ExactlyOneOf, which refuses a config supplying
+// neither form at PLAN time; and as writeonly.Attr.ExactlyOne, which refuses the
+// same config at APPLY time, where the plan-time validator is skipped because it
+// bails on an unknown path. Set one and forget the other and the floor is
+// silently missing on exactly the configurations that need it — a resource whose
+// legacy attribute was relaxed from Required would newly accept a config
+// supplying no value at all.
+//
+// Rather than reach into either package's unexported state, this drives both
+// layers with the same config and asserts they agree.
+func checkNeitherFormAgreesWithExactlyOneOf(ctx context.Context, t *testing.T, newResource func() resource.Resource, r resource.Resource, s schema.Schema, woName string) {
+	t.Helper()
+
+	legacyName := strings.TrimSuffix(woName, woSuffix)
+
+	// Plan-time: does a resource-level validator refuse "neither form set"?
+	empty := configWith(ctx, t, s, map[string]types.String{})
+	planRefuses := runConfigValidators(ctx, r, empty).HasError()
+
+	// Apply-time: does Create refuse the same config? Any request reaching the
+	// server means it did not.
+	reached := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	res := newResource()
+	rc, ok := res.(resource.ResourceWithConfigure)
+	if !ok {
+		t.Fatalf("%s: resource is not configurable", woName)
+	}
+	var cfgResp resource.ConfigureResponse
+	rc.Configure(ctx, resource.ConfigureRequest{ProviderData: c}, &cfgResp)
+	if cfgResp.Diagnostics.HasError() {
+		t.Fatalf("Configure failed: %v", cfgResp.Diagnostics.Errors())
+	}
+
+	createResp := resource.CreateResponse{State: tfsdk.State{Schema: s, Raw: nullObject(ctx, t, s)}}
+	res.Create(ctx, resource.CreateRequest{
+		Plan:   tfsdk.Plan{Schema: s, Raw: nullObject(ctx, t, s)},
+		Config: empty,
+	}, &createResp)
+	applyRefuses := createResp.Diagnostics.HasError() && !reached
+
+	if planRefuses != applyRefuses {
+		t.Errorf("%s: a config setting neither %s nor %s is refused at plan time (%v) but at apply "+
+			"time (%v) — the two spellings of the rule disagree. A resource-level ExactlyOneOf "+
+			"needs writeonly.Attr.ExactlyOne set to match, and vice versa: the plan-time validator "+
+			"is SKIPPED whenever a path is unknown, which is when the apply-time half is the only "+
+			"thing holding the floor", woName, legacyName, woName, planRefuses, applyRefuses)
 	}
 }
 

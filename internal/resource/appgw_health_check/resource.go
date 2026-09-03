@@ -212,7 +212,8 @@ func (r *healthCheckResource) Configure(_ context.Context, req resource.Configur
 
 func (r *healthCheckResource) path(gwID, poolID string) string {
 	return r.client.TenantPath(fmt.Sprintf(
-		"/application-gateways/%s/backend-pools/%s/health-check", gwID, poolID))
+		"/application-gateways/%s/backend-pools/%s/health-check", gwID, poolID,
+	))
 }
 
 func (m *HealthCheckModel) fromAPI(hc *apiHealthCheck) {
@@ -334,7 +335,8 @@ func (r *healthCheckResource) Delete(ctx context.Context, req resource.DeleteReq
 	// to warn about.
 	if _, err := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf(
 		"/application-gateways/%s/backend-pools/%s",
-		state.GatewayID.ValueString(), state.PoolID.ValueString())), nil); err != nil {
+		state.GatewayID.ValueString(), state.PoolID.ValueString(),
+	)), nil); err != nil {
 		if client.IsNotFound(err) {
 			return
 		}

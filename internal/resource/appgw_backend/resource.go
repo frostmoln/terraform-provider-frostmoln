@@ -249,7 +249,8 @@ func (r *backendResource) Configure(_ context.Context, req resource.ConfigureReq
 
 func (r *backendResource) basePath(gwID, poolID string) string {
 	return r.client.TenantPath(fmt.Sprintf(
-		"/application-gateways/%s/backend-pools/%s/backends", gwID, poolID))
+		"/application-gateways/%s/backend-pools/%s/backends", gwID, poolID,
+	))
 }
 
 func (m *BackendModel) fromAPI(b *apiBackend) {

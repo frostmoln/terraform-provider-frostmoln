@@ -16,7 +16,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
-	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -24,6 +23,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/writeonly"
 )
 
 var (
@@ -248,11 +248,65 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"console_password": schema.StringAttribute{
 				Description: "Password for the default OS user, usable only at the VNC console; SSH stays key-only. " +
 					"Changing forces replacement — so this is not an attribute you can rotate in place; a new " +
-					"value destroys and recreates the instance. " + docs.StateSecretNote,
+					"value destroys and recreates the instance. " + docs.StateSecretNote +
+					" Prefer `console_password_wo`, which carries the same password but is never written to " +
+					"state; the two are mutually exclusive.",
 				Optional:  true,
 				Sensitive: true,
+				Validators: []validator.String{
+					stringvalidator.PreferWriteOnlyAttribute(path.MatchRoot("console_password_wo")),
+				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"console_password_wo": schema.StringAttribute{
+				Description: "Password for the default OS user, as a [write-only argument]" +
+					"(https://developer.hashicorp.com/terraform/language/resources/ephemeral/write-only): the " +
+					"password reaches the provider on apply and is never written to the plan or to state. " +
+					"Requires Terraform 1.11 or later. Mutually exclusive with `console_password`, and " +
+					"`console_password_wo_version` is required whenever this one is set; setting neither is " +
+					"fine, and is what leaves the console with no password. An empty value is rejected — omit " +
+					"the attribute instead. Terraform cannot see a write-only value, so it cannot detect a " +
+					"change to this password in either direction: changing `console_password_wo_version` is " +
+					"what makes the next apply send the current password, and it does so by REPLACING the " +
+					"instance — matching `console_password`, which is create-only because the password is " +
+					"only ever applied at first boot. Editing the password without touching the version does " +
+					"nothing.",
+				Optional:  true,
+				Sensitive: true,
+				WriteOnly: true,
+				// No plan modifiers: a write-only attribute is null in prior
+				// state, plan and final state, so one here would compare null
+				// against null and never fire. The version companion carries
+				// the replacement.
+				Validators: []validator.String{
+					// "" is not null, so it passes the null guard and reaches
+					// the wire, where omitempty drops it: a REPLACEMENT that
+					// boots the new instance with no console password at all,
+					// on a green apply, with no plan line to show it.
+					stringvalidator.LengthAtLeast(1),
+					stringvalidator.ConflictsWith(path.MatchRoot("console_password")),
+					stringvalidator.AlsoRequires(path.MatchRoot("console_password_wo_version")),
+				},
+			},
+			"console_password_wo_version": schema.StringAttribute{
+				Description: "Change tracker for `console_password_wo`, required whenever that attribute is " +
+					"set. Changing this value REPLACES the instance and boots the replacement with the " +
+					"current `console_password_wo` — the same lifecycle a change to `console_password` has, " +
+					"since the password is only ever applied at first boot. Leaving it alone leaves the " +
+					"running instance untouched however much the write-only password changes. Its content is " +
+					"arbitrary — a counter or a date is typical — and unlike the password it is stored in " +
+					"state, so do not derive it from the password: a digest of it is printed verbatim in " +
+					"`terraform plan` output, and it lets anyone holding it confirm a guessed password " +
+					"offline. `terraform import` leaves this unset, so the first apply against an imported " +
+					"instance plans a REPLACEMENT.",
+				Optional: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+				Validators: []validator.String{
+					stringvalidator.AlsoRequires(path.MatchRoot("console_password_wo")),
 				},
 			},
 			"instance_access": schema.BoolAttribute{
@@ -356,7 +410,8 @@ func (r *instanceResource) Create(ctx context.Context, req resource.CreateReques
 
 	// A write-only attribute is null in the plan by construction; its value only
 	// ever reaches the provider through the config.
-	userDataWO := writeOnlyUserData(ctx, req.Config, &resp.Diagnostics)
+	userData := userDataWO.Read(ctx, req.Config, &resp.Diagnostics)
+	consolePassword := consolePasswordWO.Read(ctx, req.Config, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -365,8 +420,11 @@ func (r *instanceResource) Create(ctx context.Context, req resource.CreateReques
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if !userDataWO.IsNull() {
-		apiReq.UserData = userDataWO.ValueString()
+	if !userData.IsNull() {
+		apiReq.UserData = userData.ValueString()
+	}
+	if !consolePassword.IsNull() {
+		apiReq.ConsolePassword = consolePassword.ValueString()
 	}
 
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/instances"), apiReq)
@@ -769,30 +827,33 @@ func (r *instanceResource) Delete(ctx context.Context, req resource.DeleteReques
 	}
 }
 
-// writeOnlyUserData reads user_data_wo out of the configuration. It is read
-// straight from the config rather than through InstanceModel because a
-// write-only attribute is null everywhere else — prior state, plan and final
-// state. The config still carries the value at this point: the framework nulls
-// write-only attributes in the planned and final state, never in the config,
-// which is also what lets the attribute validators see it.
+// userDataWO is the write-only triple for the cloud-init document.
 //
-// An unknown value fails CLOSED. Config is fully resolved by apply, so this
-// should be unreachable — but the alternative spelling (adding !IsUnknown() to
-// the caller's guard) would drop the document, launch a VM with no cloud-init
-// and report success, which is the one outcome this resource must never
-// produce silently.
-func writeOnlyUserData(ctx context.Context, config tfsdk.Config, diags *diag.Diagnostics) types.String {
-	var v types.String
-	diags.Append(config.GetAttribute(ctx, path.Root("user_data_wo"), &v)...)
-	if v.IsUnknown() {
-		diags.AddError(
-			"user_data_wo Is Unknown At Apply",
-			"The write-only user_data_wo value was still unknown when the instance was created, so the "+
-				"document could not be sent. The instance was NOT created. This is a bug in the provider "+
-				"or in Terraform — please report it.",
-		)
-	}
-	return v
+// Every write-only attribute in the provider goes through this guard. They were
+// converted together on purpose: two write-only attributes with two different
+// enforcement strengths is an invitation to copy the weaker one.
+var userDataWO = writeonly.Attr{
+	WO:      "user_data_wo",
+	Version: "user_data_wo_version",
+	Legacy:  "user_data",
+	Subject: "the instance",
+}
+
+// consolePasswordWO is the write-only triple for the console password.
+//
+// The apply-time re-check matters more here than anywhere else in the provider,
+// because this is the one attribute whose empty value is DROPPED rather than
+// refused: apiCreateInstanceRequest tags consolePassword `omitempty`, and
+// provisioning treats an absent password as "key-only, no console login". So an
+// empty write-only value that was unknown at plan — where LengthAtLeast never
+// runs — produces a green apply, correct-looking state, and a VM whose console
+// password was never set, with no plan line anywhere to show it. See the
+// package comment on internal/writeonly.
+var consolePasswordWO = writeonly.Attr{ // pragma: allowlist secret
+	WO:      "console_password_wo",
+	Version: "console_password_wo_version",
+	Legacy:  "console_password",
+	Subject: "the instance",
 }
 
 func (r *instanceResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {

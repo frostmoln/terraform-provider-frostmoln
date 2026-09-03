@@ -294,7 +294,8 @@ func (r *exclusionResource) Read(ctx context.Context, req resource.ReadRequest, 
 		return
 	}
 	apiResp, err := r.client.Get(ctx, r.policyPath(
-		state.GatewayID.ValueString(), state.PolicyID.ValueString())+"/draft", nil)
+		state.GatewayID.ValueString(), state.PolicyID.ValueString(),
+	)+"/draft", nil)
 	if err != nil {
 		if client.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -13,13 +12,13 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
-	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/writeonly"
 )
 
 var (
@@ -216,7 +215,7 @@ func (r *launchTemplateResource) Create(ctx context.Context, req resource.Create
 
 	// A write-only attribute is null in the plan by construction; its value only
 	// ever reaches the provider through the config.
-	userDataWO := writeOnlyUserData(ctx, req.Config, &resp.Diagnostics)
+	userDataWO := userDataWO.Read(ctx, req.Config, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -285,7 +284,7 @@ func (r *launchTemplateResource) Update(ctx context.Context, req resource.Update
 		return
 	}
 
-	userDataWO := writeOnlyUserData(ctx, req.Config, &resp.Diagnostics)
+	userDataWO := userDataWO.Read(ctx, req.Config, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -347,25 +346,14 @@ func (r *launchTemplateResource) ImportState(ctx context.Context, req resource.I
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
-// writeOnlyUserData reads user_data_wo out of the configuration. It is read
-// straight from the config rather than through LaunchTemplateModel because a
-// write-only attribute is null everywhere else — prior state, plan and final
-// state. The config still carries the value at this point: the framework nulls
-// write-only attributes in the planned and final state, never in the config.
+// userDataWO is the write-only triple for the template's cloud-init document.
 //
-// It fails CLOSED on an unknown value. Config is fully resolved by apply so this
-// should be unreachable, but treating unknown as "no document" would send the
-// template without one and report success.
-func writeOnlyUserData(ctx context.Context, config tfsdk.Config, diags *diag.Diagnostics) types.String {
-	var v types.String
-	diags.Append(config.GetAttribute(ctx, path.Root("user_data_wo"), &v)...)
-	if v.IsUnknown() {
-		diags.AddError(
-			"user_data_wo Is Unknown At Apply",
-			"The write-only user_data_wo value was still unknown when the launch template was processed, "+
-				"so no request was sent to the platform and nothing was changed. This is a bug in the "+
-				"provider or in Terraform — please report it.",
-		)
-	}
-	return v
+// Not ExactlyOne: user_data was already Optional before the write-only form
+// existed, so a template with no user data at all stays valid. See the package
+// comment on internal/writeonly.
+var userDataWO = writeonly.Attr{
+	WO:      "user_data_wo",
+	Version: "user_data_wo_version",
+	Legacy:  "user_data",
+	Subject: "the launch template",
 }

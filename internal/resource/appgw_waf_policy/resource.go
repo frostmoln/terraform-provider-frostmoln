@@ -404,7 +404,8 @@ func (r *policyResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath(fmt.Sprintf(
-		"/application-gateways/%s/waf-policies", plan.GatewayID.ValueString())),
+		"/application-gateways/%s/waf-policies", plan.GatewayID.ValueString(),
+	)),
 		apiCreatePolicyRequest{
 			Name:                  plan.Name.ValueString(),
 			Scope:                 str(plan.Scope),

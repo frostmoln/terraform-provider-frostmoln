@@ -42,7 +42,8 @@ func read(t *testing.T, d *rulesDataSource, m RulesModel) (RulesModel, string) {
 	}
 	resp := datasource.ReadResponse{State: tfsdk.State{Schema: sr.Schema}}
 	d.Read(context.Background(), datasource.ReadRequest{
-		Config: tfsdk.Config{Schema: sr.Schema, Raw: st.Raw}}, &resp)
+		Config: tfsdk.Config{Schema: sr.Schema, Raw: st.Raw},
+	}, &resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("read: %v", resp.Diagnostics.Errors())
 	}
@@ -133,7 +134,8 @@ func TestUnknownSourceIsRefused(t *testing.T) {
 	_ = st.Set(context.Background(), &m)
 	resp := datasource.ReadResponse{State: tfsdk.State{Schema: sr.Schema}}
 	d.Read(context.Background(), datasource.ReadRequest{
-		Config: tfsdk.Config{Schema: sr.Schema, Raw: st.Raw}}, &resp)
+		Config: tfsdk.Config{Schema: sr.Schema, Raw: st.Raw},
+	}, &resp)
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("an unknown source must be refused, not silently read as the draft")
 	}

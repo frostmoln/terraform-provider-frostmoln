@@ -83,8 +83,10 @@ func TestConfigureRejectsUnexpectedProviderData(t *testing.T) {
 	}
 }
 
-var _ = json.Marshal
-var _ = types.StringValue
+var (
+	_ = json.Marshal
+	_ = types.StringValue
+)
 
 const lsnBase = "/v1/tenants/t-1/application-gateways/agw-1/listeners"
 

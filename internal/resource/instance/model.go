@@ -14,28 +14,30 @@ import (
 
 // InstanceModel is the Terraform state model for a compute instance.
 type InstanceModel struct {
-	ID              types.String `tfsdk:"id"`
-	Name            types.String `tfsdk:"name"`
-	FlavorID        types.String `tfsdk:"flavor_id"`
-	ImageID         types.String `tfsdk:"image_id"`
-	Zone            types.String `tfsdk:"zone"`
-	VPCID           types.String `tfsdk:"vpc_id"`
-	SubnetID        types.String `tfsdk:"subnet_id"`
-	SecurityGroups  types.Set    `tfsdk:"security_groups"`
-	SSHKeyNames     types.Set    `tfsdk:"ssh_key_names"`
-	UserData        types.String `tfsdk:"user_data"`
-	UserDataWO      types.String `tfsdk:"user_data_wo"`
-	UserDataWOVer   types.String `tfsdk:"user_data_wo_version"`
-	ConsolePassword types.String `tfsdk:"console_password"`
-	InstanceAccess  types.Bool   `tfsdk:"instance_access"`
-	UserDataHash    types.String `tfsdk:"user_data_hash"`
-	Tags            types.Map    `tfsdk:"tags"`
-	Status          types.String `tfsdk:"status"`
-	FlavorName      types.String `tfsdk:"flavor_name"`
-	ImageName       types.String `tfsdk:"image_name"`
-	PrivateIP       types.String `tfsdk:"private_ip"`
-	PublicIP        types.String `tfsdk:"public_ip"`
-	CreatedAt       types.String `tfsdk:"created_at"`
+	ID                 types.String `tfsdk:"id"`
+	Name               types.String `tfsdk:"name"`
+	FlavorID           types.String `tfsdk:"flavor_id"`
+	ImageID            types.String `tfsdk:"image_id"`
+	Zone               types.String `tfsdk:"zone"`
+	VPCID              types.String `tfsdk:"vpc_id"`
+	SubnetID           types.String `tfsdk:"subnet_id"`
+	SecurityGroups     types.Set    `tfsdk:"security_groups"`
+	SSHKeyNames        types.Set    `tfsdk:"ssh_key_names"`
+	UserData           types.String `tfsdk:"user_data"`
+	UserDataWO         types.String `tfsdk:"user_data_wo"`
+	UserDataWOVer      types.String `tfsdk:"user_data_wo_version"`
+	ConsolePassword    types.String `tfsdk:"console_password"`
+	ConsolePasswordWO  types.String `tfsdk:"console_password_wo"`
+	ConsolePasswordVer types.String `tfsdk:"console_password_wo_version"`
+	InstanceAccess     types.Bool   `tfsdk:"instance_access"`
+	UserDataHash       types.String `tfsdk:"user_data_hash"`
+	Tags               types.Map    `tfsdk:"tags"`
+	Status             types.String `tfsdk:"status"`
+	FlavorName         types.String `tfsdk:"flavor_name"`
+	ImageName          types.String `tfsdk:"image_name"`
+	PrivateIP          types.String `tfsdk:"private_ip"`
+	PublicIP           types.String `tfsdk:"public_ip"`
+	CreatedAt          types.String `tfsdk:"created_at"`
 }
 
 // apiNestedRef is a nested object that only carries a name (flavor{}/image{}).
@@ -328,4 +330,10 @@ func (m *InstanceModel) fromAPI(ctx context.Context, inst *apiInstance, diags *d
 	//
 	// user_data_wo_version is likewise untouched: it is practitioner-set and lives
 	// only in state.
+	//
+	// console_password_wo is safe for exactly the same structural reason, and it
+	// has to be checked rather than inherited: apiInstance has no
+	// ConsolePassword field either, so adopting a returned password is a compile
+	// error. TestCreateWriteOnlyIgnoresConsolePasswordFromTheAPI pins it, and
+	// console_password_wo_version is practitioner-set and lives only in state.
 }

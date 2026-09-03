@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -14,7 +13,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
-	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
@@ -22,6 +20,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/writeonly"
 )
 
 var (
@@ -201,7 +200,7 @@ func (r *secretResource) Create(ctx context.Context, req resource.CreateRequest,
 
 	// A write-only attribute is null in the plan by construction; its value
 	// only ever reaches the provider through the config.
-	valueWO := writeOnlyValue(ctx, req.Config, &resp.Diagnostics)
+	valueWO := secretValueWO.Read(ctx, req.Config, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -266,7 +265,7 @@ func (r *secretResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	valueWO := writeOnlyValue(ctx, req.Config, &resp.Diagnostics)
+	valueWO := secretValueWO.Read(ctx, req.Config, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -328,25 +327,17 @@ func (r *secretResource) ImportState(ctx context.Context, req resource.ImportSta
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
-// writeOnlyValue reads secret_value_wo out of the configuration. It is read
-// straight from the config rather than through SecretModel because a write-only
-// attribute is null everywhere else — prior state, plan and final state.
+// secretValueWO is the write-only triple for the secret value.
 //
-// An unknown value fails CLOSED. Config is fully resolved by apply, so this
-// should be unreachable — but the alternative spelling (adding !IsUnknown() to
-// the caller's guard) would leave the value empty and write it as a new secret
-// version, which the schema description calls out as having no way back, and
-// report success.
-func writeOnlyValue(ctx context.Context, config tfsdk.Config, diags *diag.Diagnostics) types.String {
-	var v types.String
-	diags.Append(config.GetAttribute(ctx, path.Root("secret_value_wo"), &v)...)
-	if v.IsUnknown() {
-		diags.AddError(
-			"secret_value_wo Is Unknown At Apply",
-			"The write-only secret_value_wo value was still unknown when the secret was processed, so no "+
-				"request was sent to the platform and nothing was changed. This is a bug in the provider "+
-				"or in Terraform — please report it.",
-		)
-	}
-	return v
+// This is the resource with the most to lose from the plan-time validators
+// skipping an unknown value: an empty value here is not dropped, it is WRITTEN,
+// as a new secret version, and the schema description says of that "there is no
+// way back from that". ExactlyOne, because secret_value was Required before the
+// write-only form existed. See the package comment on internal/writeonly.
+var secretValueWO = writeonly.Attr{ // pragma: allowlist secret
+	WO:         "secret_value_wo",
+	Version:    "secret_value_wo_version",
+	Legacy:     "secret_value",
+	Subject:    "the secret",
+	ExactlyOne: true,
 }

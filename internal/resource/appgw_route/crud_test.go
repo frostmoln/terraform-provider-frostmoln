@@ -83,8 +83,10 @@ func TestConfigureRejectsUnexpectedProviderData(t *testing.T) {
 	}
 }
 
-var _ = json.Marshal
-var _ = types.StringValue
+var (
+	_ = json.Marshal
+	_ = types.StringValue
+)
 
 const rtBase = "/v1/tenants/t-1/application-gateways/agw-1/listeners/lsn-1/routes"
 
@@ -196,7 +198,8 @@ func TestRouteValidateConfigCompilesTheRegexLocally(t *testing.T) {
 		p := planOf(t, m)
 		var resp resource.ValidateConfigResponse
 		r.ValidateConfig(context.Background(), resource.ValidateConfigRequest{
-			Config: tfsdk.Config(p)}, &resp)
+			Config: tfsdk.Config(p),
+		}, &resp)
 		return resp.Diagnostics.HasError()
 	}
 

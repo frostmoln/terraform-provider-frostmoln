@@ -511,7 +511,8 @@ func (r *applyResource) waitForVerdict(ctx context.Context, gwID string, revisio
 				}
 				terminalErr = fmt.Errorf(
 					"revision %d was refused and the gateway is still serving its previous "+
-						"configuration:\n\n%s", revision, detail)
+						"configuration:\n\n%s", revision, detail,
+				)
 				return "failed", nil
 
 			case "unknown":
@@ -524,7 +525,8 @@ func (r *applyResource) waitForVerdict(ctx context.Context, gwID string, revisio
 					"revision %d was dispatched but no verdict ever arrived, so the attempt was "+
 						"abandoned. Unlike a refusal this says NOTHING about what the gateway is "+
 						"serving — it may or may not have loaded this configuration; read the "+
-						"gateway's config_status and re-apply", revision)
+						"gateway's config_status and re-apply", revision,
+				)
 				return "unknown", nil
 			}
 			return gw.ConfigStatus, nil
@@ -544,7 +546,8 @@ func (r *applyResource) waitForVerdict(ctx context.Context, gwID string, revisio
 		return nil, false, fmt.Errorf(
 			"revision %d was dispatched but the appliance had not answered (last status %q, "+
 				"acknowledged %s). The change may still land; read the gateway's config_status "+
-				"before re-running: %w", revision, last.ConfigStatus, ack, err)
+				"before re-running: %w", revision, last.ConfigStatus, ack, err,
+		)
 	}
 	return &last, superseded, nil
 }

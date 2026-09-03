@@ -83,11 +83,15 @@ func TestConfigureRejectsUnexpectedProviderData(t *testing.T) {
 	}
 }
 
-var _ = json.Marshal
-var _ = types.StringValue
+var (
+	_ = json.Marshal
+	_ = types.StringValue
+)
 
-const hcPath = "/v1/tenants/t-1/application-gateways/agw-1/backend-pools/pool-1/health-check"
-const hcPoolPath = "/v1/tenants/t-1/application-gateways/agw-1/backend-pools/pool-1"
+const (
+	hcPath     = "/v1/tenants/t-1/application-gateways/agw-1/backend-pools/pool-1/health-check"
+	hcPoolPath = "/v1/tenants/t-1/application-gateways/agw-1/backend-pools/pool-1"
+)
 
 func hcFixture() apiHealthCheck {
 	return apiHealthCheck{
@@ -204,7 +208,8 @@ func TestHealthCheckValidateConfigRejectsATimeoutThatCannotFinish(t *testing.T) 
 	p := planOf(t, m)
 	var resp resource.ValidateConfigResponse
 	r.ValidateConfig(context.Background(), resource.ValidateConfigRequest{
-		Config: tfsdk.Config(p)}, &resp)
+		Config: tfsdk.Config(p),
+	}, &resp)
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("a probe allowed as long as its own interval must be refused")
 	}

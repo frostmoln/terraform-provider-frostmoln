@@ -276,7 +276,8 @@ func (m *AttachmentModel) composeID() string {
 func (r *attachmentResource) readPolicy(ctx context.Context, m *AttachmentModel) (*apiPolicy, error) {
 	apiResp, err := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf(
 		"/application-gateways/%s/waf-policies/%s",
-		m.GatewayID.ValueString(), m.PolicyID.ValueString())), nil)
+		m.GatewayID.ValueString(), m.PolicyID.ValueString(),
+	)), nil)
 	if err != nil {
 		return nil, err
 	}

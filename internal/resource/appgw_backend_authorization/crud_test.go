@@ -84,8 +84,10 @@ func TestConfigureRejectsUnexpectedProviderData(t *testing.T) {
 	}
 }
 
-var _ = json.Marshal
-var _ = types.StringValue
+var (
+	_ = json.Marshal
+	_ = types.StringValue
+)
 
 const authzBase = "/v1/tenants/t-1/application-gateways/agw-1"
 
@@ -116,7 +118,8 @@ func TestAuthorizationCreateReadDelete(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(authzFixture(false))
 		case r.Method == http.MethodGet && r.URL.Path == authzBase+"/authorizations":
 			_ = json.NewEncoder(w).Encode(apiAuthorizationListResponse{
-				Items: []apiAuthorization{authzFixture(false)}})
+				Items: []apiAuthorization{authzFixture(false)},
+			})
 		case r.Method == http.MethodDelete && r.URL.Path == authzBase+"/authorizations/a-1":
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -225,7 +228,8 @@ func TestAdoptedIsPreservedAcrossARefresh(t *testing.T) {
 	c, _ := serve(t, func(w http.ResponseWriter, _ *http.Request) {
 		// As Postgres answers: adopted absent, therefore false.
 		_ = json.NewEncoder(w).Encode(apiAuthorizationListResponse{
-			Items: []apiAuthorization{authzFixture(false)}})
+			Items: []apiAuthorization{authzFixture(false)},
+		})
 	})
 	ar := &authorizationResource{client: c}
 	prior := authzModel()

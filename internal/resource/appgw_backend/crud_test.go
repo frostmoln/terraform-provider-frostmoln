@@ -83,8 +83,10 @@ func TestConfigureRejectsUnexpectedProviderData(t *testing.T) {
 	}
 }
 
-var _ = json.Marshal
-var _ = types.StringValue
+var (
+	_ = json.Marshal
+	_ = types.StringValue
+)
 
 const bkBase = "/v1/tenants/t-1/application-gateways/agw-1/backend-pools/pool-1/backends"
 
@@ -193,7 +195,8 @@ func TestBackendValidateConfig(t *testing.T) {
 		p := planOf(t, m)
 		var resp resource.ValidateConfigResponse
 		r.ValidateConfig(context.Background(), resource.ValidateConfigRequest{
-			Config: tfsdk.Config(p)}, &resp)
+			Config: tfsdk.Config(p),
+		}, &resp)
 		return resp.Diagnostics.HasError()
 	}
 

@@ -311,7 +311,8 @@ func (r *listenerResource) Read(ctx context.Context, req resource.ReadRequest, r
 	}
 
 	apiResp, err := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf(
-		"/application-gateways/%s/listeners/%s", state.GatewayID.ValueString(), state.ID.ValueString())), nil)
+		"/application-gateways/%s/listeners/%s", state.GatewayID.ValueString(), state.ID.ValueString(),
+	)), nil)
 	if err != nil {
 		if client.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
@@ -347,7 +348,8 @@ func (r *listenerResource) Delete(ctx context.Context, req resource.DeleteReques
 		return
 	}
 	_, err := r.client.Delete(ctx, r.client.TenantPath(fmt.Sprintf(
-		"/application-gateways/%s/listeners/%s", state.GatewayID.ValueString(), state.ID.ValueString())))
+		"/application-gateways/%s/listeners/%s", state.GatewayID.ValueString(), state.ID.ValueString(),
+	)))
 	if err != nil && !client.IsNotFound(err) {
 		resp.Diagnostics.AddError("Failed to Delete Listener", err.Error())
 	}

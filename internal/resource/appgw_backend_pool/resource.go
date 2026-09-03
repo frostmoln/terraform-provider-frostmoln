@@ -290,7 +290,8 @@ func (r *poolResource) Create(ctx context.Context, req resource.CreateRequest, r
 	}
 
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath(fmt.Sprintf(
-		"/application-gateways/%s/backend-pools", plan.GatewayID.ValueString())), createReq)
+		"/application-gateways/%s/backend-pools", plan.GatewayID.ValueString(),
+	)), createReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Create Backend Pool", err.Error())
 		return
@@ -312,7 +313,8 @@ func (r *poolResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	}
 	apiResp, err := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf(
 		"/application-gateways/%s/backend-pools/%s",
-		state.GatewayID.ValueString(), state.ID.ValueString())), nil)
+		state.GatewayID.ValueString(), state.ID.ValueString(),
+	)), nil)
 	if err != nil {
 		if client.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
@@ -346,7 +348,8 @@ func (r *poolResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	}
 	_, err := r.client.Delete(ctx, r.client.TenantPath(fmt.Sprintf(
 		"/application-gateways/%s/backend-pools/%s",
-		state.GatewayID.ValueString(), state.ID.ValueString())))
+		state.GatewayID.ValueString(), state.ID.ValueString(),
+	)))
 	if err != nil && !client.IsNotFound(err) {
 		resp.Diagnostics.AddError("Failed to Delete Backend Pool", err.Error())
 	}

@@ -654,7 +654,8 @@ func (r *publicationResource) runDryRun(ctx context.Context, base string) (*apiD
 			"A dry-run is replayed by the gateway's own appliance against recent request "+
 			"signatures. It stays pending when the appliance is not running the inspection "+
 			"engine, or when the gateway has not yet applied a configuration. Check the "+
-			"gateway's config_status, and that it is running, before retrying", dryRunTimeout)
+			"gateway's config_status, and that it is running, before retrying", dryRunTimeout,
+	)
 }
 
 // findDryRun locates one dry-run in the policy's history.

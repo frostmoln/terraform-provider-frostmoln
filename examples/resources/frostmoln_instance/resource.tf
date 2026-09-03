@@ -9,7 +9,9 @@ resource "frostmoln_instance" "example" {
   security_groups = [frostmoln_security_group.web.id]
   ssh_key_names   = [frostmoln_ssh_key.example.name]
 
-  # Password for the default OS user, usable only at the VNC console (SSH stays key-only).
+  # Password for the default OS user, usable only at the VNC console (SSH stays
+  # key-only). Written to Terraform state in plaintext — prefer
+  # console_password_wo (see the second block below).
   console_password = "change-me-at-the-console" # pragma: allowlist secret
 
   # Install the Frostmoln in-guest agent at first boot for `fm ssh` terminal access.
@@ -79,4 +81,10 @@ resource "frostmoln_instance" "bootstrap" {
   # document. Do not derive it from the document: it is not sensitive, so it is
   # printed verbatim in plan output, CI logs and PR plan comments.
   user_data_wo_version = "1"
+
+  # console_password has a write-only form too, with the same shape and the same
+  # replace-on-version-bump lifecycle — the password is seeded at first boot and
+  # never again, so there is nothing an in-place update could change.
+  console_password_wo         = var.console_password
+  console_password_wo_version = "1"
 }

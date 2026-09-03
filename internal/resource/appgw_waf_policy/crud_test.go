@@ -83,8 +83,10 @@ func TestConfigureRejectsUnexpectedProviderData(t *testing.T) {
 	}
 }
 
-var _ = json.Marshal
-var _ = types.StringValue
+var (
+	_ = json.Marshal
+	_ = types.StringValue
+)
 
 const wpBase = "/v1/tenants/t-1/application-gateways/agw-1/waf-policies"
 
@@ -190,7 +192,8 @@ func TestPolicyUpdateSendsOnlyWhatChanged(t *testing.T) {
 
 	resp := resource.UpdateResponse{State: stateOf(t, state)}
 	pr.Update(context.Background(), resource.UpdateRequest{
-		Plan: planOf(t, plan), State: stateOf(t, state)}, &resp)
+		Plan: planOf(t, plan), State: stateOf(t, state),
+	}, &resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("update: %v", resp.Diagnostics.Errors())
 	}

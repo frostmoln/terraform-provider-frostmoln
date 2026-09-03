@@ -368,7 +368,8 @@ func (r *gatewayResource) Read(ctx context.Context, req resource.ReadRequest, re
 				"publication records it; it does not dispatch it. Declare a "+
 				"frostmoln_appgw_config_apply resource for this gateway so `terraform apply` "+
 				"makes the change take effect.",
-				gw.ID, gw.ConfigGeneration, ack, gw.ConfigStatus))
+				gw.ID, gw.ConfigGeneration, ack, gw.ConfigStatus),
+		)
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)

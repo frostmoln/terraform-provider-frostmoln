@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1337,15 +1338,20 @@ func instanceTFValue(t *testing.T, tfType tftypes.Type, vals map[string]tftypes.
 		"user_data_wo":         tftypes.NewValue(tftypes.String, nil),
 		"user_data_wo_version": tftypes.NewValue(tftypes.String, nil),
 		"console_password":     tftypes.NewValue(tftypes.String, nil),
-		"instance_access":      tftypes.NewValue(tftypes.Bool, nil),
-		"user_data_hash":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"flavor_name":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"image_name":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"private_ip":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"public_ip":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"created_at":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		// console_password_wo, like user_data_wo, is null in the plan and in
+		// state by construction; a test on the write-only path sets it on the
+		// CONFIG value only.
+		"console_password_wo":         tftypes.NewValue(tftypes.String, nil),
+		"console_password_wo_version": tftypes.NewValue(tftypes.String, nil),
+		"instance_access":             tftypes.NewValue(tftypes.Bool, nil),
+		"user_data_hash":              tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"tags":                        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":                      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"flavor_name":                 tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"image_name":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"private_ip":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"public_ip":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 	}
 
 	for k, v := range vals {
@@ -3506,5 +3512,258 @@ func TestUpdateWriteOnlyPreservesVersion(t *testing.T) {
 	}
 	if !model.UserData.IsNull() || !model.UserDataWO.IsNull() || !model.UserDataHash.IsNull() {
 		t.Error("the write-only path must keep user_data, user_data_wo and user_data_hash null through an update")
+	}
+}
+
+// consolePasswordWOValues is the plan/config pair for the console_password_wo
+// path. The password is null in the plan by construction and lives only in the
+// config, like every write-only value.
+func consolePasswordWOValues(version, password string) (plan, config map[string]tftypes.Value) {
+	plan = map[string]tftypes.Value{
+		"name":                        tftypes.NewValue(tftypes.String, "web-1"),
+		"console_password":            tftypes.NewValue(tftypes.String, nil),
+		"console_password_wo":         tftypes.NewValue(tftypes.String, nil),
+		"console_password_wo_version": tftypes.NewValue(tftypes.String, version),
+	}
+	config = map[string]tftypes.Value{}
+	for k, v := range plan {
+		config[k] = v
+	}
+	config["console_password_wo"] = tftypes.NewValue(tftypes.String, password)
+	return plan, config
+}
+
+// createWithWriteOnlyConsolePassword runs Create with the password present only
+// in the config, and returns the resulting state plus the body sent.
+func createWithWriteOnlyConsolePassword(t *testing.T, password string, readBack map[string]any) (InstanceModel, apiCreateInstanceRequest) {
+	t.Helper()
+
+	var sent apiCreateInstanceRequest
+	server := writeOnlyCreateServer(t, &sent, readBack)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key")
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+	r := &instanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+
+	ctx := context.Background()
+	schemaResp := getInstanceSchema(t)
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+	planVals, configVals := consolePasswordWOValues("1", password)
+
+	createResp := &resource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	r.Create(ctx, resource.CreateRequest{
+		Plan:   tfsdk.Plan{Schema: schemaResp.Schema, Raw: instanceTFValue(t, tfType, planVals)},
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: instanceTFValue(t, tfType, configVals)},
+	}, createResp)
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("Create failed: %v", createResp.Diagnostics.Errors())
+	}
+
+	var model InstanceModel
+	if d := createResp.State.Get(ctx, &model); d.HasError() {
+		t.Fatalf("reading created state: %v", d.Errors())
+	}
+	return model, sent
+}
+
+// TestSchemaConsolePasswordWriteOnlyAttributes pins what the provider-level
+// contract leaves per-resource: the legacy attribute's own shape, and — the one
+// that matters — that the version companion replaces the instance. A password
+// is applied at first boot and never again, so an in-place update would report a
+// rotation that never reached the guest.
+func TestSchemaConsolePasswordWriteOnlyAttributes(t *testing.T) {
+	attrs := getInstanceSchema(t).Schema.Attributes
+
+	legacy, ok := attrs["console_password"].(schema.StringAttribute)
+	if !ok {
+		t.Fatal("console_password is not a StringAttribute")
+	}
+	if !legacy.Optional || legacy.Required || legacy.Computed {
+		t.Error("console_password must stay Optional-only")
+	}
+
+	wo, ok := attrs["console_password_wo"].(schema.StringAttribute)
+	if !ok {
+		t.Fatal("console_password_wo missing from schema")
+	}
+	if !wo.WriteOnly || !wo.Sensitive || wo.Computed {
+		t.Error("console_password_wo must be WriteOnly and Sensitive and not Computed")
+	}
+	if len(wo.PlanModifiers) != 0 {
+		t.Error("console_password_wo must have no plan modifiers: they can never fire on a " +
+			"write-only attribute, and RequiresReplace here instead of on the version companion " +
+			"would silently make the password unchangeable")
+	}
+
+	ver, ok := attrs["console_password_wo_version"].(schema.StringAttribute)
+	if !ok {
+		t.Fatal("console_password_wo_version missing from schema")
+	}
+	if ver.WriteOnly || ver.Sensitive {
+		t.Error("console_password_wo_version must be stored in state and readable: it is the only " +
+			"change signal, and the argument against deriving it from the password depends on it " +
+			"printing in plan output")
+	}
+}
+
+// TestConsolePasswordWOVersionForcesReplacement runs the companion's own plan
+// modifiers. console_password is create-only — the platform seeds the password
+// through cloud-init at first boot and the API has no route that changes it — so
+// its write-only companion has to be create-only too. Without the replacement a
+// version bump plans an in-place update that sends no password anywhere and
+// reports a rotation that never happened.
+func TestConsolePasswordWOVersionForcesReplacement(t *testing.T) {
+	ctx := context.Background()
+	schemaResp := getInstanceSchema(t)
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+	ver, ok := schemaResp.Schema.Attributes["console_password_wo_version"].(schema.StringAttribute)
+	if !ok {
+		t.Fatal("console_password_wo_version is not a StringAttribute")
+	}
+	if len(ver.PlanModifiers) == 0 {
+		t.Fatal("console_password_wo_version has no plan modifiers")
+	}
+
+	before, _ := consolePasswordWOValues("1", "")
+	after, _ := consolePasswordWOValues("2", "")
+
+	req := planmodifier.StringRequest{
+		Path:        path.Root("console_password_wo_version"),
+		StateValue:  types.StringValue("1"),
+		PlanValue:   types.StringValue("2"),
+		ConfigValue: types.StringValue("2"),
+		State:       tfsdk.State{Schema: schemaResp.Schema, Raw: instanceTFValue(t, tfType, before)},
+		Plan:        tfsdk.Plan{Schema: schemaResp.Schema, Raw: instanceTFValue(t, tfType, after)},
+	}
+	var resp planmodifier.StringResponse
+	for _, m := range ver.PlanModifiers {
+		m.PlanModifyString(ctx, req, &resp)
+	}
+	if !resp.RequiresReplace {
+		t.Error("a changed console_password_wo_version must force the instance to be replaced; the " +
+			"password is only ever applied at first boot, so an in-place update changes nothing " +
+			"in the guest")
+	}
+}
+
+// TestCreateWriteOnlyKeepsConsolePasswordOutOfState is the point of the
+// attribute: the password reaches the API under the wire name the backend binds,
+// and nothing derived from it lands in state.
+func TestCreateWriteOnlyKeepsConsolePasswordOutOfState(t *testing.T) {
+	const password = "corr3ct-horse-battery" // pragma: allowlist secret
+
+	model, sent := createWithWriteOnlyConsolePassword(t, password, nil)
+
+	if sent.ConsolePassword != password { // pragma: allowlist secret
+		t.Errorf("expected the write-only password to reach the API, got %q", sent.ConsolePassword)
+	}
+	if !model.ConsolePasswordWO.IsNull() {
+		t.Errorf("console_password_wo must be null in state, got %q", model.ConsolePasswordWO.ValueString())
+	}
+	if !model.ConsolePassword.IsNull() {
+		t.Errorf("console_password must stay null on the write-only path, got %q", model.ConsolePassword.ValueString())
+	}
+	if model.ConsolePasswordVer.ValueString() != "1" {
+		t.Errorf("expected console_password_wo_version 1 in state, got %q", model.ConsolePasswordVer)
+	}
+}
+
+// TestCreateWriteOnlyConsolePasswordSendsTheWireKey pins the REQUEST-side json
+// tag with a raw map. A fixture that decodes into the struct that encoded it is
+// tag-symmetric: renaming `json:"consolePassword"` round-trips undetected while
+// the password never reaches the platform, and the write-only path removes the
+// plan line that would have shown something was wrong.
+func TestCreateWriteOnlyConsolePasswordSendsTheWireKey(t *testing.T) {
+	const password = "corr3ct-horse-battery" // pragma: allowlist secret
+
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]any{"tenantId": "tenant-456"})
+		case r.Method == http.MethodPost:
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-inst-1", "status": "pending", "resourceType": "instance",
+			})
+		case strings.Contains(r.URL.Path, "/operations/"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-inst-1", "status": "completed",
+				"resourceType": "instance", "resourceId": "inst-new-1",
+			})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "inst-new-1", "name": "web-1", "status": "running",
+				"flavorId": "flavor-small", "imageId": "img-ubuntu",
+				"createdAt": "2025-06-01T12:00:00Z",
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key")
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+	r := &instanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+
+	ctx := context.Background()
+	schemaResp := getInstanceSchema(t)
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+	planVals, configVals := consolePasswordWOValues("1", password)
+
+	createResp := &resource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	r.Create(ctx, resource.CreateRequest{
+		Plan:   tfsdk.Plan{Schema: schemaResp.Schema, Raw: instanceTFValue(t, tfType, planVals)},
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: instanceTFValue(t, tfType, configVals)},
+	}, createResp)
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("Create failed: %v", createResp.Diagnostics.Errors())
+	}
+
+	if got, _ := body["consolePassword"].(string); got != password {
+		t.Fatalf("the password was not sent as consolePassword; the body carried %v", body)
+	}
+}
+
+// TestCreateWriteOnlyIgnoresConsolePasswordFromTheAPI is the read-path check,
+// verified for this attribute rather than inherited from user_data_wo.
+// apiInstance has no ConsolePassword field, so adopting one the API returns is a
+// compile error — but Create's post-create read is the path with no prior state
+// to restore from, so if that ever changed the password would land in state
+// silently. Feed the API a response that does return it.
+func TestCreateWriteOnlyIgnoresConsolePasswordFromTheAPI(t *testing.T) {
+	const password = "corr3ct-horse-battery" // pragma: allowlist secret
+
+	// The structural half, asserted rather than assumed — the certificate got
+	// this pin and the instance did not. An INERT decode field leaves the
+	// behavioural check below green, so it lands in review looking like
+	// harmless completeness, one line away from adoption.
+	for _, f := range reflect.VisibleFields(reflect.TypeOf(apiInstance{})) {
+		hay := strings.ToLower(f.Name + " " + f.Tag.Get("json"))
+		// Both halves, because model.go's comment claims both are pinned and
+		// only one was: an INERT untagged UserData field leaves every
+		// behavioural test green.
+		if f.IsExported() && (strings.Contains(hay, "password") || strings.Contains(hay, "userdata")) {
+			t.Fatalf("apiInstance declares %s (json %q): the instance response type must have "+
+				"nowhere to decode a console password or a cloud-init document into",
+				f.Name, f.Tag.Get("json"))
+		}
+	}
+
+	model, _ := createWithWriteOnlyConsolePassword(t, password,
+		map[string]any{"consolePassword": password})
+
+	if !model.ConsolePassword.IsNull() {
+		t.Errorf("the API's consolePassword was adopted into state: %q", model.ConsolePassword.ValueString())
+	}
+	if !model.ConsolePasswordWO.IsNull() {
+		t.Errorf("console_password_wo must stay null, got %q", model.ConsolePasswordWO.ValueString())
 	}
 }

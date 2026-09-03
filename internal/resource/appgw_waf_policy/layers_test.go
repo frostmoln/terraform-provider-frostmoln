@@ -153,7 +153,8 @@ func TestScopeReachesTheCreateBodyAndNeverTheUpdateBody(t *testing.T) {
 	next.Mode = types.StringValue(modeInherit)
 	updResp := resource.UpdateResponse{State: stateOf(t, state)}
 	pr2.Update(context.Background(), resource.UpdateRequest{
-		Plan: planOf(t, next), State: stateOf(t, state)}, &updResp)
+		Plan: planOf(t, next), State: stateOf(t, state),
+	}, &updResp)
 	if updResp.Diagnostics.HasError() {
 		t.Fatalf("update: %v", updResp.Diagnostics.Errors())
 	}
@@ -185,7 +186,8 @@ func TestValidateConfigMirrorsTheServerConstraints(t *testing.T) {
 		p := planOf(t, m)
 		var resp resource.ValidateConfigResponse
 		r.ValidateConfig(context.Background(), resource.ValidateConfigRequest{
-			Config: tfsdk.Config(p)}, &resp)
+			Config: tfsdk.Config(p),
+		}, &resp)
 		var msgs []string
 		for _, d := range resp.Diagnostics.Errors() {
 			msgs = append(msgs, d.Summary()+" "+d.Detail())

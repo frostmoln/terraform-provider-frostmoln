@@ -98,7 +98,8 @@ func TestPublishRunsTheDryRunFirst(t *testing.T) {
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(apiDryRun{
 				ID: "d-1", ContentHash: "abc", Status: "completed",
-				RequestsSampled: 500, NewlyBlocked: 0})
+				RequestsSampled: 500, NewlyBlocked: 0,
+			})
 		case r.URL.Path == pubBase+"/publish":
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(apiVersion{Version: 4, State: "frozen", ContentHash: "abc"})
@@ -118,7 +119,8 @@ func TestPublishRunsTheDryRunFirst(t *testing.T) {
 
 	resp := resource.CreateResponse{State: emptyState(t)}
 	r.Create(context.Background(), resource.CreateRequest{
-		Plan: planOf(t, pubModel(t, types.Int64Value(0)))}, &resp)
+		Plan: planOf(t, pubModel(t, types.Int64Value(0))),
+	}, &resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("create: %v", resp.Diagnostics.Errors())
 	}
@@ -155,7 +157,8 @@ func TestPublishIsRefusedOverTheBudget(t *testing.T) {
 				ID: "d-1", Status: "completed", RequestsSampled: 500, NewlyBlocked: 42,
 				Sample: []apiDryRunSample{{
 					Method: "POST", Host: "api.example.com", Path: "/v1/search",
-					MatchedRuleKey: "block-sqli", OccurrenceCount: 42}},
+					MatchedRuleKey: "block-sqli", OccurrenceCount: 42,
+				}},
 			})
 		case r.URL.Path == pubBase+"/publish":
 			published = true
@@ -167,7 +170,8 @@ func TestPublishIsRefusedOverTheBudget(t *testing.T) {
 
 	resp := resource.CreateResponse{State: emptyState(t)}
 	r.Create(context.Background(), resource.CreateRequest{
-		Plan: planOf(t, pubModel(t, types.Int64Value(0)))}, &resp)
+		Plan: planOf(t, pubModel(t, types.Int64Value(0))),
+	}, &resp)
 
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("a dry-run over the budget must refuse the publication")
@@ -189,7 +193,8 @@ func TestPublishWarnsButProceedsWithNoBudget(t *testing.T) {
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(apiDryRun{
 				ID: "d-1", Status: "completed", RequestsSampled: 10, NewlyBlocked: 2,
-				Sample: []apiDryRunSample{{Method: "GET", Host: "h", Path: "/p", OccurrenceCount: 2}}})
+				Sample: []apiDryRunSample{{Method: "GET", Host: "h", Path: "/p", OccurrenceCount: 2}},
+			})
 			return
 		}
 		w.WriteHeader(http.StatusAccepted)
@@ -198,7 +203,8 @@ func TestPublishWarnsButProceedsWithNoBudget(t *testing.T) {
 	r := &publicationResource{client: c}
 	resp := resource.CreateResponse{State: emptyState(t)}
 	r.Create(context.Background(), resource.CreateRequest{
-		Plan: planOf(t, pubModel(t, types.Int64Null()))}, &resp)
+		Plan: planOf(t, pubModel(t, types.Int64Null())),
+	}, &resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("with no budget the publication must proceed: %v", resp.Diagnostics.Errors())
 	}
@@ -218,12 +224,14 @@ func TestUnchangedDraftPublishesNothingAndStillNamesWhatIsEnforced(t *testing.T)
 		case strings.HasSuffix(r.URL.Path, "/dry-runs") && r.Method == http.MethodPost:
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(apiDryRun{
-				ID: "d-1", Status: "completed", RequestsSampled: 120, ContentHash: "same"})
+				ID: "d-1", Status: "completed", RequestsSampled: 120, ContentHash: "same",
+			})
 		case strings.HasSuffix(r.URL.Path, "/publish"):
 			w.WriteHeader(http.StatusNoContent)
 		case strings.HasSuffix(r.URL.Path, "/versions/active"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"version": apiVersion{Version: 3, State: "frozen", ContentHash: "same"}})
+				"version": apiVersion{Version: 3, State: "frozen", ContentHash: "same"},
+			})
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -231,7 +239,8 @@ func TestUnchangedDraftPublishesNothingAndStillNamesWhatIsEnforced(t *testing.T)
 	r := &publicationResource{client: c}
 	resp := resource.CreateResponse{State: emptyState(t)}
 	r.Create(context.Background(), resource.CreateRequest{
-		Plan: planOf(t, pubModel(t, types.Int64Value(0)))}, &resp)
+		Plan: planOf(t, pubModel(t, types.Int64Value(0))),
+	}, &resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("a 204 is a success, not a failure: %v", resp.Diagnostics.Errors())
 	}
@@ -256,12 +265,14 @@ func TestAPendingDryRunNamesTheRealCause(t *testing.T) {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(apiDryRunListResponse{
-			DryRuns: []apiDryRun{{ID: "d-1", Status: "pending"}}})
+			DryRuns: []apiDryRun{{ID: "d-1", Status: "pending"}},
+		})
 	})
 	r := &publicationResource{client: c}
 	resp := resource.CreateResponse{State: emptyState(t)}
 	r.Create(context.Background(), resource.CreateRequest{
-		Plan: planOf(t, pubModel(t, types.Int64Value(0)))}, &resp)
+		Plan: planOf(t, pubModel(t, types.Int64Value(0))),
+	}, &resp)
 
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("a dry-run that never completes must fail the apply")
@@ -285,12 +296,14 @@ func TestAFailedDryRunSurfacesItsOwnError(t *testing.T) {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(apiDryRunListResponse{DryRuns: []apiDryRun{
-			{ID: "d-1", Status: "failed", Error: "the ruleset exceeded its evaluation budget"}}})
+			{ID: "d-1", Status: "failed", Error: "the ruleset exceeded its evaluation budget"},
+		}})
 	})
 	r := &publicationResource{client: c}
 	resp := resource.CreateResponse{State: emptyState(t)}
 	r.Create(context.Background(), resource.CreateRequest{
-		Plan: planOf(t, pubModel(t, types.Int64Value(0)))}, &resp)
+		Plan: planOf(t, pubModel(t, types.Int64Value(0))),
+	}, &resp)
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("a failed dry-run must fail the apply")
 	}
@@ -318,7 +331,8 @@ func TestReadTracksWhatIsEnforced(t *testing.T) {
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/versions/active") {
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"version": apiVersion{Version: 9, ContentHash: "newer"}})
+				"version": apiVersion{Version: 9, ContentHash: "newer"},
+			})
 			return
 		}
 		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -351,7 +365,8 @@ func TestAZeroSampleDryRunCannotSatisfyTheBudget(t *testing.T) {
 		if strings.HasSuffix(r.URL.Path, "/dry-runs") && r.Method == http.MethodPost {
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(apiDryRun{
-				ID: "d-1", Status: "completed", RequestsSampled: 0, NewlyBlocked: 0})
+				ID: "d-1", Status: "completed", RequestsSampled: 0, NewlyBlocked: 0,
+			})
 			return
 		}
 		published = true
@@ -361,7 +376,8 @@ func TestAZeroSampleDryRunCannotSatisfyTheBudget(t *testing.T) {
 	r := &publicationResource{client: c}
 	resp := resource.CreateResponse{State: emptyState(t)}
 	r.Create(context.Background(), resource.CreateRequest{
-		Plan: planOf(t, pubModel(t, types.Int64Value(0)))}, &resp)
+		Plan: planOf(t, pubModel(t, types.Int64Value(0))),
+	}, &resp)
 
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("a dry-run that sampled nothing must not satisfy the budget")
@@ -374,7 +390,8 @@ func TestAZeroSampleDryRunCannotSatisfyTheBudget(t *testing.T) {
 	// is not an error — it is just a weak signal, already recorded in state.
 	resp = resource.CreateResponse{State: emptyState(t)}
 	r.Create(context.Background(), resource.CreateRequest{
-		Plan: planOf(t, pubModel(t, types.Int64Null()))}, &resp)
+		Plan: planOf(t, pubModel(t, types.Int64Null())),
+	}, &resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("with no budget an empty sample must not block the publish: %v",
 			resp.Diagnostics.Errors())
@@ -394,7 +411,8 @@ func TestPublishingADifferentRulesetThanWasReplayedIsRefused(t *testing.T) {
 		if strings.HasSuffix(r.URL.Path, "/dry-runs") && r.Method == http.MethodPost {
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(apiDryRun{
-				ID: "d-1", Status: "completed", RequestsSampled: 500, ContentHash: "measured"})
+				ID: "d-1", Status: "completed", RequestsSampled: 500, ContentHash: "measured",
+			})
 			return
 		}
 		w.WriteHeader(http.StatusAccepted)
@@ -404,7 +422,8 @@ func TestPublishingADifferentRulesetThanWasReplayedIsRefused(t *testing.T) {
 	r := &publicationResource{client: c}
 	resp := resource.CreateResponse{State: emptyState(t)}
 	r.Create(context.Background(), resource.CreateRequest{
-		Plan: planOf(t, pubModel(t, types.Int64Value(0)))}, &resp)
+		Plan: planOf(t, pubModel(t, types.Int64Value(0))),
+	}, &resp)
 
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("publishing a ruleset the dry-run never measured must be refused")
@@ -432,7 +451,8 @@ func TestPublishingADifferentRulesetThanWasReplayedIsRefused(t *testing.T) {
 func TestReadRefusesToAdoptAVersionItDidNotPublish(t *testing.T) {
 	c := serve(t, func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"version": apiVersion{Version: 2, ContentHash: "rolled-back"}})
+			"version": apiVersion{Version: 2, ContentHash: "rolled-back"},
+		})
 	})
 	r := &publicationResource{client: c}
 	prior := pubModel(t, types.Int64Value(0))
@@ -480,11 +500,13 @@ func TestA409NamesTheConcurrentEditorNotAMissingDryRun(t *testing.T) {
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(apiDryRun{
 				ID: "d-7", ContentHash: "abc", Status: "completed",
-				RequestsSampled: 500, NewlyBlocked: 0})
+				RequestsSampled: 500, NewlyBlocked: 0,
+			})
 		case r.URL.Path == pubBase+"/publish":
 			w.WriteHeader(http.StatusConflict)
 			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
-				"code": "conflict", "message": "no completed dry run matches the draft"}})
+				"code": "conflict", "message": "no completed dry run matches the draft",
+			}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -493,7 +515,8 @@ func TestA409NamesTheConcurrentEditorNotAMissingDryRun(t *testing.T) {
 
 	resp := resource.CreateResponse{State: emptyState(t)}
 	r.Create(context.Background(), resource.CreateRequest{
-		Plan: planOf(t, pubModel(t, types.Int64Value(0)))}, &resp)
+		Plan: planOf(t, pubModel(t, types.Int64Value(0))),
+	}, &resp)
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("a refused publish was reported as success")
 	}
@@ -582,7 +605,8 @@ func TestPlatformOptOutsAreRecordedFromThePublishedRuleset(t *testing.T) {
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(apiDryRun{
 				ID: "d-1", ContentHash: "abc", Status: "completed",
-				RequestsSampled: 500, NewlyBlocked: 0})
+				RequestsSampled: 500, NewlyBlocked: 0,
+			})
 		case r.URL.Path == pubBase+"/publish":
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(apiVersion{Version: 4, State: "frozen", ContentHash: "abc"})
@@ -604,7 +628,8 @@ func TestPlatformOptOutsAreRecordedFromThePublishedRuleset(t *testing.T) {
 
 	resp := resource.CreateResponse{State: emptyState(t)}
 	r.Create(context.Background(), resource.CreateRequest{
-		Plan: planOf(t, pubModel(t, types.Int64Value(0)))}, &resp)
+		Plan: planOf(t, pubModel(t, types.Int64Value(0))),
+	}, &resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("create: %v", resp.Diagnostics.Errors())
 	}

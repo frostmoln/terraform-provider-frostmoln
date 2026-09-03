@@ -82,8 +82,10 @@ func TestConfigureRejectsUnexpectedProviderData(t *testing.T) {
 	}
 }
 
-var _ = json.Marshal
-var _ = types.StringValue
+var (
+	_ = json.Marshal
+	_ = types.StringValue
+)
 
 const gwBase = "/v1/tenants/t-1/application-gateways"
 
@@ -122,7 +124,8 @@ func TestGatewayCreateWritesStateEvenWhenProvisioningFails(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == gwBase:
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(apiCreateGatewayResponse{
-				Gateway: ptr(gwFixture("creating")), OperationID: "op-1"})
+				Gateway: ptr(gwFixture("creating")), OperationID: "op-1",
+			})
 		default:
 			// The operation lookup fails, standing in for provisioning falling
 			// over after the row exists.
@@ -183,7 +186,8 @@ func TestGatewayReadUpdateDelete(t *testing.T) {
 	plan.Name = types.StringValue("renamed")
 	updResp := resource.UpdateResponse{State: stateOf(t, m)}
 	gr.Update(context.Background(), resource.UpdateRequest{
-		Plan: planOf(t, plan), State: stateOf(t, m)}, &updResp)
+		Plan: planOf(t, plan), State: stateOf(t, m),
+	}, &updResp)
 	if updResp.Diagnostics.HasError() {
 		t.Fatalf("update: %v", updResp.Diagnostics.Errors())
 	}
@@ -221,7 +225,8 @@ func TestGatewayValidateConfigRefusesInconsistentPublicIPFlags(t *testing.T) {
 		p := planOf(t, m)
 		var resp resource.ValidateConfigResponse
 		r.ValidateConfig(context.Background(), resource.ValidateConfigRequest{
-			Config: tfsdk.Config(p)}, &resp)
+			Config: tfsdk.Config(p),
+		}, &resp)
 		return resp.Diagnostics.HasError()
 	}
 

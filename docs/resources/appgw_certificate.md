@@ -4,7 +4,7 @@ page_title: "frostmoln_appgw_certificate Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a TLS certificate on a Frostmoln Application Gateway.
-  ~> The private key is written to Terraform state. The platform never returns it, so Terraform is the only place it can be kept for a refresh — which means your state file holds key material and must be treated as a secret: a remote backend with encryption at rest and restricted access. Keeping the PEM out of your .tf files does not keep it out of state — a value read from a variable or a secret store is persisted exactly like a literal once it is assigned to private_key_pem. The only way to keep a key out of Terraform entirely is not to hand it one: a platform-issued ACME certificate (source = acmeDns01, obtained out of band — this resource only uploads) is attached to a listener by ID and never carries key material. See the Secrets in Terraform state https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets guide.
+  ~> private_key_pem is written to Terraform state. The provider never adopts a key from an API response, so on that attribute your state is the only place it is kept across refreshes — which means your state file holds key material and must be treated as a secret: a remote backend with encryption at rest and restricted access. Keeping the PEM out of your .tf files does not keep it out of state — a value read from a variable or a secret store is persisted exactly like a literal once it is assigned to private_key_pem. Use private_key_pem_wo instead: it carries the same key on apply and is never written to the plan or to state. The other way to keep a key out of Terraform is not to hand it one — a platform-issued ACME certificate (source = acmeDns01, obtained out of band — this resource only uploads) is attached to a listener by ID and never carries key material. See the Secrets in Terraform state https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets guide.
   The certificate API has no update operation, so every attribute forces a new resource. Rotating a certificate therefore creates a new one and destroys the old — attach it to the listener via create_before_destroy if you cannot take the interruption.
 ---
 
@@ -12,17 +12,19 @@ description: |-
 
 Manages a TLS certificate on a Frostmoln Application Gateway.
 
-~> **The private key is written to Terraform state.** The platform never returns it, so Terraform is the only place it can be kept for a refresh — which means your state file holds key material and must be treated as a secret: a remote backend with encryption at rest and restricted access. Keeping the PEM out of your `.tf` files does not keep it out of state — a value read from a variable or a secret store is persisted exactly like a literal once it is assigned to `private_key_pem`. The only way to keep a key out of Terraform entirely is not to hand it one: a platform-issued ACME certificate (`source` = `acmeDns01`, obtained out of band — this resource only uploads) is attached to a listener by ID and never carries key material. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide.
+~> **`private_key_pem` is written to Terraform state.** The provider never adopts a key from an API response, so on that attribute your state is the only place it is kept across refreshes — which means your state file holds key material and must be treated as a secret: a remote backend with encryption at rest and restricted access. Keeping the PEM out of your `.tf` files does not keep it out of state — a value read from a variable or a secret store is persisted exactly like a literal once it is assigned to `private_key_pem`. Use `private_key_pem_wo` instead: it carries the same key on apply and is never written to the plan or to state. The other way to keep a key out of Terraform is not to hand it one — a platform-issued ACME certificate (`source` = `acmeDns01`, obtained out of band — this resource only uploads) is attached to a listener by ID and never carries key material. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide.
 
 The certificate API has no update operation, so every attribute forces a new resource. Rotating a certificate therefore creates a new one and destroys the old — attach it to the listener via `create_before_destroy` if you cannot take the interruption.
 
 ## Example Usage
 
 ```terraform
-# The private key is written to Terraform state: the platform never returns it,
-# so state is the only place it can be kept for a refresh. Use a remote backend
+# The private key is written to Terraform state: the provider never adopts one
+# from an API response, so state is the only place it is kept across refreshes. Use a remote backend
 # with encryption at rest, and source the material from a variable or a secret
-# store rather than committing PEM to your configuration.
+# store rather than committing PEM to your configuration. Prefer
+# private_key_pem_wo (the second block below), which keeps the key out of state
+# entirely.
 
 resource "frostmoln_appgw_certificate" "www" {
   gateway_id = frostmoln_application_gateway.edge.id
@@ -30,6 +32,34 @@ resource "frostmoln_appgw_certificate" "www" {
 
   chain_pem       = var.www_certificate_chain
   private_key_pem = var.www_certificate_key
+}
+
+# The write-only form. private_key_pem_wo never reaches the plan or state; it
+# needs Terraform 1.11 or later. Exactly one of private_key_pem and
+# private_key_pem_wo must be set.
+#
+# Because Terraform cannot see a write-only value change, bumping
+# private_key_pem_wo_version is what uploads the current key — and it does so by
+# REPLACING the certificate, because the certificate API has no update
+# operation. Attach it with create_before_destroy if the listener cannot take
+# the interruption.
+resource "frostmoln_appgw_certificate" "api" {
+  gateway_id = frostmoln_application_gateway.edge.id
+
+  # The name carries the version, so create_before_destroy has a distinct name
+  # to create under. With a fixed name the replacement is created while the old
+  # certificate still exists — and if the gateway treats (gateway, name) as an
+  # identity, that collides and the rotation fails at the worst moment.
+  name = "api-${var.api_certificate_version}"
+
+  chain_pem = var.api_certificate_chain
+
+  private_key_pem_wo         = var.api_certificate_key
+  private_key_pem_wo_version = var.api_certificate_version
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 variable "www_certificate_chain" {
@@ -42,6 +72,23 @@ variable "www_certificate_key" {
   sensitive   = true
   description = "PEM private key for the chain."
 }
+
+variable "api_certificate_chain" {
+  type        = string
+  description = "PEM chain, leaf first."
+}
+
+variable "api_certificate_key" {
+  type        = string
+  sensitive   = true
+  description = "PEM private key for the chain. Never reaches Terraform state."
+}
+
+variable "api_certificate_version" {
+  type        = string
+  default     = "1"
+  description = "Bump to rotate. Do NOT derive it from the key — it is not sensitive and is printed in plan output."
+}
 ```
 
 <!-- schema generated by tfplugindocs -->
@@ -52,7 +99,14 @@ variable "www_certificate_key" {
 - `chain_pem` (String) The PEM certificate chain, leaf first.
 - `gateway_id` (String) The Application Gateway this certificate belongs to.
 - `name` (String) The name of the certificate.
-- `private_key_pem` (String, Sensitive) The PEM private key for `chain_pem`. The platform never returns it, so it is preserved from state on every refresh. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide.
+
+### Optional
+
+> **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
+
+- `private_key_pem` (String, Sensitive) The PEM private key for `chain_pem`. The provider preserves it from prior state on every refresh and never adopts one from an API response. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide. Prefer `private_key_pem_wo`, which carries the same key but is never written to state; exactly one of the two must be set.
+- `private_key_pem_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) The PEM private key for `chain_pem`, as a [write-only argument](https://developer.hashicorp.com/terraform/language/resources/ephemeral/write-only): the key reaches the provider on apply and is never written to the plan or to state. Requires Terraform 1.11 or later. Exactly one of `private_key_pem` or `private_key_pem_wo` must be set, and `private_key_pem_wo_version` is required whenever this one is. The key must be at least one character — omitting it is not a way to upload a certificate without one. Terraform cannot see a write-only value, so it cannot detect a change to the key: changing `private_key_pem_wo_version` is what makes the next apply send the current key, and it does so by REPLACING the certificate, because the certificate API has no update operation. Editing the key without touching the version does nothing.
+- `private_key_pem_wo_version` (String) Change tracker for `private_key_pem_wo`, required whenever that attribute is set. Changing this value REPLACES the certificate and uploads the current `private_key_pem_wo` — the same lifecycle a change to `private_key_pem` has, since the certificate API has no update operation. Leaving it alone leaves the uploaded certificate untouched however much the write-only key changes. Its content is arbitrary — a counter or a date is typical — and unlike the key it is stored in state, so do not derive it from the key or from anything in it: a digest of the key is printed verbatim in `terraform plan` output, CI job logs and PR plan comments, and a digest is an offline confirmation oracle — it lets anyone holding it test a guessed key and correlate the same key across environments. `terraform import` leaves this unset, so the first apply against an imported certificate plans a REPLACEMENT.
 
 ### Read-Only
 

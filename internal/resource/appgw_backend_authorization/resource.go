@@ -201,7 +201,8 @@ func (r *authorizationResource) Create(ctx context.Context, req resource.CreateR
 	}
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath(fmt.Sprintf(
 		"/application-gateways/%s/backend-pools/%s/backends/%s/authorize",
-		plan.GatewayID.ValueString(), plan.PoolID.ValueString(), plan.BackendID.ValueString())),
+		plan.GatewayID.ValueString(), plan.PoolID.ValueString(), plan.BackendID.ValueString(),
+	)),
 		apiAuthorizeRequest{SecurityGroupID: plan.SecurityGroupID.ValueString()})
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Authorize Backend", err.Error())
@@ -272,7 +273,8 @@ func (r *authorizationResource) Read(ctx context.Context, req resource.ReadReque
 		return
 	}
 	apiResp, err := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf(
-		"/application-gateways/%s/authorizations", state.GatewayID.ValueString())), nil)
+		"/application-gateways/%s/authorizations", state.GatewayID.ValueString(),
+	)), nil)
 	if err != nil {
 		if client.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
@@ -320,7 +322,8 @@ func (r *authorizationResource) Delete(ctx context.Context, req resource.DeleteR
 	}
 	_, err := r.client.Delete(ctx, r.client.TenantPath(fmt.Sprintf(
 		"/application-gateways/%s/authorizations/%s",
-		state.GatewayID.ValueString(), state.ID.ValueString())))
+		state.GatewayID.ValueString(), state.ID.ValueString(),
+	)))
 	if err != nil && !client.IsNotFound(err) {
 		resp.Diagnostics.AddError("Failed to Revoke Authorization", err.Error())
 	}

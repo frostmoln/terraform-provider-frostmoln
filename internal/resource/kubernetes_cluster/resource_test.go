@@ -465,7 +465,8 @@ func TestKubernetesClusterValidateConfigRefusesPublicIPID(t *testing.T) {
 				vals[name] = tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, nil)
 			case "initial_node_pool":
 				vals[name] = tftypes.NewValue(
-					schemaResp.Schema.Attributes[name].GetType().TerraformType(ctx), nil)
+					schemaResp.Schema.Attributes[name].GetType().TerraformType(ctx), nil,
+				)
 			case "ha_enabled":
 				vals[name] = tftypes.NewValue(tftypes.Bool, nil)
 			default:

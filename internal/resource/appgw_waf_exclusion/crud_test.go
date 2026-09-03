@@ -84,8 +84,10 @@ func TestConfigureRejectsUnexpectedProviderData(t *testing.T) {
 	}
 }
 
-var _ = json.Marshal
-var _ = types.StringValue
+var (
+	_ = json.Marshal
+	_ = types.StringValue
+)
 
 const exBase = "/v1/tenants/t-1/application-gateways/agw-1/waf-policies/wp-1"
 
@@ -176,7 +178,8 @@ func TestExclusionValidateConfigRequiresExactlyOneTarget(t *testing.T) {
 		p := planOf(t, m)
 		var resp resource.ValidateConfigResponse
 		r.ValidateConfig(context.Background(), resource.ValidateConfigRequest{
-			Config: tfsdk.Config(p)}, &resp)
+			Config: tfsdk.Config(p),
+		}, &resp)
 		return resp.Diagnostics.HasError()
 	}
 
