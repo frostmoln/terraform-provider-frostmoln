@@ -222,3 +222,22 @@ func TestUnavailableStreamBacksOff(t *testing.T) {
 		t.Errorf("read the operation only %d times in 10s at a 200ms fallback interval: the timer is not driving the poll while push is unavailable", n)
 	}
 }
+
+// TestStreamClientKeepsTheSharedGuards pins the two properties the stream client
+// must NOT inherit-or-lose by accident. Both were wrong in the first version of
+// events.go, and neither is visible from any happy-path test.
+func TestStreamClientKeepsTheSharedGuards(t *testing.T) {
+	c := NewClient("https://example.invalid/api", "k") // pragma: allowlist secret
+
+	// A whole-request deadline severs a long-lived stream. The context bounds it.
+	if got := c.streamHTTPClient().Timeout; got != 0 {
+		t.Errorf("stream client Timeout = %v, want 0: a whole-request deadline severs the stream at that mark and makes push look permanently broken while the fallback silently carries the wait", got)
+	}
+
+	// Go's DEFAULT policy follows redirects and re-sends the request, so dropping
+	// the shared CheckRedirect hands Authorization / X-API-Key to a host the
+	// operator never named.
+	if c.streamHTTPClient().CheckRedirect == nil {
+		t.Error("stream client has no CheckRedirect: a redirect on the stream would re-send this caller's credentials to a host the operator never named, while every other request from this client refuses that")
+	}
+}

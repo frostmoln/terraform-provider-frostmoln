@@ -241,13 +241,24 @@ func (c *Client) newStreamRequest(ctx context.Context) (*http.Request, error) {
 	return req, nil
 }
 
-// streamHTTPClient returns a client with NO overall timeout.
+// streamHTTPClient returns a client with NO overall timeout, and the SAME
+// redirect policy as every other request this client makes.
 //
 // The shared client carries a 60s Timeout, which is right for a request and
 // fatal for a stream: it would sever every connection at 60 seconds, making push
 // look permanently broken while the fallback quietly carried the whole wait --
 // a regression that no test of the happy path would ever show. The context
 // bounds the stream instead.
+//
+// CheckRedirect is carried over deliberately, and dropping it was a real defect
+// in the first version of this file. Go's default policy FOLLOWS up to 10
+// redirects and re-sends the request -- so a 302 or 307 on the stream would
+// hand this caller's Authorization header or X-API-Key to a host the operator
+// never named. Every other request from this client refuses that; a telemetry
+// stream is not the place to make an exception.
 func (c *Client) streamHTTPClient() *http.Client {
-	return &http.Client{Transport: c.httpClient.Transport}
+	return &http.Client{
+		Transport:     c.httpClient.Transport,
+		CheckRedirect: c.httpClient.CheckRedirect,
+	}
 }
