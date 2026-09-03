@@ -346,6 +346,25 @@ func (e *APIError) Error() string {
 // importing it. Erroring there is the answer we want — flat would let
 // `terraform destroy` print success against a platform-owned load balancer.
 //
+//   - network_ownership_guard.go IS TOO, and it renders FLAT — the one
+//     provisioning producer on this predicate's path that does. subnet and
+//     public_ip reach it from an IsNotFound call site (it is mounted on the
+//     customer DELETE for subnets, public IPs and routers; no resource here
+//     deletes a router).
+//
+// THE CONTRAST WITH THE LB GUARD IS THE WHOLE LESSON, so read them together.
+// That guard falls THROUGH on NotFound, so nothing but a platform-owned load
+// balancer ever reaches its 404 — nested is right there. This one CANNOT fall
+// through: collapsing "gone", "not yours" and "not a customer resource" into one
+// answer is the point of it, so its 404 IS the already-gone answer. Nested would
+// make `terraform destroy` of a subnet or public IP deleted out of band fail
+// permanently, recoverable only with `terraform state rm`. Its 503 stays nested,
+// because a transient is not a verdict.
+//
+// The shape is therefore not a per-service convention — it is per-refusal, and
+// the question to ask of a new producer is whether its 404 can mean "genuinely
+// gone".
+//
 // Adding a call site on any other nested-rendering path means checking its
 // producer first.
 //
