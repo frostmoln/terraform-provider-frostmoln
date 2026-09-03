@@ -15,7 +15,8 @@ Terraform writes **every** attribute of **every** managed resource to state —
 data source results too, and regardless of where the value came from. The only
 exception is [write-only
 arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral/write-only),
-which this provider does not yet offer.
+which this provider offers for `frostmoln_secret.secret_value` — see
+[Write-only arguments](#write-only-arguments) below.
 
 Marking an attribute `sensitive` does not change that. It redacts the value from
 `plan` and `apply` output, prints `<sensitive>` for `terraform output`, requires
@@ -67,12 +68,12 @@ $ fm kubernetes cluster kubeconfig <cluster-id>
 
 ### Values you supply in configuration
 
-| Resource | Attribute |
-|---|---|
-| `frostmoln_instance` | `user_data`, `console_password` |
-| `frostmoln_launch_template` | `user_data` |
-| `frostmoln_secret` | `secret_value` |
-| `frostmoln_appgw_certificate` | `private_key_pem` |
+| Resource | Attribute | Write-only form |
+|---|---|---|
+| `frostmoln_instance` | `user_data`, `console_password` | not yet |
+| `frostmoln_launch_template` | `user_data` | not yet |
+| `frostmoln_secret` | `secret_value` | `secret_value_wo` |
+| `frostmoln_appgw_certificate` | `private_key_pem` | not yet |
 
 These are the attributes the provider marks `sensitive`. Every *other* value you
 configure is in state too — a DNS TXT record holding a verification token is as
@@ -167,10 +168,83 @@ destructive.
 ## Write-only arguments
 
 Terraform 1.11 added write-only arguments: they reach the provider on apply and
-are never persisted to the plan or the state. They are the mechanism that would
-remove the third table above from state; they cannot help the first, because a
+are never persisted to the plan or the state. They are the mechanism for keeping
+the third table above out of state; they cannot help the first, because a
 credential the platform mints once has to be stored somewhere for you to use it.
-This provider does not offer write-only variants today.
 
-If the exposure matters for a particular resource in your setup, raise it with
-support — it helps us order the work.
+One row of that table has a write-only form today — `frostmoln_secret`. Set
+`secret_value_wo` instead of
+`secret_value`, and pair it with `secret_value_wo_version`:
+
+```terraform
+resource "frostmoln_secret" "api_token" {
+  name = "prod/payments/api-token"
+
+  secret_value_wo         = var.payments_api_token
+  secret_value_wo_version = "1"
+}
+```
+
+Exactly one of `secret_value` and `secret_value_wo` must be set — the pair is
+mutually exclusive, and a configuration must still supply one of them.
+`secret_value_wo_version` is required alongside `secret_value_wo`.
+
+An existing configuration keeps working untouched, because the write-only
+attributes are purely additive and `secret_value` was only relaxed from required
+to optional. The write-only form is opt-in, and only a configuration that opts in
+needs Terraform 1.11 — support is negotiated per client, not pinned by the
+provider. Setting `secret_value` while running 1.11 or later produces a warning
+pointing at the write-only form.
+
+`secret_value_wo_version` is a string, so a counter, a date, or an upstream
+version identifier all work — whatever you change when you change the value.
+
+~> **Do not derive it from the secret.** `secret_value_wo_version = sha256(var.token)`
+makes rotation automatic, and it is tempting for exactly that reason. But the
+version is deliberately *not* a sensitive attribute — it is the signal that tells
+you why an update is happening, so it must stay readable — which means a digest of
+your secret would be printed verbatim in `terraform plan` output: CI job logs, PR
+plan comments, terminal scrollback. That is a wider audience than the state file,
+and a digest lets anyone holding it confirm a guessed value offline or correlate
+the same secret across environments. Use a counter.
+
+**`secret_value_wo_version` is what makes updates work.** Because the value is
+never stored, Terraform cannot tell that it changed: it has nothing to compare
+against. Changing the version — any value; a counter or a date is typical —
+is what makes the next apply send the current `secret_value_wo` to the platform
+as a new secret version. Rotating the value without touching the version is a
+no-op.
+
+### What you give up
+
+Terraform cannot see a write-only value at all — not just when *you* change it.
+A secret rotated in the portal, by `fm`, or by any other client is invisible to
+`terraform plan`, which reports no drift and will not correct it. The version
+companion is a one-way signal from your configuration to the platform, not
+two-way reconciliation. If you need Terraform to notice out-of-band edits, the
+legacy `secret_value` is the attribute that does that, and the price is the
+value in your state file.
+
+Bumping `secret_value_wo_version` without changing the value writes a new secret
+version regardless; versions count against `max_versions`, so a value rolled
+often enough pushes older versions out of history.
+
+### Migrating an existing secret
+
+Removing `secret_value` and adding `secret_value_wo` + `secret_value_wo_version`
+is an in-place update. Two things to expect:
+
+- **It writes a new secret version**, even when the value is byte-identical.
+  The version companion goes from unset to whatever you set, which is what tells
+  the provider to push the value. The same applies after `terraform import`.
+- **It does not un-expose the old value.** The value leaves your *current* state
+  only. It remains in `terraform.tfstate.backup`, in every prior state version on
+  a versioned remote backend, in any archived plan file, and in whatever state
+  snapshots your colleagues have locally. Treat a secret that was ever set
+  through `secret_value` as disclosed: **rotate it** — supply a genuinely new
+  value through `secret_value_wo` — and prune old state versions per your
+  backend. Switching the attribute is not a substitute for rotation.
+
+The other attributes in the third table do not have a write-only form yet. If the
+exposure matters for one of them in your setup, raise it with support — it helps
+us order the work.

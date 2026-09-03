@@ -14,6 +14,8 @@ type SecretModel struct {
 	Name               types.String `tfsdk:"name"`
 	Description        types.String `tfsdk:"description"`
 	SecretValue        types.String `tfsdk:"secret_value"`
+	SecretValueWO      types.String `tfsdk:"secret_value_wo"`
+	SecretValueWOVer   types.String `tfsdk:"secret_value_wo_version"`
 	ContentType        types.String `tfsdk:"content_type"`
 	Tags               types.Map    `tfsdk:"tags"`
 	MaxVersions        types.Int64  `tfsdk:"max_versions"`
@@ -107,7 +109,11 @@ func (m *SecretModel) toUpdateRequest(ctx context.Context, state *SecretModel, d
 		}
 	}
 
-	if !m.SecretValue.Equal(state.SecretValue) {
+	// A null secret_value is "not the source", never "set the secret to empty":
+	// there is no clear-a-secret operation, and the API accepts "" as a new
+	// version. Sending it would destroy the value on the write-only path, where
+	// secret_value is null on both sides of every diff.
+	if !m.SecretValue.IsNull() && !m.SecretValue.Equal(state.SecretValue) {
 		v := m.SecretValue.ValueString()
 		req.SecretValue = &v
 	}
@@ -157,9 +163,21 @@ func (m *SecretModel) fromAPI(ctx context.Context, s *apiSecret, diags *diag.Dia
 		m.Description = types.StringValue("")
 	}
 
-	// Only set secret_value from API if it was returned (create/read-with-value).
-	// Preserve the plan value otherwise.
-	if s.SecretValue != "" {
+	// The API returns the plaintext on every GET, so adopting it unconditionally
+	// would put in state exactly what secret_value_wo exists to keep out. A null
+	// secret_value means this attribute is not the source — the write-only path,
+	// or a fresh import — so leave it null. Non-null means the practitioner
+	// configured it here and drift detection needs the API's value.
+	//
+	// This holds only while secret_value is Optional-ONLY. Give it Computed or a
+	// UseStateForUnknown modifier and its plan value on the write-only path
+	// becomes unknown rather than null, IsNull() goes false, and the plaintext is
+	// adopted again — silently. TestSchemaWriteOnlyAttributes pins that.
+	//
+	// The empty check is load-bearing too: a pendingDeletion secret returns 200
+	// with an empty secretValue, which would otherwise blank a legacy user's
+	// state on refresh.
+	if s.SecretValue != "" && !m.SecretValue.IsNull() {
 		m.SecretValue = types.StringValue(s.SecretValue)
 	}
 

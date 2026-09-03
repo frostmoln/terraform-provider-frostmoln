@@ -10,6 +10,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -205,7 +207,9 @@ func TestSecretModelFromAPI(t *testing.T) {
 		UpdatedAt:          "2025-01-02T00:00:00Z",
 	}
 
-	var model SecretModel
+	// A non-null secret_value is the legacy path: the practitioner configured it
+	// here, so the API's value is adopted for drift detection.
+	model := SecretModel{SecretValue: types.StringValue("stale")} // pragma: allowlist secret
 	model.fromAPI(ctx, api, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
@@ -365,6 +369,14 @@ func buildSecretPlan(t *testing.T, model SecretModel) tfsdk.Plan {
 	return plan
 }
 
+// buildSecretConfig returns the configuration Terraform would send for model.
+// tfsdk.Config is read-only, so it borrows a plan's encoding of the same model.
+func buildSecretConfig(t *testing.T, model SecretModel) tfsdk.Config {
+	t.Helper()
+	plan := buildSecretPlan(t, model)
+	return tfsdk.Config(plan)
+}
+
 func emptySecretState(t *testing.T) tfsdk.State {
 	t.Helper()
 	r := NewResource()
@@ -389,6 +401,15 @@ func fullSecretModel() SecretModel {
 		CreatedAt:          types.StringValue("2025-01-01T00:00:00Z"),
 		UpdatedAt:          types.StringNull(),
 	}
+}
+
+// secretJSONWithValue mirrors the real service, which returns the decrypted
+// value on every GET (secrets/internal/service/impl/secret.go, Get). The
+// value-less secretJSON below cannot catch a read-path leak at all.
+func secretJSONWithValue(status, value string) apiSecret {
+	out := secretJSON(status)
+	out.SecretValue = value // pragma: allowlist secret
+	return out
 }
 
 func secretJSON(status string) apiSecret {
@@ -430,7 +451,7 @@ func TestCreate(t *testing.T) {
 	c.SetTenantIDForTest("t-1")
 
 	r := &secretResource{client: c}
-	plan := buildSecretPlan(t, SecretModel{
+	planModel := SecretModel{
 		Name:               types.StringValue("my-secret"),
 		SecretValue:        types.StringValue("value"), // pragma: allowlist secret
 		Description:        types.StringValue("desc"),
@@ -438,10 +459,11 @@ func TestCreate(t *testing.T) {
 		Tags:               types.MapNull(types.StringType),
 		MaxVersions:        types.Int64Value(10),
 		RecoveryWindowDays: types.Int64Value(7),
-	})
+	}
+	plan := buildSecretPlan(t, planModel)
 
 	createResp := resource.CreateResponse{State: emptySecretState(t)}
-	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan, Config: buildSecretConfig(t, planModel)}, &createResp)
 	if createResp.Diagnostics.HasError() {
 		t.Fatalf("create failed: %v", createResp.Diagnostics.Errors())
 	}
@@ -467,7 +489,7 @@ func TestCreateAPIError(t *testing.T) {
 	c.SetTenantIDForTest("t-1")
 
 	r := &secretResource{client: c}
-	plan := buildSecretPlan(t, SecretModel{
+	planModel := SecretModel{
 		Name:               types.StringValue("my-secret"),
 		SecretValue:        types.StringValue("value"), // pragma: allowlist secret
 		Description:        types.StringNull(),
@@ -475,10 +497,11 @@ func TestCreateAPIError(t *testing.T) {
 		Tags:               types.MapNull(types.StringType),
 		MaxVersions:        types.Int64Value(10),
 		RecoveryWindowDays: types.Int64Value(7),
-	})
+	}
+	plan := buildSecretPlan(t, planModel)
 
 	createResp := resource.CreateResponse{State: emptySecretState(t)}
-	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan, Config: buildSecretConfig(t, planModel)}, &createResp)
 	if !createResp.Diagnostics.HasError() {
 		t.Error("expected error on API failure")
 	}
@@ -568,7 +591,7 @@ func TestUpdate(t *testing.T) {
 	plan := buildSecretPlan(t, planModel)
 
 	updateResp := resource.UpdateResponse{State: state}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state, Config: buildSecretConfig(t, planModel)}, &updateResp)
 	if updateResp.Diagnostics.HasError() {
 		t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
 	}
@@ -594,7 +617,7 @@ func TestUpdateAPIError(t *testing.T) {
 	plan := buildSecretPlan(t, planModel)
 
 	updateResp := resource.UpdateResponse{State: state}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state, Config: buildSecretConfig(t, planModel)}, &updateResp)
 	if !updateResp.Diagnostics.HasError() {
 		t.Error("expected error on update API failure")
 	}
@@ -646,5 +669,450 @@ func TestDeleteAlreadyGone(t *testing.T) {
 	r.Delete(context.Background(), resource.DeleteRequest{State: state}, &deleteResp)
 	if deleteResp.Diagnostics.HasError() {
 		t.Fatalf("delete of gone resource should not error, got %v", deleteResp.Diagnostics.Errors())
+	}
+}
+
+// --- write-only secret_value_wo ---
+
+func writeOnlyModel(version string) SecretModel {
+	m := fullSecretModel()
+	m.SecretValue = types.StringNull()
+	m.SecretValueWO = types.StringValue("wo-value") // pragma: allowlist secret
+	m.SecretValueWOVer = types.StringValue(version)
+	return m
+}
+
+func TestSchemaWriteOnlyAttributes(t *testing.T) {
+	r := NewResource()
+	var resp resource.SchemaResponse
+	r.Schema(context.Background(), resource.SchemaRequest{}, &resp)
+
+	legacy, ok := resp.Schema.Attributes["secret_value"].(schema.StringAttribute)
+	if !ok {
+		t.Fatal("secret_value is not a StringAttribute")
+	}
+	if legacy.Required {
+		t.Error("secret_value must be Optional now that secret_value_wo exists")
+	}
+	if !legacy.Optional {
+		t.Error("secret_value must be Optional")
+	}
+	if legacy.Computed {
+		// The write-only guard in fromAPI keys on secret_value being null. A
+		// Computed secret_value would be marked unknown instead of null on the
+		// write-only path, so the guard would pass and adopt the plaintext.
+		t.Error("secret_value must not be Computed: the write-only guard keys on a null plan value")
+	}
+	if len(legacy.PlanModifiers) != 0 {
+		t.Error("secret_value must have no plan modifiers: UseStateForUnknown would defeat the write-only guard")
+	}
+
+	wo, ok := resp.Schema.Attributes["secret_value_wo"].(schema.StringAttribute)
+	if !ok {
+		t.Fatal("secret_value_wo missing from schema")
+	}
+	if !wo.WriteOnly {
+		t.Error("secret_value_wo must be WriteOnly")
+	}
+	if wo.Computed {
+		t.Error("secret_value_wo must not be Computed: the framework rejects WriteOnly+Computed")
+	}
+	if !wo.Sensitive {
+		t.Error("secret_value_wo must be Sensitive")
+	}
+
+	ver, ok := resp.Schema.Attributes["secret_value_wo_version"].(schema.StringAttribute)
+	if !ok {
+		t.Fatal("secret_value_wo_version missing from schema")
+	}
+	if ver.WriteOnly {
+		t.Error("secret_value_wo_version must be stored in state: it is the only change signal")
+	}
+	if !ver.Optional || ver.Computed {
+		t.Error("secret_value_wo_version must be Optional-only")
+	}
+}
+
+func TestConfigValidatorsExactlyOneSecretValue(t *testing.T) {
+	validators := NewResource().(resource.ResourceWithConfigValidators).ConfigValidators(context.Background())
+	if len(validators) == 0 {
+		t.Fatal("expected at least one config validator")
+	}
+
+	run := func(model SecretModel) diag.Diagnostics {
+		req := resource.ValidateConfigRequest{Config: buildSecretConfig(t, model)}
+		var resp resource.ValidateConfigResponse
+		for _, v := range validators {
+			v.ValidateResource(context.Background(), req, &resp)
+		}
+		return resp.Diagnostics
+	}
+
+	both := writeOnlyModel("1")
+	both.SecretValue = types.StringValue("legacy") // pragma: allowlist secret
+	if !run(both).HasError() {
+		t.Error("expected an error when both secret_value and secret_value_wo are set")
+	}
+
+	neither := fullSecretModel()
+	neither.SecretValue = types.StringNull()
+	if !run(neither).HasError() {
+		t.Error("expected an error when neither secret_value nor secret_value_wo is set")
+	}
+
+	if d := run(writeOnlyModel("1")); d.HasError() {
+		t.Errorf("write-only-only config should validate, got %v", d.Errors())
+	}
+	if d := run(fullSecretModel()); d.HasError() {
+		t.Errorf("legacy-only config should validate, got %v", d.Errors())
+	}
+}
+
+func TestPreferWriteOnlyAttributeWarnsOnLegacyValue(t *testing.T) {
+	r := NewResource()
+	var schemaResp resource.SchemaResponse
+	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
+	attr := schemaResp.Schema.Attributes["secret_value"].(schema.StringAttribute)
+
+	req := validator.StringRequest{
+		ClientCapabilities: validator.ValidateSchemaClientCapabilities{WriteOnlyAttributesAllowed: true},
+		Config:             buildSecretConfig(t, fullSecretModel()),
+		ConfigValue:        types.StringValue("value"), // pragma: allowlist secret
+		Path:               path.Root("secret_value"),
+		PathExpression:     path.MatchRoot("secret_value"),
+	}
+	var resp validator.StringResponse
+	for _, v := range attr.Validators {
+		v.ValidateString(context.Background(), req, &resp)
+	}
+	if resp.Diagnostics.WarningsCount() == 0 {
+		t.Error("expected a warning nudging a write-only-capable client towards secret_value_wo")
+	}
+	if resp.Diagnostics.HasError() {
+		t.Errorf("expected only a warning, got errors: %v", resp.Diagnostics.Errors())
+	}
+}
+
+// TestCreateWriteOnlyKeepsValueOutOfState is the point of the whole feature: the
+// value reaches the API, and neither it nor secret_value survives into state.
+func TestCreateWriteOnlyKeepsValueOutOfState(t *testing.T) {
+	var sent string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/secrets" {
+			var body apiCreateSecretRequest
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			sent = body.SecretValue
+			w.WriteHeader(http.StatusCreated)
+			out := secretJSON("active")
+			// The API echoes the value back on create; state must not keep it.
+			out.SecretValue = body.SecretValue // pragma: allowlist secret
+			_ = json.NewEncoder(w).Encode(out)
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+
+	r := &secretResource{client: c}
+	model := writeOnlyModel("1")
+
+	// Terraform nulls a write-only attribute in the plan; only the config has it.
+	planModel := model
+	planModel.SecretValueWO = types.StringNull()
+
+	createResp := resource.CreateResponse{State: emptySecretState(t)}
+	r.Create(context.Background(), resource.CreateRequest{
+		Plan:   buildSecretPlan(t, planModel),
+		Config: buildSecretConfig(t, model),
+	}, &createResp)
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("create failed: %v", createResp.Diagnostics.Errors())
+	}
+
+	if sent != "wo-value" { // pragma: allowlist secret
+		t.Errorf("expected the write-only value to reach the API, got %q", sent)
+	}
+
+	var result SecretModel
+	createResp.State.Get(context.Background(), &result)
+	if !result.SecretValueWO.IsNull() {
+		t.Errorf("secret_value_wo must be null in state, got %q", result.SecretValueWO.ValueString())
+	}
+	if !result.SecretValue.IsNull() {
+		t.Errorf("secret_value must stay null on the write-only path, got %q", result.SecretValue.ValueString())
+	}
+	if result.SecretValueWOVer.ValueString() != "1" {
+		t.Errorf("expected secret_value_wo_version 1 in state, got %q", result.SecretValueWOVer)
+	}
+}
+
+func TestUpdateWriteOnlySendsValueOnlyWhenVersionChanges(t *testing.T) {
+	var putBody apiUpdateSecretRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			putBody = apiUpdateSecretRequest{}
+			_ = json.NewDecoder(r.Body).Decode(&putBody)
+			w.WriteHeader(http.StatusOK)
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(secretJSON("active"))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &secretResource{client: c}
+
+	apply := func(stateVersion, planVersion string) SecretModel {
+		t.Helper()
+		stateModel := writeOnlyModel(stateVersion)
+		stateModel.SecretValueWO = types.StringNull() // never persisted
+		state := buildSecretState(t, stateModel)
+
+		config := writeOnlyModel(planVersion)
+		planModel := config
+		planModel.SecretValueWO = types.StringNull()
+
+		updateResp := resource.UpdateResponse{State: state}
+		r.Update(context.Background(), resource.UpdateRequest{
+			Plan:   buildSecretPlan(t, planModel),
+			State:  state,
+			Config: buildSecretConfig(t, config),
+		}, &updateResp)
+		if updateResp.Diagnostics.HasError() {
+			t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
+		}
+		var result SecretModel
+		updateResp.State.Get(context.Background(), &result)
+		return result
+	}
+
+	result := apply("1", "2")
+	if putBody.SecretValue == nil || *putBody.SecretValue != "wo-value" { // pragma: allowlist secret
+		t.Errorf("a changed version must push the write-only value, got %v", putBody.SecretValue)
+	}
+	if !result.SecretValue.IsNull() || !result.SecretValueWO.IsNull() {
+		t.Error("neither secret value may land in state after a write-only update")
+	}
+	if result.SecretValueWOVer.ValueString() != "2" {
+		t.Errorf("expected the new version in state, got %q", result.SecretValueWOVer)
+	}
+
+	apply("1", "1")
+	if putBody.SecretValue != nil { // pragma: allowlist secret
+		t.Errorf("an unchanged version must not push a value, got %q", *putBody.SecretValue) // pragma: allowlist secret
+	}
+}
+
+// TestReadWriteOnlyKeepsValueOutOfState covers the path Create cannot: Read has
+// no config, so the only discriminator is that prior state left secret_value
+// null. The API hands back the plaintext on every refresh.
+func TestReadWriteOnlyKeepsValueOutOfState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(secretJSONWithValue("active", "wo-value"))
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &secretResource{client: c}
+
+	stateModel := writeOnlyModel("1")
+	stateModel.SecretValueWO = types.StringNull() // never persisted
+	state := buildSecretState(t, stateModel)
+
+	readResp := resource.ReadResponse{State: state}
+	r.Read(context.Background(), resource.ReadRequest{State: state}, &readResp)
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	var result SecretModel
+	readResp.State.Get(context.Background(), &result)
+	if !result.SecretValue.IsNull() {
+		t.Errorf("refresh put the secret back into state: %q", result.SecretValue.ValueString())
+	}
+	if !result.SecretValueWO.IsNull() {
+		t.Errorf("secret_value_wo must stay null, got %q", result.SecretValueWO.ValueString())
+	}
+}
+
+// TestReadLegacyPathKeepsValue pins the other direction: a practitioner who
+// configured secret_value still gets drift detection from the API's value.
+func TestReadLegacyPathKeepsValue(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(secretJSONWithValue("active", "rotated-elsewhere"))
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &secretResource{client: c}
+
+	state := buildSecretState(t, fullSecretModel())
+	readResp := resource.ReadResponse{State: state}
+	r.Read(context.Background(), resource.ReadRequest{State: state}, &readResp)
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	var result SecretModel
+	readResp.State.Get(context.Background(), &result)
+	if result.SecretValue.ValueString() != "rotated-elsewhere" {
+		t.Errorf("legacy path lost drift detection, got %q", result.SecretValue.ValueString())
+	}
+}
+
+// TestUpdateNullSecretValueIsNeverSentAsEmpty is the data-loss guard: a null
+// secret_value means "not the source", and the API writes "" as a new version
+// with no way back.
+func TestUpdateNullSecretValueIsNeverSentAsEmpty(t *testing.T) {
+	var putBody apiUpdateSecretRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			_ = json.NewDecoder(r.Body).Decode(&putBody)
+			w.WriteHeader(http.StatusOK)
+		default:
+			_ = json.NewEncoder(w).Encode(secretJSONWithValue("active", "wo-value"))
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &secretResource{client: c}
+
+	// Worst case: state still holds a value (a pre-fix state file, or a legacy
+	// resource being migrated), config has it null, version unchanged.
+	stateModel := writeOnlyModel("1")
+	stateModel.SecretValueWO = types.StringNull()
+	stateModel.SecretValue = types.StringValue("live-secret") // pragma: allowlist secret
+	state := buildSecretState(t, stateModel)
+
+	config := writeOnlyModel("1")
+	planModel := config
+	planModel.SecretValueWO = types.StringNull()
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:   buildSecretPlan(t, planModel),
+		State:  state,
+		Config: buildSecretConfig(t, config),
+	}, &updateResp)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
+	}
+
+	if putBody.SecretValue != nil { // pragma: allowlist secret
+		t.Errorf("a null secret_value must never be sent, got %q", *putBody.SecretValue)
+	}
+}
+
+// TestUpdateMigrationFromLegacySendsTheWriteOnlyValue covers the switch an
+// existing practitioner makes: secret_value removed, secret_value_wo added. The
+// state version is null, so the version always differs and the value is pushed.
+func TestUpdateMigrationFromLegacySendsTheWriteOnlyValue(t *testing.T) {
+	var putBody apiUpdateSecretRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			_ = json.NewDecoder(r.Body).Decode(&putBody)
+			w.WriteHeader(http.StatusOK)
+		default:
+			_ = json.NewEncoder(w).Encode(secretJSONWithValue("active", "wo-value"))
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &secretResource{client: c}
+
+	state := buildSecretState(t, fullSecretModel()) // legacy: secret_value set, no version
+
+	config := writeOnlyModel("1")
+	planModel := config
+	planModel.SecretValueWO = types.StringNull()
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:   buildSecretPlan(t, planModel),
+		State:  state,
+		Config: buildSecretConfig(t, config),
+	}, &updateResp)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
+	}
+
+	if putBody.SecretValue == nil || *putBody.SecretValue != "wo-value" { // pragma: allowlist secret
+		t.Errorf("migration must push the write-only value, got %v", putBody.SecretValue)
+	}
+
+	var result SecretModel
+	updateResp.State.Get(context.Background(), &result)
+	if !result.SecretValue.IsNull() {
+		t.Errorf("secret_value must be null after migrating, got %q", result.SecretValue.ValueString())
+	}
+}
+
+// TestPriorStateWithoutTheNewAttributesDecodes pins the non-breaking claim: a
+// state file written before this change has neither new key, and both decode as
+// null against the current schema — so no schema Version bump is needed.
+func TestPriorStateWithoutTheNewAttributesDecodes(t *testing.T) {
+	r := NewResource()
+	var schemaResp resource.SchemaResponse
+	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
+
+	priorJSON := []byte(`{
+		"id": "secret-1", "name": "my-secret", "description": "desc",
+		"secret_value": "value", "content_type": "text/plain", "tags": null,
+		"max_versions": 10, "recovery_window_days": 7, "current_version": 1,
+		"status": "active", "created_at": "2025-01-01T00:00:00Z", "updated_at": null
+	}`) // pragma: allowlist secret
+
+	typ := schemaResp.Schema.Type().TerraformType(context.Background())
+	raw, err := tftypes.ValueFromJSONWithOpts(priorJSON, typ, tftypes.ValueFromJSONOpts{IgnoreUndefinedAttributes: true})
+	if err != nil {
+		t.Fatalf("pre-change state does not decode against the new schema: %v", err)
+	}
+
+	var model SecretModel
+	state := tfsdk.State{Schema: schemaResp.Schema, Raw: raw}
+	if diags := state.Get(context.Background(), &model); diags.HasError() {
+		t.Fatalf("failed to read pre-change state: %v", diags.Errors())
+	}
+	if !model.SecretValueWO.IsNull() || !model.SecretValueWOVer.IsNull() {
+		t.Error("the new attributes must decode as null from a pre-change state file")
+	}
+	if model.SecretValue.ValueString() != "value" { // pragma: allowlist secret
+		t.Errorf("existing secret_value lost in decode, got %q", model.SecretValue.ValueString())
+	}
+}
+
+// TestSecretModelFromAPIKeepsNullSecretValueNull is the unit-level form of the
+// write-only guard: the API hands back the plaintext and a null secret_value
+// must survive it. Covered end to end by the Read/Create/Update tests too, but
+// this is the one that names the rule.
+func TestSecretModelFromAPIKeepsNullSecretValueNull(t *testing.T) {
+	ctx := context.Background()
+	diags := diag.Diagnostics{}
+
+	api := secretJSONWithValue("active", "wo-value")
+	model := SecretModel{SecretValue: types.StringNull()}
+	model.fromAPI(ctx, &api, &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+	}
+	if !model.SecretValue.IsNull() {
+		t.Errorf("a null secret_value must not adopt the API value, got %q", model.SecretValue.ValueString())
 	}
 }
