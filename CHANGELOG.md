@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.47.0] - 2026-09-03
+
+### 🚀 Features
+
+- *(provider)* Write-only console_password and private_key_pem (#449)
+
+### 🐛 Bug Fixes
+
+- *(secret)* Refuse create-time attribute changes at plan time, and correct the empty-value docs (#455)
+
+### 📚 Documentation
+
+- *(client)* Record the FLAT provisioning producer on the IsNotFound path (#453)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(client)* Drop a scratch diagnostic swept in by #449 (#451)
+
 ## [0.46.0] - 2026-09-03
 
 ### 🚀 Features
