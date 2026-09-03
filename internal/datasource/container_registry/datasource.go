@@ -41,8 +41,15 @@ type containerRegistryModel struct {
 	Enabled   types.Bool   `tfsdk:"enabled"`
 	Endpoint  types.String `tfsdk:"endpoint"`
 	Namespace types.String `tfsdk:"namespace"`
-	// Null when the API omits them. Null means "not reported" — never
-	// "unlimited" and never zero.
+	// Null when the API omits them. For the limit that is four causes with one
+	// shape: disabled, no cap reported, a cap of exactly 0 that refuses every
+	// push, or a failed quota read that nothing repairs. Null means "not
+	// reported" — never "unlimited" and never zero.
+	//
+	// Disabled is a cause HERE and not on the resource, which removes a disabled
+	// registry from state rather than nulling its attributes. A 0 and an
+	// unlimited -1 both arrive as null rather than as a value — storageAttrs
+	// nulls any non-positive before it reaches state.
 	StorageLimitBytes types.Int64 `tfsdk:"storage_limit_bytes"`
 	StorageUsedBytes  types.Int64 `tfsdk:"storage_used_bytes"`
 }
@@ -105,7 +112,7 @@ func (d *containerRegistryDataSource) Schema(_ context.Context, _ datasource.Sch
 				Computed: true,
 			},
 			"storage_limit_bytes": schema.Int64Attribute{
-				Description: "The hard storage cap enforced on this namespace, in bytes. A push that would cross it is refused with a 403 whose message states the cap, the usage and the size that would not fit — as prose, and only once the push has failed. This attribute is the machine-readable form of the cap. Null when the registry is not enabled, and in the rare window where the API reports no cap — null means the limit was not reported, and never that it is unlimited.",
+				Description: "The hard storage cap enforced on this namespace, in bytes. A push that would cross it is refused with a 403 whose message states the cap, the usage and the size that would not fit — as prose, and only once the push has failed. This attribute is the machine-readable form of the cap. Null for four different reasons with the same result: the registry is not enabled; the registry reports no cap at all; the registry reports a hard cap of exactly 0, which refuses every push and is the one null that is worse than it looks, not better; or the quota read itself failed. The platform re-checks and resets the cap on a later sweep, which repairs the middle two; it never repairs a failed read, so that one can persist for as long as the outage lasts and the value can go null and back between reads with no configuration change. A cap of 0 and an unlimited -1 both arrive as null rather than as a value, so null — not a zero or negative number — is the only state to check for. Null means the limit was not reported, and never that it is unlimited.",
 				Computed:    true,
 			},
 			"storage_used_bytes": schema.Int64Attribute{

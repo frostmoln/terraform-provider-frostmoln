@@ -18,9 +18,15 @@ type ContainerRegistryModel struct {
 	Enabled   types.Bool   `tfsdk:"enabled"`
 	Endpoint  types.String `tfsdk:"endpoint"`
 	Namespace types.String `tfsdk:"namespace"`
-	// StorageLimitBytes and StorageUsedBytes are null when the API omits them:
-	// while the registry is disabled, and (for the limit) in the drift window
-	// where the API has no cap to report. Null means "not reported" — never
+	// StorageLimitBytes and StorageUsedBytes are null when the API omits them.
+	// For the limit that is THREE causes with one shape on this surface: the
+	// registry reports no cap at all; the registry reports a cap of exactly 0,
+	// which refuses every push and is the one null that is worse than it looks;
+	// or the quota read itself failed. (Disabled is a fourth cause on the DATA
+	// SOURCE only — Read removes a disabled registry from state instead.) A
+	// reconcile repairs the first two on a later sweep, not necessarily the next
+	// one, and never repairs a failed read. A 0 and an unlimited -1 both arrive
+	// as null rather than as a value. Null means "not reported" — never
 	// "unlimited" and never zero, so nothing downstream should default them.
 	StorageLimitBytes types.Int64 `tfsdk:"storage_limit_bytes"`
 	StorageUsedBytes  types.Int64 `tfsdk:"storage_used_bytes"`
