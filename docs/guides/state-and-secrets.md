@@ -235,7 +235,7 @@ attributes) and `frostmoln_appgw_certificate` replace.
 
 ```terraform
 resource "frostmoln_secret" "api_token" {
-  name = "prod/payments/api-token"
+  name = "prod-payments-api-token"
 
   secret_value_wo         = var.payments_api_token
   secret_value_wo_version = "1"

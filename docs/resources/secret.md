@@ -14,7 +14,7 @@ Manages a secret in the Frostmoln platform.
 
 ```terraform
 resource "frostmoln_secret" "database_password" {
-  name         = "prod/database/password"
+  name         = "prod-database-password"
   description  = "Production database master password"
   secret_value = var.db_password
   content_type = "text/plain"
@@ -32,7 +32,7 @@ resource "frostmoln_secret" "database_password" {
 # state file. It needs Terraform 1.11 or later, and because Terraform cannot see
 # a write-only value change, bump secret_value_wo_version to push a new one.
 resource "frostmoln_secret" "api_token" {
-  name        = "prod/payments/api-token"
+  name        = "prod-payments-api-token"
   description = "Payment provider API token"
 
   secret_value_wo         = var.payments_api_token
@@ -51,11 +51,11 @@ resource "frostmoln_secret" "api_token" {
 
 > **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
 
-- `content_type` (String) The content type of the secret value. Defaults to "text/plain".
+- `content_type` (String) The content type of the secret value. Defaults to "text/plain". Fixed when the secret is created: the API's update accepts only the value, description and tags, so changing this is refused at plan time rather than applied and quietly ignored.
 - `description` (String) A description of the secret.
-- `max_versions` (Number) The maximum number of versions to retain. Defaults to 10.
-- `recovery_window_days` (Number) The number of days to retain a deleted secret before permanent removal. Defaults to 7.
-- `secret_value` (String, Sensitive) The secret value. Terraform persists every configured attribute, so this one is stored in state in plaintext no matter where the value came from — minting it out of band and passing it through a variable does not change that. Prefer `secret_value_wo`, which is never written to state. Exactly one of `secret_value` or `secret_value_wo` must be set, and the value must be at least one character: the API writes an empty value as a new secret version, and there is no way back from that. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide.
+- `max_versions` (Number) The maximum number of versions to retain. Defaults to 10. Fixed when the secret is created: the API's update accepts only the value, description and tags, so changing this is refused at plan time. Choose it at create — it cannot be raised later, and Vault prunes against it.
+- `recovery_window_days` (Number) The number of days to retain a deleted secret before permanent removal, and the window during which the secret's name stays taken after a destroy. Defaults to 7. Fixed when the secret is created: the API's update accepts only the value, description and tags, so changing this is refused at plan time.
+- `secret_value` (String, Sensitive) The secret value. Terraform persists every configured attribute, so this one is stored in state in plaintext no matter where the value came from — minting it out of band and passing it through a variable does not change that. Prefer `secret_value_wo`, which is never written to state. Exactly one of `secret_value` or `secret_value_wo` must be set, and the value must be at least one character: there is no clear-a-secret operation, so an empty value is refused at plan time when it is known then, refused at apply time when it is not, and rejected by current versions of the API. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide.
 - `secret_value_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) The secret value, as a [write-only argument](https://developer.hashicorp.com/terraform/language/resources/ephemeral/write-only): it reaches the provider on apply and is never written to the plan or to state. Requires Terraform 1.11 or later. Exactly one of `secret_value` or `secret_value_wo` must be set, and `secret_value_wo_version` is required whenever this one is. The value must be at least one character. Because the value is not stored, Terraform can detect no change to it in either direction: bump `secret_value_wo_version` to push a new value, and accept that a secret rotated outside Terraform is invisible to `plan` and will not be corrected.
 - `secret_value_wo_version` (String) Change tracker for `secret_value_wo`, required whenever that attribute is set. Any change to this value makes Terraform send the current `secret_value_wo` to the platform as a new secret version; leaving it alone leaves the stored secret untouched, however much the write-only value changes. Bumping it without changing the value still writes a new version, which counts against `max_versions`. Its content is arbitrary — a counter or a date is typical — and unlike the value it is stored in state, so do not derive it from the secret or from anything in it: a digest of the secret is printed verbatim in `terraform plan` output, and it is an offline confirmation oracle. `terraform import` leaves this unset, so the first apply against an imported secret writes a new version.
 - `tags` (Map of String) Tags for the secret.
@@ -83,4 +83,10 @@ terraform import frostmoln_secret.database_password <secret-id>
 # first apply after an import therefore pushes the value from your configuration
 # and writes one new secret version, even when the value is unchanged. Versions
 # count against max_versions.
+
+# content_type, max_versions and recovery_window_days are fixed when the secret
+# is created, so an imported secret keeps whatever the platform holds. Leave
+# them out of the configuration to accept those values, or set them to what
+# `terraform state show` reports — a value that disagrees is refused at plan
+# time, because the API's update would discard it.
 ```

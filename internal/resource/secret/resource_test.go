@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -127,17 +128,8 @@ func TestSecretModelToUpdateRequest(t *testing.T) {
 	if req.SecretValue == nil || *req.SecretValue != "newval" { // pragma: allowlist secret
 		t.Error("expected secretValue update")
 	}
-	if req.ContentType == nil || *req.ContentType != "application/json" {
-		t.Error("expected contentType update")
-	}
 	if req.Tags["k"] != "v2" {
 		t.Errorf("expected tag k=v2, got %v", req.Tags)
-	}
-	if req.MaxVersions == nil || *req.MaxVersions != 20 {
-		t.Error("expected maxVersions update")
-	}
-	if req.RecoveryWindowDays == nil || *req.RecoveryWindowDays != 30 {
-		t.Error("expected recoveryWindowDays update")
 	}
 }
 
@@ -182,8 +174,7 @@ func TestSecretModelToUpdateRequestNoChanges(t *testing.T) {
 	}
 
 	req := same.toUpdateRequest(ctx, &same, &diags)
-	if req.Description != nil || req.SecretValue != nil || req.ContentType != nil || // pragma: allowlist secret
-		req.MaxVersions != nil || req.RecoveryWindowDays != nil || req.Tags != nil {
+	if req.Description != nil || req.SecretValue != nil || req.Tags != nil { // pragma: allowlist secret
 		t.Errorf("expected empty update request, got %+v", req)
 	}
 }
@@ -972,8 +963,9 @@ func TestReadLegacyPathKeepsValue(t *testing.T) {
 }
 
 // TestUpdateNullSecretValueIsNeverSentAsEmpty is the data-loss guard: a null
-// secret_value means "not the source", and the API writes "" as a new version
-// with no way back.
+// secret_value means "not the source". Sending "" blanks the secret on any
+// server without the secrets v0.12.23 guard, and fails the apply on one with
+// it — the provider must never send it either way.
 func TestUpdateNullSecretValueIsNeverSentAsEmpty(t *testing.T) {
 	var putBody apiUpdateSecretRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1114,5 +1106,276 @@ func TestSecretModelFromAPIKeepsNullSecretValueNull(t *testing.T) {
 	}
 	if !model.SecretValue.IsNull() {
 		t.Errorf("a null secret_value must not adopt the API value, got %q", model.SecretValue.ValueString())
+	}
+}
+
+// --- Create-time attributes: plan-time refusal ---
+
+func modifyPlan(t *testing.T, plan, state SecretModel) resource.ModifyPlanResponse {
+	t.Helper()
+	p := buildSecretPlan(t, plan)
+	resp := resource.ModifyPlanResponse{Plan: p}
+	NewResource().(resource.ResourceWithModifyPlan).ModifyPlan(context.Background(), resource.ModifyPlanRequest{
+		Plan:  p,
+		State: buildSecretState(t, state),
+	}, &resp)
+	return resp
+}
+
+// TestModifyPlanRefusesCreateTimeAttributes is the silent-no-op guard.
+//
+// The API's update payload is secretValue, description and tags; gin accepts
+// unknown fields and drops them, so changing max_versions used to reach the
+// wire, be discarded, and end the apply in "Provider produced inconsistent
+// result after apply" — with the platform never taking the value. Each of the
+// three must be refused at plan time, naming itself and both values.
+func TestModifyPlanRefusesCreateTimeAttributes(t *testing.T) {
+	cases := []struct {
+		attr             string
+		mutate           func(*SecretModel)
+		current, request string
+	}{
+		{"content_type", func(m *SecretModel) { m.ContentType = types.StringValue("application/json") }, `"text/plain"`, `"application/json"`},
+		{"max_versions", func(m *SecretModel) { m.MaxVersions = types.Int64Value(20) }, "10", "20"},
+		{"recovery_window_days", func(m *SecretModel) { m.RecoveryWindowDays = types.Int64Value(30) }, "7", "30"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.attr, func(t *testing.T) {
+			plan := fullSecretModel()
+			tc.mutate(&plan)
+
+			resp := modifyPlan(t, plan, fullSecretModel())
+			if !resp.Diagnostics.HasError() {
+				t.Fatalf("changing %s must be refused at plan time, not sent and discarded", tc.attr)
+			}
+			d := resp.Diagnostics.Errors()[0]
+			text := d.Summary() + "\n" + d.Detail()
+			for _, want := range []string{tc.attr, tc.current, tc.request} {
+				if !strings.Contains(text, want) {
+					t.Errorf("the error must contain %q, got:\n%s", want, text)
+				}
+			}
+			// "destroy and recreate" is NOT a remedy: DELETE is a soft delete and
+			// UNIQUE(tenant_id, name) holds the name for recovery_window_days, so a
+			// same-name recreate 409s. Saying so would send the practitioner into a
+			// credential outage.
+			if strings.Contains(text, "destroy and recreate") {
+				t.Errorf("the remedy must not be destroy-and-recreate, got:\n%s", text)
+			}
+		})
+	}
+}
+
+// TestModifyPlanAllowsCreateTimeChangeWhenNameChanges: a name change already
+// replaces the resource, and the new values land at create. Refusing here would
+// block the one remedy that works.
+func TestModifyPlanAllowsCreateTimeChangeWhenNameChanges(t *testing.T) {
+	plan := fullSecretModel()
+	plan.Name = types.StringValue("my-secret-v2")
+	plan.MaxVersions = types.Int64Value(20)
+
+	if resp := modifyPlan(t, plan, fullSecretModel()); resp.Diagnostics.HasError() {
+		t.Errorf("a rename carrying new create-time values must plan cleanly: %v", resp.Diagnostics.Errors())
+	}
+}
+
+// TestModifyPlanAllowsWhatTheAPIAccepts: the refusal must not swallow the
+// updates that do work, or the resource is read-only after create.
+func TestModifyPlanAllowsWhatTheAPIAccepts(t *testing.T) {
+	plan := fullSecretModel()
+	plan.Description = types.StringValue("new desc")
+	plan.SecretValue = types.StringValue("rotated") // pragma: allowlist secret
+
+	if resp := modifyPlan(t, plan, fullSecretModel()); len(resp.Diagnostics) != 0 {
+		t.Errorf("a value/description change must plan cleanly, got %v", resp.Diagnostics)
+	}
+}
+
+// TestModifyPlanQuietOnCreateAndDestroy: nothing to compare against.
+func TestModifyPlanQuietOnCreateAndDestroy(t *testing.T) {
+	var schemaResp resource.SchemaResponse
+	NewResource().Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
+	s := schemaResp.Schema
+	r := NewResource().(resource.ResourceWithModifyPlan)
+	prior := buildSecretState(t, fullSecretModel())
+
+	create := &resource.ModifyPlanResponse{Plan: tfsdk.Plan(prior)}
+	r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{
+		Plan:  tfsdk.Plan(prior),
+		State: emptySecretState(t),
+	}, create)
+	if len(create.Diagnostics) != 0 {
+		t.Errorf("create must be quiet, got %v", create.Diagnostics)
+	}
+
+	destroy := &resource.ModifyPlanResponse{Plan: tfsdk.Plan{Schema: s}}
+	r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{
+		Plan:  tfsdk.Plan{Schema: s},
+		State: prior,
+	}, destroy)
+	if len(destroy.Diagnostics) != 0 {
+		t.Errorf("destroy must be quiet, got %v", destroy.Diagnostics)
+	}
+}
+
+// TestRefusedCreateTimeChangesSkipsUnknownAndReportsAll pins the two edges the
+// per-attribute cases cannot: an unknown plan value (wired to another
+// resource's output, resolved only at apply) is NOT refused at plan time, and
+// all three changing at once are all reported rather than just the first.
+func TestRefusedCreateTimeChangesSkipsUnknownAndReportsAll(t *testing.T) {
+	state := fullSecretModel()
+
+	unknown := fullSecretModel()
+	unknown.ContentType = types.StringUnknown()
+	unknown.MaxVersions = types.Int64Unknown()
+	unknown.RecoveryWindowDays = types.Int64Unknown()
+	if refused := refusedCreateTimeChanges(unknown, state); len(refused) != 0 {
+		t.Errorf("an unknown plan value must not be refused at plan time, got %v", refused)
+	}
+
+	allThree := fullSecretModel()
+	allThree.ContentType = types.StringValue("application/json")
+	allThree.MaxVersions = types.Int64Value(20)
+	allThree.RecoveryWindowDays = types.Int64Value(30)
+	if refused := refusedCreateTimeChanges(allThree, state); len(refused) != 3 {
+		t.Errorf("all three changes must be reported, got %v", refused)
+	}
+}
+
+// TestUpdateRefusesCreateTimeChangeUnknownAtPlan is the apply-time half of the
+// unknown carve-out: by Update both sides are known, and without this check the
+// request would be sent, the field discarded, and the apply would look like it
+// worked.
+func TestUpdateRefusesCreateTimeChangeUnknownAtPlan(t *testing.T) {
+	puts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			puts++
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(secretJSON("active"))
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &secretResource{client: c}
+
+	plan := fullSecretModel()
+	plan.MaxVersions = types.Int64Value(20)
+	state := buildSecretState(t, fullSecretModel())
+
+	resp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:   buildSecretPlan(t, plan),
+		State:  state,
+		Config: buildSecretConfig(t, plan),
+	}, &resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a create-time change that reached apply must be refused, not sent")
+	}
+	if puts != 0 {
+		t.Errorf("nothing must be PUT, got %d requests", puts)
+	}
+}
+
+// TestUpdateRequestNeverCarriesCreateTimeFields pins the wire: re-adding any of
+// the three to apiUpdateSecretRequest puts a field back on a request the server
+// silently discards.
+func TestUpdateRequestNeverCarriesCreateTimeFields(t *testing.T) {
+	ctx := context.Background()
+	diags := diag.Diagnostics{}
+
+	plan := fullSecretModel()
+	plan.Description = types.StringValue("new desc")
+	plan.SecretValue = types.StringValue("newval") // pragma: allowlist secret
+	plan.ContentType = types.StringValue("application/json")
+	plan.MaxVersions = types.Int64Value(20)
+	plan.RecoveryWindowDays = types.Int64Value(30)
+
+	body, err := json.Marshal(plan.toUpdateRequest(ctx, ptr(fullSecretModel()), &diags))
+	if err != nil {
+		t.Fatalf("marshalling the update request: %v", err)
+	}
+	for _, key := range []string{"contentType", "maxVersions", "recoveryWindowDays"} {
+		// The body carries the secret value; name the offending key only.
+		if strings.Contains(string(body), key) {
+			t.Errorf("the update body must not carry %s — the server discards it silently", key)
+		}
+	}
+}
+
+func ptr(m SecretModel) *SecretModel { return &m }
+
+// TestCreateTimeAttributesUseStateNotDefault pins the mechanism, not just the
+// values: a schema Default is substituted whenever the CONFIG value is null,
+// irrespective of prior state (planmod's own doc comment says so). With one, an
+// imported secret whose platform values differ from the literals would plan the
+// literal, and ModifyPlan would refuse — permanently, on a configuration the
+// practitioner never changed. planmod.*UseStateOrDefault only fills a gap.
+func TestCreateTimeAttributesUseStateNotDefault(t *testing.T) {
+	var resp resource.SchemaResponse
+	NewResource().Schema(context.Background(), resource.SchemaRequest{}, &resp)
+
+	if a, ok := resp.Schema.Attributes["content_type"].(schema.StringAttribute); ok {
+		if a.Default != nil {
+			t.Error("content_type must not carry a schema Default — it overwrites an imported secret's value")
+		}
+		if len(a.PlanModifiers) == 0 {
+			t.Error("content_type needs planmod.StringUseStateOrDefault to keep the platform's value")
+		}
+	} else {
+		t.Fatal("content_type is not a StringAttribute")
+	}
+
+	for _, name := range []string{"max_versions", "recovery_window_days"} {
+		a, ok := resp.Schema.Attributes[name].(schema.Int64Attribute)
+		if !ok {
+			t.Fatalf("%s is not an Int64Attribute", name)
+		}
+		if a.Default != nil {
+			t.Errorf("%s must not carry a schema Default — it overwrites an imported secret's value", name)
+		}
+		if len(a.PlanModifiers) == 0 {
+			t.Errorf("%s needs planmod.Int64UseStateOrDefault to keep the platform's value", name)
+		}
+	}
+}
+
+// TestCreateRefusesBlankLegacySecretValue is the apply-time half of the empty
+// check. LengthAtLeast(1) self-disables on an unknown value, so a secret_value
+// wired to another resource's output is unchecked at plan and resolves only
+// here; against a server without the secrets v0.12.23 guard, sending it writes
+// a blank version and prunes history at max_versions.
+func TestCreateRefusesBlankLegacySecretValue(t *testing.T) {
+	posts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts++
+		}
+		_ = json.NewEncoder(w).Encode(secretJSON("active"))
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &secretResource{client: c}
+
+	plan := fullSecretModel()
+	plan.SecretValue = types.StringValue("   ") // whitespace only: the server trims and rejects it too
+
+	resp := resource.CreateResponse{State: buildSecretState(t, plan)}
+	r.Create(context.Background(), resource.CreateRequest{
+		Plan:   buildSecretPlan(t, plan),
+		Config: buildSecretConfig(t, plan),
+	}, &resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a blank secret_value must be refused before the request")
+	}
+	if posts != 0 {
+		t.Errorf("nothing must be POSTed, got %d requests", posts)
 	}
 }

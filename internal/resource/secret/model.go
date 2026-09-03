@@ -54,13 +54,17 @@ type apiCreateSecretRequest struct {
 }
 
 // apiUpdateSecretRequest is the API request to update a secret.
+//
+// Deliberately narrower than apiCreateSecretRequest: the API's update payload
+// is secretValue, description and tags. It used to carry contentType,
+// maxVersions and recoveryWindowDays too, which the server discarded silently
+// (gin does not reject unknown fields), so an apply reported success and
+// changed nothing. ModifyPlan now refuses those changes at plan time; sending
+// them as well would only put the lie back on the wire.
 type apiUpdateSecretRequest struct {
-	Description        *string           `json:"description,omitempty"`
-	SecretValue        *string           `json:"secretValue,omitempty"`
-	ContentType        *string           `json:"contentType,omitempty"`
-	Tags               map[string]string `json:"tags,omitempty"`
-	MaxVersions        *int              `json:"maxVersions,omitempty"`
-	RecoveryWindowDays *int              `json:"recoveryWindowDays,omitempty"`
+	Description *string           `json:"description,omitempty"`
+	SecretValue *string           `json:"secretValue,omitempty"`
+	Tags        map[string]string `json:"tags,omitempty"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -110,17 +114,13 @@ func (m *SecretModel) toUpdateRequest(ctx context.Context, state *SecretModel, d
 	}
 
 	// A null secret_value is "not the source", never "set the secret to empty":
-	// there is no clear-a-secret operation, and the API accepts "" as a new
-	// version. Sending it would destroy the value on the write-only path, where
-	// secret_value is null on both sides of every diff.
+	// there is no clear-a-secret operation. On the write-only path secret_value
+	// is null on both sides of every diff, so sending "" there would blank the
+	// secret on any server without the secrets v0.12.23 guard, and fail every
+	// apply on one with it.
 	if !m.SecretValue.IsNull() && !m.SecretValue.Equal(state.SecretValue) {
 		v := m.SecretValue.ValueString()
 		req.SecretValue = &v
-	}
-
-	if !m.ContentType.Equal(state.ContentType) {
-		v := m.ContentType.ValueString()
-		req.ContentType = &v
 	}
 
 	if !m.Tags.Equal(state.Tags) {
@@ -129,16 +129,6 @@ func (m *SecretModel) toUpdateRequest(ctx context.Context, state *SecretModel, d
 			diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
 			req.Tags = tags
 		}
-	}
-
-	if !m.MaxVersions.Equal(state.MaxVersions) {
-		v := int(m.MaxVersions.ValueInt64())
-		req.MaxVersions = &v
-	}
-
-	if !m.RecoveryWindowDays.Equal(state.RecoveryWindowDays) {
-		v := int(m.RecoveryWindowDays.ValueInt64())
-		req.RecoveryWindowDays = &v
 	}
 
 	return req

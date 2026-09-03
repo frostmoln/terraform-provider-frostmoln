@@ -149,6 +149,17 @@ Optional+Computed attribute goes in its `mustReplaceOnRealChange` table, which
 guards the other direction (that `RequiresReplace()` was not simply dropped); the
 test fails if an attribute replaces without an entry, so the table cannot drift.
 
+**Exception — `frostmoln_secret`'s `content_type`, `max_versions` and
+`recovery_window_days`.** They are create-only but deliberately do NOT replace,
+so they are absent from `mustReplaceOnRealChange`. `RequiresReplace()` there
+would destroy a live secret and then FAIL to recreate it: a delete is a soft
+delete, and `UNIQUE(tenant_id, name)` in the secrets schema has no partial
+predicate, so the name stays taken for `recovery_window_days` (up to 30) and the
+create 409s. They use `planmod.*UseStateOrDefault` (never a schema `Default`,
+which `TransformDefaults` would substitute over an imported secret's real value)
+plus a `ModifyPlan` refusal. Copy that pattern for any attribute whose resource
+cannot be recreated under the same name.
+
 An attribute with a schema `Default` is exempt: `MarkComputedNilsAsUnknown`
 returns a default-bearing attribute untouched, so a null config never makes its
 plan value unknown. (An unknown *config expression* still can, but no ordering
