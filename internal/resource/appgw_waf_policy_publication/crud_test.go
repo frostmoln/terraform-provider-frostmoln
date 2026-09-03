@@ -60,9 +60,12 @@ func revisions(t *testing.T) types.Map {
 
 func pubModel(t *testing.T, maxBlocked types.Int64) PublicationModel {
 	return PublicationModel{
-		GatewayID:       types.StringValue("agw-1"),
-		PolicyID:        types.StringValue("wp-1"),
-		RuleRevisions:   revisions(t),
+		GatewayID:     types.StringValue("agw-1"),
+		PolicyID:      types.StringValue("wp-1"),
+		RuleRevisions: revisions(t),
+		// A typed null, not the zero types.List: a list value with no element
+		// type fails the framework's type check before any assertion runs.
+		PlatformOptOuts: types.ListNull(types.StringType),
 		MaxNewlyBlocked: maxBlocked,
 	}
 }
@@ -99,6 +102,13 @@ func TestPublishRunsTheDryRunFirst(t *testing.T) {
 		case r.URL.Path == pubBase+"/publish":
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(apiVersion{Version: 4, State: "frozen", ContentHash: "abc"})
+		case r.URL.Path == pubBase+"/versions/active":
+			// Read back AFTER the publish, to record which platform
+			// protections the published ruleset turns off.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"version": apiVersion{Version: 4, State: "frozen", ContentHash: "abc"},
+				"rules":   []apiRule{},
+			})
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -112,7 +122,11 @@ func TestPublishRunsTheDryRunFirst(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("create: %v", resp.Diagnostics.Errors())
 	}
-	if len(order) != 2 || !strings.HasSuffix(order[0], "/dry-runs") || !strings.HasSuffix(order[1], "/publish") {
+	// Asserted as an ORDERING, not as an exact transcript: the resource may
+	// legitimately make other calls (it reads the published ruleset back), and
+	// what this test is for is that nothing publishes before a dry-run has run.
+	dryRunAt, publishAt := indexOfSuffix(order, "/dry-runs"), indexOfSuffix(order, "/publish")
+	if dryRunAt < 0 || publishAt < 0 || dryRunAt > publishAt {
 		t.Fatalf("the dry-run must run BEFORE the publish, got %v", order)
 	}
 
@@ -436,5 +450,190 @@ func TestReadRefusesToAdoptAVersionItDidNotPublish(t *testing.T) {
 	}
 	if resp.Diagnostics.WarningsCount() == 0 {
 		t.Error("removing it from state must say why")
+	}
+}
+
+// indexOfSuffix returns the position of the first request whose path ends in
+// suffix, or -1.
+func indexOfSuffix(order []string, suffix string) int {
+	for i, o := range order {
+		if strings.HasSuffix(o, suffix) {
+			return i
+		}
+	}
+	return -1
+}
+
+// TestA409NamesTheConcurrentEditorNotAMissingDryRun.
+//
+// 🔴 THIS RESOURCE CANNOT HAVE FORGOTTEN TO DRY-RUN. It ran one seconds
+// earlier, on this draft, and waited for it to complete. So the server's 409 --
+// "no completed dry-run matches the draft" -- can only mean the draft MOVED in
+// between: a second apply, the portal, the CLI. The generic advice ("run a
+// dry-run first") is the one action that is already happening, so printing it
+// here sends a practitioner in a circle while a concurrent writer keeps
+// winning.
+func TestA409NamesTheConcurrentEditorNotAMissingDryRun(t *testing.T) {
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == pubBase+"/dry-runs" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(apiDryRun{
+				ID: "d-7", ContentHash: "abc", Status: "completed",
+				RequestsSampled: 500, NewlyBlocked: 0})
+		case r.URL.Path == pubBase+"/publish":
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
+				"code": "conflict", "message": "no completed dry run matches the draft"}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	r := &publicationResource{client: c}
+
+	resp := resource.CreateResponse{State: emptyState(t)}
+	r.Create(context.Background(), resource.CreateRequest{
+		Plan: planOf(t, pubModel(t, types.Int64Value(0)))}, &resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a refused publish was reported as success")
+	}
+	var detail string
+	for _, d := range resp.Diagnostics.Errors() {
+		detail += d.Summary() + " " + d.Detail() + "\n"
+	}
+	if !strings.Contains(detail, "edited since") && !strings.Contains(detail, "Draft Changed") {
+		t.Fatalf("the 409 does not point at a concurrent editor:\n%s", detail)
+	}
+	// The dry-run this apply ran is named, which is what makes "you did not
+	// forget" checkable rather than asserted.
+	if !strings.Contains(detail, "d-7") {
+		t.Errorf("the message does not name the dry-run this apply ran:\n%s", detail)
+	}
+	if !strings.Contains(detail, "Nothing was published") {
+		t.Errorf("the message does not say whether anything landed:\n%s", detail)
+	}
+}
+
+// TestPlatformOptOutsAreNamedInThePlan.
+//
+// 🔴 THE ONE PUBLISHED SECURITY CHANGE NO HCL DIFF CAN SHOW. frostmoln_appgw_waf_rule
+// refuses to manage a platform rule and points at the CLI or the portal. Both
+// write the DRAFT, so the opt-out lands as hasUnpublishedChanges and the next
+// apply publishes it — disabling a platform protection that appears in nobody's
+// configuration, under a plan line reading only "version will be known after
+// apply".
+func TestPlatformOptOutsAreNamedInThePlan(t *testing.T) {
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == pubBase+"/draft" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"version": map[string]any{
+					"version": 5, "contentHash": "abc", "hasUnpublishedChanges": true,
+				},
+				"rules": []apiRule{
+					{RuleKey: "platform-cve-2026-1234", Owner: "platform", OptedOut: true},
+					{RuleKey: "platform-selfprotect", Owner: "platform", OptedOut: false},
+					{RuleKey: "my-rule", Owner: "tenant", OptedOut: false},
+					// 🔴 THE OWNER FILTER IS WHAT SELECTS, NOT THE FLAG. This
+					// row differs from the named one ONLY in its owner, so a
+					// check that looked at optedOut alone would list it -- and
+					// then the warning would be about a rule the tenant wrote
+					// and can see in their own HCL, which is the opposite of
+					// what it exists to surface.
+					{RuleKey: "my-disabled-rule", Owner: "tenant", OptedOut: true},
+				},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	r := &publicationResource{client: c}
+
+	plan := planOf(t, pubModel(t, types.Int64Value(0)))
+	state := stateOf(t, pubModel(t, types.Int64Value(0)))
+	resp := resource.ModifyPlanResponse{Plan: plan}
+	r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{Plan: plan, State: state}, &resp)
+
+	var warnings string
+	for _, d := range resp.Diagnostics.Warnings() {
+		warnings += d.Summary() + " " + d.Detail() + "\n"
+	}
+	if !strings.Contains(warnings, "platform-cve-2026-1234") {
+		t.Fatalf("the plan does not name the platform protection this apply would switch off:\n%s", warnings)
+	}
+	// Only the ones actually opted out, and only platform-owned ones: a warning
+	// that lists everything is one nobody reads.
+	if strings.Contains(warnings, "platform-selfprotect") {
+		t.Errorf("a platform rule that is NOT opted out was named:\n%s", warnings)
+	}
+	for _, tenantRule := range []string{"my-rule", "my-disabled-rule"} {
+		if strings.Contains(warnings, tenantRule) {
+			t.Errorf("tenant-owned rule %q was named as a platform opt-out:\n%s", tenantRule, warnings)
+		}
+	}
+}
+
+// TestPlatformOptOutsAreRecordedFromThePublishedRuleset. The plan warns; state
+// records. Without the second half the attribute would be empty on every apply
+// and the next plan would have nothing to compare against.
+func TestPlatformOptOutsAreRecordedFromThePublishedRuleset(t *testing.T) {
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == pubBase+"/dry-runs" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(apiDryRun{
+				ID: "d-1", ContentHash: "abc", Status: "completed",
+				RequestsSampled: 500, NewlyBlocked: 0})
+		case r.URL.Path == pubBase+"/publish":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(apiVersion{Version: 4, State: "frozen", ContentHash: "abc"})
+		case r.URL.Path == pubBase+"/versions/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"version": apiVersion{Version: 4, State: "frozen", ContentHash: "abc"},
+				"rules": []apiRule{
+					{RuleKey: "platform-cve-2026-1234", Owner: "platform", OptedOut: true},
+					{RuleKey: "my-rule", Owner: "tenant", OptedOut: false},
+					// Differs from the platform row only in owner.
+					{RuleKey: "my-disabled-rule", Owner: "tenant", OptedOut: true},
+				},
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	r := &publicationResource{client: c}
+
+	resp := resource.CreateResponse{State: emptyState(t)}
+	r.Create(context.Background(), resource.CreateRequest{
+		Plan: planOf(t, pubModel(t, types.Int64Value(0)))}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("create: %v", resp.Diagnostics.Errors())
+	}
+	var out PublicationModel
+	resp.State.Get(context.Background(), &out)
+
+	var keys []string
+	out.PlatformOptOuts.ElementsAs(context.Background(), &keys, false)
+	if len(keys) != 1 || keys[0] != "platform-cve-2026-1234" {
+		t.Fatalf("platform_opt_outs = %v, want the one opted-out platform rule", keys)
+	}
+	// And the apply says so out loud, not only in an attribute nobody reads.
+	var warnings string
+	for _, d := range resp.Diagnostics.Warnings() {
+		warnings += d.Detail() + "\n"
+	}
+	if !strings.Contains(warnings, "platform-cve-2026-1234") {
+		t.Errorf("the apply did not say which protection the published ruleset disables:\n%s", warnings)
+	}
+}
+
+// TestPlatformOptOutsAreEmptyNotNullWhenNothingIsDisabled. "This ruleset
+// disables nothing" is a fact worth recording; null reads as "not looked at".
+func TestPlatformOptOutsAreEmptyNotNullWhenNothingIsDisabled(t *testing.T) {
+	v := listOfStrings(context.Background(), nil)
+	if v.IsNull() {
+		t.Fatal("no opt-outs rendered as null, which is indistinguishable from not having checked")
+	}
+	if len(v.Elements()) != 0 {
+		t.Fatalf("expected an empty list, got %v", v)
 	}
 }

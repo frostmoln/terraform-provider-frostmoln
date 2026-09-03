@@ -39,9 +39,14 @@ var mustReplaceOnRealChange = map[string][]string{
 	// there is no practitioner-set value that could force a replacement.
 	"frostmoln_application_gateway": {"public_ip_mode"},
 	"frostmoln_appgw_listener":      {"tls_min_version", "tls_cipher_profile", "geo_block_mode", "redirect_to_https"},
-	"frostmoln_appgw_route":         {"priority", "path_match_type", "path", "action"},
-	"frostmoln_appgw_backend_pool":  {"protocol", "algorithm", "session_affinity", "tls_verify_backend", "timeout_connect_ms", "timeout_response_ms"},
-	"frostmoln_appgw_backend":       {"source_kind", "address", "weight"},
+	// scope decides what a WAF policy is COMPILED FROM -- a gateway policy
+	// carries the managed ruleset, an overlay does not. The server's update
+	// body has no scope field at all, so scope is immutable after creation and
+	// a change to it is expressible only as a new policy.
+	"frostmoln_appgw_waf_policy":   {"scope"},
+	"frostmoln_appgw_route":        {"priority", "path_match_type", "path", "action"},
+	"frostmoln_appgw_backend_pool": {"protocol", "algorithm", "session_affinity", "tls_verify_backend", "timeout_connect_ms", "timeout_response_ms"},
+	"frostmoln_appgw_backend":      {"source_kind", "address", "weight"},
 	// adopt_existing decides whether this resource may take over an ingress
 	// rule that already exists. Changing it changes what a destroy will do to
 	// other backends, so it is create-only rather than flippable in place.

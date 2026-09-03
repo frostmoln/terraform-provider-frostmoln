@@ -198,8 +198,11 @@ func (r *listenerResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				PlanModifiers: replaceInt,
 			},
 			"waf_policy_id": schema.StringAttribute{
-				Description: "The WAF policy applied to this listener, if any.",
-				Computed:    true,
+				Description: "The WAF policy applied to this listener, if any — an `overlay`-scoped " +
+					"policy. Read-only here: attach one with " +
+					"`frostmoln_appgw_waf_policy_attachment`, which is where the attachment's " +
+					"lifecycle lives.",
+				Computed: true,
 			},
 			"enabled": schema.BoolAttribute{
 				Description: "Whether the listener is serving.",

@@ -65,6 +65,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_route"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_waf_exclusion"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_waf_policy"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_waf_policy_attachment"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_waf_policy_publication"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_waf_rule"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/application_gateway"
@@ -572,6 +573,7 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		appgw_waf_policy.NewResource,
 		appgw_waf_rule.NewResource,
 		appgw_waf_exclusion.NewResource,
+		appgw_waf_policy_attachment.NewResource,
 		appgw_waf_policy_publication.NewResource,
 		lb_pool.NewResource,
 		lb_member.NewResource,

@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -62,6 +64,10 @@ type PublicationModel struct {
 	Version     types.Int64  `tfsdk:"version"`
 	ContentHash types.String `tfsdk:"content_hash"`
 
+	// PlatformOptOuts names the platform protections this published ruleset
+	// turns off. Computed, because they are authored outside Terraform.
+	PlatformOptOuts types.List `tfsdk:"platform_opt_outs"`
+
 	DryRunID              types.String `tfsdk:"dry_run_id"`
 	DryRunNewlyBlocked    types.Int64  `tfsdk:"dry_run_newly_blocked"`
 	DryRunNewlyAllowed    types.Int64  `tfsdk:"dry_run_newly_allowed"`
@@ -97,14 +103,48 @@ type apiDryRunListResponse struct {
 	DryRuns []apiDryRun `json:"dryRuns"`
 }
 
-// apiDraft is the policy's draft as the server reports it. Only the two fields
-// that say whether it differs from what is enforced are parsed.
+// apiDraft is the policy's draft as the server reports it: the fields that say
+// whether it differs from what is enforced, plus the rules -- because one class
+// of rule in there is security state that NOBODY'S HCL contains.
 type apiDraft struct {
 	Version struct {
 		Version               int    `json:"version"`
 		ContentHash           string `json:"contentHash"`
 		HasUnpublishedChanges bool   `json:"hasUnpublishedChanges"`
 	} `json:"version"`
+	Rules []apiRule `json:"rules"`
+}
+
+// apiRule is the slice of a rule this resource needs to spot a platform opt-out.
+type apiRule struct {
+	RuleKey  string `json:"ruleKey"`
+	Owner    string `json:"owner"`
+	OptedOut bool   `json:"optedOut"`
+}
+
+// platformOptOuts returns the keys of platform-owned rules this ruleset turns
+// OFF, sorted.
+//
+// 🔴 THIS IS THE ONE PIECE OF PUBLISHED SECURITY STATE THAT APPEARS IN NO HCL.
+// frostmoln_appgw_waf_rule correctly refuses to manage a platform rule and
+// points at the CLI or the portal -- and both of those write the DRAFT, which
+// changes the content hash, which makes this resource's ModifyPlan see
+// hasUnpublishedChanges. So the next `terraform apply` publishes a ruleset that
+// disables a platform protection nobody in this configuration chose, and the
+// plan says only "version will be known after apply".
+//
+// The asymmetry cannot be closed here -- Terraform does not own the opt-out --
+// but it can be made VISIBLE, which is why fm's export format carries
+// platformOptOuts as a first-class section rather than folding it into rules.
+func platformOptOuts(rules []apiRule) []string {
+	var keys []string
+	for _, r := range rules {
+		if r.Owner == "platform" && r.OptedOut {
+			keys = append(keys, r.RuleKey)
+		}
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 type apiVersion struct {
@@ -157,6 +197,17 @@ func (r *publicationResource) Schema(_ context.Context, _ resource.SchemaRequest
 			"~> **Declare at most one publication per policy.** A second one targeting the same " +
 			"`policy_id` is not refused, but both then compute the same `version` and `id`, and " +
 			"each apply races the other's dry-run. One policy, one publication.\n\n" +
+			"## Platform opt-outs reach this resource from outside Terraform\n\n" +
+			"`frostmoln_appgw_waf_rule` will not manage a **platform-owned** rule — the tenant may " +
+			"only opt out of one, and only where the platform allows it, using the CLI or the " +
+			"portal. Both of those write the **draft**, which changes its content hash, which this " +
+			"resource sees as `hasUnpublishedChanges`. So the next apply publishes that opt-out: a " +
+			"platform protection is switched off by a change that appears in **no HCL**.\n\n" +
+			"This provider cannot own that decision, so it makes it visible instead. The plan warns " +
+			"and names each rule, and `platform_opt_outs` records what the published ruleset " +
+			"disables. Read them: an opt-out is normally a false-positive workaround for an " +
+			"emergency virtual patch, and it is the single most consequential edit a tenant can " +
+			"make to a WAF.\n\n" +
 			"~> **Destroying this resource does not unpublish anything.** A published version stays " +
 			"published — there is no unpublish, by design, because history is never rewritten. " +
 			"Destroy removes it from state and warns; use a rollback to go back to an earlier version.",
@@ -220,6 +271,19 @@ func (r *publicationResource) Schema(_ context.Context, _ resource.SchemaRequest
 			"dry_run_requests_sampled": schema.Int64Attribute{
 				Description: "How many requests the dry-run replayed. A small sample means a weak signal.",
 				Computed:    true,
+			},
+			"platform_opt_outs": schema.ListAttribute{
+				Description: "The keys of platform-owned rules that the published ruleset turns " +
+					"**off** for this gateway.\n\n" +
+					"These are tenant-authored security decisions that live outside Terraform: " +
+					"`frostmoln_appgw_waf_rule` will not manage a platform rule, so an opt-out is " +
+					"made with the CLI or the portal. Both write the draft, so the next apply of " +
+					"this resource publishes it — and without this attribute the plan would say " +
+					"only \"version will be known after apply\" while disabling a protection that " +
+					"appears in nobody's configuration. Anything listed here is a protection you " +
+					"are choosing not to run.",
+				Computed:    true,
+				ElementType: types.StringType,
 			},
 			"published_at": schema.StringAttribute{
 				Description: "When the version was published.",
@@ -286,6 +350,27 @@ func (r *publicationResource) ModifyPlan(ctx context.Context, req resource.Modif
 	resp.Plan.SetAttribute(ctx, path.Root("dry_run_newly_blocked"), types.Int64Unknown())
 	resp.Plan.SetAttribute(ctx, path.Root("dry_run_newly_allowed"), types.Int64Unknown())
 	resp.Plan.SetAttribute(ctx, path.Root("dry_run_requests_sampled"), types.Int64Unknown())
+	resp.Plan.SetAttribute(ctx, path.Root("platform_opt_outs"), types.ListUnknown(types.StringType))
+
+	// 🔴 NAME THE PLATFORM PROTECTIONS THIS APPLY WOULD SWITCH OFF.
+	//
+	// An opt-out is made with the CLI or the portal -- this provider's rule
+	// resource refuses platform rules by design -- and it writes the DRAFT. So
+	// it arrives here as hasUnpublishedChanges, and applying publishes it. The
+	// plan would otherwise report "version will be known after apply" for a
+	// change whose actual content is "stop running an emergency virtual patch",
+	// which is the single most consequential edit a tenant can make and the one
+	// no HCL diff can show.
+	if optOuts := platformOptOuts(draft.Rules); len(optOuts) > 0 {
+		resp.Diagnostics.AddWarning("This Apply Will Publish Platform Protections That Are Turned OFF",
+			fmt.Sprintf("The draft opts out of %d platform-owned rule(s), and applying this "+
+				"resource publishes them:\n\n  %s\n\nThese are decisions made outside "+
+				"Terraform — frostmoln_appgw_waf_rule will not manage a platform rule, so an "+
+				"opt-out is made with the CLI or the portal, and it lands on the same draft this "+
+				"resource publishes. Each one is a protection this gateway will stop running. If "+
+				"that is not intended, re-enable it before applying.",
+				len(optOuts), strings.Join(optOuts, "\n  ")))
+	}
 
 	if req.State.Raw.IsNull() {
 		return // create: the plan already shows everything as unknown
@@ -404,6 +489,27 @@ func (r *publicationResource) publish(ctx context.Context, m *PublicationModel, 
 
 	apiResp, err := r.client.Post(ctx, base+"/publish", nil)
 	if err != nil {
+		// 🔴 IN THIS RESOURCE A 409 CANNOT MEAN "YOU FORGOT TO DRY-RUN".
+		//
+		// The server refuses a publish with 409 when no completed dry-run
+		// matches the draft's content hash, and for a human at a CLI the
+		// actionable advice is "run one". Here it is not: this resource ran a
+		// dry-run seconds ago, on this same draft, and waited for it. The hash
+		// can therefore only have stopped matching because SOMETHING ELSE moved
+		// the draft in between -- a second apply, the portal, the CLI -- which
+		// is the same race the replayed-hash check below catches on the other
+		// side of the publish. Repeating the generic advice would send a
+		// practitioner to re-run the thing that is already running.
+		if client.IsConflict(err) {
+			diags.AddError("The Draft Changed While This Apply Was Publishing It",
+				fmt.Sprintf("The server refused the publish: no completed dry-run matches the "+
+					"draft any more. This apply ran a dry-run (%s) against the draft moments ago "+
+					"and it completed, so the draft has been edited since — by a concurrent "+
+					"apply, the portal, or the CLI.\n\nNothing was published. Re-run to "+
+					"dry-run and publish the current draft, and check whether another writer is "+
+					"racing this configuration.\n\nUnderlying error: %s", dr.ID, err.Error()))
+			return
+		}
 		diags.AddError("Failed to Publish WAF Policy", err.Error())
 		return
 	}
@@ -413,12 +519,13 @@ func (r *publicationResource) publish(ctx context.Context, m *PublicationModel, 
 	// cutting a version nobody asked for. The active version is read back so
 	// state still names what is enforced.
 	if apiResp.StatusCode == 204 {
-		v, verr := r.activeVersion(ctx, base)
+		v, optOuts, verr := r.activeVersion(ctx, base)
 		if verr != nil {
 			diags.AddError("Failed to Read The Active WAF Version", verr.Error())
 			return
 		}
 		m.applyVersion(v)
+		m.PlatformOptOuts = listOfStrings(ctx, optOuts)
 		return
 	}
 
@@ -446,9 +553,48 @@ func (r *publicationResource) publish(ctx context.Context, m *PublicationModel, 
 		// State is still written: the version IS published, and leaving
 		// Terraform unaware of it would be worse than a failed apply.
 		m.applyVersion(v)
+		r.recordPublishedOptOuts(ctx, base, m, diags)
 		return
 	}
 	m.applyVersion(v)
+	r.recordPublishedOptOuts(ctx, base, m, diags)
+}
+
+// recordPublishedOptOuts reads the now-enforcing version to record which
+// platform protections it turns off.
+//
+// A failure here is NOT a failed publish -- the version is live either way --
+// so it warns rather than erroring, and leaves the attribute empty.
+func (r *publicationResource) recordPublishedOptOuts(ctx context.Context, base string, m *PublicationModel, diags diagnosticsSink) {
+	_, optOuts, err := r.activeVersion(ctx, base)
+	if err != nil {
+		diags.AddWarning("Could Not Read The Published Ruleset's Platform Opt-Outs",
+			fmt.Sprintf("The version was published. Reading back which platform-owned rules it "+
+				"turns off failed: %s", err.Error()))
+		m.PlatformOptOuts = types.ListValueMust(types.StringType, []attr.Value{})
+		return
+	}
+	if len(optOuts) > 0 {
+		diags.AddWarning("The Published Ruleset Turns Platform Protections OFF",
+			fmt.Sprintf("Version %d disables %d platform-owned rule(s):\n\n  %s\n\nThese "+
+				"opt-outs were authored outside Terraform (the CLI or the portal) and have now "+
+				"been published.", m.Version.ValueInt64(), len(optOuts), strings.Join(optOuts, "\n  ")))
+	}
+	m.PlatformOptOuts = listOfStrings(ctx, optOuts)
+}
+
+// listOfStrings renders keys as a list value, empty rather than null when there
+// are none: "this ruleset disables nothing" is a fact, and null reads as "not
+// looked at".
+func listOfStrings(ctx context.Context, keys []string) types.List {
+	if len(keys) == 0 {
+		return types.ListValueMust(types.StringType, []attr.Value{})
+	}
+	v, d := types.ListValueFrom(ctx, types.StringType, keys)
+	if d.HasError() {
+		return types.ListValueMust(types.StringType, []attr.Value{})
+	}
+	return v
 }
 
 func (m *PublicationModel) applyVersion(v *apiVersion) {
@@ -529,18 +675,29 @@ func (r *publicationResource) findDryRun(ctx context.Context, base, id string) (
 	return nil, nil
 }
 
-func (r *publicationResource) activeVersion(ctx context.Context, base string) (*apiVersion, error) {
+// activeVersion reads the version being ENFORCED, and its rules with it.
+//
+// The rules are read because platform opt-outs are recorded on this resource:
+// what matters is which protections the PUBLISHED ruleset turns off, and the
+// enforcing version is the only object that answers that.
+func (r *publicationResource) activeVersion(ctx context.Context, base string) (*apiVersion, []string, error) {
 	apiResp, err := r.client.Get(ctx, base+"/versions/active", nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	wrapper, err := client.ParseResponse[struct {
 		Version apiVersion `json:"version"`
+		Rules   []apiRule  `json:"rules"`
 	}](apiResp)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return &wrapper.Version, nil
+	return &wrapper.Version, platformOptOuts(wrapper.Rules), nil
+}
+
+// recordOptOuts records the published opt-outs on the model.
+func (m *PublicationModel) recordOptOuts(ctx context.Context, keys []string, _ *diag.Diagnostics) {
+	m.PlatformOptOuts = listOfStrings(ctx, keys)
 }
 
 func (r *publicationResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -552,7 +709,7 @@ func (r *publicationResource) Read(ctx context.Context, req resource.ReadRequest
 	// The publication is an ACT, not a stored object: what exists afterwards is
 	// a frozen version. Refreshing therefore means asking what is enforced now.
 	// If the policy is gone, so is this.
-	v, err := r.activeVersion(ctx, r.policyPath(state.GatewayID.ValueString(), state.PolicyID.ValueString()))
+	v, optOuts, err := r.activeVersion(ctx, r.policyPath(state.GatewayID.ValueString(), state.PolicyID.ValueString()))
 	if err != nil {
 		if client.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
@@ -592,6 +749,7 @@ func (r *publicationResource) Read(ctx context.Context, req resource.ReadRequest
 	}
 
 	state.applyVersion(v)
+	state.recordOptOuts(ctx, optOuts, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 

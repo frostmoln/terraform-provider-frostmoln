@@ -89,4 +89,4 @@ resource "frostmoln_appgw_listener" "https" {
 - `enabled` (Boolean) Whether the listener is serving.
 - `id` (String) The unique identifier of the listener.
 - `updated_at` (String) The last update timestamp.
-- `waf_policy_id` (String) The WAF policy applied to this listener, if any.
+- `waf_policy_id` (String) The WAF policy applied to this listener, if any — an `overlay`-scoped policy. Read-only here: attach one with `frostmoln_appgw_waf_policy_attachment`, which is where the attachment's lifecycle lives.

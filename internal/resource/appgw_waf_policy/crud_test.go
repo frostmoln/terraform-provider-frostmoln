@@ -93,7 +93,7 @@ func wpFixture() apiPolicy {
 	return apiPolicy{
 		ID: "wp-1", GatewayID: "agw-1", Name: "default", Mode: "detect",
 		ParanoiaLevel: 2, AnomalyScoreThreshold: 5, CRSVersion: "4.7.0",
-		FailMode: "open", RequestBodyLimitBytes: 1 << 20,
+		FailMode: "open", RequestBodyLimitBytes: 16384,
 		ActiveVersion: &active, DraftVersion: &draft, CreatedAt: "2026-08-01T00:00:00Z",
 	}
 }
@@ -183,7 +183,7 @@ func TestPolicyUpdateSendsOnlyWhatChanged(t *testing.T) {
 	state.fromAPI(&apiPolicy{
 		ID: "wp-1", GatewayID: "agw-1", Name: "default", Mode: "detect",
 		ParanoiaLevel: 2, AnomalyScoreThreshold: 5, CRSVersion: "4.7.0",
-		FailMode: "open", RequestBodyLimitBytes: 1 << 20,
+		FailMode: "open", RequestBodyLimitBytes: 16384,
 	})
 	plan := state
 	plan.Mode = types.StringValue("block") // the only change

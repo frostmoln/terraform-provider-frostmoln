@@ -4,6 +4,9 @@ page_title: "frostmoln_appgw_waf_policy Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a Web Application Firewall policy on a Frostmoln Application Gateway.
+  The firewall is composed, not singular
+  A gateway-scoped policy attaches to the gateway and carries the managed ruleset, along with the dials that tune it — paranoia_level, anomaly_score_threshold, managed_ruleset_version. An overlay-scoped policy attaches to one listener or one route, is compiled without the managed ruleset, and carries only your own rules — so none of those dials apply to it. Attach either with frostmoln_appgw_waf_policy_attachment.
+  An overlay defaults to mode = "inherit": it takes the gateway policy's mode, so it blocks when the gateway policy blocks. Read effective_mode, never mode, to decide whether a policy is refusing requests.
   ~> These settings are AUTHORED, not enforced. Changing mode (or any other setting) writes the policy immediately, but what the gateway inspects with is the last published version's snapshot. A policy can read block here while the gateway is still only logging, until a frostmoln_appgw_waf_policy_publication publishes and the gateway applies its configuration.
   Settings are part of what a dry-run is taken against, so changing one invalidates the current dry-run and the next publish needs a fresh one. That is deliberate: the dry-run must describe the ruleset that is about to go live, settings included.
 ---
@@ -11,6 +14,12 @@ description: |-
 # frostmoln_appgw_waf_policy (Resource)
 
 Manages a Web Application Firewall policy on a Frostmoln Application Gateway.
+
+## The firewall is composed, not singular
+
+A `gateway`-scoped policy attaches to the gateway and carries the **managed ruleset**, along with the dials that tune it — `paranoia_level`, `anomaly_score_threshold`, `managed_ruleset_version`. An `overlay`-scoped policy attaches to one listener or one route, is compiled **without** the managed ruleset, and carries only your own rules — so none of those dials apply to it. Attach either with `frostmoln_appgw_waf_policy_attachment`.
+
+An overlay defaults to `mode = "inherit"`: it takes the gateway policy's mode, so it **blocks when the gateway policy blocks**. Read `effective_mode`, never `mode`, to decide whether a policy is refusing requests.
 
 ~> **These settings are AUTHORED, not enforced.** Changing `mode` (or any other setting) writes the policy immediately, but what the gateway inspects with is the last **published** version's snapshot. A policy can read `block` here while the gateway is still only logging, until a `frostmoln_appgw_waf_policy_publication` publishes and the gateway applies its configuration.
 
@@ -22,9 +31,12 @@ Settings are part of what a dry-run is taken against, so changing one invalidate
 # These settings are AUTHORED, not enforced. What the gateway inspects with is
 # the last PUBLISHED version — see frostmoln_appgw_waf_policy_publication.
 
+# The GATEWAY policy: it carries the managed ruleset for everything the gateway
+# serves, and owns the dials that tune it.
 resource "frostmoln_appgw_waf_policy" "main" {
   gateway_id = frostmoln_application_gateway.edge.id
   name       = "default"
+  scope      = "gateway" # the default
 
   # Start in detect: the ruleset runs and records what it WOULD have done, and
   # blocks nothing. Move to block once a dry-run has shown you what changes.
@@ -35,7 +47,38 @@ resource "frostmoln_appgw_waf_policy" "main" {
   # never an accident.
   fail_mode = "open"
 
-  request_body_limit_bytes = 10 * 1024 * 1024
+  # Between 4096 and 40960 bytes. The ceiling is the inspection engine's frame
+  # size, not a memory budget, so it does not rise with a larger flavor.
+  request_body_limit_bytes = 32768
+}
+
+# An OVERLAY policy: your own rules on one listener or one route. It is compiled
+# WITHOUT the managed ruleset, so paranoia_level, anomaly_score_threshold and
+# managed_ruleset_version do not belong here.
+resource "frostmoln_appgw_waf_policy" "api" {
+  gateway_id = frostmoln_application_gateway.edge.id
+  name       = "api-rules"
+  scope      = "overlay"
+
+  # "inherit" is the overlay default: it takes the GATEWAY policy's mode, so it
+  # blocks when that policy blocks. It is not the cautious setting — read
+  # effective_mode, never mode, to see what is actually in force.
+  mode = "inherit"
+}
+
+# What THIS POLICY resolves to, with "inherit" resolved. A check written against
+# `mode` would report an inheriting overlay as not blocking while its users'
+# requests are being refused.
+#
+# Not "what is in force for traffic": the platform composes one ruleset per
+# gateway, with the managed ruleset applied across the whole gateway and each
+# scope's own rules added to it. An overlay adds rules to its listener or route;
+# it never exempts that route from the gateway's baseline. So a detecting
+# overlay does not mean traffic there is uninspected.
+#
+# It is null when it cannot be determined, so read it through try().
+output "api_overlay_effective_mode" {
+  value = try(frostmoln_appgw_waf_policy.api.effective_mode, "unknown")
 }
 ```
 
@@ -50,20 +93,40 @@ resource "frostmoln_appgw_waf_policy" "main" {
 ### Optional
 
 - `anomaly_score_threshold` (Number) The accumulated anomaly score at which a request is refused.
+
+`gateway`-scoped policies only, for the same reason as `paranoia_level`.
 - `fail_mode` (String) What happens when the inspection engine is unavailable: `open` passes traffic through uninspected, `closed` refuses it. An explicit choice, never an accident.
 - `managed_ruleset_version` (String) The managed ruleset version in force.
 
 The server accepts only the version the running build ships, and migrating a stored pin is the platform's job — so leave this unset unless you have a specific reason, and read it rather than writing it.
-- `mode` (String) `detect` records what the ruleset WOULD have done and blocks nothing; `block` refuses matching requests.
+
+`gateway`-scoped policies only.
+- `mode` (String) `detect` records what the ruleset WOULD have done and blocks nothing; `block` refuses matching requests; `inherit` takes the mode from the **gateway** policy and is valid only on an `overlay`-scoped policy, where it is the default.
 
 `detect` is the safe place to start and the safe place to return to. Move to `block` after a dry-run has shown you what would newly be refused.
+
+~> `inherit` is **not** the cautious setting. Under a blocking gateway policy an inheriting overlay blocks. Read `effective_mode` for what is actually in force.
 - `paranoia_level` (Number) How aggressively the managed ruleset matches, 1-4. Higher catches more and produces more false positives.
-- `request_body_limit_bytes` (Number) How much of a request body is inspected, in bytes. Between 128 KiB and 512 MiB. Anything beyond the limit is not examined.
+
+`gateway`-scoped policies only: an overlay is not compiled with the managed ruleset, so this has nothing to act on and the server refuses it.
+- `request_body_limit_bytes` (Number) How much of a request body is inspected, in bytes. Between 4096 and 40960. Anything beyond the limit is not examined.
+
+The ceiling is the inspection engine's frame size, not a memory budget, so it does not rise with a larger gateway flavor.
+- `scope` (String) `gateway` (the default) or `overlay`.
+
+A `gateway` policy carries the managed ruleset and the dials that tune it. An `overlay` policy carries only your own rules and attaches to a listener or a route; `mode = "inherit"` is available to it, and the managed-ruleset dials are not.
+
+Changing this forces a new resource: scope decides what the policy is compiled from, and the API has no field for it on an update.
 
 ### Read-Only
 
 - `active_version` (Number) The version being ENFORCED. Null until something has been published.
 - `created_at` (String) The creation timestamp.
 - `draft_version` (Number) The version being EDITED. Rule and exclusion writes land here.
+- `effective_mode` (String) `mode` with `inherit` resolved — what the engine actually does. Server-computed and read-only.
+
+This is the attribute to key on. An overlay whose `mode` is `inherit` under a blocking gateway policy has `effective_mode = "block"`, and a check written against `mode` would report it as not blocking while its users' requests are being refused.
+
+It is **`null`** when the mode in force cannot be determined — the policy inherits and the server did not resolve it. It is never the literal string `inherit`: resolving that needs the gateway policy's mode, and this provider surfaces an absent value rather than guessing one. Use `try()` or `coalesce()` if your configuration must tolerate that.
 - `id` (String) The unique identifier of the WAF policy.
 - `updated_at` (String) The last update timestamp.

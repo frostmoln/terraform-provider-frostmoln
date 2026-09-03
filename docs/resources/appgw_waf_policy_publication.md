@@ -11,6 +11,9 @@ description: |-
   Publishing is not applying
   A published version reaches the appliance on the gateway's next configuration apply. This resource publishes; it does not dispatch.
   ~> Declare at most one publication per policy. A second one targeting the same policy_id is not refused, but both then compute the same version and id, and each apply races the other's dry-run. One policy, one publication.
+  Platform opt-outs reach this resource from outside Terraform
+  frostmoln_appgw_waf_rule will not manage a platform-owned rule — the tenant may only opt out of one, and only where the platform allows it, using the CLI or the portal. Both of those write the draft, which changes its content hash, which this resource sees as hasUnpublishedChanges. So the next apply publishes that opt-out: a platform protection is switched off by a change that appears in no HCL.
+  This provider cannot own that decision, so it makes it visible instead. The plan warns and names each rule, and platform_opt_outs records what the published ruleset disables. Read them: an opt-out is normally a false-positive workaround for an emergency virtual patch, and it is the single most consequential edit a tenant can make to a WAF.
   ~> Destroying this resource does not unpublish anything. A published version stays published — there is no unpublish, by design, because history is never rewritten. Destroy removes it from state and warns; use a rollback to go back to an earlier version.
 ---
 
@@ -31,6 +34,12 @@ Applying this resource starts a dry-run, waits for it, and refuses to publish if
 A published version reaches the appliance on the gateway's next configuration apply. This resource publishes; it does not dispatch.
 
 ~> **Declare at most one publication per policy.** A second one targeting the same `policy_id` is not refused, but both then compute the same `version` and `id`, and each apply races the other's dry-run. One policy, one publication.
+
+## Platform opt-outs reach this resource from outside Terraform
+
+`frostmoln_appgw_waf_rule` will not manage a **platform-owned** rule — the tenant may only opt out of one, and only where the platform allows it, using the CLI or the portal. Both of those write the **draft**, which changes its content hash, which this resource sees as `hasUnpublishedChanges`. So the next apply publishes that opt-out: a platform protection is switched off by a change that appears in **no HCL**.
+
+This provider cannot own that decision, so it makes it visible instead. The plan warns and names each rule, and `platform_opt_outs` records what the published ruleset disables. Read them: an opt-out is normally a false-positive workaround for an emergency virtual patch, and it is the single most consequential edit a tenant can make to a WAF.
 
 ~> **Destroying this resource does not unpublish anything.** A published version stays published — there is no unpublish, by design, because history is never rewritten. Destroy removes it from state and warns; use a rollback to go back to an earlier version.
 
@@ -99,5 +108,8 @@ Raise it deliberately when a rule is *supposed* to start blocking. There is no w
 - `dry_run_newly_blocked` (Number) How many requests in the dry-run's sample would NEWLY be refused by the published ruleset. The number that says whether this change breaks someone.
 - `dry_run_requests_sampled` (Number) How many requests the dry-run replayed. A small sample means a weak signal.
 - `id` (String) The identifier of this publication: the policy id and the version it published.
+- `platform_opt_outs` (List of String) The keys of platform-owned rules that the published ruleset turns **off** for this gateway.
+
+These are tenant-authored security decisions that live outside Terraform: `frostmoln_appgw_waf_rule` will not manage a platform rule, so an opt-out is made with the CLI or the portal. Both write the draft, so the next apply of this resource publishes it — and without this attribute the plan would say only "version will be known after apply" while disabling a protection that appears in nobody's configuration. Anything listed here is a protection you are choosing not to run.
 - `published_at` (String) When the version was published.
 - `version` (Number) The version number this publication produced.

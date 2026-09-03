@@ -86,4 +86,4 @@ resource "frostmoln_appgw_route" "spa" {
 - `enabled` (Boolean) Whether the route is serving.
 - `id` (String) The unique identifier of the route.
 - `updated_at` (String) The last update timestamp.
-- `waf_policy_id` (String) The WAF policy applied to this route, if any.
+- `waf_policy_id` (String) The WAF policy applied to this route, if any — an `overlay`-scoped policy. Read-only here: attach one with `frostmoln_appgw_waf_policy_attachment`, which is where the attachment's lifecycle lives.
