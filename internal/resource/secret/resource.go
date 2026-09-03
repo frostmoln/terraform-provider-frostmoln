@@ -118,7 +118,11 @@ func (r *secretResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					"platform as a new secret version; leaving it alone leaves the stored secret untouched, " +
 					"however much the write-only value changes. Bumping it without changing the value still " +
 					"writes a new version, which counts against `max_versions`. Its content is arbitrary — a " +
-					"counter or a date is typical — and it is stored in state.",
+					"counter or a date is typical — and unlike the value it is stored in state, so do not " +
+					"derive it from the secret or from anything in it: a digest of the secret is printed " +
+					"verbatim in `terraform plan` output, and it is an offline confirmation oracle. " +
+					"`terraform import` leaves this unset, so the first apply against an imported secret " +
+					"writes a new version.",
 				Optional: true,
 				Validators: []validator.String{
 					stringvalidator.AlsoRequires(path.MatchRoot("secret_value_wo")),
@@ -327,8 +331,22 @@ func (r *secretResource) ImportState(ctx context.Context, req resource.ImportSta
 // writeOnlyValue reads secret_value_wo out of the configuration. It is read
 // straight from the config rather than through SecretModel because a write-only
 // attribute is null everywhere else — prior state, plan and final state.
+//
+// An unknown value fails CLOSED. Config is fully resolved by apply, so this
+// should be unreachable — but the alternative spelling (adding !IsUnknown() to
+// the caller's guard) would leave the value empty and write it as a new secret
+// version, which the schema description calls out as having no way back, and
+// report success.
 func writeOnlyValue(ctx context.Context, config tfsdk.Config, diags *diag.Diagnostics) types.String {
 	var v types.String
 	diags.Append(config.GetAttribute(ctx, path.Root("secret_value_wo"), &v)...)
+	if v.IsUnknown() {
+		diags.AddError(
+			"secret_value_wo Is Unknown At Apply",
+			"The write-only secret_value_wo value was still unknown when the secret was processed, so no "+
+				"request was sent to the platform and nothing was changed. This is a bug in the provider "+
+				"or in Terraform — please report it.",
+		)
+	}
 	return v
 }

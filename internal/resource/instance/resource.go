@@ -194,7 +194,9 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					"Mutually exclusive with `user_data`, and `user_data_wo_version` is required whenever " +
 					"this one is set. Everything `user_data` says about the document itself applies here " +
 					"unchanged: write it as plain text rather than `base64encode(...)`, and give the VPC " +
-					"an outbound path if cloud-init reaches the network. " +
+					"an outbound path if cloud-init reaches the network. One rule does NOT carry over: " +
+					"unlike `user_data`, an empty document is rejected here — omit the attribute for no user " +
+					"data. " +
 					"Terraform cannot see a write-only value, so it cannot detect a change to this document " +
 					"in either direction: changing `user_data_wo_version` is what makes the next apply send " +
 					"the current document, and it does so by REPLACING the instance — matching `user_data`, " +
@@ -209,6 +211,16 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				// null against null and can never fire. The version companion is
 				// the attribute that carries the replacement.
 				Validators: []validator.String{
+					// Omit the attribute for "no user data". An empty document
+					// here is always a mistake — an unset variable, a template
+					// that rendered to nothing — and it is not null, so it
+					// passes the null guard and reaches the wire, where
+					// omitempty drops it. The result is a REPLACEMENT that
+					// boots the new instance with no cloud-init at all, on a
+					// green apply, with no plan line to show it: the
+					// write-only path removes the diff the legacy attribute
+					// would have displayed.
+					stringvalidator.LengthAtLeast(1),
 					stringvalidator.ConflictsWith(path.MatchRoot("user_data")),
 					stringvalidator.AlsoRequires(path.MatchRoot("user_data_wo_version")),
 				},

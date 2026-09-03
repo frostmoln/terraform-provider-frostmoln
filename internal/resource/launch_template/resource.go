@@ -120,7 +120,9 @@ func (r *launchTemplateResource) Schema(_ context.Context, _ resource.SchemaRequ
 					"Mutually exclusive with `user_data`, and `user_data_wo_version` is required whenever this " +
 					"one is set. Everything `user_data` says about the document itself applies here unchanged: " +
 					"write it as plain text rather than `base64encode(...)`, and give the launched instance's " +
-					"VPC an outbound path if cloud-init reaches the network. Terraform cannot see a write-only " +
+					"VPC an outbound path if cloud-init reaches the network. One rule does NOT carry over: " +
+					"unlike `user_data`, an empty document is rejected here — omit the attribute for no user " +
+					"data. Terraform cannot see a write-only " +
 					"value, so it cannot detect a change to this document in either direction: changing " +
 					"`user_data_wo_version` is what makes the next apply send the current document, and it " +
 					"updates the template in place. Editing the document without touching the version does " +

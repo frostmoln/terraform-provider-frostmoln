@@ -293,9 +293,12 @@ resource "frostmoln_instance" "worker" {
 ```
 
 `user_data` and `user_data_wo` are mutually exclusive, and — unlike the secret
-pair — setting neither is fine: an instance does not need user data. Everything
-`user_data` documents about the document itself still applies, including writing
-it as plain text rather than `base64encode(...)`.
+pair — setting neither is fine: an instance does not need user data. Omitting the
+attribute is the only way to say that, though: `user_data_wo = ""` is refused at
+plan time, because an empty document is not "no user data" on the write-only path
+— it is a replacement that boots the new instance with no cloud-init and shows no
+diff. Everything `user_data` documents about the document itself still applies,
+including writing it as plain text rather than `base64encode(...)`.
 
 Replacement is not a quirk of the write-only form. A guest reads user data once,
 at first boot, so `user_data` has always been create-only: the only way a new
@@ -341,9 +344,10 @@ resource "frostmoln_launch_template" "worker" {
 ```
 
 `user_data` and `user_data_wo` are mutually exclusive, and setting neither is
-fine — a template does not need user data. Everything `user_data` documents
-about the document itself still applies, including writing it as plain text
-rather than `base64encode(...)`.
+fine — a template does not need user data. Omitting the attribute is the only way
+to say that, though: `user_data_wo = ""` is refused at plan time. Everything
+`user_data` documents about the document itself still applies, including writing
+it as plain text rather than `base64encode(...)`.
 
 Changing `user_data_wo_version` updates the template in place and nothing else
 happens: **instances already launched from the template keep the user data they
@@ -369,8 +373,18 @@ update you did not ask for.
 `user_data`, or the write-only pair, sends nothing — a null value means "not the
 source here", never "clear it" — so the apply is clean, state goes to null, and
 the platform keeps serving the old document to every instance launched from the
-template afterwards. To actually clear it, set `user_data = ""`, or destroy the
-template. The same is true of `frostmoln_secret` and `frostmoln_instance`.
+template afterwards. Clearing it is per-resource, and only one of the three is
+the obvious spelling: on a launch template, set `user_data = ""` or destroy the
+template; on `frostmoln_secret` there is no empty spelling at all — `secret_value
+= ""` is refused, so destroying the secret is the only route; on
+`frostmoln_instance`, removing `user_data` *does* clear it, because the attribute
+is create-only and the apply replaces the instance with one that has none.
+
+~> **The write-only pair cannot express "clear".** `<name>_wo = ""` is rejected
+on all three resources, and removing the pair sends nothing. So clearing a value
+you set through the write-only form means going back to the legacy attribute —
+and back to the state exposure the pair exists to remove — or destroying the
+resource.
 
 Migrating an existing template means removing `user_data` and adding the pair.
 That plans a normal in-place update, and as with the others it does not un-expose
