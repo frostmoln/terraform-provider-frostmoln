@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.44.2] - 2026-09-03
+
+### 🐛 Bug Fixes
+
+- *(postgres)* Raise the create poll budget for an HA pair (#432)
+
+### 📚 Documentation
+
+- Say plainly that sensitive attributes are stored in Terraform state in plaintext (#429)
+
 ## [0.44.1] - 2026-09-01
 
 ### 📚 Documentation
