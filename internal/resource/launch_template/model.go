@@ -244,5 +244,13 @@ func (m *LaunchTemplateModel) fromAPI(ctx context.Context, lt *apiLaunchTemplate
 		m.Tags = types.MapNull(types.StringType)
 	}
 
-	// user_data is not returned by the API; preserved from state in Read/Update.
+	// user_data is preserved from state in Read/Update. NOT because the API
+	// withholds it: compute's LaunchTemplate READ model carries userData
+	// (compute/internal/domain/launch_template.go) and apiLaunchTemplate above
+	// has a field to decode it into — this function simply does not assign it.
+	// So when this resource gains user_data_wo (stage 3 of
+	// TF-PROVIDER-WRITE-ONLY-SECRETS-PLAN) it needs frostmoln_secret's read-path
+	// guard — adopt the API value only when user_data is already non-null — and
+	// NOT frostmoln_instance's argument, whose safety rests on the response type
+	// having no such field at all.
 }

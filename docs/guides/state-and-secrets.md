@@ -15,7 +15,8 @@ Terraform writes **every** attribute of **every** managed resource to state —
 data source results too, and regardless of where the value came from. The only
 exception is [write-only
 arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral/write-only),
-which this provider offers for `frostmoln_secret.secret_value` — see
+which this provider offers for `frostmoln_secret.secret_value` and
+`frostmoln_instance.user_data` — see
 [Write-only arguments](#write-only-arguments) below.
 
 Marking an attribute `sensitive` does not change that. It redacts the value from
@@ -70,7 +71,7 @@ $ fm kubernetes cluster kubeconfig <cluster-id>
 
 | Resource | Attribute | Write-only form |
 |---|---|---|
-| `frostmoln_instance` | `user_data`, `console_password` | not yet |
+| `frostmoln_instance` | `user_data`, `console_password` | `user_data_wo`; `console_password` not yet |
 | `frostmoln_launch_template` | `user_data` | not yet |
 | `frostmoln_secret` | `secret_value` | `secret_value_wo` |
 | `frostmoln_appgw_certificate` | `private_key_pem` | not yet |
@@ -104,6 +105,13 @@ The state file is not the only artifact that carries them:
   `crash.log`.
 - **`terraform.tfstate.backup`**, which is written next to local state and
   *survives* a later migration to a remote backend.
+
+~> **A write-only value skips the state file and the plan, not the wire.** It
+still crosses the Terraform-to-provider RPC (visible under `TF_LOG=TRACE`) and
+still travels in the outbound HTTPS request body. If you are adopting `_wo` to
+satisfy an auditor, that is the boundary it moves: out of the durable artifacts,
+not out of the request. The platform edge redacts these fields from its own
+request logging.
 
 ## Protecting the state file
 
@@ -152,12 +160,15 @@ destructive.
 
 ## Keeping secrets out of state in the first place
 
+- **Use `user_data_wo`** so the cloud-init document never reaches state at all.
+  That covers the document; the next bullet still applies to what is *in* it.
 - **Don't put long-lived secrets in `user_data`.** Put a narrowly scoped,
   short-lived `frostmoln_api_key` there instead — one that can read the single
   `frostmoln_secret` the instance needs at boot, and nothing else. Scope it with
   `frostmoln_iam_policy`. This trades a long-lived secret in state for a small
   one; it does not eliminate the exposure, and there is no VM-side platform
-  identity that would.
+  identity that would. Note the key itself is minted by the platform, so it is in
+  state whichever way you deliver it.
 - **Reference, don't upload.** Where a resource takes an ID instead of the
   material — a listener attaching a certificate, for instance — the material
   never enters your state.
@@ -172,9 +183,11 @@ are never persisted to the plan or the state. They are the mechanism for keeping
 the third table above out of state; they cannot help the first, because a
 credential the platform mints once has to be stored somewhere for you to use it.
 
-One row of that table has a write-only form today — `frostmoln_secret`. Set
-`secret_value_wo` instead of
-`secret_value`, and pair it with `secret_value_wo_version`:
+Two attributes have a write-only form today: `frostmoln_secret.secret_value` and
+`frostmoln_instance.user_data`. Each is set instead of the legacy attribute and
+paired with a `_wo_version` companion.
+
+### `frostmoln_secret.secret_value_wo`
 
 ```terraform
 resource "frostmoln_secret" "api_token" {
@@ -245,6 +258,53 @@ is an in-place update. Two things to expect:
   value through `secret_value_wo` — and prune old state versions per your
   backend. Switching the attribute is not a substitute for rotation.
 
-The other attributes in the third table do not have a write-only form yet. If the
-exposure matters for one of them in your setup, raise it with support — it helps
-us order the work.
+### `frostmoln_instance.user_data_wo`
+
+The same pair, with one difference that matters: **changing
+`user_data_wo_version` replaces the instance.**
+
+```terraform
+resource "frostmoln_instance" "worker" {
+  name      = "worker-01"
+  flavor_id = data.frostmoln_flavor.medium.id
+  image_id  = data.frostmoln_image.ubuntu.id
+
+  user_data_wo         = file("${path.module}/cloud-init.yaml")
+  user_data_wo_version = "1"
+}
+```
+
+`user_data` and `user_data_wo` are mutually exclusive, and — unlike the secret
+pair — setting neither is fine: an instance does not need user data. Everything
+`user_data` documents about the document itself still applies, including writing
+it as plain text rather than `base64encode(...)`.
+
+Replacement is not a quirk of the write-only form. A guest reads user data once,
+at first boot, so `user_data` has always been create-only: the only way a new
+document takes effect is a new instance. The version companion inherits that,
+which means bumping it destroys the running instance — ephemeral disk contents
+gone, new addresses — exactly as editing `user_data` does today. Editing the
+document without touching the version changes nothing at all.
+
+~> **`user_data_hash` is null on this path.** The hash is computed from the
+configured `user_data`, and on the write-only path there is no configured value
+in state to hash — nor should there be: a digest of the document is a digest of
+whatever the document carries. `user_data_wo_version` is the change signal
+instead, which is also why it must not be derived from the document.
+
+`terraform import` leaves `user_data_wo_version` unset, so the first apply
+against an imported instance plans a **replacement** — set the version to
+whatever you want to call what the instance was launched with, or accept the
+rebuild. This is the same trap `user_data` and `instance_access` already have on
+an imported instance, and it is worth knowing before you import a production VM.
+
+Migrating an existing instance means removing `user_data` and adding the pair,
+and that plans a **replacement** — the same one any `user_data` edit plans. As
+with the secret, switching the attribute does not un-expose the old document: it
+remains in `terraform.tfstate.backup`, in prior remote-state versions and in
+archived plan files. Treat anything it embedded as disclosed and rotate it at its
+source.
+
+The other attributes in the tables above do not have a write-only form yet. If
+the exposure matters for one of them in your setup, raise it with support — it
+helps us order the work.

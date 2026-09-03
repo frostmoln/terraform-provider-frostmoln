@@ -15,6 +15,9 @@ resource "frostmoln_instance" "example" {
   # Install the Frostmoln in-guest agent at first boot for `fm ssh` terminal access.
   instance_access = true
 
+  # Prefer user_data_wo (see the second block below) when this document carries
+  # anything secret: user_data is written to Terraform state in plaintext.
+  #
   # Cloud-init as PLAIN TEXT. Base64 is accepted by the API, but do not use it here:
   # this instance also sets ssh_key_names, console_password and instance_access, so the
   # platform merges its own cloud-config into the document — and that merge dispatches
@@ -49,4 +52,31 @@ resource "frostmoln_instance" "example" {
     role        = "web"
     environment = "production"
   }
+}
+
+# Prefer the write-only form when the document carries anything you would not
+# want in the state file. user_data_wo never reaches the plan or state; it needs
+# Terraform 1.11 or later. Because Terraform cannot see a write-only value
+# change, bumping user_data_wo_version is what launches a replacement with the
+# current document — user data is only ever read at first boot, so this is the
+# same lifecycle a change to user_data has.
+resource "frostmoln_instance" "bootstrap" {
+  name      = "worker-01"
+  flavor_id = data.frostmoln_flavor.medium.id
+  image_id  = data.frostmoln_image.ubuntu.id
+  vpc_id    = frostmoln_vpc.example.id
+  subnet_id = frostmoln_subnet.example.id
+
+  # The document is rendered from a template with a secret injected into it.
+  # Neither var.bootstrap_token nor the rendered document reaches state — which
+  # is the point: where a value is CONSUMED decides whether it is stored, so
+  # passing a secret through a variable into user_data would store it in full.
+  user_data_wo = templatefile("${path.module}/cloud-init.yaml.tftpl", {
+    bootstrap_token = var.bootstrap_token
+  })
+
+  # Bumping this REPLACES the instance with one launched from the current
+  # document. Do not derive it from the document: it is not sensitive, so it is
+  # printed verbatim in plan output, CI logs and PR plan comments.
+  user_data_wo_version = "1"
 }

@@ -12,9 +12,12 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -1319,26 +1322,30 @@ func instanceTFValue(t *testing.T, tfType tftypes.Type, vals map[string]tftypes.
 
 	// Defaults for every attribute so callers only need to override what they care about.
 	defaults := map[string]tftypes.Value{
-		"id":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"name":             tftypes.NewValue(tftypes.String, "test-vm"),
-		"flavor_id":        tftypes.NewValue(tftypes.String, "flavor-small"),
-		"image_id":         tftypes.NewValue(tftypes.String, "img-ubuntu"),
-		"zone":             tftypes.NewValue(tftypes.String, nil),
-		"vpc_id":           tftypes.NewValue(tftypes.String, nil),
-		"subnet_id":        tftypes.NewValue(tftypes.String, nil),
-		"security_groups":  tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, nil),
-		"ssh_key_names":    tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, nil),
-		"user_data":        tftypes.NewValue(tftypes.String, nil),
-		"console_password": tftypes.NewValue(tftypes.String, nil),
-		"instance_access":  tftypes.NewValue(tftypes.Bool, nil),
-		"user_data_hash":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"tags":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"flavor_name":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"image_name":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"private_ip":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"public_ip":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"created_at":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"id":              tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":            tftypes.NewValue(tftypes.String, "test-vm"),
+		"flavor_id":       tftypes.NewValue(tftypes.String, "flavor-small"),
+		"image_id":        tftypes.NewValue(tftypes.String, "img-ubuntu"),
+		"zone":            tftypes.NewValue(tftypes.String, nil),
+		"vpc_id":          tftypes.NewValue(tftypes.String, nil),
+		"subnet_id":       tftypes.NewValue(tftypes.String, nil),
+		"security_groups": tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, nil),
+		"ssh_key_names":   tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, nil),
+		"user_data":       tftypes.NewValue(tftypes.String, nil),
+		// user_data_wo is null in the plan and in state by construction; a test
+		// that exercises the write-only path sets it on the CONFIG value only.
+		"user_data_wo":         tftypes.NewValue(tftypes.String, nil),
+		"user_data_wo_version": tftypes.NewValue(tftypes.String, nil),
+		"console_password":     tftypes.NewValue(tftypes.String, nil),
+		"instance_access":      tftypes.NewValue(tftypes.Bool, nil),
+		"user_data_hash":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"flavor_name":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"image_name":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"private_ip":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"public_ip":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 	}
 
 	for k, v := range vals {
@@ -1545,7 +1552,8 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 	})
 
 	createReq := resource.CreateRequest{
-		Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+		Plan:   tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: planVal},
 	}
 	createResp := &resource.CreateResponse{
 		State: tfsdk.State{Schema: schemaResp.Schema},
@@ -1654,7 +1662,8 @@ func TestInstanceResource_TFSDKCreateMinimal(t *testing.T) {
 	})
 
 	createReq := resource.CreateRequest{
-		Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+		Plan:   tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: planVal},
 	}
 	createResp := &resource.CreateResponse{
 		State: tfsdk.State{Schema: schemaResp.Schema},
@@ -1759,7 +1768,8 @@ func TestInstanceResource_TFSDKCreateZoneless(t *testing.T) {
 	})
 
 	createReq := resource.CreateRequest{
-		Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+		Plan:   tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: planVal},
 	}
 	createResp := &resource.CreateResponse{
 		State: tfsdk.State{Schema: schemaResp.Schema},
@@ -1836,7 +1846,8 @@ func TestInstanceResource_TFSDKCreateErrorState(t *testing.T) {
 	})
 
 	createReq := resource.CreateRequest{
-		Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+		Plan:   tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: planVal},
 	}
 	createResp := &resource.CreateResponse{
 		State: tfsdk.State{Schema: schemaResp.Schema},
@@ -3006,3 +3017,494 @@ func TestInstanceResource_GetPollDefaults(t *testing.T) {
 
 // Ensure fmt is used (for error state test diagnostics message validation).
 var _ = fmt.Sprintf
+
+// --- write-only user_data_wo ---
+
+// writeOnlyPlanValues is the plan/state shape of an instance created through
+// user_data_wo: the document itself is null everywhere, only the version
+// companion is stored.
+func writeOnlyPlanValues(version string) map[string]tftypes.Value {
+	return map[string]tftypes.Value{
+		"name":                 tftypes.NewValue(tftypes.String, "web-1"),
+		"user_data":            tftypes.NewValue(tftypes.String, nil),
+		"user_data_wo":         tftypes.NewValue(tftypes.String, nil),
+		"user_data_wo_version": tftypes.NewValue(tftypes.String, version),
+	}
+}
+
+// writeOnlyConfigValues is the same shape as Terraform sends it in the CONFIG,
+// where the write-only document is the one place it exists.
+func writeOnlyConfigValues(version, document string) map[string]tftypes.Value {
+	vals := writeOnlyPlanValues(version)
+	vals["user_data_wo"] = tftypes.NewValue(tftypes.String, document)
+	return vals
+}
+
+// writeOnlyCreateServer mocks the async create flow and captures the create
+// body. readBack is merged into the post-create instance read, so a test can
+// model an API that hands the document back.
+func writeOnlyCreateServer(t *testing.T, sent *apiCreateInstanceRequest, readBack map[string]any) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]any{"tenantId": "tenant-456"})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances":
+			if err := json.NewDecoder(r.Body).Decode(sent); err != nil {
+				t.Errorf("failed to decode create request: %v", err)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-inst-1", "status": "pending", "resourceType": "instance",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-inst-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-inst-1", "status": "completed",
+				"resourceType": "instance", "resourceId": "inst-new-1",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-new-1":
+			body := map[string]any{
+				"id": "inst-new-1", "name": "web-1", "status": "running",
+				"flavorId": "flavor-small", "imageId": "img-ubuntu",
+				"createdAt": "2025-06-01T12:00:00Z",
+			}
+			for k, v := range readBack {
+				body[k] = v
+			}
+			_ = json.NewEncoder(w).Encode(body)
+
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+// createWithWriteOnlyUserData runs Create with the write-only document present
+// only in the config, the way Terraform delivers it, and returns the resulting
+// state plus the body the provider sent.
+func createWithWriteOnlyUserData(t *testing.T, document string, readBack map[string]any) (InstanceModel, apiCreateInstanceRequest) {
+	t.Helper()
+
+	var sent apiCreateInstanceRequest
+	server := writeOnlyCreateServer(t, &sent, readBack)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key")
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+	r := &instanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+
+	ctx := context.Background()
+	schemaResp := getInstanceSchema(t)
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	createResp := &resource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	r.Create(ctx, resource.CreateRequest{
+		Plan:   tfsdk.Plan{Schema: schemaResp.Schema, Raw: instanceTFValue(t, tfType, writeOnlyPlanValues("1"))},
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: instanceTFValue(t, tfType, writeOnlyConfigValues("1", document))},
+	}, createResp)
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("Create failed: %v", createResp.Diagnostics.Errors())
+	}
+
+	var model InstanceModel
+	createResp.State.Get(ctx, &model)
+	return model, sent
+}
+
+func TestSchemaUserDataWriteOnlyAttributes(t *testing.T) {
+	attrs := getInstanceSchema(t).Schema.Attributes
+
+	legacy, ok := attrs["user_data"].(schema.StringAttribute)
+	if !ok {
+		t.Fatal("user_data is not a StringAttribute")
+	}
+	if !legacy.Optional || legacy.Required || legacy.Computed {
+		t.Error("user_data must stay Optional-only")
+	}
+
+	wo, ok := attrs["user_data_wo"].(schema.StringAttribute)
+	if !ok {
+		t.Fatal("user_data_wo missing from schema")
+	}
+	if !wo.WriteOnly {
+		t.Error("user_data_wo must be WriteOnly")
+	}
+	if wo.Computed {
+		t.Error("user_data_wo must not be Computed: the framework rejects WriteOnly+Computed")
+	}
+	if !wo.Sensitive {
+		t.Error("user_data_wo must be Sensitive")
+	}
+	if len(wo.PlanModifiers) != 0 {
+		// A write-only attribute is null in prior state, plan and final state, so
+		// a plan modifier here compares null against null and never fires. Putting
+		// RequiresReplace on it instead of on the version companion would silently
+		// make the document unchangeable.
+		t.Error("user_data_wo must have no plan modifiers: they can never fire on a write-only attribute")
+	}
+
+	ver, ok := attrs["user_data_wo_version"].(schema.StringAttribute)
+	if !ok {
+		t.Fatal("user_data_wo_version missing from schema")
+	}
+	if ver.WriteOnly {
+		t.Error("user_data_wo_version must be stored in state: it is the only change signal")
+	}
+	if !ver.Optional || ver.Computed {
+		t.Error("user_data_wo_version must be Optional-only")
+	}
+}
+
+// TestUserDataWOVersionForcesReplacement runs the attribute's own plan
+// modifiers: user_data is create-only, so its write-only companion has to be
+// too, and the replacement is the only thing that gets a new document to a
+// guest that reads user data once at first boot.
+func TestUserDataWOVersionForcesReplacement(t *testing.T) {
+	ctx := context.Background()
+	schemaResp := getInstanceSchema(t)
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+	ver := schemaResp.Schema.Attributes["user_data_wo_version"].(schema.StringAttribute)
+	if len(ver.PlanModifiers) == 0 {
+		t.Fatal("user_data_wo_version has no plan modifiers")
+	}
+
+	// Non-null State.Raw and Plan.Raw: RequiresReplace reads them to tell an
+	// update apart from a create (null state) or a destroy (null plan), and
+	// returns early on both.
+	req := planmodifier.StringRequest{
+		Path:        path.Root("user_data_wo_version"),
+		StateValue:  types.StringValue("1"),
+		PlanValue:   types.StringValue("2"),
+		ConfigValue: types.StringValue("2"),
+		State:       tfsdk.State{Schema: schemaResp.Schema, Raw: instanceTFValue(t, tfType, writeOnlyPlanValues("1"))},
+		Plan:        tfsdk.Plan{Schema: schemaResp.Schema, Raw: instanceTFValue(t, tfType, writeOnlyPlanValues("2"))},
+	}
+	var resp planmodifier.StringResponse
+	for _, m := range ver.PlanModifiers {
+		m.PlanModifyString(ctx, req, &resp)
+	}
+	if !resp.RequiresReplace {
+		t.Error("a changed user_data_wo_version must force the instance to be replaced")
+	}
+}
+
+// TestUserDataConflictsWithWriteOnly pins the mutual exclusion. user_data was
+// already Optional, so unlike frostmoln_secret there is no ExactlyOneOf here:
+// setting neither is a valid instance.
+func TestUserDataConflictsWithWriteOnly(t *testing.T) {
+	ctx := context.Background()
+	schemaResp := getInstanceSchema(t)
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	// Parameterised on the attribute: the version companion has its own
+	// AlsoRequires and it is the half whose failure is silent and destructive,
+	// so it must be executed too, not just declared.
+	runAttr := func(attrName string, vals map[string]tftypes.Value) diag.Diagnostics {
+		attr := schemaResp.Schema.Attributes[attrName].(schema.StringAttribute)
+		req := validator.StringRequest{
+			Config:         tfsdk.Config{Schema: schemaResp.Schema, Raw: instanceTFValue(t, tfType, vals)},
+			Path:           path.Root(attrName),
+			PathExpression: path.MatchRoot(attrName),
+		}
+		var cfgValue types.String
+		if d := req.Config.GetAttribute(ctx, path.Root(attrName), &cfgValue); d.HasError() {
+			t.Fatalf("reading %s from config: %v", attrName, d.Errors())
+		}
+		req.ConfigValue = cfgValue
+
+		var resp validator.StringResponse
+		for _, v := range attr.Validators {
+			v.ValidateString(ctx, req, &resp)
+		}
+		return resp.Diagnostics
+	}
+	run := func(vals map[string]tftypes.Value) diag.Diagnostics {
+		return runAttr("user_data_wo", vals)
+	}
+
+	both := writeOnlyConfigValues("1", "#cloud-config\n")
+	both["user_data"] = tftypes.NewValue(tftypes.String, "#cloud-config\n")
+	if !run(both).HasError() {
+		t.Error("expected an error when both user_data and user_data_wo are set")
+	}
+
+	noVersion := writeOnlyConfigValues("1", "#cloud-config\n")
+	noVersion["user_data_wo_version"] = tftypes.NewValue(tftypes.String, nil)
+	if !run(noVersion).HasError() {
+		t.Error("expected an error when user_data_wo is set without a version companion")
+	}
+
+	if d := run(writeOnlyConfigValues("1", "#cloud-config\n")); d.HasError() {
+		t.Errorf("write-only-only config should validate, got %v", d.Errors())
+	}
+
+	// The reverse direction, and the one that matters most: a version companion
+	// with no document. Without this guard the config validates clean, Create
+	// sends no userData, and bumping the version on an existing instance
+	// destroys it and boots the replacement with no cloud-init at all — on a
+	// green apply. It depends on the config still carrying the write-only value
+	// at validation time (the framework nulls write-only attributes in the
+	// planned and final state, never in the config), so it is worth executing
+	// rather than assuming.
+	noDocument := writeOnlyPlanValues("1") // user_data_wo null, version set
+	if !runAttr("user_data_wo_version", noDocument).HasError() {
+		t.Error("expected an error when user_data_wo_version is set without user_data_wo")
+	}
+	if d := runAttr("user_data_wo_version", writeOnlyConfigValues("1", "#cloud-config\n")); d.HasError() {
+		t.Errorf("a version alongside a document should validate, got %v", d.Errors())
+	}
+}
+
+func TestPreferWriteOnlyAttributeWarnsOnUserData(t *testing.T) {
+	ctx := context.Background()
+	schemaResp := getInstanceSchema(t)
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+	legacy := schemaResp.Schema.Attributes["user_data"].(schema.StringAttribute)
+
+	vals := map[string]tftypes.Value{"user_data": tftypes.NewValue(tftypes.String, "#cloud-config\n")}
+	req := validator.StringRequest{
+		ClientCapabilities: validator.ValidateSchemaClientCapabilities{WriteOnlyAttributesAllowed: true},
+		Config:             tfsdk.Config{Schema: schemaResp.Schema, Raw: instanceTFValue(t, tfType, vals)},
+		ConfigValue:        types.StringValue("#cloud-config\n"),
+		Path:               path.Root("user_data"),
+		PathExpression:     path.MatchRoot("user_data"),
+	}
+	var resp validator.StringResponse
+	for _, v := range legacy.Validators {
+		v.ValidateString(ctx, req, &resp)
+	}
+	if resp.Diagnostics.WarningsCount() == 0 {
+		t.Error("expected a warning nudging a write-only-capable client towards user_data_wo")
+	}
+	if resp.Diagnostics.HasError() {
+		t.Errorf("expected only a warning, got errors: %v", resp.Diagnostics.Errors())
+	}
+}
+
+// TestCreateWriteOnlyKeepsUserDataOutOfState is the point of the whole feature:
+// the document reaches the API and nothing derived from it lands in state.
+func TestCreateWriteOnlyKeepsUserDataOutOfState(t *testing.T) {
+	const document = "#cloud-config\nwrite_files:\n  - path: /etc/token\n    content: s3cret\n" // pragma: allowlist secret
+
+	model, sent := createWithWriteOnlyUserData(t, document, nil)
+
+	if sent.UserData != document {
+		t.Errorf("expected the write-only document to reach the API, got %q", sent.UserData)
+	}
+	if !model.UserDataWO.IsNull() {
+		t.Errorf("user_data_wo must be null in state, got %q", model.UserDataWO.ValueString())
+	}
+	if !model.UserData.IsNull() {
+		t.Errorf("user_data must stay null on the write-only path, got %q", model.UserData.ValueString())
+	}
+	if !model.UserDataHash.IsNull() {
+		// A hash of the document is a digest of exactly what the attribute exists
+		// to keep out of state, and there is no configured value to hash anyway.
+		t.Errorf("user_data_hash must be null on the write-only path, got %q", model.UserDataHash.ValueString())
+	}
+	if model.UserDataWOVer.ValueString() != "1" {
+		t.Errorf("expected user_data_wo_version 1 in state, got %q", model.UserDataWOVer)
+	}
+}
+
+// TestCreateWriteOnlyIgnoresUserDataFromTheAPI is the stage-1 lesson applied
+// here. compute's instance response carries no userData today (its domain type
+// has the field only on CreateInstanceRequest) and apiInstance has no field to
+// decode one into — but Create's post-create read is the path with no prior
+// state to restore from, so if either half ever changed the document would land
+// in state silently. Feed the API a response that does return it.
+func TestCreateWriteOnlyIgnoresUserDataFromTheAPI(t *testing.T) {
+	const document = "#cloud-config\npackages: [nginx]\n"
+
+	model, _ := createWithWriteOnlyUserData(t, document, map[string]any{"userData": document})
+
+	if !model.UserData.IsNull() {
+		t.Errorf("the API's userData was adopted into state: %q", model.UserData.ValueString())
+	}
+	if !model.UserDataWO.IsNull() {
+		t.Errorf("user_data_wo must stay null, got %q", model.UserDataWO.ValueString())
+	}
+}
+
+// TestReadPreservesWriteOnlyVersion pins that a refresh leaves the write-only
+// pair alone: the version companion survives and the document stays null even
+// when the API hands one back.
+func TestReadPreservesWriteOnlyVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]any{"tenantId": "tenant-456"})
+		case strings.HasSuffix(r.URL.Path, "/security-groups"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "inst-1", "name": "web-1", "status": "running",
+				"flavorId": "flavor-small", "imageId": "img-ubuntu",
+				"createdAt": "2025-06-01T12:00:00Z",
+				"userData":  "#cloud-config\nruncmd: [echo leaked]\n",
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key")
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+	r := &instanceResource{client: c}
+
+	ctx := context.Background()
+	schemaResp := getInstanceSchema(t)
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	stateVals := writeOnlyPlanValues("7")
+	stateVals["id"] = tftypes.NewValue(tftypes.String, "inst-1")
+	stateVals["user_data_hash"] = tftypes.NewValue(tftypes.String, nil)
+	stateVals["status"] = tftypes.NewValue(tftypes.String, "running")
+	stateVals["flavor_name"] = tftypes.NewValue(tftypes.String, nil)
+	stateVals["image_name"] = tftypes.NewValue(tftypes.String, nil)
+	stateVals["private_ip"] = tftypes.NewValue(tftypes.String, nil)
+	stateVals["public_ip"] = tftypes.NewValue(tftypes.String, nil)
+	stateVals["created_at"] = tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z")
+	state := tfsdk.State{Schema: schemaResp.Schema, Raw: instanceTFValue(t, tfType, stateVals)}
+
+	readResp := &resource.ReadResponse{State: state}
+	r.Read(ctx, resource.ReadRequest{State: state}, readResp)
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+
+	var model InstanceModel
+	readResp.State.Get(ctx, &model)
+	if !model.UserData.IsNull() {
+		t.Errorf("refresh put user data into state: %q", model.UserData.ValueString())
+	}
+	if !model.UserDataWO.IsNull() {
+		t.Errorf("user_data_wo must stay null across a refresh, got %q", model.UserDataWO.ValueString())
+	}
+	if !model.UserDataHash.IsNull() {
+		t.Errorf("user_data_hash must stay null across a refresh, got %q", model.UserDataHash.ValueString())
+	}
+	if model.UserDataWOVer.ValueString() != "7" {
+		t.Errorf("user_data_wo_version lost on refresh, got %q", model.UserDataWOVer)
+	}
+}
+
+// TestPriorInstanceStateWithoutTheNewAttributesDecodes pins the non-breaking
+// claim: a state file written before this change has neither new key, and both
+// decode as null against the current schema — so no schema Version bump and no
+// state upgrader are needed.
+func TestPriorInstanceStateWithoutTheNewAttributesDecodes(t *testing.T) {
+	ctx := context.Background()
+	schemaResp := getInstanceSchema(t)
+
+	priorJSON := []byte(`{
+		"id": "inst-1", "name": "web-1", "flavor_id": "flavor-small",
+		"image_id": "img-ubuntu", "zone": null, "vpc_id": null, "subnet_id": null,
+		"security_groups": null, "ssh_key_names": null,
+		"user_data": "#cloud-config\n", "user_data_hash": "abc123",
+		"console_password": null, "instance_access": null, "tags": null,
+		"status": "running", "flavor_name": "Small", "image_name": "Ubuntu",
+		"private_ip": "10.0.1.5", "public_ip": null,
+		"created_at": "2025-06-01T12:00:00Z"
+	}`)
+
+	typ := schemaResp.Schema.Type().TerraformType(ctx)
+	raw, err := tftypes.ValueFromJSONWithOpts(priorJSON, typ, tftypes.ValueFromJSONOpts{IgnoreUndefinedAttributes: true})
+	if err != nil {
+		t.Fatalf("pre-change state does not decode against the new schema: %v", err)
+	}
+
+	var model InstanceModel
+	state := tfsdk.State{Schema: schemaResp.Schema, Raw: raw}
+	if diags := state.Get(ctx, &model); diags.HasError() {
+		t.Fatalf("failed to read pre-change state: %v", diags.Errors())
+	}
+	if !model.UserDataWO.IsNull() || !model.UserDataWOVer.IsNull() {
+		t.Error("the new attributes must decode as null from a pre-change state file")
+	}
+	if model.UserData.ValueString() != "#cloud-config\n" {
+		t.Errorf("existing user_data lost in decode, got %q", model.UserData.ValueString())
+	}
+	if model.UserDataHash.ValueString() != "abc123" {
+		t.Errorf("existing user_data_hash lost in decode, got %q", model.UserDataHash.ValueString())
+	}
+}
+
+// TestUpdateWriteOnlyPreservesVersion covers the in-place update path on a
+// write-only instance. Update restores user_data and user_data_hash from state
+// and must leave user_data_wo_version alone — dropping it would make the next
+// plan read `null -> "1"` on a RequiresReplace attribute and propose destroying
+// a running VM after an unrelated rename.
+func TestUpdateWriteOnlyPreservesVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]any{"tenantId": "tenant-456"})
+		case strings.HasSuffix(r.URL.Path, "/security-groups"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "inst-1", "name": "renamed-vm", "status": "running",
+				"flavorId": "flavor-small", "imageId": "img-ubuntu",
+				"createdAt": "2025-06-01T12:00:00Z",
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key")
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+	r := &instanceResource{client: c}
+
+	ctx := context.Background()
+	schemaResp := getInstanceSchema(t)
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	settled := func(vals map[string]tftypes.Value) map[string]tftypes.Value {
+		vals["id"] = tftypes.NewValue(tftypes.String, "inst-1")
+		vals["user_data_hash"] = tftypes.NewValue(tftypes.String, nil)
+		vals["status"] = tftypes.NewValue(tftypes.String, "running")
+		vals["flavor_name"] = tftypes.NewValue(tftypes.String, nil)
+		vals["image_name"] = tftypes.NewValue(tftypes.String, nil)
+		vals["private_ip"] = tftypes.NewValue(tftypes.String, nil)
+		vals["public_ip"] = tftypes.NewValue(tftypes.String, nil)
+		vals["created_at"] = tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z")
+		return vals
+	}
+
+	// A rename only. The version is unchanged on both sides — it is
+	// RequiresReplace, so a changed one never reaches Update at all.
+	stateVals := settled(writeOnlyPlanValues("3"))
+	planVals := settled(writeOnlyPlanValues("3"))
+	planVals["name"] = tftypes.NewValue(tftypes.String, "renamed-vm")
+
+	updateResp := &resource.UpdateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	r.Update(ctx, resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: schemaResp.Schema, Raw: instanceTFValue(t, tfType, planVals)},
+		State: tfsdk.State{Schema: schemaResp.Schema, Raw: instanceTFValue(t, tfType, stateVals)},
+	}, updateResp)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("Update failed: %v", updateResp.Diagnostics.Errors())
+	}
+
+	var model InstanceModel
+	updateResp.State.Get(ctx, &model)
+	if model.UserDataWOVer.ValueString() != "3" {
+		t.Errorf("user_data_wo_version lost on an in-place update, got %q", model.UserDataWOVer)
+	}
+	if !model.UserData.IsNull() || !model.UserDataWO.IsNull() || !model.UserDataHash.IsNull() {
+		t.Error("the write-only path must keep user_data, user_data_wo and user_data_hash null through an update")
+	}
+}

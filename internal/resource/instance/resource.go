@@ -15,8 +15,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
@@ -152,7 +156,8 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Description: "User data to provide to the instance at launch — typically a cloud-init " +
 					"document. The API does not return it, so the value you configure is preserved from " +
 					"state on refresh and a SHA256 hash is stored alongside it for change detection. " +
-					docs.UserDataStateNote + "\n\n" +
+					docs.UserDataStateNote + " Prefer `user_data_wo`, which carries the same document but " +
+					"is never written to state; the two are mutually exclusive.\n\n" +
 					"**Write the document as plain text — `file(\"cloud-init.yaml\")`, not " +
 					"`base64encode(file(...))`.** Base64 is accepted by the API, but it must NOT be " +
 					"used on an instance that also sets `ssh_key_names`, `console_password` or " +
@@ -173,9 +178,59 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					"VPC, or the step fails on first boot with no internet and no name resolution.",
 				Optional:  true,
 				Sensitive: true,
+				Validators: []validator.String{
+					stringvalidator.PreferWriteOnlyAttribute(path.MatchRoot("user_data_wo")),
+				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"user_data_wo": schema.StringAttribute{
+				Description: "User data to provide to the instance at launch, as a [write-only argument]" +
+					"(https://developer.hashicorp.com/terraform/language/resources/ephemeral/write-only): the " +
+					"document reaches the provider on apply and is never written to the plan or to state, so " +
+					"anything embedded in it stays out of the state file. Requires Terraform 1.11 or later. " +
+					"Mutually exclusive with `user_data`, and `user_data_wo_version` is required whenever " +
+					"this one is set. Everything `user_data` says about the document itself applies here " +
+					"unchanged: write it as plain text rather than `base64encode(...)`, and give the VPC " +
+					"an outbound path if cloud-init reaches the network. " +
+					"Terraform cannot see a write-only value, so it cannot detect a change to this document " +
+					"in either direction: changing `user_data_wo_version` is what makes the next apply send " +
+					"the current document, and it does so by REPLACING the instance — matching `user_data`, " +
+					"which is create-only for the same reason. Editing the document without touching the " +
+					"version does nothing. `user_data_hash` is null on this path; there is no config value " +
+					"in state to hash, and a digest of the document does not belong in state either.",
+				Optional:  true,
+				Sensitive: true,
+				WriteOnly: true,
+				// No RequiresReplace here: a write-only attribute is null in prior
+				// state, plan and final state, so a plan modifier on it compares
+				// null against null and can never fire. The version companion is
+				// the attribute that carries the replacement.
+				Validators: []validator.String{
+					stringvalidator.ConflictsWith(path.MatchRoot("user_data")),
+					stringvalidator.AlsoRequires(path.MatchRoot("user_data_wo_version")),
+				},
+			},
+			"user_data_wo_version": schema.StringAttribute{
+				Description: "Change tracker for `user_data_wo`, required whenever that attribute is set. " +
+					"Changing this value REPLACES the instance and launches the replacement with the " +
+					"current `user_data_wo` — the same lifecycle a change to `user_data` has, since user " +
+					"data is only ever read at first boot. Leaving it alone leaves the running instance " +
+					"untouched however much the write-only document changes. Its content is arbitrary — a " +
+					"counter or a date is typical — and unlike the document it is stored in state, so do " +
+					"not derive it from the document or from anything in it: a digest of the document is " +
+					"a digest of whatever the document carries, and it is printed verbatim in `terraform " +
+					"plan` output. `terraform import` leaves this unset, so the first apply against an " +
+					"imported instance plans a REPLACEMENT — set it to match what the instance was " +
+					"launched with, or accept the rebuild.",
+				Optional: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+				Validators: []validator.String{
+					stringvalidator.AlsoRequires(path.MatchRoot("user_data_wo")),
 				},
 			},
 			"console_password": schema.StringAttribute{
@@ -200,8 +255,11 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				},
 			},
 			"user_data_hash": schema.StringAttribute{
-				Description: "SHA256 hash of the user data, used for change detection.",
-				Computed:    true,
+				Description: "SHA256 hash of the user data, used for change detection. Computed from the " +
+					"configured `user_data`, so it is null when the document is supplied through " +
+					"`user_data_wo` — there is no config value in state to hash, and `user_data_wo_version` " +
+					"is what carries change detection on that path.",
+				Computed: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -284,9 +342,19 @@ func (r *instanceResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
+	// A write-only attribute is null in the plan by construction; its value only
+	// ever reaches the provider through the config.
+	userDataWO := writeOnlyUserData(ctx, req.Config, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	apiReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+	if !userDataWO.IsNull() {
+		apiReq.UserData = userDataWO.ValueString()
 	}
 
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/instances"), apiReq)
@@ -330,7 +398,12 @@ func (r *instanceResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
-	// Store user_data hash before fromAPI (which doesn't touch user_data fields)
+	// Store user_data hash before fromAPI (which doesn't touch user_data fields).
+	// It stays null on the write-only path: the hash exists to detect a change to
+	// the configured document, and there is no configured document in state to
+	// hash — user_data_wo_version does that job instead. Hashing the write-only
+	// value would also put a digest of it in state, which is what the attribute
+	// exists to avoid.
 	if !plan.UserData.IsNull() && !plan.UserData.IsUnknown() {
 		plan.UserDataHash = types.StringValue(computeUserDataHash(plan.UserData.ValueString()))
 	} else {
@@ -682,6 +755,32 @@ func (r *instanceResource) Delete(ctx context.Context, req resource.DeleteReques
 	if err != nil {
 		resp.Diagnostics.AddError("Instance failed to delete", err.Error())
 	}
+}
+
+// writeOnlyUserData reads user_data_wo out of the configuration. It is read
+// straight from the config rather than through InstanceModel because a
+// write-only attribute is null everywhere else — prior state, plan and final
+// state. The config still carries the value at this point: the framework nulls
+// write-only attributes in the planned and final state, never in the config,
+// which is also what lets the attribute validators see it.
+//
+// An unknown value fails CLOSED. Config is fully resolved by apply, so this
+// should be unreachable — but the alternative spelling (adding !IsUnknown() to
+// the caller's guard) would drop the document, launch a VM with no cloud-init
+// and report success, which is the one outcome this resource must never
+// produce silently.
+func writeOnlyUserData(ctx context.Context, config tfsdk.Config, diags *diag.Diagnostics) types.String {
+	var v types.String
+	diags.Append(config.GetAttribute(ctx, path.Root("user_data_wo"), &v)...)
+	if v.IsUnknown() {
+		diags.AddError(
+			"user_data_wo Is Unknown At Apply",
+			"The write-only user_data_wo value was still unknown when the instance was created, so the "+
+				"document could not be sent. The instance was NOT created. This is a bug in the provider "+
+				"or in Terraform — please report it.",
+		)
+	}
+	return v
 }
 
 func (r *instanceResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {

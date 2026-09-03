@@ -24,6 +24,8 @@ type InstanceModel struct {
 	SecurityGroups  types.Set    `tfsdk:"security_groups"`
 	SSHKeyNames     types.Set    `tfsdk:"ssh_key_names"`
 	UserData        types.String `tfsdk:"user_data"`
+	UserDataWO      types.String `tfsdk:"user_data_wo"`
+	UserDataWOVer   types.String `tfsdk:"user_data_wo_version"`
 	ConsolePassword types.String `tfsdk:"console_password"`
 	InstanceAccess  types.Bool   `tfsdk:"instance_access"`
 	UserDataHash    types.String `tfsdk:"user_data_hash"`
@@ -314,4 +316,16 @@ func (m *InstanceModel) fromAPI(ctx context.Context, inst *apiInstance, diags *d
 	// user_data, user_data_hash, console_password and instance_access are NOT set
 	// here because the API doesn't return them. They are preserved from the
 	// existing state in the Read method.
+	//
+	// That the instance read carries no userData is what makes user_data_wo safe
+	// without a read-path guard: compute's Instance response type has no UserData
+	// field (compute/internal/domain/instance.go — it exists only on
+	// CreateInstanceRequest), and apiInstance above has no field to decode one
+	// into either. Both halves are load-bearing. Adding UserData to apiInstance
+	// would put the document into state on the create read-back, where nothing
+	// restores it from the (null) prior value the way Read does — the leak stage 1
+	// hit on frostmoln_secret. TestCreateWriteOnlyIgnoresUserDataFromTheAPI pins it.
+	//
+	// user_data_wo_version is likewise untouched: it is practitioner-set and lives
+	// only in state.
 }
