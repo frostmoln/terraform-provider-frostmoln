@@ -45,11 +45,25 @@ func (r *postgresInstanceResource) getPollInterval() time.Duration {
 	return 5 * time.Second
 }
 
+// getPollTimeout bounds the create/resize wait.
+//
+// Raised from 15 minutes on 2026-09-03, when the database-ha entitlement was removed
+// and ha_enabled = true became reachable for every tenant. An HA instance is a TWO-VM
+// provision with a replica seed between them, so it is not bounded by the same clock
+// as a single node. 30 minutes matches kubernetes_node_pool, the platform's other
+// multi-VM resource.
+//
+// This MOVES the cliff, it does not remove it. Create returns the wait error before
+// resp.State.Set runs, so a timeout still leaves a running, billable instance that
+// Terraform holds no id for, and the next apply re-creates it or 409s on the
+// duplicate name. Writing the id to state before waiting is the actual fix and is
+// tracked separately — it changes how a partially-created instance reads, which is
+// more than a timeout bump should carry.
 func (r *postgresInstanceResource) getPollTimeout() time.Duration {
 	if r.pollTimeout > 0 {
 		return r.pollTimeout
 	}
-	return 15 * time.Minute
+	return 30 * time.Minute
 }
 
 // pollRunning waits until the instance returns to "running" state.
