@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.45.0] - 2026-09-03
+
+### 🚀 Features
+
+- *(client)* Wait on the tenant event stream instead of a timer (#434)
+
+### 🐛 Bug Fixes
+
+- *(client)* The stream client kept no redirect policy (#436)
+
 ## [0.44.2] - 2026-09-03
 
 ### 🐛 Bug Fixes
