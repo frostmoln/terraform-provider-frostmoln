@@ -34,6 +34,7 @@ var (
 	_ resource.ResourceWithConfigure      = &attachmentResource{}
 	_ resource.ResourceWithImportState    = &attachmentResource{}
 	_ resource.ResourceWithValidateConfig = &attachmentResource{}
+	_ resource.ResourceWithModifyPlan     = &attachmentResource{}
 )
 
 const (
@@ -196,6 +197,63 @@ func (r *attachmentResource) ValidateConfig(ctx context.Context, req resource.Va
 			"A route id is unique only within its listener, so a route on its own does not name "+
 				"an attachment point. Set listener_id to the route's listener.")
 	}
+}
+
+// ModifyPlan decides between "unknown" and "unchanged" for effective_mode, and
+// BOTH answers are load-bearing.
+//
+// 🔴 WITHOUT THE UNKNOWN BRANCH, MOVING AN ATTACHMENT IS A GUARANTEED APPLY
+// FAILURE. effective_mode is Computed-only, so Terraform's proposed new state
+// carries its PRIOR value into the plan -- a promise about a value this
+// resource reads back off the policy on every attach. `policy_id` is the only
+// attribute here that changes without forcing a replacement, and re-pointing an
+// attachment at another policy is exactly what changes the mode in force, so
+// the promise is wrong precisely when it is made:
+//
+//	Provider produced inconsistent result after apply: .effective_mode:
+//	was cty.StringVal("detect"), but now cty.StringVal("block")
+//
+// 🔴 WITHOUT THE UNCHANGED BRANCH, AN UNRESOLVED MODE DIFFS FOREVER. Where the
+// server does not resolve an inheriting overlay, effective_mode is null, and
+// MarkComputedNilsAsUnknown turns a null computed attribute into "(known after
+// apply)" on every plan -- an update reported forever, with an empty re-PUT of
+// an attachment nobody asked to move behind it. An unchanged policy_id reaches
+// no Update, so nothing can contradict the value the refresh found.
+//
+// 🔴 AND THE CONDITION IS policy_id, NOT `inherit`. The cross-resource hazard
+// the POLICY resource has to handle -- the gateway policy flipping under an
+// unchanged overlay -- cannot produce an inconsistent result here, because an
+// attachment with an unchanged policy_id plans no apply at all.
+//
+// scope is deliberately left alone: attach REFUSES a policy whose scope does
+// not fit the level, so an update that would change it fails with that
+// diagnostic rather than an inconsistent result.
+func (r *attachmentResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// Create (no prior state) and destroy (no plan) have nothing to decide: the
+	// framework already marks every computed attribute unknown on a create.
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return
+	}
+	var plan, state AttachmentModel
+	if d := req.Plan.Get(ctx, &plan); d.HasError() {
+		return
+	}
+	if d := req.State.Get(ctx, &state); d.HasError() {
+		return
+	}
+	// A replacement is a NEW attachment, and pinning a computed value to the
+	// old one's state would describe the object being destroyed. Every
+	// attribute that forces one is checked, so adding another cannot quietly
+	// skip this.
+	if !plan.GatewayID.Equal(state.GatewayID) || !plan.ListenerID.Equal(state.ListenerID) ||
+		!plan.RouteID.Equal(state.RouteID) {
+		return
+	}
+	if !plan.PolicyID.Equal(state.PolicyID) {
+		resp.Plan.SetAttribute(ctx, path.Root("effective_mode"), types.StringUnknown())
+		return
+	}
+	resp.Plan.SetAttribute(ctx, path.Root("effective_mode"), state.EffectiveMode)
 }
 
 func (r *attachmentResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {

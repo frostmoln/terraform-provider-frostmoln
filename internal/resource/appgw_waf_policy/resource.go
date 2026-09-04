@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
@@ -550,9 +551,34 @@ func (r *policyResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 		return
 	}
 
-	if !plan.Mode.Equal(state.Mode) {
+	// 🔴 AN INHERITING POLICY DOES NOT DECIDE ITS OWN EFFECTIVE MODE, so the
+	// "did this policy's mode change" test cannot speak for it.
+	//
+	// The first case below asks whether THIS policy's `mode` moved. For an
+	// overlay at `inherit` the mode in force is decided by the GATEWAY policy,
+	// which is a different resource with no dependency edge to this one. One
+	// apply that flips the gateway policy detect -> block and touches any
+	// attribute of an attached overlay (fail_mode, say) leaves this policy's
+	// `mode` equal, so that test alone pins effective_mode to the
+	// refreshed-but-now-stale "detect"; the gateway policy applies first, this
+	// Update reads back "block", and Terraform fails the apply with
+	//   Provider produced inconsistent result after apply: .effective_mode:
+	//   was cty.StringVal("detect"), but now cty.StringVal("block")
+	//
+	// 🔴 AND `inherit` ALONE IS NOT THE CONDITION -- THE APPLY HAPPENING IS.
+	// Going unknown on every inheriting overlay would put "(known after apply)"
+	// on one that is not being changed at all, and that is the perpetual diff
+	// the pin exists to kill: the plan reports an update, the apply sends an
+	// empty PATCH, the read returns the same value, forever. A plan that
+	// changes no settable attribute reaches no Update, so nothing can
+	// contradict the pin there. Where an update IS coming, unknown costs one
+	// extra "(known after apply)" line on a resource already being changed.
+	switch {
+	case !plan.Mode.Equal(state.Mode):
 		resp.Plan.SetAttribute(ctx, path.Root("effective_mode"), types.StringUnknown())
-	} else {
+	case plan.Mode.ValueString() == modeInherit && planReachesUpdate(req):
+		resp.Plan.SetAttribute(ctx, path.Root("effective_mode"), types.StringUnknown())
+	default:
 		resp.Plan.SetAttribute(ctx, path.Root("effective_mode"), state.EffectiveMode)
 	}
 	for _, eff := range []struct {
@@ -572,6 +598,37 @@ func (r *policyResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 		}
 		resp.Plan.SetAttribute(ctx, path.Root(eff.attr), eff.known)
 	}
+}
+
+// planReachesUpdate reports whether this plan will actually call Update, which
+// is the only situation in which a pinned computed value can be contradicted.
+//
+// It compares every attribute a practitioner can set, taken off the SCHEMA
+// rather than from a hand-written list, so an attribute added later cannot
+// quietly fall outside it. Computed-only attributes are skipped deliberately:
+// they are the values this decides, and the framework has already turned the
+// null ones into unknowns, so including them would answer "changed" on every
+// plan and make the function useless.
+//
+// A raw value that will not decode answers "an update is coming": that costs an
+// unknown, where the other answer would be a pin nothing has checked.
+func planReachesUpdate(req resource.ModifyPlanRequest) bool {
+	var planAttrs, stateAttrs map[string]tftypes.Value
+	if err := req.Plan.Raw.As(&planAttrs); err != nil {
+		return true
+	}
+	if err := req.State.Raw.As(&stateAttrs); err != nil {
+		return true
+	}
+	for name, a := range req.Plan.Schema.GetAttributes() {
+		if !a.IsOptional() && !a.IsRequired() {
+			continue
+		}
+		if !planAttrs[name].Equal(stateAttrs[name]) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *policyResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {

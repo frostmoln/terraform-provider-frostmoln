@@ -389,3 +389,131 @@ func TestEffectiveModeIsNeverTheInheritToken(t *testing.T) {
 		t.Fatalf("an unresolved inherit rendered as %v, want null", v)
 	}
 }
+
+// TestAnInheritedEffectiveModeIsNotPinnedAcrossAnApply.
+//
+// 🔴 AN OVERLAY DOES NOT DECIDE THIS VALUE, AND PINNING IT FAILS THE APPLY.
+// `effective_mode` on an overlay at `inherit` is resolved from the GATEWAY
+// policy -- a different resource, with no dependency edge to this one. So a
+// single apply can flip the gateway policy detect -> block AND touch some
+// unrelated attribute of an attached overlay, and the overlay's own `mode`
+// never moves.
+//
+// A plan-time test that asks only "did THIS policy's mode change" answers "no"
+// there and pins effective_mode to the refreshed-but-now-stale "detect". The
+// gateway policy applies first, this Update reads back "block", and Terraform
+// ends the run with
+//
+//	Provider produced inconsistent result after apply: .effective_mode:
+//	was cty.StringVal("detect"), but now cty.StringVal("block")
+//
+// The first case re-enacts exactly that apply: it takes the planned value out
+// of ModifyPlan and the applied value out of Update, and holds the pair to
+// Terraform's own rule -- a computed attribute is either UNKNOWN in the plan or
+// equal to what the apply produced.
+func TestAnInheritedEffectiveModeIsNotPinnedAcrossAnApply(t *testing.T) {
+	r := NewResource().(resource.ResourceWithModifyPlan)
+
+	// The overlay as the refresh found it: authored `inherit`, and resolved by
+	// the gateway policy -- which was detecting when the refresh ran.
+	inheritingOverlay := func() PolicyModel {
+		var m PolicyModel
+		m.fromAPI(&apiPolicy{
+			ID: "wp-2", GatewayID: "agw-1", Name: "api", Scope: scopeOverlay,
+			Mode: modeInherit, EffectiveMode: modeDetect,
+			FailMode: "open", RequestBodyLimitBytes: 8192,
+		})
+		return m
+	}
+	// What the framework hands ModifyPlan: a Computed attribute that is null in
+	// the proposed new state has already been marked unknown. effective_mode is
+	// NOT null here -- the refresh resolved it -- so it arrives as the KNOWN
+	// "detect", and that known value is the whole subject of this test.
+	proposed := func(m PolicyModel) PolicyModel {
+		m.EffectiveAllowedMethods = types.ListUnknown(types.StringType)
+		m.EffectiveAllowedRequestContentTypes = types.ListUnknown(types.StringType)
+		return m
+	}
+	planned := func(t *testing.T, plan, state PolicyModel) PolicyModel {
+		t.Helper()
+		resp := resource.ModifyPlanResponse{Plan: planOf(t, plan)}
+		r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{
+			Plan: planOf(t, plan), State: stateOf(t, state),
+		}, &resp)
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("modify plan: %v", resp.Diagnostics.Errors())
+		}
+		var out PolicyModel
+		resp.Plan.Get(context.Background(), &out)
+		return out
+	}
+
+	t.Run("the gateway policy flips in the same apply that edits the overlay", func(t *testing.T) {
+		state := inheritingOverlay()
+		// The premise the whole case rests on: the value being pinned is a
+		// KNOWN "detect", and this policy's own mode is the unchanged
+		// `inherit`. Without both, a later unknown would prove nothing.
+		if state.EffectiveMode.ValueString() != modeDetect {
+			t.Fatalf("effective_mode in state = %v, want the resolved %q", state.EffectiveMode, modeDetect)
+		}
+		plan := proposed(state)
+		// The unrelated edit. THIS is what makes an apply happen at all; the
+		// overlay's `mode` stays `inherit` on both sides.
+		plan.FailMode = types.StringValue("closed")
+		if !plan.Mode.Equal(state.Mode) {
+			t.Fatalf("mode moved from %v to %v; this case is about an overlay whose own mode "+
+				"does NOT change", state.Mode, plan.Mode)
+		}
+
+		out := planned(t, plan, state)
+
+		// The apply. The gateway policy flipped earlier in the same run, so the
+		// server now resolves this overlay to "block".
+		_, updResp := captureUpdate(t, plan, state, apiPolicy{
+			ID: "wp-2", GatewayID: "agw-1", Name: "api", Scope: scopeOverlay,
+			Mode: modeInherit, EffectiveMode: modeBlock,
+			FailMode: "closed", RequestBodyLimitBytes: 8192,
+		})
+		if updResp.Diagnostics.HasError() {
+			t.Fatalf("update: %v", updResp.Diagnostics.Errors())
+		}
+		var applied PolicyModel
+		updResp.State.Get(context.Background(), &applied)
+		if applied.EffectiveMode.ValueString() != modeBlock {
+			t.Fatalf("the apply produced effective_mode = %v, want %q -- without the flipped "+
+				"gateway policy reaching state there is no inconsistency here to catch",
+				applied.EffectiveMode, modeBlock)
+		}
+
+		if !out.EffectiveMode.IsUnknown() && !out.EffectiveMode.Equal(applied.EffectiveMode) {
+			t.Fatalf("the plan promised effective_mode = %v and the apply produced %v, so "+
+				"Terraform ends the run with \"Provider produced inconsistent result after "+
+				"apply: .effective_mode: was cty.StringVal(%q), but now cty.StringVal(%q)\". "+
+				"This overlay's own mode did not move -- the GATEWAY policy's did -- so the "+
+				"plan must not pin a value this resource does not decide",
+				out.EffectiveMode, applied.EffectiveMode,
+				out.EffectiveMode.ValueString(), applied.EffectiveMode.ValueString())
+		}
+	})
+
+	// 🔴 A GUARD AGAINST THE OVER-BROAD FIX, NOT EVIDENCE ABOUT THE ONE ABOVE:
+	// this case passed before the inherit handling existed and passes after it,
+	// because both pin here. It fails only against "inherit means unknown,
+	// always" -- which reads reasonable and brings back the perpetual diff, on
+	// a resource with nothing to apply, forever. Nothing is being changed, so
+	// no Update runs and nothing can contradict the pin.
+	t.Run("an inheriting overlay with nothing to apply keeps the refreshed value", func(t *testing.T) {
+		state := inheritingOverlay()
+		plan := proposed(state)
+
+		out := planned(t, plan, state)
+		if out.EffectiveMode.IsUnknown() {
+			t.Fatalf("effective_mode is unknown on an overlay with nothing to change, so every "+
+				"plan reports an update and every apply sends an empty request; want the "+
+				"refreshed %v", state.EffectiveMode)
+		}
+		if !out.EffectiveMode.Equal(state.EffectiveMode) {
+			t.Errorf("effective_mode = %v, want the refreshed %v", out.EffectiveMode, state.EffectiveMode)
+		}
+	})
+}

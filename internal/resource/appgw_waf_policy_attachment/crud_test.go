@@ -557,3 +557,120 @@ func TestAttachmentEffectiveModeIsNullWhenItCannotBeResolved(t *testing.T) {
 			state2.EffectiveMode)
 	}
 }
+
+// TestTheAttachmentPlanIsHonestAboutTheEffectiveMode.
+//
+// 🔴 THE SAME CLASS OF DEFECT AS ON THE POLICY RESOURCE, THROUGH A DIFFERENT
+// DOOR. `effective_mode` here is Computed-only, and Terraform's proposed new
+// state keeps a Computed-only attribute's PRIOR value across an update -- so
+// with no ModifyPlan at all the plan silently promises the OLD policy's mode
+// while the apply re-reads the NEW one.
+//
+// `policy_id` is the only attribute on this resource that can be changed
+// without forcing a replacement, and re-pointing an attachment at another
+// policy is exactly what changes the mode in force. So the promise is wrong
+// precisely when it is made, and Terraform ends the run with
+//
+//	Provider produced inconsistent result after apply: .effective_mode:
+//	was cty.StringVal("detect"), but now cty.StringVal("block")
+//
+// The inherit-driven variant the policy resource has to handle -- the GATEWAY
+// policy flipping under an unchanged overlay -- is NOT reachable here: an
+// unchanged policy_id changes nothing, so Terraform plans no apply and no
+// promise is made. That is why the second case must keep the refreshed value
+// rather than going unknown on inherit alone.
+func TestTheAttachmentPlanIsHonestAboutTheEffectiveMode(t *testing.T) {
+	// proposedNewState is what Terraform core hands the provider for an update
+	// before any ModifyPlan runs: a Computed-only attribute keeps its PRIOR
+	// STATE value. That default is the hazard -- it is a promise about a value
+	// the server recomputes on every attach.
+	proposedNewState := func(plan, state AttachmentModel) AttachmentModel {
+		plan.ID = state.ID
+		plan.Scope = state.Scope
+		plan.EffectiveMode = state.EffectiveMode
+		return plan
+	}
+	planned := func(t *testing.T, plan, state AttachmentModel) AttachmentModel {
+		t.Helper()
+		out := proposedNewState(plan, state)
+		mp, ok := NewResource().(resource.ResourceWithModifyPlan)
+		if !ok {
+			return out
+		}
+		resp := resource.ModifyPlanResponse{Plan: planOf(t, out)}
+		mp.ModifyPlan(context.Background(), resource.ModifyPlanRequest{
+			Plan: planOf(t, out), State: stateOf(t, state),
+		}, &resp)
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("modify plan: %v", resp.Diagnostics.Errors())
+		}
+		resp.Plan.Get(context.Background(), &out)
+		return out
+	}
+	// A settled attachment on a listener, carrying an overlay policy that the
+	// gateway resolved to "detect" when the refresh ran.
+	settled := func() AttachmentModel {
+		m := model("wp-ov")
+		m.ListenerID = types.StringValue("l-1")
+		m.ID = types.StringValue("agw-1/l-1")
+		m.Scope = types.StringValue(scopeOverlay)
+		m.EffectiveMode = types.StringValue("detect")
+		return m
+	}
+
+	t.Run("re-pointing the attachment at a policy in another mode", func(t *testing.T) {
+		state := settled()
+		plan := state
+		plan.PolicyID = types.StringValue("wp-ov2") // the only non-replacing edit there is
+
+		out := planned(t, plan, state)
+
+		// The apply: the newly named policy inherits, and the gateway resolves
+		// it to "block".
+		next := overlayPolicy()
+		next.ID = "wp-ov2"
+		c, _ := api(t, next, next.ID)
+		ar := &attachmentResource{client: c}
+		resp := resource.UpdateResponse{State: stateOf(t, state)}
+		ar.Update(context.Background(), resource.UpdateRequest{
+			Plan: planOf(t, plan), State: stateOf(t, state),
+		}, &resp)
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("update: %v", resp.Diagnostics.Errors())
+		}
+		var applied AttachmentModel
+		resp.State.Get(context.Background(), &applied)
+		if applied.EffectiveMode.ValueString() != "block" {
+			t.Fatalf("the apply produced effective_mode = %v, want block -- without that this "+
+				"test cannot see the inconsistency it exists for", applied.EffectiveMode)
+		}
+
+		if !out.EffectiveMode.IsUnknown() && !out.EffectiveMode.Equal(applied.EffectiveMode) {
+			t.Fatalf("the plan promised effective_mode = %v and the apply produced %v, so "+
+				"Terraform ends the run with \"Provider produced inconsistent result after "+
+				"apply: .effective_mode: was cty.StringVal(%q), but now cty.StringVal(%q)\". "+
+				"A different policy is a different mode, so the plan cannot carry the old "+
+				"one's forward",
+				out.EffectiveMode, applied.EffectiveMode,
+				out.EffectiveMode.ValueString(), applied.EffectiveMode.ValueString())
+		}
+	})
+
+	// 🔴 A GUARD AGAINST THE OVER-BROAD FIX, NOT EVIDENCE ABOUT THE ONE ABOVE:
+	// this case passes with no ModifyPlan at all, and it fails only against one
+	// that marks effective_mode unknown unconditionally. That version reads
+	// reasonable and costs a perpetual diff: a plan that changes nothing would
+	// report an update forever, and every apply would re-PUT an attachment
+	// nobody asked to move.
+	t.Run("an attachment with nothing to apply keeps the refreshed value", func(t *testing.T) {
+		state := settled()
+		out := planned(t, state, state)
+		if out.EffectiveMode.IsUnknown() {
+			t.Fatalf("effective_mode is unknown on an attachment with nothing to change, so "+
+				"every plan reports an update; want the refreshed %v", state.EffectiveMode)
+		}
+		if !out.EffectiveMode.Equal(state.EffectiveMode) {
+			t.Errorf("effective_mode = %v, want the refreshed %v", out.EffectiveMode, state.EffectiveMode)
+		}
+	})
+}

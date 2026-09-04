@@ -90,6 +90,14 @@ func TestTheAllowListTriStateReachesTheWire(t *testing.T) {
 		// must be ABSENT.
 		wantBody string
 	}{
+		// 🔴 THE NEXT TWO ROWS ARE FORWARD GUARDS, NOT PROOF OF THIS CHANGE.
+		// Both assert that a field is ABSENT, and it was absent before the
+		// allow-lists existed at all -- an empty PATCH body satisfies them. They
+		// earn their place by pinning the "leave it alone" leg of the tri-state
+		// against a future Update that restates every field it knows, which is
+		// how an unrelated edit starts re-asserting a narrowing. The three rows
+		// below them are the regression: each one fails against a client that
+		// cannot spell all three wire states.
 		{
 			name:    "unchanged sends nothing, so an unrelated edit never restates it",
 			planned: strList("GET", "HEAD"), stored: strList("GET", "HEAD"),
@@ -256,6 +264,14 @@ func TestCreateOmitsAnAbsentOverrideAndSendsAPresentOne(t *testing.T) {
 // an override pins its tenant out of the next widening -- and the plan that
 // does it looks like a no-op. The effective fields must never appear in a
 // request body, on either door.
+//
+// 🔴 A FORWARD GUARD, AND NOT EVIDENCE ABOUT TODAY'S CODE. Neither request
+// struct HAS an effective field -- apiCreatePolicyRequest and
+// apiUpdatePolicyRequest carry none -- so these keys are structurally unable to
+// appear and this test passed before the round-trip rule was ever written down.
+// What it is worth is the day somebody adds one "so the server can see what we
+// think it resolved to": the round-trip becomes expressible, and this fails at
+// that commit rather than in a tenant's next widening.
 func TestAnEffectiveListIsNeverWritten(t *testing.T) {
 	forbidden := []string{
 		"effectiveAllowedMethods", "effectiveAllowedRequestContentTypes", "effectiveMode",
@@ -263,7 +279,12 @@ func TestAnEffectiveListIsNeverWritten(t *testing.T) {
 
 	var createBody map[string]json.RawMessage
 	c, _ := serve(t, func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&createBody)
+		// A swallowed decode error would leave createBody nil, and every
+		// "was this key sent" below reads false on a nil map -- so the whole
+		// negative assertion would pass having checked nothing.
+		if err := json.NewDecoder(r.Body).Decode(&createBody); err != nil {
+			t.Errorf("decode POST body: %v", err)
+		}
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(wpFixture())
 	})
