@@ -65,7 +65,16 @@ func (r *securityGroupRuleResource) Schema(_ context.Context, _ resource.SchemaR
 			"`ether_type` attribute, so the IPv4 and IPv6 defaults are indistinguishable in " +
 			"configuration — only one of the two could ever be expressed.\n\n" +
 			"Every attribute forces replacement: rules are immutable, and a change destroys and " +
-			"re-creates the rule rather than updating it.",
+			"re-creates the rule rather than updating it." +
+			"\n\n**A rule on a security group Frostmoln provisioned for a managed service cannot " +
+			"be managed here.** The parent groups for a managed database, cache, webserver, " +
+			"messaging instance, Kubernetes cluster or Application Gateway are visible in your " +
+			"account, so their rules can be declared \u2014 but creating or deleting a rule on one is " +
+			"refused with `409` / `resource_in_use`, permanently, and no attribute predicts it. " +
+			"Every attribute here forces replacement, so any change to a declared rule is a " +
+			"destroy-and-create and fails on both halves. The apply keeps failing until the " +
+			"block is removed (and `terraform state rm` used for anything already imported). " +
+			"Point these resources only at groups you created.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the rule.",

@@ -347,10 +347,20 @@ func (e *APIError) Error() string {
 // `terraform destroy` print success against a platform-owned load balancer.
 //
 //   - network_ownership_guard.go IS TOO, and it renders FLAT — the one
-//     provisioning producer on this predicate's path that does. subnet and
-//     public_ip reach it from an IsNotFound call site (it is mounted on the
-//     customer DELETE for subnets, public IPs and routers; no resource here
-//     deletes a router).
+//     provisioning producer on this predicate's path that does. subnet,
+//     public_ip, security_group and security_group_rule reach it from an
+//     IsNotFound call site (it is mounted on the customer DELETE for subnets,
+//     public IPs, routers and security groups, and on both security-group RULE
+//     writes; no resource here deletes a router).
+//
+//     THE SECURITY-GROUP ARM ANSWERS 409 AS WELL, AND THAT ONE IS NESTED — it is
+//     NOT on this predicate's path and must not be brought onto it. A group the
+//     platform provisioned for a managed offer is VISIBLE in the customer's own
+//     list, so the guard gives it a real answer instead of folding it into "not
+//     found"; nested is what stops `terraform destroy` reading that refusal as
+//     "gone" and dropping a live, still-billing group from state. Only the
+//     already-gone / not-yours / not-a-customer-resource set is flat, which is
+//     the same rule the subnet and public-IP arms follow.
 //
 // THE CONTRAST WITH THE LB GUARD IS THE WHOLE LESSON, so read them together.
 // That guard falls THROUGH on NotFound, so nothing but a platform-owned load

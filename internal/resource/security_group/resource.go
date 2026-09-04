@@ -69,7 +69,16 @@ func (r *securityGroupResource) Schema(_ context.Context, _ resource.SchemaReque
 			"makes the next apply try to RE-CREATE the rule, and the platform refuses a rule with " +
 			"no remote. `frostmoln_security_group_rule` also has no `ether_type` attribute, so the " +
 			"IPv4 and IPv6 defaults are indistinguishable in configuration — only one of the two " +
-			"could ever be expressed.",
+			"could ever be expressed." +
+			"\n\n**A security group Frostmoln provisioned for a managed service cannot be managed " +
+			"here.** Groups created for a managed database, cache, webserver, messaging instance, " +
+			"Kubernetes cluster or Application Gateway are visible in your account and returned by " +
+			"the API, so they can be imported \u2014 but every write against one is refused with " +
+			"`409` / `resource_in_use`, permanently. Reads still work, so an imported group " +
+			"that matches its configuration plans empty and applies clean; what fails, every " +
+			"time, is `terraform destroy` and any `apply` that plans a change to it. There is " +
+			"no attribute that predicts this and no force flag, so the only exit is " +
+			"`terraform state rm`. Do not import one.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the security group.",
