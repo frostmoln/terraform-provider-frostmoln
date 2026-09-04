@@ -64,6 +64,12 @@ type PublicationModel struct {
 	Version     types.Int64  `tfsdk:"version"`
 	ContentHash types.String `tfsdk:"content_hash"`
 
+	// EffectiveMode is what the ENFORCED version is doing: its `mode` with
+	// `inherit` resolved against the gateway policy. Server-computed, and
+	// stamped on exactly one endpoint -- the active version -- so it is null
+	// for anything this resource cannot read there.
+	EffectiveMode types.String `tfsdk:"effective_mode"`
+
 	// PlatformOptOuts names the platform protections this published ruleset
 	// turns off. Computed, because they are authored outside Terraform.
 	PlatformOptOuts types.List `tfsdk:"platform_opt_outs"`
@@ -151,7 +157,12 @@ type apiVersion struct {
 	Version     int    `json:"version"`
 	State       string `json:"state"`
 	ContentHash string `json:"contentHash"`
-	PublishedAt string `json:"publishedAt,omitempty"`
+	// EffectiveMode is present ONLY on the version returned as currently
+	// active. A historical version does not carry it, and neither does the
+	// version a publish returns -- the server resolves it on the active-version
+	// endpoint alone, so it arrives on the read-back rather than on the write.
+	EffectiveMode string `json:"effectiveMode,omitempty"`
+	PublishedAt   string `json:"publishedAt,omitempty"`
 }
 
 type publicationResource struct {
@@ -255,6 +266,18 @@ func (r *publicationResource) Schema(_ context.Context, _ resource.SchemaRequest
 				Description: "The canonical hash of the rules, exclusions and settings that were published.",
 				Computed:    true,
 			},
+			"effective_mode": schema.StringAttribute{
+				Description: "What the **enforced** version is doing: its mode with `inherit` " +
+					"resolved against the gateway policy. Server-computed and read-only.\n\n" +
+					"This is the honest answer to \"is the firewall blocking right now\". A " +
+					"policy's own settings are AUTHORED and take effect only once published, and " +
+					"a version's own mode can be the word `inherit`, which answers nothing on its " +
+					"own — so a check written against either can report a gateway as not blocking " +
+					"while requests are being refused.\n\n" +
+					"It is `null` when the mode in force cannot be determined. Use `try()` or " +
+					"`coalesce()` if your configuration must tolerate that.",
+				Computed: true,
+			},
 			"dry_run_id": schema.StringAttribute{
 				Description: "The dry-run that gated this publication.",
 				Computed:    true,
@@ -322,6 +345,20 @@ func (r *publicationResource) ModifyPlan(ctx context.Context, req resource.Modif
 	if diags := req.Plan.Get(ctx, &plan); diags.HasError() {
 		return
 	}
+	// 🔴 PIN effective_mode BEFORE ANY EARLY RETURN, or a resource with nothing
+	// to publish diffs on every plan. It is Computed-only and legitimately NULL
+	// when the server could not resolve the mode in force, and the framework
+	// turns a null computed value into "(known after apply)" -- which schedules
+	// an update, which reads the same null back, forever. Pinning it to what
+	// the refresh found is honest precisely because the refresh has already
+	// run; the publishing branch below overrides it with unknown, which is the
+	// only case where this apply can change it.
+	if !req.State.Raw.IsNull() {
+		var enforced types.String
+		if d := req.State.GetAttribute(ctx, path.Root("effective_mode"), &enforced); !d.HasError() {
+			resp.Plan.SetAttribute(ctx, path.Root("effective_mode"), enforced)
+		}
+	}
 	// The client is nil during the framework's early plan walks.
 	if r.client == nil || plan.GatewayID.IsUnknown() || plan.PolicyID.IsUnknown() {
 		return
@@ -351,6 +388,11 @@ func (r *publicationResource) ModifyPlan(ctx context.Context, req resource.Modif
 	resp.Plan.SetAttribute(ctx, path.Root("dry_run_newly_allowed"), types.Int64Unknown())
 	resp.Plan.SetAttribute(ctx, path.Root("dry_run_requests_sampled"), types.Int64Unknown())
 	resp.Plan.SetAttribute(ctx, path.Root("platform_opt_outs"), types.ListUnknown(types.StringType))
+	// Publishing a different ruleset can change what the enforced version does,
+	// so the pin above must not survive into this branch: a known planned value
+	// that the apply then contradicts is "Provider produced inconsistent result
+	// after apply", an error rather than a warning.
+	resp.Plan.SetAttribute(ctx, path.Root("effective_mode"), types.StringUnknown())
 
 	// 🔴 NAME THE PLATFORM PROTECTIONS THIS APPLY WOULD SWITCH OFF.
 	//
@@ -566,13 +608,19 @@ func (r *publicationResource) publish(ctx context.Context, m *PublicationModel, 
 // A failure here is NOT a failed publish -- the version is live either way --
 // so it warns rather than erroring, and leaves the attribute empty.
 func (r *publicationResource) recordPublishedOptOuts(ctx context.Context, base string, m *PublicationModel, diags diagnosticsSink) {
-	_, optOuts, err := r.activeVersion(ctx, base)
+	active, optOuts, err := r.activeVersion(ctx, base)
 	if err != nil {
 		diags.AddWarning("Could Not Read The Published Ruleset's Platform Opt-Outs",
 			fmt.Sprintf("The version was published. Reading back which platform-owned rules it "+
 				"turns off failed: %s", err.Error()))
 		m.PlatformOptOuts = types.ListValueMust(types.StringType, []attr.Value{})
 		return
+	}
+	// The publish response does not carry effectiveMode -- only the
+	// active-version endpoint resolves it -- so this read-back, which happens
+	// anyway, is where "what the version now enforcing is doing" comes from.
+	if active != nil && active.EffectiveMode != "" {
+		m.EffectiveMode = types.StringValue(active.EffectiveMode)
 	}
 	if len(optOuts) > 0 {
 		diags.AddWarning("The Published Ruleset Turns Platform Protections OFF",
@@ -602,6 +650,15 @@ func (m *PublicationModel) applyVersion(v *apiVersion) {
 	m.ContentHash = types.StringValue(v.ContentHash)
 	m.PublishedAt = types.StringValue(v.PublishedAt)
 	m.ID = types.StringValue(fmt.Sprintf("%s/%d", m.PolicyID.ValueString(), v.Version))
+	// NULL when the server did not resolve it, never a guess: the field is
+	// stamped on the active-version endpoint alone, so a publish response
+	// carries none and the value arrives on the read-back below. An empty
+	// string would sit in an attribute documented as "what is in force" and be
+	// compared against "block" by somebody.
+	m.EffectiveMode = types.StringNull()
+	if v.EffectiveMode != "" {
+		m.EffectiveMode = types.StringValue(v.EffectiveMode)
+	}
 }
 
 // runDryRun starts a replay and waits for a verdict.

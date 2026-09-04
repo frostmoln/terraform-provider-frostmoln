@@ -662,3 +662,128 @@ func TestPlatformOptOutsAreEmptyNotNullWhenNothingIsDisabled(t *testing.T) {
 		t.Fatalf("expected an empty list, got %v", v)
 	}
 }
+
+// TestTheEnforcedVersionReportsWhatItIsDoing.
+//
+// 🔴 THE VERSION'S OWN `mode` CAN SAY "inherit", AND CLIENTS RENDER A VERSION'S
+// MODE AS "WHAT IS HAPPENING". This resource is the only place in the provider
+// that names the version the gateway is ENFORCING, so it is the only place that
+// can answer "is the WAF blocking right now" without the reader composing the
+// answer from a policy's authored settings and an attachment chain.
+//
+// The server resolves it on exactly ONE endpoint -- /versions/active, which is
+// the endpoint this resource already reads -- and deliberately leaves it empty
+// on a historical version, because "what would this do now" is a question about
+// the active one.
+func TestTheEnforcedVersionReportsWhatItIsDoing(t *testing.T) {
+	var sr resource.SchemaResponse
+	NewResource().Schema(context.Background(), resource.SchemaRequest{}, &sr)
+	attr, ok := sr.Schema.Attributes["effective_mode"]
+	if !ok {
+		t.Fatal("the publication has no effective_mode, so nothing reports what the ENFORCED " +
+			"version is actually doing")
+	}
+	if !attr.IsComputed() || attr.IsOptional() || attr.IsRequired() {
+		t.Fatalf("effective_mode must be Computed-only, got computed=%v optional=%v required=%v",
+			attr.IsComputed(), attr.IsOptional(), attr.IsRequired())
+	}
+
+	read := func(t *testing.T, effectiveMode string) PublicationModel {
+		t.Helper()
+		c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != pubBase+"/versions/active" {
+				t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"version": apiVersion{
+					Version: 4, State: "active", ContentHash: "abc",
+					EffectiveMode: effectiveMode,
+				},
+				"rules": []any{},
+			})
+		})
+		r := &publicationResource{client: c}
+		state := pubModel(t, types.Int64Value(0))
+		resp := resource.ReadResponse{State: stateOf(t, state)}
+		r.Read(context.Background(), resource.ReadRequest{State: stateOf(t, state)}, &resp)
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("read: %v", resp.Diagnostics.Errors())
+		}
+		var out PublicationModel
+		resp.State.Get(context.Background(), &out)
+		return out
+	}
+
+	t.Run("a blocking version says block", func(t *testing.T) {
+		out := read(t, "block")
+		if out.EffectiveMode.ValueString() != "block" {
+			t.Fatalf("effective_mode = %v, want block -- the gateway is refusing requests with "+
+				"this version", out.EffectiveMode)
+		}
+	})
+
+	// 🔴 ABSENT MEANS UNRESOLVED, NOT "detect". The server omits the field when
+	// the attachment chain cannot be resolved, and an empty string or a guessed
+	// mode would answer a question it did not answer -- the same rule the
+	// policy's own effective_mode already follows.
+	t.Run("an unresolved version is null, never a guess", func(t *testing.T) {
+		out := read(t, "")
+		if !out.EffectiveMode.IsNull() {
+			t.Fatalf("effective_mode = %q, want null when the server did not resolve it",
+				out.EffectiveMode.ValueString())
+		}
+	})
+}
+
+// TestAnUnchangedPublicationPlansNoChange.
+//
+// 🔴 A PLAN THAT SHOWS A DIFF WHEN NOTHING CHANGED IS A BUG, and a Computed-only
+// attribute that is legitimately NULL is how one appears: the framework turns a
+// null computed value into "(known after apply)" on every plan, which schedules
+// an update, which reads the same null back, forever. effective_mode is null
+// whenever the attachment chain cannot be resolved, so the plan must pin it to
+// what the refresh found rather than leave it unknown.
+func TestAnUnchangedPublicationPlansNoChange(t *testing.T) {
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != pubBase+"/draft" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		// Nothing to publish: the draft matches what is enforced.
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"version": map[string]any{
+				"version": 4, "contentHash": "abc", "hasUnpublishedChanges": false,
+			},
+			"rules": []any{},
+		})
+	})
+	r := &publicationResource{client: c}
+
+	state := pubModel(t, types.Int64Value(0))
+	state.Version = types.Int64Value(4)
+	state.ContentHash = types.StringValue("abc")
+	state.PlatformOptOuts = types.ListValueMust(types.StringType, nil)
+	// The chain could not be resolved, so the refresh recorded null.
+	state.EffectiveMode = types.StringNull()
+
+	planned := state
+	// What the framework hands ModifyPlan: a null computed attribute already
+	// marked "known after apply".
+	planned.EffectiveMode = types.StringUnknown()
+
+	resp := resource.ModifyPlanResponse{Plan: planOf(t, planned)}
+	r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{
+		Plan: planOf(t, planned), State: stateOf(t, state),
+	}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("modify plan: %v", resp.Diagnostics.Errors())
+	}
+	var out PublicationModel
+	resp.Plan.Get(context.Background(), &out)
+	if out.EffectiveMode.IsUnknown() {
+		t.Fatal("effective_mode is still unknown with nothing to publish, so every plan shows " +
+			"this resource changing and every apply re-publishes nothing")
+	}
+	if !out.EffectiveMode.IsNull() {
+		t.Fatalf("effective_mode = %v, want the null the refresh recorded", out.EffectiveMode)
+	}
+}

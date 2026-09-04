@@ -33,3 +33,17 @@ resource "frostmoln_appgw_waf_policy_publication" "main" {
 output "waf_newly_blocked" {
   value = frostmoln_appgw_waf_policy_publication.main.dry_run_newly_blocked
 }
+
+# What the ENFORCED version is actually doing, with "inherit" resolved.
+#
+# This is the honest answer to "is the firewall blocking right now". A policy's
+# own settings are AUTHORED and take effect only once published, and a version's
+# mode can be the word "inherit", which answers nothing on its own -- so a check
+# written against either can report a gateway as not blocking while requests are
+# being refused.
+#
+# It is null when the mode in force cannot be determined, so read it through
+# try().
+output "waf_enforced_mode" {
+  value = try(frostmoln_appgw_waf_policy_publication.main.effective_mode, "unknown")
+}

@@ -33,6 +33,11 @@ type FlavorModel struct {
 	MaxRoutes    types.Int64 `tfsdk:"max_routes"`
 	MaxBackends  types.Int64 `tfsdk:"max_backends"`
 	MaxWafRules  types.Int64 `tfsdk:"max_waf_rules"`
+	// A SEPARATE budget from MaxWafRules, counted across all of the gateway's
+	// WAF policies. Exceeding either is a refusal, not a throttle -- and it is
+	// the one a false-positive exclusion spends, so a catalog that publishes
+	// only the rule cap hides the limit routine tuning actually reaches.
+	MaxWafExclusions types.Int64 `tfsdk:"max_waf_exclusions"`
 
 	MaxRPS         types.Int64 `tfsdk:"max_requests_per_second"`
 	MaxConnections types.Int64 `tfsdk:"max_concurrent_connections"`
@@ -46,10 +51,11 @@ type apiFlavor struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 
-	MaxListeners int `json:"maxListeners"`
-	MaxRoutes    int `json:"maxRoutes"`
-	MaxBackends  int `json:"maxBackends"`
-	MaxWafRules  int `json:"maxWafRules"`
+	MaxListeners     int `json:"maxListeners"`
+	MaxRoutes        int `json:"maxRoutes"`
+	MaxBackends      int `json:"maxBackends"`
+	MaxWafRules      int `json:"maxWafRules"`
+	MaxWafExclusions int `json:"maxWafExclusions"`
 
 	MaxRPS         int `json:"maxRequestsPerSecond"`
 	MaxConnections int `json:"maxConcurrentConnections"`
@@ -79,9 +85,11 @@ func (d *flavorsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 			"A size is described by what the appliance carries, not by the virtual machine it runs " +
 			"on: `vcpus`, `ram_mb` and `disk_gb` are no longer exposed, because they describe the " +
 			"substrate rather than the service.\n\n" +
-			"`max_listeners`, `max_routes`, `max_backends` and `max_waf_rules` are **structural " +
-			"caps, not guidance**: exceeding one is refused. Size for the ruleset you intend to " +
-			"write, not only for the traffic.",
+			"`max_listeners`, `max_routes`, `max_backends`, `max_waf_rules` and " +
+			"`max_waf_exclusions` are **structural caps, not guidance**: exceeding one is refused. " +
+			"Size for the ruleset you intend to write, not only for the traffic.\n\n" +
+			"The two WAF caps are **separate budgets**, each counted across all of a gateway's " +
+			"policies — so tuning away a false positive never costs you room for a rule.",
 		Attributes: map[string]schema.Attribute{
 			"include_inactive": schema.BoolAttribute{
 				Description: "Deprecated and inert. The customer catalog endpoint returns only " +
@@ -101,6 +109,13 @@ func (d *flavorsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 						"max_routes":    schema.Int64Attribute{Description: "Maximum routes. Enforced.", Computed: true},
 						"max_backends":  schema.Int64Attribute{Description: "Maximum backends. Enforced.", Computed: true},
 						"max_waf_rules": schema.Int64Attribute{Description: "Maximum WAF rules. Enforced.", Computed: true},
+						"max_waf_exclusions": schema.Int64Attribute{
+							Description: "Maximum WAF exclusions, counted across **all** of the gateway's WAF " +
+								"policies. Enforced: exceeding it is refused, not throttled.\n\n" +
+								"A separate budget from `max_waf_rules`, so tuning away a false positive never " +
+								"costs you room for a rule.",
+							Computed: true,
+						},
 						"max_concurrent_connections": schema.Int64Attribute{
 							Description: "Concurrent connections this size is rated for, and the limit the " +
 								"appliance is built with by default. NOT a hard cap — a listener with a " +
@@ -163,17 +178,18 @@ func (d *flavorsDataSource) Read(ctx context.Context, req datasource.ReadRequest
 	cfg.Flavors = make([]FlavorModel, 0, len(list.Flavors))
 	for _, f := range list.Flavors {
 		cfg.Flavors = append(cfg.Flavors, FlavorModel{
-			ID:             types.StringValue(f.ID),
-			Name:           types.StringValue(f.Name),
-			Description:    types.StringValue(f.Description),
-			MaxListeners:   types.Int64Value(int64(f.MaxListeners)),
-			MaxRoutes:      types.Int64Value(int64(f.MaxRoutes)),
-			MaxBackends:    types.Int64Value(int64(f.MaxBackends)),
-			MaxWafRules:    types.Int64Value(int64(f.MaxWafRules)),
-			MaxRPS:         types.Int64Value(int64(f.MaxRPS)),
-			MaxConnections: types.Int64Value(int64(f.MaxConnections)),
-			PricingTier:    types.StringValue(f.PricingTier),
-			Active:         types.BoolValue(f.Active),
+			ID:               types.StringValue(f.ID),
+			Name:             types.StringValue(f.Name),
+			Description:      types.StringValue(f.Description),
+			MaxListeners:     types.Int64Value(int64(f.MaxListeners)),
+			MaxRoutes:        types.Int64Value(int64(f.MaxRoutes)),
+			MaxBackends:      types.Int64Value(int64(f.MaxBackends)),
+			MaxWafRules:      types.Int64Value(int64(f.MaxWafRules)),
+			MaxWafExclusions: types.Int64Value(int64(f.MaxWafExclusions)),
+			MaxRPS:           types.Int64Value(int64(f.MaxRPS)),
+			MaxConnections:   types.Int64Value(int64(f.MaxConnections)),
+			PricingTier:      types.StringValue(f.PricingTier),
+			Active:           types.BoolValue(f.Active),
 		})
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &cfg)...)

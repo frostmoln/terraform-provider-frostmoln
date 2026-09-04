@@ -104,6 +104,14 @@ func wpModel() PolicyModel {
 	return PolicyModel{
 		GatewayID: types.StringValue("agw-1"),
 		Name:      types.StringValue("default"),
+		// TYPED nulls, not the zero types.List. A list value carrying no
+		// element type fails the framework's type check the moment the model is
+		// written into a plan or state, with a "MISSING TYPE" conversion error
+		// that says nothing about the attribute that is actually wrong.
+		AllowedMethods:                      types.ListNull(types.StringType),
+		AllowedRequestContentTypes:          types.ListNull(types.StringType),
+		EffectiveAllowedMethods:             types.ListNull(types.StringType),
+		EffectiveAllowedRequestContentTypes: types.ListNull(types.StringType),
 	}
 }
 

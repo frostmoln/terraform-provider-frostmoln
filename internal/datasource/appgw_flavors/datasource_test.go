@@ -50,6 +50,7 @@ func body() string {
 	return `{"flavors":[
 	  {"id":"agw.gp1.small","name":"Small","vcpus":2,"ramMb":4096,"diskGb":40,
 	   "maxListeners":5,"maxRoutes":50,"maxBackends":50,"maxWafRules":100,
+	   "maxWafExclusions":200,
 	   "maxRequestsPerSecond":5000,"maxConcurrentConnections":20000,
 	   "pricingTier":"app_gateway_gp1","active":true},
 	  {"id":"agw.gp1.legacy","name":"Legacy","vcpus":1,"active":false}
@@ -84,6 +85,7 @@ func TestTheSchemaSellsCapacityNotSubstrate(t *testing.T) {
 	for _, capacity := range []string{
 		"max_requests_per_second", "max_concurrent_connections",
 		"max_listeners", "max_routes", "max_backends", "max_waf_rules",
+		"max_waf_exclusions",
 	} {
 		if _, present := attrs[capacity]; !present {
 			t.Errorf("the catalog is missing %q, which is what a size is chosen on", capacity)
@@ -168,3 +170,56 @@ func TestReadSurfacesAnAPIError(t *testing.T) {
 }
 
 func boolTrue() types.Bool { return types.BoolValue(true) }
+
+// TestTheExclusionBudgetIsInTheCatalog.
+//
+// 🔴 TWO WAF BUDGETS, NOT ONE. max_waf_rules and max_waf_exclusions are counted
+// separately across ALL of a gateway's policies, and exceeding either is a
+// refusal (409 FLAVOR_LIMIT_EXCEEDED), not a throttle. A catalog that publishes
+// only the rule cap makes the exclusion cap invisible until an apply fails on
+// it -- and tuning away a false positive is exactly the routine act that hits
+// it, on a gateway whose rule count looks fine.
+//
+// Asserted through the SCHEMA and through a READ: the schema is what a
+// practitioner can interpolate, and the read is what proves the value actually
+// arrives rather than sitting in the schema unwired.
+func TestTheExclusionBudgetIsInTheCatalog(t *testing.T) {
+	d, cfg, st := harness(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body()))
+	})
+
+	var sr datasource.SchemaResponse
+	d.Schema(context.Background(), datasource.SchemaRequest{}, &sr)
+	nested, ok := sr.Schema.Attributes["flavors"].(schema.ListNestedAttribute)
+	if !ok {
+		t.Fatalf("flavors is not a ListNestedAttribute")
+	}
+	if _, present := nested.NestedObject.Attributes["max_waf_exclusions"]; !present {
+		t.Fatal("the catalog has no max_waf_exclusions, so the exclusion budget is invisible " +
+			"until an apply is refused by it")
+	}
+
+	cfg = configOf(t, cfg, FlavorsModel{})
+	resp := datasource.ReadResponse{State: st}
+	d.Read(context.Background(), datasource.ReadRequest{Config: cfg}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("read: %v", resp.Diagnostics.Errors())
+	}
+	var out FlavorsModel
+	resp.State.Get(context.Background(), &out)
+	if len(out.Flavors) == 0 {
+		t.Fatal("no sizes were read")
+	}
+	if got := out.Flavors[0].MaxWafExclusions.ValueInt64(); got != 200 {
+		t.Errorf("max_waf_exclusions = %d, want 200 -- the server sent it and it must survive "+
+			"the read", got)
+	}
+	// A SEPARATE budget: reading the rule cap into it (or the reverse) would be
+	// the plausible wiring mistake, and it would tell a customer their exclusion
+	// room is the rule room.
+	if out.Flavors[0].MaxWafExclusions.Equal(out.Flavors[0].MaxWafRules) {
+		t.Errorf("max_waf_exclusions and max_waf_rules read the same value (%v); they are "+
+			"separate budgets and the fixture gives them different numbers",
+			out.Flavors[0].MaxWafRules)
+	}
+}

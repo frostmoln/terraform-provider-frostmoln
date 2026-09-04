@@ -5,7 +5,8 @@ subcategory: ""
 description: |-
   The Application Gateway size catalog.
   A size is described by what the appliance carries, not by the virtual machine it runs on: vcpus, ram_mb and disk_gb are no longer exposed, because they describe the substrate rather than the service.
-  max_listeners, max_routes, max_backends and max_waf_rules are structural caps, not guidance: exceeding one is refused. Size for the ruleset you intend to write, not only for the traffic.
+  max_listeners, max_routes, max_backends, max_waf_rules and max_waf_exclusions are structural caps, not guidance: exceeding one is refused. Size for the ruleset you intend to write, not only for the traffic.
+  The two WAF caps are separate budgets, each counted across all of a gateway's policies — so tuning away a false positive never costs you room for a rule.
 ---
 
 # frostmoln_appgw_flavors (Data Source)
@@ -14,14 +15,21 @@ The Application Gateway size catalog.
 
 A size is described by what the appliance carries, not by the virtual machine it runs on: `vcpus`, `ram_mb` and `disk_gb` are no longer exposed, because they describe the substrate rather than the service.
 
-`max_listeners`, `max_routes`, `max_backends` and `max_waf_rules` are **structural caps, not guidance**: exceeding one is refused. Size for the ruleset you intend to write, not only for the traffic.
+`max_listeners`, `max_routes`, `max_backends`, `max_waf_rules` and `max_waf_exclusions` are **structural caps, not guidance**: exceeding one is refused. Size for the ruleset you intend to write, not only for the traffic.
+
+The two WAF caps are **separate budgets**, each counted across all of a gateway's policies — so tuning away a false positive never costs you room for a rule.
 
 ## Example Usage
 
 ```terraform
 # The max_* values are structural caps, not guidance: creating more listeners,
-# routes, backends or WAF rules than the size allows is refused. Size for the
-# ruleset you intend to write, not only for the traffic.
+# routes, backends, WAF rules or WAF exclusions than the size allows is refused.
+# Size for the ruleset you intend to write, not only for the traffic.
+#
+# max_waf_rules and max_waf_exclusions are SEPARATE budgets, each counted across
+# all of a gateway's WAF policies, so tuning away a false positive never costs
+# you room for a rule. Exclusions are what routine tuning spends, and a gateway
+# whose rule count looks comfortable can still run out of them.
 
 data "frostmoln_appgw_flavors" "available" {}
 
@@ -29,7 +37,7 @@ locals {
   # The smallest size that can hold the ruleset we are about to write.
   suitable = [
     for f in data.frostmoln_appgw_flavors.available.flavors :
-    f if f.max_waf_rules >= 200 && f.max_routes >= 50
+    f if f.max_waf_rules >= 200 && f.max_waf_exclusions >= 100 && f.max_routes >= 50
   ]
 }
 
@@ -62,6 +70,9 @@ Read-Only:
 - `max_listeners` (Number) Maximum listeners. Enforced.
 - `max_requests_per_second` (Number) Rated throughput. NOT enforced and not a guarantee — real throughput depends on your rules, TLS settings and backends. It is the basis `max_concurrent_connections` is derived from.
 - `max_routes` (Number) Maximum routes. Enforced.
+- `max_waf_exclusions` (Number) Maximum WAF exclusions, counted across **all** of the gateway's WAF policies. Enforced: exceeding it is refused, not throttled.
+
+A separate budget from `max_waf_rules`, so tuning away a false positive never costs you room for a rule.
 - `max_waf_rules` (Number) Maximum WAF rules. Enforced.
 - `name` (String) The display name.
 - `pricing_tier` (String) The pricing category this size bills under.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -25,6 +26,7 @@ var (
 	_ resource.ResourceWithImportState    = &policyResource{}
 	_ resource.ResourceWithConfigure      = &policyResource{}
 	_ resource.ResourceWithValidateConfig = &policyResource{}
+	_ resource.ResourceWithModifyPlan     = &policyResource{}
 )
 
 // WAF policy scopes and modes.
@@ -75,6 +77,21 @@ type PolicyModel struct {
 	FailMode              types.String `tfsdk:"fail_mode"`
 	RequestBodyLimitBytes types.Int64  `tfsdk:"request_body_limit_bytes"`
 
+	// The two allow-list OVERRIDES. Null means this policy carries none and
+	// runs on the platform default; see allowlists.go for the tri-state this
+	// maps onto and why an empty list is refused.
+	AllowedMethods             types.List `tfsdk:"allowed_methods"`
+	AllowedRequestContentTypes types.List `tfsdk:"allowed_request_content_types"`
+	// The lists that will actually compile: server-computed and read-only, the
+	// override where one is set and the platform default otherwise.
+	//
+	// 🔴 NEVER FEED ONE OF THESE BACK INTO A WRITE. The platform default has
+	// been widened three times; a configuration that copies today's effective
+	// list into the override above pins the tenant out of the next widening
+	// while appearing to change nothing.
+	EffectiveAllowedMethods             types.List `tfsdk:"effective_allowed_methods"`
+	EffectiveAllowedRequestContentTypes types.List `tfsdk:"effective_allowed_request_content_types"`
+
 	ActiveVersion types.Int64 `tfsdk:"active_version"`
 	DraftVersion  types.Int64 `tfsdk:"draft_version"`
 
@@ -101,6 +118,17 @@ type apiPolicy struct {
 	FailMode              string `json:"failMode"`
 	RequestBodyLimitBytes int    `json:"requestBodyLimitBytes"`
 
+	// Absent when this policy carries no override -- and absent on an overlay
+	// policy, which cannot carry one. A nil slice is that absence; an empty
+	// slice would be the server sending an empty list, which it does not.
+	AllowedMethods             []string `json:"allowedMethods,omitempty"`
+	AllowedRequestContentTypes []string `json:"allowedRequestContentTypes,omitempty"`
+	// Server-computed, read-only, and absent on an overlay policy -- which does
+	// not decide these lists, so stamping the platform default there would
+	// claim a route enforces something it has no say in.
+	EffectiveAllowedMethods             []string `json:"effectiveAllowedMethods,omitempty"`
+	EffectiveAllowedRequestContentTypes []string `json:"effectiveAllowedRequestContentTypes,omitempty"`
+
 	ActiveVersion *int `json:"activeVersion,omitempty"`
 	DraftVersion  *int `json:"draftVersion,omitempty"`
 
@@ -118,15 +146,21 @@ type apiCreatePolicyRequest struct {
 	CRSVersion            string `json:"crsVersion,omitempty"`
 	FailMode              string `json:"failMode,omitempty"`
 	RequestBodyLimitBytes int    `json:"requestBodyLimitBytes,omitempty"`
+	// Plain slices, NOT pointers: a create has no override to clear, so it has
+	// only two states -- omit for the platform default, or send a narrowing.
+	// The tri-state belongs to the PATCH below.
+	AllowedMethods             []string `json:"allowedMethods,omitempty"`
+	AllowedRequestContentTypes []string `json:"allowedRequestContentTypes,omitempty"`
 }
 
 // apiUpdatePolicyRequest has NO scope and NO effectiveMode, and that mirrors the
 // server exactly: its update body carries mode, paranoiaLevel,
-// anomalyScoreThreshold, crsVersion, failMode and requestBodyLimitBytes, and
-// nothing else. So scope is IMMUTABLE after creation -- confirmed, not assumed
-// -- which is what makes RequiresReplace on the scope attribute correct rather
-// than merely cautious. effectiveMode is server-computed; a client that sent
-// either would be asserting something it does not decide.
+// anomalyScoreThreshold, crsVersion, failMode, requestBodyLimitBytes and the two
+// allow-list overrides, and nothing else. So scope is IMMUTABLE after creation
+// -- confirmed, not assumed -- which is what makes RequiresReplace on the scope
+// attribute correct rather than merely cautious. effectiveMode and the
+// effective* lists are server-computed; a client that sent one would be
+// asserting something it does not decide.
 type apiUpdatePolicyRequest struct {
 	Mode                  *string `json:"mode,omitempty"`
 	ParanoiaLevel         *int    `json:"paranoiaLevel,omitempty"`
@@ -134,6 +168,15 @@ type apiUpdatePolicyRequest struct {
 	CRSVersion            *string `json:"crsVersion,omitempty"`
 	FailMode              *string `json:"failMode,omitempty"`
 	RequestBodyLimitBytes *int    `json:"requestBodyLimitBytes,omitempty"`
+
+	// 🔴 POINTERS TO SLICES, AND THAT IS THE WHOLE POINT. `omitempty` omits a
+	// NIL POINTER and marshals a pointer to an empty slice as `[]`, so this one
+	// type expresses all three of the server's states: absent (leave alone),
+	// `[]` (clear the override, return to the platform default) and a list.
+	// A plain []string could not: `omitempty` would erase the `[]` that is the
+	// only spelling of a reset the API has. See allowlists.go.
+	AllowedMethods             *[]string `json:"allowedMethods,omitempty"`
+	AllowedRequestContentTypes *[]string `json:"allowedRequestContentTypes,omitempty"`
 }
 
 type policyResource struct {
@@ -285,6 +328,91 @@ func (r *policyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Validators:    []validator.Int64{int64validator.Between(minRequestBodyLimitBytes, maxRequestBodyLimitBytes)},
 				PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()},
 			},
+			"allowed_methods": schema.ListAttribute{
+				Description: "The HTTP methods the managed ruleset accepts, as an **override** of " +
+					"the platform default.\n\n" +
+					"Omit it unless you are narrowing: absent means the platform default, which is " +
+					"kept current for you. **Removing this attribute from your configuration clears " +
+					"the override** and returns the policy to that default — that is the plan you " +
+					"will see (`[\"GET\"]` to `null`) and what the apply does. An empty list is " +
+					"refused: it is not a narrowing to no methods, and it could not be kept.\n\n" +
+					"Entries are uppercase method tokens. `TRACE`, `TRACK`, `CONNECT` and `DEBUG` " +
+					"are refused on every gateway and may never be listed — it is a deny-list of " +
+					"four, not a ceiling of seven. Everything else is yours to name, including the " +
+					"WebDAV and CalDAV verbs (`PROPFIND`, `PROPPATCH`, `MKCOL`, `COPY`, `MOVE`, " +
+					"`LOCK`, `UNLOCK`, `REPORT`, `SEARCH`), which the platform default does not " +
+					"carry and which are therefore refused until you list them.\n\n" +
+					"~> A method outside the list is refused with **403, independently of " +
+					"`anomaly_score_threshold`** — at 5, at 100 and at 1000. Raising the threshold " +
+					"to quiet false positives cannot switch this control off. A policy in `detect` " +
+					"mode still logs and serves: this is a refusal, not a bypass of the mode.\n\n" +
+					"Read `effective_allowed_methods` to see the list actually in force. " +
+					"`gateway`-scoped policies only.",
+				Optional:    true,
+				ElementType: types.StringType,
+				Validators: []validator.List{
+					overrideNotEmpty{what: "methods"},
+					listvalidator.SizeAtMost(maxAllowedMethods),
+					listvalidator.UniqueValues(),
+					listvalidator.ValueStringsAre(
+						stringvalidator.RegexMatches(httpMethodPattern,
+							"must be an uppercase HTTP method token such as GET or PROPFIND"),
+						methodNotRefused{},
+					),
+				},
+			},
+			"allowed_request_content_types": schema.ListAttribute{
+				Description: "The request `Content-Type` values the managed ruleset accepts, as an " +
+					"**override** of the platform default.\n\n" +
+					"Omit it unless you are changing the set. **Removing this attribute from your " +
+					"configuration clears the override** and returns the policy to the platform " +
+					"default; an empty list is refused, for the same reason as `allowed_methods`.\n\n" +
+					"Unlike `allowed_methods` this may **add** types as well as remove them: a " +
+					"vendor media type such as `application/vnd.acme.v2+json` is ordinary, and the " +
+					"alternative is turning the whole content-type check off.\n\n" +
+					"Write each entry lowercase as `type/subtype` with no parameters — " +
+					"`application/json`, never `application/json; charset=utf-8`. The type is " +
+					"compared without its parameters and without regard to case, and the header is " +
+					"tested with a substring match. A request with no `Content-Type` at all is not " +
+					"affected.\n\n" +
+					"~> A body whose type is outside the list is refused with **403, independently " +
+					"of `anomaly_score_threshold`**, exactly as for `allowed_methods`.\n\n" +
+					"The platform default has been widened three times, so read " +
+					"`effective_allowed_request_content_types` rather than keeping a copy of it. " +
+					"`gateway`-scoped policies only.",
+				Optional:    true,
+				ElementType: types.StringType,
+				Validators: []validator.List{
+					overrideNotEmpty{what: "media types"},
+					listvalidator.SizeAtMost(maxAllowedContentTypes),
+					listvalidator.UniqueValues(),
+					listvalidator.ValueStringsAre(
+						stringvalidator.RegexMatches(mediaTypePattern,
+							"must be a lowercase media type written as type/subtype with no parameters"),
+					),
+				},
+			},
+			"effective_allowed_methods": schema.ListAttribute{
+				Description: "The method list that will actually compile: `allowed_methods` where " +
+					"you set one, the platform default otherwise. Server-computed and read-only.\n\n" +
+					"Render this if you render only one — it saves you carrying a copy of a default " +
+					"that moves.\n\n" +
+					"~> **Never feed this back into `allowed_methods`.** Copying it turns a default " +
+					"that is maintained for you into a frozen override, and the change is invisible " +
+					"in the plan the day you do it.\n\n" +
+					"`null` on a listener- or route-scoped policy, which does not decide it.",
+				Computed:    true,
+				ElementType: types.StringType,
+			},
+			"effective_allowed_request_content_types": schema.ListAttribute{
+				Description: "The media-type list that will actually compile. Same rule as " +
+					"`effective_allowed_methods`, and the same warning with more force: this " +
+					"default has been widened three times, so a configuration that copies it into " +
+					"`allowed_request_content_types` pins the tenant out of the next widening.\n\n" +
+					"`null` on a listener- or route-scoped policy.",
+				Computed:    true,
+				ElementType: types.StringType,
+			},
 			"active_version": schema.Int64Attribute{
 				Description: "The version being ENFORCED. Null until something has been published.",
 				Computed:    true,
@@ -340,22 +468,109 @@ func (r *policyResource) ValidateConfig(ctx context.Context, req resource.Valida
 	if scope != scopeOverlay {
 		return
 	}
-	for _, dial := range []struct {
-		attr string
-		set  bool
+	const dialDetail = "An overlay policy is compiled WITHOUT the managed ruleset, so this setting has " +
+		"nothing to act on and the server refuses it. Set it on the gateway-scoped policy " +
+		"instead; an overlay carries your own builder and raw rules only."
+	// The allow-lists are refused for a related but distinct reason, and saying
+	// the right one matters: they are not a dial on a ruleset the overlay
+	// lacks, they are a gateway-wide decision. The server refuses them at BOTH
+	// doors -- create and update -- so a plan-time refusal here costs nothing
+	// and replaces a 400 that names a JSON field halfway through an apply.
+	const allowListDetail = "The gateway runs ONE managed ruleset and reads this list from the " +
+		"gateway-scoped policy alone, so a value here would be stored and never applied -- which " +
+		"is why the server refuses it at create and at update alike. Set it on the gateway-scoped " +
+		"policy; every listener and route behind that gateway is covered by it.\n\n" +
+		"An overlay's own effective list is reported as null for the same reason: it does not " +
+		"decide one."
+	for _, setting := range []struct {
+		attr   string
+		set    bool
+		detail string
 	}{
-		{"paranoia_level", !cfg.ParanoiaLevel.IsNull() && !cfg.ParanoiaLevel.IsUnknown()},
-		{"anomaly_score_threshold", !cfg.AnomalyScoreThreshold.IsNull() && !cfg.AnomalyScoreThreshold.IsUnknown()},
-		{"managed_ruleset_version", !cfg.CRSVersion.IsNull() && !cfg.CRSVersion.IsUnknown()},
+		{"paranoia_level", !cfg.ParanoiaLevel.IsNull() && !cfg.ParanoiaLevel.IsUnknown(), dialDetail},
+		{"anomaly_score_threshold", !cfg.AnomalyScoreThreshold.IsNull() && !cfg.AnomalyScoreThreshold.IsUnknown(), dialDetail},
+		{"managed_ruleset_version", !cfg.CRSVersion.IsNull() && !cfg.CRSVersion.IsUnknown(), dialDetail},
+		{"allowed_methods", !cfg.AllowedMethods.IsNull() && !cfg.AllowedMethods.IsUnknown(), allowListDetail},
+		{"allowed_request_content_types", !cfg.AllowedRequestContentTypes.IsNull() && !cfg.AllowedRequestContentTypes.IsUnknown(), allowListDetail},
 	} {
-		if !dial.set {
+		if !setting.set {
 			continue
 		}
-		resp.Diagnostics.AddAttributeError(path.Root(dial.attr),
-			dial.attr+` Belongs To A gateway-scoped Policy`,
-			"An overlay policy is compiled WITHOUT the managed ruleset, so this setting has "+
-				"nothing to act on and the server refuses it. Set it on the gateway-scoped policy "+
-				"instead; an overlay carries your own builder and raw rules only.")
+		resp.Diagnostics.AddAttributeError(path.Root(setting.attr),
+			setting.attr+` Belongs To A gateway-scoped Policy`, setting.detail)
+	}
+}
+
+// ModifyPlan decides, for each server-computed effective_* attribute, between
+// "unknown" and "unchanged" -- and BOTH answers are load-bearing.
+//
+// 🔴 WITHOUT THE UNKNOWN BRANCH, SETTING allowed_methods IS A GUARANTEED APPLY
+// FAILURE. effective_* are Computed-only, so the framework proposes their PRIOR
+// STATE value, and Terraform treats a computed attribute whose applied value
+// differs from a KNOWN planned value as "Provider produced inconsistent result
+// after apply" -- an error, not a warning. Narrowing allowed_methods changes
+// effective_allowed_methods by definition, so every such apply would fail on
+// the value it had just correctly written.
+//
+// 🔴 WITHOUT THE UNCHANGED BRANCH, EVERY OVERLAY POLICY DIFFS FOREVER. An
+// overlay decides none of these three, so the server sends none of them and
+// they are permanently null -- and MarkComputedNilsAsUnknown turns a null
+// computed attribute into "(known after apply)" on every plan. Terraform then
+// schedules an update, the apply sends an empty PATCH, the read returns null
+// again, and the next plan says the same thing. A plan that shows a diff when
+// nothing changed is a bug, so the value is pinned back to what the refresh
+// found.
+//
+// 🔴 AND THAT PINNING IS NOT UseStateForUnknown, WHICH WOULD LIE HERE. The
+// schema modifier cannot see WHY a value is unknown, so it would pin the old
+// effective list across the very apply that changes it -- the first failure
+// above. The condition is what makes pinning honest: it fires only when nothing
+// in this configuration decides the value, and the state it pins to is the
+// REFRESHED state, so an effective value that moved on its own (the gateway
+// policy's mode flipped, the platform default was widened) has already been
+// read back before this runs.
+func (r *policyResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// Create (no prior state) and destroy (no plan) have nothing to decide: the
+	// framework already marks every computed attribute unknown on a create.
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return
+	}
+	var plan, state PolicyModel
+	if d := req.Plan.Get(ctx, &plan); d.HasError() {
+		return
+	}
+	if d := req.State.Get(ctx, &state); d.HasError() {
+		return
+	}
+	// A replacement is a NEW policy, and pinning a computed value to the old
+	// one's state would describe the object being destroyed. Every attribute
+	// that forces one is checked, so adding another cannot quietly skip this.
+	if !plan.GatewayID.Equal(state.GatewayID) || !plan.Name.Equal(state.Name) ||
+		!plan.Scope.Equal(state.Scope) {
+		return
+	}
+
+	if !plan.Mode.Equal(state.Mode) {
+		resp.Plan.SetAttribute(ctx, path.Root("effective_mode"), types.StringUnknown())
+	} else {
+		resp.Plan.SetAttribute(ctx, path.Root("effective_mode"), state.EffectiveMode)
+	}
+	for _, eff := range []struct {
+		attr    string
+		changed bool
+		known   types.List
+	}{
+		{"effective_allowed_methods",
+			!plan.AllowedMethods.Equal(state.AllowedMethods), state.EffectiveAllowedMethods},
+		{"effective_allowed_request_content_types",
+			!plan.AllowedRequestContentTypes.Equal(state.AllowedRequestContentTypes),
+			state.EffectiveAllowedRequestContentTypes},
+	} {
+		if eff.changed {
+			resp.Plan.SetAttribute(ctx, path.Root(eff.attr), types.ListUnknown(types.StringType))
+			continue
+		}
+		resp.Plan.SetAttribute(ctx, path.Root(eff.attr), eff.known)
 	}
 }
 
@@ -389,6 +604,14 @@ func (m *PolicyModel) fromAPI(p *apiPolicy) {
 	m.CRSVersion = types.StringValue(p.CRSVersion)
 	m.FailMode = types.StringValue(p.FailMode)
 	m.RequestBodyLimitBytes = types.Int64Value(int64(p.RequestBodyLimitBytes))
+	// Absent stays NULL on all four. For the overrides that is "this policy
+	// carries none, so it runs on the platform default"; for the effective
+	// lists it is "this policy does not decide them" (an overlay). Rendering
+	// either as [] would say "allows nothing", which is a different claim.
+	m.AllowedMethods = optionalStringList(p.AllowedMethods)
+	m.AllowedRequestContentTypes = optionalStringList(p.AllowedRequestContentTypes)
+	m.EffectiveAllowedMethods = optionalStringList(p.EffectiveAllowedMethods)
+	m.EffectiveAllowedRequestContentTypes = optionalStringList(p.EffectiveAllowedRequestContentTypes)
 	// Null rather than 0: "nothing published yet" and "version 0" are
 	// different, and version 0 does not exist.
 	m.ActiveVersion = optionalInt(p.ActiveVersion)
@@ -403,18 +626,31 @@ func (r *policyResource) Create(ctx context.Context, req resource.CreateRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// A null override is simply OMITTED here. A create has nothing to clear --
+	// a brand-new policy carries no override -- so the create body has two
+	// states, not three, and `[]` would be the same request as omitting it.
+	methods, d := stringSliceFrom(ctx, plan.AllowedMethods)
+	resp.Diagnostics.Append(d...)
+	contentTypes, d := stringSliceFrom(ctx, plan.AllowedRequestContentTypes)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath(fmt.Sprintf(
 		"/application-gateways/%s/waf-policies", plan.GatewayID.ValueString(),
 	)),
 		apiCreatePolicyRequest{
-			Name:                  plan.Name.ValueString(),
-			Scope:                 str(plan.Scope),
-			Mode:                  str(plan.Mode),
-			ParanoiaLevel:         int(plan.ParanoiaLevel.ValueInt64()),
-			AnomalyScoreThreshold: int(plan.AnomalyScoreThreshold.ValueInt64()),
-			CRSVersion:            str(plan.CRSVersion),
-			FailMode:              str(plan.FailMode),
-			RequestBodyLimitBytes: int(plan.RequestBodyLimitBytes.ValueInt64()),
+			Name:                       plan.Name.ValueString(),
+			Scope:                      str(plan.Scope),
+			Mode:                       str(plan.Mode),
+			ParanoiaLevel:              int(plan.ParanoiaLevel.ValueInt64()),
+			AnomalyScoreThreshold:      int(plan.AnomalyScoreThreshold.ValueInt64()),
+			CRSVersion:                 str(plan.CRSVersion),
+			FailMode:                   str(plan.FailMode),
+			RequestBodyLimitBytes:      int(plan.RequestBodyLimitBytes.ValueInt64()),
+			AllowedMethods:             methods,
+			AllowedRequestContentTypes: contentTypes,
 		})
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Create WAF Policy", err.Error())
@@ -492,6 +728,29 @@ func (r *policyResource) Update(ctx context.Context, req resource.UpdateRequest,
 		v := int(plan.RequestBodyLimitBytes.ValueInt64())
 		body.RequestBodyLimitBytes = &v
 	}
+	// 🔴 THE TRI-STATE, AND THE ONE PLACE ALL THREE WIRE STATES ARE PRODUCED.
+	//
+	//   plan == state          -> the pointer stays nil, the field is ABSENT,
+	//                             and the server leaves the override alone.
+	//   plan is NULL, state is a list
+	//                          -> the practitioner REMOVED the attribute from
+	//                             their configuration, which means "stop
+	//                             overriding". That is `[]` on the wire: the
+	//                             only spelling of a reset the API has.
+	//   plan is a list         -> send exactly that list.
+	//
+	// Omitting the field in the middle case would be the silent failure the
+	// whole design is against: the plan would show the attribute going to null,
+	// the apply would report success, and the narrowing would still be in force
+	// -- with the next refresh reading it back and proposing the same removal
+	// forever. See allowlists.go.
+	resp.Diagnostics.Append(allowListDelta(ctx, plan.AllowedMethods, state.AllowedMethods,
+		&body.AllowedMethods)...)
+	resp.Diagnostics.Append(allowListDelta(ctx, plan.AllowedRequestContentTypes,
+		state.AllowedRequestContentTypes, &body.AllowedRequestContentTypes)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	apiResp, err := r.client.Patch(ctx, r.policyPath(state.GatewayID.ValueString(), state.ID.ValueString()), body)
 	if err != nil {
@@ -523,7 +782,8 @@ func (r *policyResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 
 	if body.Mode != nil || body.ParanoiaLevel != nil || body.AnomalyScoreThreshold != nil ||
-		body.FailMode != nil || body.RequestBodyLimitBytes != nil {
+		body.FailMode != nil || body.RequestBodyLimitBytes != nil ||
+		body.AllowedMethods != nil || body.AllowedRequestContentTypes != nil {
 		resp.Diagnostics.AddWarning("Settings Changed But Not Yet Enforced",
 			"These settings are part of the ruleset, so this change is not in force until it is "+
 				"published and the gateway's configuration is applied. Until then the gateway keeps "+
