@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.47.1] - 2026-09-04
+
+### 🐛 Bug Fixes
+
+- *(network)* Filter the reserved frostmoln_ namespace out of tags on read-back (#459)
+
+### 📚 Documentation
+
+- *(security-group)* A platform-managed group cannot be managed by Terraform (#457)
+
 ## [0.47.0] - 2026-09-03
 
 ### 🚀 Features
