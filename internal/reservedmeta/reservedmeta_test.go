@@ -91,3 +91,69 @@ func TestFilterInstance(t *testing.T) {
 		t.Errorf("FilterInstance mutated input: %v", in)
 	}
 }
+
+// The network predicate is NARROWER than the volume one on purpose, and the
+// cases below are the ones that would be wrong if someone reused FilterVolume
+// for network resources: network reserves the frostmoln_ prefix and nothing
+// else, so the bare *-id keys and the frostmoln- hyphen spelling are legal
+// CUSTOMER tags there and must survive read-back.
+func TestIsReservedNetwork(t *testing.T) {
+	reserved := []string{
+		"frostmoln_type",
+		"frostmoln_managed_by",
+		"frostmoln_cluster_id",
+		// The key a named list already missed — the reason the predicate is a
+		// prefix rather than three names (network nlmeta.ReservedTagPrefix).
+		"frostmoln_enclave_key",
+		"frostmoln_",
+	}
+	for _, k := range reserved {
+		if !IsReservedNetwork(k) {
+			t.Errorf("IsReservedNetwork(%q) = false, want true", k)
+		}
+	}
+
+	notReserved := []string{
+		"env", "team", "cost-centre",
+		// Reserved for VOLUMES, not for network. Filtering these here would
+		// drop a legal customer tag — the bug this package's header warns of.
+		"request-id", "customer-id", "project-id",
+		"frostmoln-type",
+		// Near-misses that are the customer's own.
+		"frostmolnish", "frostmoln", "my_frostmoln_type",
+	}
+	for _, k := range notReserved {
+		if IsReservedNetwork(k) {
+			t.Errorf("IsReservedNetwork(%q) = true, want false", k)
+		}
+	}
+}
+
+func TestFilterNetwork(t *testing.T) {
+	got := FilterNetwork(map[string]string{
+		"env":                   "prod",
+		"customer-id":           "cust-1",
+		"frostmoln-type":        "mine",
+		"frostmoln_type":        "kubernetes-control-plane",
+		"frostmoln_enclave_key": "org-7",
+	})
+	want := map[string]string{
+		"env":            "prod",
+		"customer-id":    "cust-1",
+		"frostmoln-type": "mine",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("FilterNetwork() = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("FilterNetwork()[%q] = %q, want %q", k, got[k], v)
+		}
+	}
+
+	// The whole point: an all-reserved map filters to empty, which is what lets
+	// the caller fall through to MapNull instead of writing a key into state.
+	if len(FilterNetwork(map[string]string{"frostmoln_type": "x"})) != 0 {
+		t.Error("a map of only reserved keys must filter to empty")
+	}
+}

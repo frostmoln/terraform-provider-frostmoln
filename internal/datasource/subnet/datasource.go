@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
 )
 
 var _ datasource.DataSource = &subnetDataSource{}
@@ -236,8 +237,12 @@ func (d *subnetDataSource) setSubnetState(ctx context.Context, state *subnetMode
 	state.AvailableIPs = types.Int64Value(int64(sub.AvailableIPs))
 	state.CreatedAt = types.StringValue(sub.CreatedAt)
 
-	if len(sub.Tags) > 0 {
-		tagsMap, diags := types.MapValueFrom(ctx, types.StringType, sub.Tags)
+	// Filter platform-internal metadata (the frostmoln_ namespace) so the computed
+	// tags attribute exposes only customer tags, matching the instance data source
+	// and the resource read-back. `tags` means the same thing on every surface.
+	userTags := reservedmeta.FilterNetwork(sub.Tags)
+	if len(userTags) > 0 {
+		tagsMap, diags := types.MapValueFrom(ctx, types.StringType, userTags)
 		resp.Diagnostics.Append(diags...)
 		state.Tags = tagsMap
 	} else {

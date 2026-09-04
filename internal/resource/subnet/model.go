@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
@@ -173,12 +174,33 @@ func (m *SubnetModel) fromAPI(ctx context.Context, subnet *apiSubnet, diags *dia
 		m.DNSServers = types.ListNull(types.StringType)
 	}
 
-	if len(subnet.Tags) > 0 {
-		tagsMap, d := types.MapValueFrom(ctx, types.StringType, subnet.Tags)
+	// network's REST plane refuses a frostmoln_* key on write, so a key that IS
+	// on a resource cannot be removed by any client -- and once the pending
+	// network change lands (subnet/router rejectReservedTag plus
+	// nlmeta.MergePlatformOwnedTags on update, branch
+	// fix/subnet-router-reserved-tags) omitting it stops removing it too.
+	// Copying such a key into state fails "inconsistent result after apply"
+	// against a config that does not mention it. Correct either way: today the
+	// reachable case is a visible platform-stamped key (the ADR-0115
+	// cluster-owned pair, or frostmoln_enclave_key) -- offer-internal
+	// frostmoln_type resources are 404-hidden from this plane entirely.
+	// Same treatment as volume/instance.
+	userTags := reservedmeta.FilterNetwork(subnet.Tags)
+	if len(userTags) > 0 {
+		tagsMap, d := types.MapValueFrom(ctx, types.StringType, userTags)
 		diags.Append(d...)
 		m.Tags = tagsMap
-	} else if m.Tags.IsNull() {
-		m.Tags = types.MapNull(types.StringType)
+	} else if !m.Tags.IsNull() {
+		// The model HAD tags and the filtered read has none -- either the
+		// customer cleared them, or every key the API returned is
+		// platform-owned. Either way the practitioner wrote `tags = {}`, and
+		// answering null there is a plan that never converges. The two
+		// branches here used to be identical (both null), which is the same
+		// bug the reserved-key filter above exists to fix, one case over.
+		// Matches volume/snapshot/instance.
+		tagsMap, d := types.MapValueFrom(ctx, types.StringType, map[string]string{})
+		diags.Append(d...)
+		m.Tags = tagsMap
 	} else {
 		m.Tags = types.MapNull(types.StringType)
 	}

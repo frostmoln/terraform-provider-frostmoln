@@ -939,3 +939,92 @@ func subnetDeleteState(t *testing.T) tfsdk.State {
 
 // Ensure fmt is used.
 var _ = fmt.Sprintf
+
+// The convergence cases the reserved-key filter exists for. network refuses a
+// `frostmoln_*` key on write AND carries a stored one forward on update, so a
+// GET can return a key no client can remove. If fromAPI copied it into state,
+// Terraform would compare that state against a plan built from a config that
+// does not mention it and fail "Provider produced inconsistent result after
+// apply" on every run, with no config that converges.
+func TestSubnetModelFromAPI_ReservedTagsNeverReachState(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("mixed tags: the customer's survive, the platform's do not", func(t *testing.T) {
+		var model SubnetModel
+		var diags diag.Diagnostics
+		model.fromAPI(ctx, &apiSubnet{
+			ID: "subnet-1",
+			Tags: map[string]string{
+				"env":                   "prod",
+				"frostmoln_type":        "kubernetes-control-plane",
+				"frostmoln_enclave_key": "org-7",
+				// NOT reserved for network: the bare *-id keys and the hyphen
+				// spelling belong to the volume predicate, not this one.
+				"customer-id":    "cust-1",
+				"frostmoln-type": "mine",
+			},
+		}, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags)
+		}
+
+		got := map[string]string{}
+		diags.Append(model.Tags.ElementsAs(ctx, &got, false)...)
+		for _, k := range []string{"env", "customer-id", "frostmoln-type"} {
+			if _, ok := got[k]; !ok {
+				t.Errorf("customer tag %q was dropped: %v", k, got)
+			}
+		}
+		for _, k := range []string{"frostmoln_type", "frostmoln_enclave_key"} {
+			if _, ok := got[k]; ok {
+				t.Errorf("reserved key %q reached state: %v", k, got)
+			}
+		}
+	})
+
+	// The case that motivated aligning these branches: every key the API
+	// returns is platform-owned, and the practitioner wrote `tags = {}`. The
+	// filtered read is empty, so the model must answer an EMPTY MAP — matching
+	// what the config says — not null, which would never converge.
+	t.Run("only platform keys, config wrote an empty map", func(t *testing.T) {
+		empty, d := types.MapValueFrom(ctx, types.StringType, map[string]string{})
+		if d.HasError() {
+			t.Fatalf("fixture: %v", d)
+		}
+		model := SubnetModel{Tags: empty}
+		var diags diag.Diagnostics
+		model.fromAPI(ctx, &apiSubnet{
+			ID:   "subnet-1",
+			Tags: map[string]string{"frostmoln_type": "kubernetes-control-plane"},
+		}, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags)
+		}
+
+		if model.Tags.IsNull() {
+			t.Fatal("answered null for a config that wrote an empty map: the plan can never converge")
+		}
+		got := map[string]string{}
+		diags.Append(model.Tags.ElementsAs(ctx, &got, false)...)
+		if len(got) != 0 {
+			t.Errorf("expected an empty map, got %v", got)
+		}
+	})
+
+	// The mirror: a config that never mentioned tags must stay null, or every
+	// subnet without tags shows a permanent {} diff.
+	t.Run("only platform keys, config never mentioned tags", func(t *testing.T) {
+		model := SubnetModel{Tags: types.MapNull(types.StringType)}
+		var diags diag.Diagnostics
+		model.fromAPI(ctx, &apiSubnet{
+			ID:   "subnet-1",
+			Tags: map[string]string{"frostmoln_type": "kubernetes-control-plane"},
+		}, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags)
+		}
+		if !model.Tags.IsNull() {
+			t.Errorf("expected null, got %v", model.Tags)
+		}
+	})
+}
