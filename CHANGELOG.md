@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.48.0] - 2026-09-04
+
+### 🚀 Features
+
+- *(appgw)* Carry the six composed-WAF fields (#461)
+
 ## [0.47.1] - 2026-09-04
 
 ### 🐛 Bug Fixes
