@@ -179,7 +179,9 @@ The server accepts only the version the running build ships, and migrating a sto
 - `paranoia_level` (Number) How aggressively the managed ruleset matches, 1-4. Higher catches more and produces more false positives.
 
 `gateway`-scoped policies only: an overlay is not compiled with the managed ruleset, so this has nothing to act on and the server refuses it.
-- `request_body_limit_bytes` (Number) How much of a request body is inspected, in bytes. Between 4096 and 40960. Anything beyond the limit is not examined.
+- `request_body_limit_bytes` (Number) The largest request body this gateway ACCEPTS, in bytes. Between 4096 and 40960.
+
+A larger body is refused with 413 rather than passed uninspected, so lowering this lowers the maximum request size your application receives - it is not only an inspection-cost setting. Lower it only if you know your application never receives bodies above the value you choose; at the 4096 floor the gateway refuses every request with a body over 4 KiB, ordinary JSON API calls included.
 
 The ceiling is the inspection engine's frame size, not a memory budget, so it does not rise with a larger gateway flavor.
 - `scope` (String) `gateway` (the default) or `overlay`.

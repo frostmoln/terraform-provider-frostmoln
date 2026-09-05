@@ -320,8 +320,14 @@ func (r *policyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"request_body_limit_bytes": schema.Int64Attribute{
-				Description: "How much of a request body is inspected, in bytes. Between 4096 and " +
-					"40960. Anything beyond the limit is not examined.\n\n" +
+				Description: "The largest request body this gateway ACCEPTS, in bytes. Between " +
+					"4096 and 40960.\n\n" +
+					"A larger body is refused with 413 rather than passed uninspected, so lowering " +
+					"this lowers the maximum request size your application receives - it is not " +
+					"only an inspection-cost setting. Lower it only if you know your application " +
+					"never receives bodies above the value you choose; at the 4096 floor the " +
+					"gateway refuses every request with a body over 4 KiB, ordinary JSON API " +
+					"calls included.\n\n" +
 					"The ceiling is the inspection engine's frame size, not a memory budget, so it " +
 					"does not rise with a larger gateway flavor.",
 				Optional:      true,
