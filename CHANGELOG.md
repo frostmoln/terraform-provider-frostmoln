@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.48.1] - 2026-09-05
+
+### 🐛 Bug Fixes
+
+- *(appgw)* Never pin an effective_mode this resource does not decide (#463)
+- *(api_key)* Build the tenant-scoped API-key path, and guard the id against traversal (#467)
+
+### 📚 Documentation
+
+- *(appgw)* The connection ceiling IS a hard cap, the provider told practitioners the opposite (#465)
+
 ## [0.48.0] - 2026-09-04
 
 ### 🚀 Features
