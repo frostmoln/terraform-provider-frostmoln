@@ -9,7 +9,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -118,12 +117,32 @@ func (r *subnetResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			// NO UseStateForUnknown, deliberately, unlike every attribute around
+			// it. Those are fixed at create (id, cidr, zone, created_at) or
+			// change only when Terraform changes them, so pinning the prior
+			// value is right and saves a spurious "known after apply".
+			//
+			// This one is a LIVE GAUGE. It is the subnet's free-address count,
+			// which every instance launch and every NIC delete moves, whether or
+			// not Terraform is involved. UseStateForUnknown makes the plan ASSERT
+			// the value the last read returned, so if anything consumes or frees
+			// an address between plan and apply the provider returns a different
+			// number and Terraform fails the apply with "Provider produced
+			// inconsistent result after apply" -- on a change the customer made
+			// to something else entirely, like a tag.
+			//
+			// That was unreachable only by accident: the network service's
+			// CountBySubnet sent the Frostmoln tenant id as Neutron's tenant_id,
+			// which matches nothing under project scope, so this number was a
+			// CONSTANT (the whole pool) for every subnet of every tenant and
+			// could not disagree with itself. Fixing that (network's CountBySubnet
+			// scope fix) makes
+			// it a real, moving figure, so the modifier has to go with it.
+			// Computed with no modifier plans as "(known after apply)", which is
+			// what a value the platform computes at read time actually is.
 			"available_ips": schema.Int64Attribute{
 				Description: "The number of available IP addresses in the subnet.",
 				Computed:    true,
-				PlanModifiers: []planmodifier.Int64{
-					int64planmodifier.UseStateForUnknown(),
-				},
 			},
 			"created_at": schema.StringAttribute{
 				Description: "The creation timestamp.",

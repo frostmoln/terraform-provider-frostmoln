@@ -1028,3 +1028,48 @@ func TestSubnetModelFromAPI_ReservedTagsNeverReachState(t *testing.T) {
 		}
 	})
 }
+
+// available_ips must carry NO plan modifiers, and this pins that as a decision
+// rather than an oversight -- every sibling attribute has UseStateForUnknown, so
+// the obvious "tidy-up" is to add it here for consistency.
+//
+// It is a live gauge: the subnet's free-address count moves with every instance
+// launch and NIC delete, Terraform involved or not. UseStateForUnknown makes the
+// plan ASSERT the last-read value, so anything consuming an address between plan
+// and apply fails the apply with "Provider produced inconsistent result after
+// apply" -- on an unrelated change like a tag edit.
+//
+// It was harmless only while the number could not move: network's CountBySubnet
+// sent the Frostmoln tenant id as Neutron's tenant_id, which matches nothing
+// under project scope, so available_ips was a constant (the whole pool) for
+// every subnet of every tenant. network's CountBySubnet scope fix makes it real.
+func TestSubnetAvailableIPsHasNoPlanModifiers(t *testing.T) {
+	r := NewResource()
+	resp := &resource.SchemaResponse{}
+	r.Schema(context.Background(), resource.SchemaRequest{}, resp)
+
+	attr, ok := resp.Schema.Attributes["available_ips"]
+	if !ok {
+		t.Fatal("available_ips missing from the schema; this guard now checks nothing")
+	}
+
+	int64Attr, ok := attr.(schema.Int64Attribute)
+	if !ok {
+		t.Fatalf("available_ips is %T, not schema.Int64Attribute; this guard cannot read its modifiers", attr)
+	}
+
+	if n := len(int64Attr.PlanModifiers); n != 0 {
+		t.Errorf("available_ips has %d plan modifier(s), want 0: it is a live gauge, and "+
+			"pinning it to state makes an unrelated apply fail with "+
+			"\"Provider produced inconsistent result after apply\"", n)
+	}
+
+	// Fail stale rather than green: if the sibling stops carrying one, this
+	// test's premise (that a bare Computed attribute here is deliberate and
+	// unusual) no longer holds and the comment above needs rewriting.
+	statusAttr, ok := resp.Schema.Attributes["status"].(schema.StringAttribute)
+	if !ok || len(statusAttr.PlanModifiers) == 0 {
+		t.Error("expected the sibling `status` to still carry a plan modifier; " +
+			"if it no longer does, re-read why available_ips is the exception")
+	}
+}
