@@ -205,8 +205,8 @@ func (d *artifactsDataSource) Schema(_ context.Context, _ datasource.SchemaReque
 							Description: "The size of THIS artifact in bytes, as the registry reports it for " +
 								"the artifact alone.\n\n" +
 								"DO NOT SUM THESE, and do not compare a sum with `storage_used_bytes` on " +
-								"`frostmoln_container_registry`. A layer shared between artifacts is STORED " +
-								"ONCE and counted ONCE against the storage cap, but counted IN FULL in every " +
+								"`frostmoln_container_registry`. A layer shared between artifacts in the " +
+								"same namespace is counted ONCE against that namespace's cap, but counted IN FULL in every " +
 								"artifact that references it — so a sum over this list overstates what the " +
 								"namespace occupies, usually by a lot, since images built from a common base " +
 								"share nearly all of their bytes. For the same reason, deleting an artifact " +

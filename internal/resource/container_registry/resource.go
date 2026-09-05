@@ -81,7 +81,7 @@ func (r *containerRegistryResource) Schema(_ context.Context, _ resource.SchemaR
 				Computed:    true,
 			},
 			"storage_used_bytes": schema.Int64Attribute{
-				Description: "Storage currently counted against that cap, in bytes. OBSERVATIONAL: it changes with every push, so expect it to differ on each refresh. It counts deduplicated stored bytes as the registry measures them, which does not equal the sum of your local image sizes — do not use it for billing reconciliation.",
+				Description: "Storage currently counted against that cap, in bytes. OBSERVATIONAL: it changes with every push, so expect it to differ on each refresh. It counts the deduplicated bytes stored in this namespace as the registry measures them, which does not equal the sum of your local image sizes — do not use it for billing reconciliation.",
 				Computed:    true,
 			},
 		},
