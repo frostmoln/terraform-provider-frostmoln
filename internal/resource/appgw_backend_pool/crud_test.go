@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	tfpath "github.com/hashicorp/terraform-plugin-framework/path"
@@ -278,4 +279,56 @@ func importState(t *testing.T) tfsdk.State {
 		attrs[name] = tftypes.NewValue(at, nil)
 	}
 	return tfsdk.State{Schema: s, Raw: tftypes.NewValue(obj, attrs)}
+}
+
+// 🔴 THE COOKIE NAME GOES THROUGH THE SAME RULES AS A HEADER NAME, AND FOR A
+// SHARPER REASON.
+//
+// The server shares its RFC token regexp AND its `#`/apostrophe refusal between
+// header names and cookie names, because the cookie name is rendered as a BARE,
+// whitespace-separated argument: `cookie <name> insert indirect nocache
+// httponly`. So a `#` truncates the line, leaving a cookie directive with no
+// mode, and an apostrophe opens strong quoting mid-word. Either way the proxy
+// refuses its WHOLE configuration and the appliance keeps serving the previous
+// revision — while the API reports the new one.
+//
+// ValidateConfig said it "mirrors the server's cookie rule" and checked only
+// that a name was present.
+func TestPoolValidateConfigChecksTheCookieName(t *testing.T) {
+	r := NewResource().(resource.ResourceWithValidateConfig)
+	check := func(name string) bool {
+		m := poolModel()
+		m.SessionAffinity = types.StringValue("cookie")
+		m.SessionCookieName = types.StringValue(name)
+		p := planOf(t, m)
+		var resp resource.ValidateConfigResponse
+		r.ValidateConfig(context.Background(), resource.ValidateConfigRequest{
+			Config: tfsdk.Config(p),
+		}, &resp)
+		return resp.Diagnostics.HasError()
+	}
+
+	for _, tc := range []struct{ what, name string }{
+		{"a space", "session id"},
+		{"an equals sign", "session=id"},
+		{"a semicolon", "session;id"},
+		// Legal in a cookie name, fatal to the rendered configuration.
+		{"a '#'", "session#id"},
+		{"an apostrophe", "session'id"},
+		{"over 64 bytes", strings.Repeat("a", 65)},
+	} {
+		if !check(tc.name) {
+			t.Errorf("%s: accepted at plan time; the server refuses it, so the practitioner "+
+				"meets it at apply with the pool already created", tc.what)
+		}
+	}
+
+	// The converse, so the test cannot pass by refusing everything — and the
+	// boundary, which must match the server's `>` exactly.
+	for _, ok := range []string{"session-id", "SESSIONID", "sess_id.v2", strings.Repeat("a", 64)} {
+		if check(ok) {
+			t.Errorf("%q was refused; the server accepts it, so this provider is stricter "+
+				"than the platform", ok)
+		}
+	}
 }

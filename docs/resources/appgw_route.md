@@ -75,9 +75,9 @@ resource "frostmoln_appgw_route" "spa" {
 - `path` (String) The path to match. Required when `path_match_type` is `regex`.
 - `path_match_type` (String) How `path` is matched: `prefix` (default), `exact` or `regex` (RE2).
 - `priority` (Number) Evaluation priority; **lower wins**. Omit to have the server place this route last, which is the safe default — a route given priority 0 by accident would take precedence over everything already configured.
-- `request_headers_remove` (List of String) Headers to strip from requests before forwarding.
-- `request_headers_set` (Map of String) Headers to set on requests forwarded to the backend.
-- `response_headers_set` (Map of String) Headers to set on responses returned to the client.
+- `request_headers_remove` (List of String) Headers to strip from requests before forwarding. This is also how you remove a header: setting one to an empty string is refused. Names follow the same rule as `request_headers_set`.
+- `request_headers_set` (Map of String) Headers to set on requests forwarded to the backend. Names are HTTP tokens and additionally may not contain `#` or an apostrophe, which the gateway cannot render. Values must be non-empty, at most 1024 bytes, and free of control characters. Checked at plan time.
+- `response_headers_set` (Map of String) Headers to set on responses returned to the client. Same name and value rules as `request_headers_set`, checked at plan time.
 - `rewrite_path_prefix` (String) Replace the matched path prefix with this before forwarding.
 
 ### Read-Only

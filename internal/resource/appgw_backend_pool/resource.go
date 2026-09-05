@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
+
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
@@ -17,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/appgwvalidate"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
@@ -210,7 +212,21 @@ func (r *poolResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 	}
 }
 
-// ValidateConfig mirrors the server's cookie rule at plan time.
+// ValidateConfig mirrors the server's cookie rules at plan time.
+//
+// 🔴 IT CHECKED THE COUPLING AND NOT THE NAME, WHILE SAYING IT MIRRORED THE
+// RULE. The server applies three more: the RFC token set, a 64-byte bound, and
+// a refusal of `#` and an apostrophe. The last is the one that matters most and
+// is the least obvious — the cookie name is rendered as a BARE, whitespace-
+// separated argument (`cookie <name> insert indirect nocache httponly`), so a
+// `#` truncates the line and leaves a cookie directive with no mode, and an
+// apostrophe opens strong quoting mid-word. Either way the proxy refuses its
+// WHOLE configuration and the appliance sticks at its previous revision.
+//
+// The server's own comment records that this is the SECOND caller of that
+// shared rule, and that it was "found by review rather than by the class being
+// closed properly the first time". The provider had the same split: the route
+// headers were validated here and the cookie name was not.
 func (r *poolResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 	var cfg PoolModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
@@ -223,6 +239,7 @@ func (r *poolResource) ValidateConfig(ctx context.Context, req resource.Validate
 			"session_cookie_name Is Required With session_affinity = \"cookie\"",
 			"Cookie affinity needs the name of the cookie to pin on.")
 	}
+	validateCookieName(cfg.SessionCookieName, resp)
 	// Verification and a CA bundle only mean anything when the gateway speaks
 	// TLS to the backend. Silently ignoring them would let a practitioner
 	// believe a plaintext pool was verified.
@@ -234,6 +251,33 @@ func (r *poolResource) ValidateConfig(ctx context.Context, req resource.Validate
 					"the backend, which is plaintext on an http pool. Set protocol = \"https\" to "+
 					"re-encrypt, or remove these attributes.")
 		}
+	}
+}
+
+// validateCookieName applies the server's three name rules to a known value.
+// An unknown one is deferred, like any other value Terraform cannot see yet.
+func validateCookieName(n types.String, resp *resource.ValidateConfigResponse) {
+	if n.IsNull() || n.IsUnknown() {
+		return
+	}
+	at := path.Root("session_cookie_name")
+	name := n.ValueString()
+	switch {
+	case len(name) > appgwvalidate.MaxCookieNameLength:
+		resp.Diagnostics.AddAttributeError(at, "session_cookie_name Is Too Long",
+			fmt.Sprintf("It is %d bytes; the gateway accepts %d or fewer.",
+				len(name), appgwvalidate.MaxCookieNameLength))
+	case !appgwvalidate.Token.MatchString(name):
+		resp.Diagnostics.AddAttributeError(at, "Invalid session_cookie_name",
+			fmt.Sprintf("%q is not a valid cookie name. It allows letters, digits and "+
+				"!#$%%&'*+-.^_`|~ — a space, a colon or an equals sign is what usually "+
+				"causes this.", name))
+	case appgwvalidate.HasUnrenderable(name):
+		resp.Diagnostics.AddAttributeError(at, "session_cookie_name the Gateway Cannot Render",
+			fmt.Sprintf("%q contains '#' or an apostrophe. Both are legal in a cookie name "+
+				"but the gateway renders it as a bare argument, so either one makes the "+
+				"proxy refuse its whole configuration and keep serving the previous one.",
+				name))
 	}
 }
 

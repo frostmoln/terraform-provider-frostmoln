@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/mapvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
+
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -18,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/appgwvalidate"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
@@ -120,14 +124,18 @@ func (r *routeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				PlanModifiers: replaceStr,
 			},
 			"request_headers_set": schema.MapAttribute{
-				Description:   "Headers to set on requests forwarded to the backend.",
+				Description: "Headers to set on requests forwarded to the backend. Names are " +
+					"HTTP tokens and additionally may not contain `#` or an apostrophe, " +
+					"which the gateway cannot render. Values must be non-empty, at most 1024 bytes, and free of control characters. Checked at plan time.",
 				Optional:      true,
 				ElementType:   types.StringType,
 				Validators:    []validator.Map{mapvalidator.SizeAtLeast(1)},
 				PlanModifiers: []planmodifier.Map{mapplanmodifier.RequiresReplace()},
 			},
 			"request_headers_remove": schema.ListAttribute{
-				Description: "Headers to strip from requests before forwarding.",
+				Description: "Headers to strip from requests before forwarding. This is also " +
+					"how you remove a header: setting one to an empty string is refused. " +
+					"Names follow the same rule as `request_headers_set`.",
 				Optional:    true,
 				ElementType: types.StringType,
 				// SizeAtLeast(1): the server omits an empty collection entirely,
@@ -137,7 +145,8 @@ func (r *routeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				PlanModifiers: []planmodifier.List{listplanmodifier.RequiresReplace()},
 			},
 			"response_headers_set": schema.MapAttribute{
-				Description:   "Headers to set on responses returned to the client.",
+				Description: "Headers to set on responses returned to the client. Same name " +
+					"and value rules as `request_headers_set`, checked at plan time.",
 				Optional:      true,
 				ElementType:   types.StringType,
 				Validators:    []validator.Map{mapvalidator.SizeAtLeast(1)},
@@ -167,17 +176,35 @@ func (r *routeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 	}
 }
 
-// ValidateConfig catches the regex problems at PLAN time.
+// ValidateConfig catches the REGEX and HEADER problems at PLAN time.
 //
-// Worth doing here rather than leaving to the server: a bad pattern discovered
-// at apply time has usually already created the gateway and the listener, and
-// the practitioner then has to unpick a half-built stack over a typo.
+// Named narrowly on purpose. It does NOT cover everything the server refuses --
+// `host` (RFC 1123 with an optional single `*.`), `path` on a non-regex route,
+// and the `rewrite_path_prefix` + `path_match_type` coupling are all checked
+// server-side and not here. A comment promising "what the server would refuse"
+// would be read as a guarantee and is a list that silently goes stale.
+//
+// Worth doing here rather than leaving to the server: a bad value discovered at
+// apply time has usually already created the gateway and the listener, and the
+// practitioner then has to unpick a half-built stack over a typo.
+//
+// 🔴 THE HEADER CHECKS RUN FOR EVERY ROUTE, NOT ONLY REGEX ONES. They used to
+// sit below the `path_match_type != "regex"` return, so on the overwhelming
+// majority of routes -- every prefix and exact one -- this function looked at
+// the path and then stopped, and the header maps were never examined at all.
+// Plan-time validation that only runs on one match type is not plan-time
+// validation; it is a regex check wearing its name.
 func (r *routeResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 	var cfg RouteModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	validateHeaderMap(ctx, cfg.RequestHeadersSet, path.Root("request_headers_set"), resp)
+	validateHeaderMap(ctx, cfg.ResponseHeadersSet, path.Root("response_headers_set"), resp)
+	validateHeaderNames(ctx, cfg.RequestHeadersRemove, path.Root("request_headers_remove"), resp)
+
 	if cfg.PathMatchType.IsUnknown() || cfg.PathMatchType.ValueString() != "regex" {
 		return
 	}
@@ -197,6 +224,127 @@ func (r *routeResource) ValidateConfig(ctx context.Context, req resource.Validat
 		resp.Diagnostics.AddAttributeError(path.Root("path"),
 			"path Is Not a Valid Regular Expression",
 			fmt.Sprintf("The gateway compiles route patterns with RE2: %s", err))
+	}
+}
+
+// validateHeaderMap checks a name/value map the way the server does.
+//
+// 🔴 A DIAGNOSTIC NAMES THE HEADER AND NEVER THE VALUE. The server refuses this
+// way for a stated reason -- a header value is where a tenant's upstream
+// credential lives -- and a Terraform diagnostic is a worse place to leak one
+// than an API error: it lands in plan output, in CI logs, and in whatever
+// captures them.
+func validateHeaderMap(_ context.Context, m types.Map, at path.Path, resp *resource.ValidateConfigResponse) {
+	if m.IsNull() || m.IsUnknown() {
+		return
+	}
+
+	// 🔴 ELEMENT BY ELEMENT, NOT ElementsAs -- AND THE REASON IS THE BUG THIS
+	// FUNCTION EXISTS TO CLOSE.
+	//
+	// ElementsAs converts the WHOLE map and errors on any unknown element, so a
+	// single value interpolated from another resource made this function return
+	// having checked nothing. That is not a rare config; it is the ordinary one:
+	//
+	//     request_headers_set = {
+	//       "X Forwarded"   = "1"                       # the server 400s on this
+	//       "Authorization" = frostmoln_secret.up.value # unknown at plan
+	//     }
+	//
+	// Plan clean, apply fails, gateway and listener already created -- exactly
+	// the half-built stack this validation is for.
+	//
+	// A map KEY can never be unknown: Terraform cannot produce a known map with
+	// an unknown key. So every name here is checkable even when a value is not,
+	// and only the individual unknown VALUE is deferred to the server.
+	for _, name := range sortedKeys(m.Elements()) {
+		checkHeaderName(name, at.AtMapKey(name), resp)
+
+		el := m.Elements()[name]
+		if el.IsUnknown() || el.IsNull() {
+			continue
+		}
+		v, ok := el.(types.String)
+		if !ok {
+			continue
+		}
+		checkHeaderValue(name, v.ValueString(), at.AtMapKey(name), resp)
+	}
+}
+
+// checkHeaderValue applies the server's value rules to one known value.
+func checkHeaderValue(name, value string, at path.Path, resp *resource.ValidateConfigResponse) {
+	switch {
+	case value == "":
+		resp.Diagnostics.AddAttributeError(at, "Header Value Must Not Be Empty",
+			fmt.Sprintf("The value of %q is empty. The gateway refuses this: an empty "+
+				"pair of quotes collapses and leaves a directive the proxy will not "+
+				"parse. To REMOVE a header, list it in request_headers_remove instead.",
+				name))
+	case len(value) > appgwvalidate.MaxHeaderValueLength:
+		resp.Diagnostics.AddAttributeError(at, "Header Value Is Too Long",
+			fmt.Sprintf("The value of %q is %d bytes; the gateway accepts %d or fewer. "+
+				"The bound is on BYTES, so a non-ASCII value reaches it sooner than its "+
+				"character count suggests.", name, len(value), appgwvalidate.MaxHeaderValueLength))
+	default:
+		for _, r := range value {
+			if r < 0x20 || r == 0x7f {
+				resp.Diagnostics.AddAttributeError(at, "Header Value Contains a Control Character",
+					fmt.Sprintf("The value of %q contains a control character. A newline "+
+						"ends the directive whatever quoting is in force, so the gateway "+
+						"refuses it.", name))
+				break
+			}
+		}
+	}
+}
+
+// sortedKeys gives the diagnostics a deterministic order. Ranging a Go map
+// would emit two bad headers in a different order on each run, which makes plan
+// output irreproducible in a CI diff.
+func sortedKeys(m map[string]attr.Value) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// validateHeaderNames checks a list of bare header names (the remove list).
+func validateHeaderNames(_ context.Context, l types.List, at path.Path, resp *resource.ValidateConfigResponse) {
+	if l.IsNull() || l.IsUnknown() {
+		return
+	}
+	// Element by element for the same reason as the map -- but here an unknown
+	// element genuinely IS an unknown name, so only the known ones are
+	// salvageable. Checking those still beats checking none.
+	for i, el := range l.Elements() {
+		if el.IsUnknown() || el.IsNull() {
+			continue
+		}
+		v, ok := el.(types.String)
+		if !ok {
+			continue
+		}
+		checkHeaderName(v.ValueString(), at.AtListIndex(i), resp)
+	}
+}
+
+func checkHeaderName(name string, at path.Path, resp *resource.ValidateConfigResponse) {
+	switch {
+	case name == "":
+		resp.Diagnostics.AddAttributeError(at, "Header Name Must Not Be Empty",
+			"A header name must not be empty.")
+	case !appgwvalidate.Token.MatchString(name):
+		resp.Diagnostics.AddAttributeError(at, "Invalid Header Name",
+			fmt.Sprintf("%q is not a valid header name. HTTP allows letters, digits and "+
+				"!#$%%&'*+-.^_`|~ — a space or a colon is what usually causes this.", name))
+	case appgwvalidate.HasUnrenderable(name):
+		resp.Diagnostics.AddAttributeError(at, "Header Name the Gateway Cannot Render",
+			fmt.Sprintf("The header name %q contains '#' or an apostrophe. Both are legal "+
+				"HTTP but the gateway cannot render them: it would refuse its whole "+
+				"configuration and go on serving the previous one.", name))
 	}
 }
 

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	tfpath "github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -96,6 +98,27 @@ func rtFixture() apiRoute {
 		PathMatchType: "prefix", Path: "/v1", Action: "forward", BackendPoolID: "pool-1",
 		Enabled: true, CreatedAt: "2026-08-01T00:00:00Z",
 	}
+}
+
+// mapValue / listValue build the framework collection types the header
+// validators read. Fatal on error rather than returning one: a fixture that
+// silently became null would make every assertion below vacuous.
+func mapValue(t *testing.T, m map[string]string) types.Map {
+	t.Helper()
+	v, d := types.MapValueFrom(context.Background(), types.StringType, m)
+	if d.HasError() {
+		t.Fatalf("building the header map fixture: %v", d)
+	}
+	return v
+}
+
+func listValue(t *testing.T, l []string) types.List {
+	t.Helper()
+	v, d := types.ListValueFrom(context.Background(), types.StringType, l)
+	if d.HasError() {
+		t.Fatalf("building the header list fixture: %v", d)
+	}
+	return v
 }
 
 func rtModel() RouteModel {
@@ -293,4 +316,292 @@ func importState(t *testing.T) tfsdk.State {
 		attrs[name] = tftypes.NewValue(at, nil)
 	}
 	return tfsdk.State{Schema: s, Raw: tftypes.NewValue(obj, attrs)}
+}
+
+// 🔴 THE HEADER MAPS WERE NEVER VALIDATED, ON ANY ROUTE THAT WAS NOT A REGEX
+// ROUTE — WHICH IS ALMOST ALL OF THEM.
+//
+// ValidateConfig returned early at `path_match_type != "regex"`, above the
+// header checks, so a prefix or exact route's headers went straight to apply.
+// The failure that produces is the one plan-time validation exists to prevent:
+// the gateway and the listener are already created, the route 400s, and the
+// practitioner unpicks a half-built stack over a typo in a header name.
+//
+// Every case below is refused by the SERVER (appgw internal/domain/wire.go);
+// the assertion is that the practitioner learns it at plan time instead.
+func TestRouteValidateConfigChecksHeadersOnEveryMatchType(t *testing.T) {
+	r := NewResource().(resource.ResourceWithValidateConfig)
+	check := func(m RouteModel) bool {
+		p := planOf(t, m)
+		var resp resource.ValidateConfigResponse
+		r.ValidateConfig(context.Background(), resource.ValidateConfigRequest{
+			Config: tfsdk.Config(p),
+		}, &resp)
+		return resp.Diagnostics.HasError()
+	}
+	// A PREFIX route — the case the early return skipped entirely.
+	withRequestHeaders := func(h map[string]string) RouteModel {
+		m := rtModel()
+		m.PathMatchType = types.StringValue("prefix")
+		m.Path = types.StringValue("/")
+		m.RequestHeadersSet = mapValue(t, h)
+		return m
+	}
+
+	for _, tc := range []struct {
+		name    string
+		headers map[string]string
+	}{
+		{"a space in the name", map[string]string{"X Forwarded": "1"}},
+		{"a colon in the name", map[string]string{"X-Trace:": "1"}},
+		{"an empty name", map[string]string{"": "1"}},
+		// Legal HTTP tokens, refused because the renderer cannot express them:
+		// '#' opens a comment and an apostrophe opens a quote, either of which
+		// makes the proxy refuse its WHOLE configuration.
+		{"a '#' in the name", map[string]string{"X-Rate#Limit": "1"}},
+		{"an apostrophe in the name", map[string]string{"X-Don't": "1"}},
+		{"an empty value", map[string]string{"X-Trace": ""}},
+		{"a newline in the value", map[string]string{"X-Trace": "a\nb"}},
+		{"an over-long value", map[string]string{"X-Trace": strings.Repeat("a", 1025)}},
+	} {
+		if !check(withRequestHeaders(tc.headers)) {
+			t.Errorf("%s: accepted at plan time on a prefix route; the server refuses it, "+
+				"so the practitioner meets it at apply with the stack half built", tc.name)
+		}
+	}
+
+	// The converse, so the test cannot pass by refusing everything.
+	ok := withRequestHeaders(map[string]string{
+		"X-Forwarded-Host": "app.example.test",
+		// A value that is JSON, which an earlier server rule wrongly refused —
+		// Report-To and NEL are both JSON, and they must still be settable.
+		"Report-To": `{"group":"csp","max_age":86400}`,
+	})
+	if check(ok) {
+		t.Error("a valid header map was refused; a client stricter than the server refuses " +
+			"a configuration the platform would accept")
+	}
+}
+
+// The response map and the remove list go through the same rules — a check that
+// covered only the request map would leave two of the three collections open.
+func TestRouteValidateConfigChecksEveryHeaderCollection(t *testing.T) {
+	r := NewResource().(resource.ResourceWithValidateConfig)
+	check := func(m RouteModel) bool {
+		p := planOf(t, m)
+		var resp resource.ValidateConfigResponse
+		r.ValidateConfig(context.Background(), resource.ValidateConfigRequest{
+			Config: tfsdk.Config(p),
+		}, &resp)
+		return resp.Diagnostics.HasError()
+	}
+
+	badResponse := rtModel()
+	badResponse.PathMatchType = types.StringValue("prefix")
+	badResponse.Path = types.StringValue("/")
+	badResponse.ResponseHeadersSet = mapValue(t, map[string]string{"X Bad": "1"})
+	if !check(badResponse) {
+		t.Error("response_headers_set was not validated")
+	}
+
+	badRemove := rtModel()
+	badRemove.PathMatchType = types.StringValue("prefix")
+	badRemove.Path = types.StringValue("/")
+	badRemove.RequestHeadersRemove = listValue(t, []string{"X Bad"})
+	if !check(badRemove) {
+		t.Error("request_headers_remove was not validated")
+	}
+}
+
+// 🔴 A DIAGNOSTIC MUST NAME THE HEADER AND NEVER THE VALUE.
+//
+// The server refuses this way for a stated reason — a header value is where a
+// tenant's upstream credential lives — and a Terraform diagnostic is a WORSE
+// place to leak one than an API error: it lands in plan output, in CI logs, and
+// in whatever captures them.
+func TestRouteValidateConfigNeverEchoesAHeaderValue(t *testing.T) {
+	// 🔴 THE SECRET CARRIES A QUOTE ON PURPOSE. A leak rendered with %q would
+	// escape it, so a Contains check against a plain marker would MISS the very
+	// leak it is looking for.
+	const secret = `Bearer sk-live-"do-not-log-me"`
+	r := NewResource().(resource.ResourceWithValidateConfig)
+
+	// EVERY refusal branch, not just the one the first version covered: a bad
+	// name, and each of the three value rules. The code is airtight today; this
+	// is what notices when a later edit adds the value to one message.
+	for _, tc := range []struct {
+		name    string
+		headers map[string]string
+	}{
+		{"bad name", map[string]string{"X Bad": secret}},
+		{"control character", map[string]string{"X-Trace": secret + "\n"}},
+		{"over length", map[string]string{"X-Trace": secret + strings.Repeat("x", 1024)}},
+		// The empty-value branch cannot carry a secret by construction, but it
+		// is included so the table matches the switch it guards.
+		{"empty value", map[string]string{"X-Trace": ""}},
+	} {
+		m := rtModel()
+		m.PathMatchType = types.StringValue("prefix")
+		m.Path = types.StringValue("/")
+		m.RequestHeadersSet = mapValue(t, tc.headers)
+
+		p := planOf(t, m)
+		var resp resource.ValidateConfigResponse
+		r.ValidateConfig(context.Background(), resource.ValidateConfigRequest{
+			Config: tfsdk.Config(p),
+		}, &resp)
+		if !resp.Diagnostics.HasError() {
+			t.Fatalf("%s: the fixture must be refused, or this assertion is vacuous", tc.name)
+		}
+		for _, d := range resp.Diagnostics.Errors() {
+			if strings.Contains(d.Summary(), secret) || strings.Contains(d.Detail(), secret) {
+				t.Errorf("%s: a diagnostic echoed the header VALUE into plan output:\n  %s\n  %s",
+					tc.name, d.Summary(), d.Detail())
+			}
+		}
+	}
+}
+
+// 🔴 AN UNKNOWN VALUE MUST NOT ABANDON THE WHOLE MAP.
+//
+// The first version converted the map with ElementsAs, which errors on ANY
+// unknown element — so one value interpolated from another resource made the
+// validator return having checked nothing, and the bad NAME beside it sailed
+// through to apply. That is not a rare configuration; it is the ordinary one.
+//
+// A map KEY can never be unknown, so every name is checkable even when a value
+// is not. Only the individual unknown value is deferred to the server.
+func TestRouteValidateConfigChecksNamesEvenWhenAValueIsUnknown(t *testing.T) {
+	r := NewResource().(resource.ResourceWithValidateConfig)
+
+	m := rtModel()
+	m.PathMatchType = types.StringValue("prefix")
+	m.Path = types.StringValue("/")
+	// A bad name beside a value Terraform cannot resolve at plan time.
+	m.RequestHeadersSet = types.MapValueMust(types.StringType, map[string]attr.Value{
+		"X Forwarded":   types.StringValue("1"),
+		"Authorization": types.StringUnknown(),
+	})
+
+	p := planOf(t, m)
+	var resp resource.ValidateConfigResponse
+	r.ValidateConfig(context.Background(), resource.ValidateConfigRequest{
+		Config: tfsdk.Config(p),
+	}, &resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Error("an unknown value beside a bad header NAME abandoned the whole map; the " +
+			"name reaches apply, which is the half-built-stack failure this validator exists " +
+			"to prevent, in the most ordinary config there is")
+	}
+}
+
+// And the converse, which is the regression the fix could introduce: an unknown
+// value must not be REFUSED. Treating unknown as an empty string would fail
+// every configuration that interpolates a header value, with no workaround.
+func TestRouteValidateConfigAcceptsAnUnknownHeaderValue(t *testing.T) {
+	r := NewResource().(resource.ResourceWithValidateConfig)
+
+	m := rtModel()
+	m.PathMatchType = types.StringValue("prefix")
+	m.Path = types.StringValue("/")
+	m.RequestHeadersSet = types.MapValueMust(types.StringType, map[string]attr.Value{
+		"Authorization": types.StringUnknown(),
+	})
+	m.RequestHeadersRemove = types.ListValueMust(types.StringType, []attr.Value{
+		types.StringUnknown(),
+	})
+
+	p := planOf(t, m)
+	var resp resource.ValidateConfigResponse
+	r.ValidateConfig(context.Background(), resource.ValidateConfigRequest{
+		Config: tfsdk.Config(p),
+	}, &resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Errorf("an unknown header value was refused at plan time; every configuration "+
+			"that interpolates one would break with no workaround: %v", resp.Diagnostics.Errors())
+	}
+}
+
+// 🔴 THE ACCEPTED CHARACTER SET IS PINNED, because narrowing it is invisible.
+//
+// The client's regexp is the server's verbatim, and the server's own test
+// enumerates this set because it was MEASURED against HAProxy 2.8/3.0/3.2.
+// Drop `^`, the backtick or `|~` from the class and every other test here still
+// passes while the provider starts refusing names the platform accepts — a
+// client stricter than the server, which is the failure the copied-constant
+// comment is about.
+func TestRouteValidateConfigAcceptsEveryTokenCharacterTheServerDoes(t *testing.T) {
+	r := NewResource().(resource.ResourceWithValidateConfig)
+	check := func(m RouteModel) bool {
+		p := planOf(t, m)
+		var resp resource.ValidateConfigResponse
+		r.ValidateConfig(context.Background(), resource.ValidateConfigRequest{
+			Config: tfsdk.Config(p),
+		}, &resp)
+		return resp.Diagnostics.HasError()
+	}
+	// Every RFC 7230 token character EXCEPT '#' and the apostrophe, which the
+	// gateway cannot render and which are refused on purpose.
+	for _, name := range []string{
+		"X-Bang!", "X-Dollar$", "X-Percent%", "X-Amp&", "X-Star*", "X-Plus+",
+		"X-Dash-", "X-Dot.", "X-Caret^", "X-Under_", "X-Tick`", "X-Pipe|", "X-Tilde~",
+		"X-Digits0123456789", "lowercase-name",
+	} {
+		m := rtModel()
+		m.PathMatchType = types.StringValue("prefix")
+		m.Path = types.StringValue("/")
+		m.RequestHeadersSet = mapValue(t, map[string]string{name: "v"})
+		if check(m) {
+			t.Errorf("%q was refused; the server accepts it, so this provider is stricter "+
+				"than the platform and refuses a valid configuration", name)
+		}
+	}
+}
+
+// The length bound is the SERVER's 1024, on BYTES, and the boundary is exact.
+// Literals rather than the package constant: reading our own constant would
+// move the test with a drifting value and never observe the divergence.
+func TestRouteValidateConfigLengthBoundMatchesTheServerExactly(t *testing.T) {
+	r := NewResource().(resource.ResourceWithValidateConfig)
+	check := func(value string) bool {
+		m := rtModel()
+		m.PathMatchType = types.StringValue("prefix")
+		m.Path = types.StringValue("/")
+		m.RequestHeadersSet = mapValue(t, map[string]string{"X-Trace": value})
+		p := planOf(t, m)
+		var resp resource.ValidateConfigResponse
+		r.ValidateConfig(context.Background(), resource.ValidateConfigRequest{
+			Config: tfsdk.Config(p),
+		}, &resp)
+		return resp.Diagnostics.HasError()
+	}
+	if check(strings.Repeat("a", 1024)) {
+		t.Error("1024 bytes was refused; the server accepts it (its comparison is `>`)")
+	}
+	if !check(strings.Repeat("a", 1025)) {
+		t.Error("1025 bytes was accepted; the server refuses it")
+	}
+}
+
+// Positive cases for the other two collections, so a validator that refused
+// EVERYTHING in them would not pass.
+func TestRouteValidateConfigAcceptsValidValuesInEveryCollection(t *testing.T) {
+	r := NewResource().(resource.ResourceWithValidateConfig)
+	m := rtModel()
+	m.PathMatchType = types.StringValue("prefix")
+	m.Path = types.StringValue("/")
+	m.RequestHeadersSet = mapValue(t, map[string]string{"X-Request-Id": "abc"})
+	m.ResponseHeadersSet = mapValue(t, map[string]string{"X-Frame-Options": "DENY"})
+	m.RequestHeadersRemove = listValue(t, []string{"X-Internal-Token", "Server"})
+
+	p := planOf(t, m)
+	var resp resource.ValidateConfigResponse
+	r.ValidateConfig(context.Background(), resource.ValidateConfigRequest{
+		Config: tfsdk.Config(p),
+	}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Errorf("a valid configuration was refused: %v", resp.Diagnostics.Errors())
+	}
 }
