@@ -116,10 +116,36 @@ func (d *flavorsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 								"costs you room for a rule.",
 							Computed: true,
 						},
+						// 🔴 THIS DESCRIPTION SAID THE OPPOSITE OF WHAT THE SERVER
+						// DOES, and it is the number a practitioner reads while
+						// choosing a size. It read "NOT a hard cap — a listener
+						// with a larger `max_connections` raises the appliance's
+						// global limit to meet it", which was true of an earlier
+						// design and stopped being true when the server made it
+						// a cap: a listener asking for more is refused at create
+						// with 409 FLAVOR_LIMIT_EXCEEDED, and a stored row above
+						// it is clamped at render. So a `terraform apply` that
+						// the docs said would work now fails, and the docs were
+						// the reason it was written.
+						//
+						// The server's own comment records the reversal in as
+						// many words -- "IT IS A HARD CAP, and the comment here
+						// used to say the opposite" -- and names why: a rating
+						// the appliance cannot honour is worse than no number,
+						// because a 2 GiB size rated 4096 driven to 200000 is
+						// roughly 14 GiB of proxy buffers at TLS. HAProxy
+						// allocates on demand, so that appliance starts, serves,
+						// and is OOM-killed when the connections arrive.
 						"max_concurrent_connections": schema.Int64Attribute{
-							Description: "Concurrent connections this size is rated for, and the limit the " +
-								"appliance is built with by default. NOT a hard cap — a listener with a " +
-								"larger `max_connections` raises the appliance's global limit to meet it.",
+							// ONE paragraph, not two: tfplugindocs renders each
+							// attribute as a list item, and a `\n\n` inside one
+							// breaks the second half out of the list (which is
+							// what max_waf_exclusions above already does).
+							Description: "Concurrent connections this size allows. **Enforced**: a listener " +
+								"whose `max_connections` exceeds it is refused at create, and a stored " +
+								"value above it is clamped when the configuration is rendered. Derived " +
+								"from `max_requests_per_second` rather than stored, so it cannot disagree " +
+								"with the limit the appliance is actually built with.",
 							Computed: true,
 						},
 						"max_requests_per_second": schema.Int64Attribute{

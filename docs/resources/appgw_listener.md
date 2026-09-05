@@ -75,7 +75,7 @@ resource "frostmoln_appgw_listener" "https" {
 - `denied_cidrs` (List of String) Source CIDRs refused by this listener.
 - `geo_block_mode` (String) Country filtering: `off`, `allow` (only `geo_countries`) or `deny` (everything except `geo_countries`).
 - `geo_countries` (List of String) ISO 3166-1 alpha-2 country codes. Required when `geo_block_mode` is `allow` or `deny`.
-- `max_connections` (Number) Maximum concurrent connections on this listener.
+- `max_connections` (Number) Maximum concurrent connections on this listener. Must not exceed the flavor's `max_concurrent_connections`, which is enforced server-side — a larger value is refused at create with `FLAVOR_LIMIT_EXCEEDED` naming the flavor.
 - `rate_limit_burst` (Number) Burst allowance above `rate_limit_rps`.
 - `rate_limit_rps` (Number) Requests per second permitted per source address.
 - `redirect_to_https` (Boolean) Redirect requests to the https listener instead of serving them.

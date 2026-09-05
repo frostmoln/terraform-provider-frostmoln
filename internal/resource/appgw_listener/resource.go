@@ -187,8 +187,15 @@ func (r *listenerResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				PlanModifiers: replaceInt,
 			},
 			"max_connections": schema.Int64Attribute{
-				Description: "Maximum concurrent connections on this listener.",
-				Optional:    true,
+				// Names the server-side ceiling, because this is the field a
+				// practitioner sets and the flavor's is the one that refuses it.
+				// The bound below is a SHAPE check, not that ceiling: the real
+				// limit is per-flavor and only the server knows it.
+				Description: "Maximum concurrent connections on this listener. Must not exceed the " +
+					"flavor's `max_concurrent_connections`, which is enforced server-side — a " +
+					"larger value is refused at create with `FLAVOR_LIMIT_EXCEEDED` naming the " +
+					"flavor.",
+				Optional: true,
 				// AtLeast(1), not 0: the server treats 0 as absent — either by
 				// `omitempty` on the wire or by coercing it to a default — so a
 				// configured 0 comes back as something else and the apply fails
