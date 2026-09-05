@@ -49,6 +49,12 @@ var writeOnlyAttributes = map[string][]string{
 	"frostmoln_instance":          {"console_password_wo", "user_data_wo"},
 	"frostmoln_launch_template":   {"user_data_wo"},
 	"frostmoln_appgw_certificate": {"private_key_pem_wo"},
+	// (1) The caches API returns NO credential — no endpoint reads an upstream
+	// credential back — so fromAPI cannot adopt one; it writes neither the
+	// legacy password nor the write-only pair. (2) There is no Update: every
+	// configurable attribute is RequiresReplace, so Create is the only reader
+	// and there is no second one to drift from it.
+	"frostmoln_container_registry_cache": {"password_wo"},
 }
 
 // TestWriteOnlyAttributeContract asserts, for every WriteOnly attribute of every

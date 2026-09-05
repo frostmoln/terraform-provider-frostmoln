@@ -27,6 +27,7 @@ import (
 	appgwwafrulesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/appgw_waf_rules"
 	dscontainerregistry "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/container_registry"
 	dscontainerregistryartifacts "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/container_registry_artifacts"
+	dscontainerregistrycacheupstreams "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/container_registry_cache_upstreams"
 	dscontainerregistryrepositories "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/container_registry_repositories"
 	databaseenginesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/database_engines"
 	dnszoneds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/dns_zone"
@@ -73,6 +74,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/bucket_cors_configuration"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/bucket_lifecycle_configuration"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/container_registry"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/container_registry_cache"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/container_registry_credential"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_record"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_zone"
@@ -545,6 +547,11 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		s3_credential.NewResource,
 		container_registry.NewResource,
 		container_registry_credential.NewResource,
+		// One pull-through cache. Immutable end to end: the API has no update
+		// route, so every argument is RequiresReplace — including the write-only
+		// upstream password, whose missing RequiresReplace would report a
+		// successful apply that changed nothing on the server.
+		container_registry_cache.NewResource,
 		vpc.NewResource,
 		vpc_route.NewResource,
 		subnet.NewResource,
@@ -622,6 +629,11 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		// Terraform.
 		dscontainerregistryrepositories.NewDataSource,
 		dscontainerregistryartifacts.NewDataSource,
+		// The upstream catalog a pull-through cache may front. It is a data
+		// source rather than a constant on purpose: the set is server-owned and
+		// rows are retired without a provider release, so any copy held here
+		// would refuse a key the server accepts.
+		dscontainerregistrycacheupstreams.NewDataSource,
 		appgwflavorsds.NewDataSource,
 		// Two sources rather than one with an owner argument: a tenant's rules
 		// and the platform's are managed by entirely different means, and a

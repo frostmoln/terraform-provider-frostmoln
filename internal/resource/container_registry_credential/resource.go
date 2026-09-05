@@ -119,8 +119,11 @@ func (r *credentialResource) Schema(_ context.Context, _ resource.SchemaRequest,
 			},
 			"namespaces": schema.ListAttribute{
 				Description: "The namespaces this credential reaches — the tenant's repository namespace " +
-					"and each of its pull-through caches. One credential covers all of them, because " +
-					"`docker login` is per host.",
+					"and each of its pull-through caches (`frostmoln_container_registry_cache`). One " +
+					"credential covers all of them, because `docker login` is per host. A cache created " +
+					"AFTER this credential is extended onto it by the platform, so pulling through a new " +
+					"cache needs no new credential and no replacement of this one — but the list is read " +
+					"at refresh, so it lags a cache created in the same apply until the next one.",
 				Computed:    true,
 				ElementType: types.StringType,
 			},
