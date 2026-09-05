@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.48.3] - 2026-09-05
+
+### 🐛 Bug Fixes
+
+- *(subnet)* Drop UseStateForUnknown from available_ips, a live gauge (#471)
+
 ## [0.48.2] - 2026-09-05
 
 ### 📚 Documentation
