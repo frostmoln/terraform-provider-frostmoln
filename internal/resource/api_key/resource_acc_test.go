@@ -103,7 +103,7 @@ func testAccCheckAPIKeyDestroy(s *terraform.State) error {
 			continue
 		}
 
-		_, err := c.Get(context.Background(), "/v1/api-keys/"+rs.Primary.ID, nil)
+		_, err := c.Get(context.Background(), c.TenantPath("/api-keys/"+rs.Primary.ID), nil)
 		if err == nil {
 			return fmt.Errorf("api key %s still exists", rs.Primary.ID)
 		}

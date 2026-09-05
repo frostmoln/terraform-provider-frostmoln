@@ -429,7 +429,7 @@ func TestAPIKeyCreate(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			meHandler(w, r)
 
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/api-keys":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/api-keys":
 			var req apiCreateAPIKeyRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatalf("failed to decode request: %v", err)
@@ -468,7 +468,7 @@ func TestAPIKeyCreate(t *testing.T) {
 		Scopes:      []string{"compute:read"},
 		RateLimit:   50,
 	}
-	resp, err := c.Post(context.Background(), "/v1/api-keys", apiReq)
+	resp, err := c.Post(context.Background(), "/v1/tenants/tenant-456/api-keys", apiReq)
 	if err != nil {
 		t.Fatalf("post failed: %v", err)
 	}
@@ -498,7 +498,7 @@ func TestAPIKeyRead(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			meHandler(w, r)
 
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/api-keys/ak-123":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/api-keys/ak-123":
 			_ = json.NewEncoder(w).Encode(apiAPIKey{
 				ID:          "ak-123",
 				Name:        "my-key",
@@ -519,7 +519,7 @@ func TestAPIKeyRead(t *testing.T) {
 
 	c := newTestClient(t, server)
 
-	resp, err := c.Get(context.Background(), "/v1/api-keys/ak-123", nil)
+	resp, err := c.Get(context.Background(), "/v1/tenants/tenant-456/api-keys/ak-123", nil)
 	if err != nil {
 		t.Fatalf("get failed: %v", err)
 	}
@@ -550,7 +550,7 @@ func TestAPIKeyReadNotFound(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			meHandler(w, r)
 
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/api-keys/nonexistent":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/api-keys/nonexistent":
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"code":    "NOT_FOUND",
@@ -566,7 +566,7 @@ func TestAPIKeyReadNotFound(t *testing.T) {
 
 	c := newTestClient(t, server)
 
-	_, err := c.Get(context.Background(), "/v1/api-keys/nonexistent", nil)
+	_, err := c.Get(context.Background(), "/v1/tenants/tenant-456/api-keys/nonexistent", nil)
 	if err == nil {
 		t.Fatal("expected error for not found")
 	}
@@ -582,7 +582,7 @@ func TestAPIKeyUpdate(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			meHandler(w, r)
 
-		case r.Method == http.MethodPatch && r.URL.Path == "/v1/api-keys/ak-123":
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/tenant-456/api-keys/ak-123":
 			patched = true
 			var req apiUpdateAPIKeyRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -599,7 +599,7 @@ func TestAPIKeyUpdate(t *testing.T) {
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
 
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/api-keys/ak-123":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/api-keys/ak-123":
 			_ = json.NewEncoder(w).Encode(apiAPIKey{
 				ID:        "ak-123",
 				Name:      "updated-key",
@@ -619,7 +619,7 @@ func TestAPIKeyUpdate(t *testing.T) {
 
 	name := "updated-key"
 	updateReq := apiUpdateAPIKeyRequest{Name: &name}
-	_, err := c.Patch(context.Background(), "/v1/api-keys/ak-123", updateReq)
+	_, err := c.Patch(context.Background(), "/v1/tenants/tenant-456/api-keys/ak-123", updateReq)
 	if err != nil {
 		t.Fatalf("patch failed: %v", err)
 	}
@@ -636,7 +636,7 @@ func TestAPIKeyDelete(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			meHandler(w, r)
 
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1/api-keys/ak-123":
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-456/api-keys/ak-123":
 			deleted = true
 			w.WriteHeader(http.StatusNoContent)
 
@@ -649,7 +649,7 @@ func TestAPIKeyDelete(t *testing.T) {
 
 	c := newTestClient(t, server)
 
-	_, err := c.Delete(context.Background(), "/v1/api-keys/ak-123")
+	_, err := c.Delete(context.Background(), "/v1/tenants/tenant-456/api-keys/ak-123")
 	if err != nil {
 		t.Fatalf("delete failed: %v", err)
 	}
@@ -665,7 +665,7 @@ func TestAPIKeyDeleteAlreadyGone(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
 			meHandler(w, r)
 
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1/api-keys/gone":
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-456/api-keys/gone":
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"code":    "NOT_FOUND",
@@ -681,7 +681,7 @@ func TestAPIKeyDeleteAlreadyGone(t *testing.T) {
 
 	c := newTestClient(t, server)
 
-	_, err := c.Delete(context.Background(), "/v1/api-keys/gone")
+	_, err := c.Delete(context.Background(), "/v1/tenants/tenant-456/api-keys/gone")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -802,7 +802,7 @@ func TestAPIKeyResource_Configure_WrongType(t *testing.T) {
 func TestAPIKeyResource_Create_TFSDK(t *testing.T) {
 	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/api-keys":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/api-keys":
 			// Decode the request and echo it back inside the create ENVELOPE
 			// ({apiKey: {...}, key: "..."}) exactly as identity does, so the
 			// test exercises both the envelope decode and the expires_at
@@ -936,7 +936,7 @@ func TestAPIKeyResource_Create_APIError(t *testing.T) {
 func TestAPIKeyResource_Read_TFSDK(t *testing.T) {
 	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/api-keys/ak-123":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/api-keys/ak-123":
 			_ = json.NewEncoder(w).Encode(apiAPIKey{
 				ID:        "ak-123",
 				Name:      "my-key",
@@ -1042,7 +1042,7 @@ func TestAPIKeyResource_Read_NotFound_TFSDK(t *testing.T) {
 func TestAPIKeyResource_Update_TFSDK(t *testing.T) {
 	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPatch && r.URL.Path == "/v1/api-keys/ak-123":
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/tenant-456/api-keys/ak-123":
 			_ = json.NewEncoder(w).Encode(apiAPIKey{
 				ID:        "ak-123",
 				Name:      "updated-key",
@@ -1050,7 +1050,7 @@ func TestAPIKeyResource_Update_TFSDK(t *testing.T) {
 				Status:    "active",
 				CreatedAt: "2025-06-01T12:00:00Z",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/api-keys/ak-123":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/api-keys/ak-123":
 			_ = json.NewEncoder(w).Encode(apiAPIKey{
 				ID:        "ak-123",
 				Name:      "updated-key",
@@ -1182,7 +1182,7 @@ func TestAPIKeyResource_Delete_TFSDK(t *testing.T) {
 	deleted := false
 	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1/api-keys/ak-123":
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-456/api-keys/ak-123":
 			deleted = true
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -1297,5 +1297,52 @@ func TestAPIKeyResource_ImportState_TFSDK(t *testing.T) {
 	importResp.State.Get(context.Background(), &model)
 	if model.ID.ValueString() != "ak-123" {
 		t.Errorf("expected imported ID ak-123, got %s", model.ID.ValueString())
+	}
+}
+
+// TestAPIKeyPathRefusesTraversal is the regression test for a DESTROYED
+// resource, not a tidy-up.
+//
+// `id` is Computed, so a practitioner reaches it through `terraform import` or a
+// supplied/edited state file — a shared module, a CI pipeline that builds an
+// import block, tampered remote state. Client.do finishes URL assembly with
+// path.Join, which CLEANS dot segments, and TenantPath escapes only the tenant;
+// url.PathEscape would not help either, since "." and ".." are unreserved. So an
+// unguarded id of "../instances/<uuid>" turns the DELETE that Terraform issues on
+// destroy into a delete of that INSTANCE — a registered route, same verb,
+// authorized by the practitioner's own credential — while the plan says "api
+// key" throughout. Three more dot segments reach /api/v1/me, identity's
+// self-service account delete.
+//
+// Moving these routes under /v1/tenants/{tid}/ only added segments to climb. The
+// guard is what closes it, so this asserts the guard, and asserts a valid id is
+// still built correctly so the guard cannot be "fixed" by refusing everything.
+func TestAPIKeyPathRefusesTraversal(t *testing.T) {
+	c := client.NewClient("https://api.example.test", "test-key")
+	c.SetTenantIDForTest("tenant-456")
+	r := &apiKeyResource{client: c}
+
+	for _, id := range []string{
+		"..",
+		".",
+		"",
+		"../instances/9f2c",
+		"../../v1/me",
+		"a/b",
+	} {
+		if _, err := r.apiKeyPath(id, ""); err == nil {
+			t.Errorf("apiKeyPath(%q) was accepted; it collapses onto another resource", id)
+		}
+		if _, err := r.apiKeyPath(id, "/revoke"); err == nil {
+			t.Errorf("apiKeyPath(%q, /revoke) was accepted", id)
+		}
+	}
+
+	got, err := r.apiKeyPath("ak-123", "")
+	if err != nil {
+		t.Fatalf("a valid id must still build a path: %v", err)
+	}
+	if want := "/v1/tenants/tenant-456/api-keys/ak-123"; got != want {
+		t.Errorf("apiKeyPath = %q, want %q", got, want)
 	}
 }

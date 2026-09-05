@@ -152,7 +152,7 @@ func (r *apiKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	apiResp, err := r.client.Post(ctx, "/v1/api-keys", apiReq)
+	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/api-keys"), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create API key", err.Error())
 		return
@@ -188,7 +188,12 @@ func (r *apiKeyResource) Read(ctx context.Context, req resource.ReadRequest, res
 	// Preserve the key value from state (API does not return it on reads).
 	savedKey := state.Key
 
-	apiResp, err := r.client.Get(ctx, "/v1/api-keys/"+state.ID.ValueString(), nil)
+	keyPath, err := r.apiKeyPath(state.ID.ValueString(), "")
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid API key ID", err.Error())
+		return
+	}
+	apiResp, err := r.client.Get(ctx, keyPath, nil)
 	if err != nil {
 		if client.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
@@ -231,14 +236,19 @@ func (r *apiKeyResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	_, err := r.client.Patch(ctx, "/v1/api-keys/"+id, updateReq)
+	keyPath, err := r.apiKeyPath(id, "")
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid API key ID", err.Error())
+		return
+	}
+	_, err = r.client.Patch(ctx, keyPath, updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to update API key", err.Error())
 		return
 	}
 
 	// Refresh state from API.
-	apiResp, err := r.client.Get(ctx, "/v1/api-keys/"+id, nil)
+	apiResp, err := r.client.Get(ctx, keyPath, nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to read API key after update", err.Error())
 		return
@@ -265,7 +275,12 @@ func (r *apiKeyResource) Delete(ctx context.Context, req resource.DeleteRequest,
 		return
 	}
 
-	_, err := r.client.Delete(ctx, "/v1/api-keys/"+state.ID.ValueString())
+	keyPath, err := r.apiKeyPath(state.ID.ValueString(), "")
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid API key ID", err.Error())
+		return
+	}
+	_, err = r.client.Delete(ctx, keyPath)
 	if err != nil {
 		if client.IsNotFound(err) {
 			return
@@ -275,5 +290,40 @@ func (r *apiKeyResource) Delete(ctx context.Context, req resource.DeleteRequest,
 }
 
 func (r *apiKeyResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	// NOT ImportStatePassthroughID: that writes the practitioner's string
+	// straight into `id`, and `id` becomes a URL path segment. See apiKeyPath.
+	parts, err := client.ParseImportID(req.ID, "api_key_id")
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid import ID", err.Error())
+		return
+	}
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[0])...)
+}
+
+// apiKeyPath builds the tenant-scoped path for one API key, optionally with a
+// sub-action suffix such as "/revoke".
+//
+// 🔴 THE ID IS VALIDATED, AND THE DIFFERENCE IS A DESTROYED RESOURCE. Client.do
+// finishes URL assembly with path.Join, which CLEANS dot segments, and
+// TenantPath escapes only the TENANT — the subpath is interpolated raw.
+// url.PathEscape would not help anyway: "." and ".." are unreserved, so there is
+// nothing for it to escape. `id` is Computed, so the practitioner-controlled
+// entry points are `terraform import` and a supplied or edited state file (a
+// shared module, a CI pipeline that builds an import block, tampered remote
+// state). With an id of "../instances/<uuid>" the DELETE that Terraform issues
+// on destroy lands on /api/v1/tenants/{t}/instances/<uuid> — a registered route,
+// same verb, authorized by the practitioner's own credential — and the plan says
+// "api key" throughout. Three more dot segments reach /api/v1/me, identity's
+// self-service account delete.
+//
+// Moving these routes under /v1/tenants/{tid}/ only added segments to climb; it
+// did not close this. Refusing the value does, which is what ParseImportID's
+// single-segment form is for — it rejects "", ".", ".." and anything containing
+// a slash. One builder for every id-bearing call so a new sub-action cannot skip
+// the guard. Same shape as fm-cli's account.apiKeyPath.
+func (r *apiKeyResource) apiKeyPath(id, suffix string) (string, error) {
+	if _, err := client.ParseImportID(id, "api_key_id"); err != nil {
+		return "", err
+	}
+	return r.client.TenantPath("/api-keys/" + id + suffix), nil
 }

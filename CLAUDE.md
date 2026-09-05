@@ -236,6 +236,6 @@ and the default when `api_endpoint` is unset.
 | Volumes | `/v1/tenants/{t}/volumes` | Async create, resize support |
 | Snapshots | `/v1/tenants/{t}/snapshots` | Immutable after create |
 | Instances | `/v1/tenants/{t}/instances` | Async, resize via actions |
-| API Keys | `/v1/api-keys` | Key only on create |
+| API Keys | `/v1/tenants/{t}/api-keys` | Key only on create. TENANT-SCOPED — the gateway re-scopes the signed auth context only on a `/tenants/{id}/` path, so the bare `/v1/api-keys` alias binds the key to the caller's HOME tenant, and an org-invited user has none (identity then resolves no org role and refuses every scope) |
 | Images | `/v1/tenants/{t}/images` | Reads public; writes (BYOI custom images) open to every tenant since 2026-08-22 (the `custom-images` entitlement was removed). TENANT-SCOPED — the gateway re-scopes the signed auth context only on a `/tenants/{id}/` path, so a bare `/v1/images` call silently acts on the caller's home tenant. Create → mint upload form → upload to object storage → import → poll, all on the same tenant path |
 | Flavors | `/v1/flavors` | Read-only, public |
