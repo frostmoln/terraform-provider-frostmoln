@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.48.4] - 2026-09-05
+
+### 📚 Documentation
+
+- Drop the retired instance-access entitlement from instance_access (#473)
+
 ## [0.48.3] - 2026-09-05
 
 ### 🐛 Bug Fixes
