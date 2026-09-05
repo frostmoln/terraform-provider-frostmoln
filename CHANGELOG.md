@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.49.0] - 2026-09-05
+
+### 🚀 Features
+
+- *(registry)* Frostmoln_container_registry_cache (#477)
+
+### 🐛 Bug Fixes
+
+- *(appgw_route)* Validate headers at plan time on every route, not only regex ones (#475)
+
 ## [0.48.4] - 2026-09-05
 
 ### 📚 Documentation
