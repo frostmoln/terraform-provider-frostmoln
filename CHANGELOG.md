@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.51.3] - 2026-09-06
+
+### 🐛 Bug Fixes
+
+- *(postgres)* Write the instance id to state before waiting, so a timeout cannot orphan it (#494)
+
 ## [0.51.2] - 2026-09-06
 
 ### 📚 Documentation
