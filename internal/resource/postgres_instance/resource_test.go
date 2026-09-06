@@ -1109,3 +1109,122 @@ func TestPostgresInstanceToUpdateRequestEnableCarriesPolicy(t *testing.T) {
 		t.Error("expected a disable to carry only backupEnabled")
 	}
 }
+
+// TestCreate202TimeoutStillRecordsTheInstance.
+//
+// 🔴 THE ORPHAN, AS A TEST. A create that times out must still leave the instance IN STATE.
+//
+// Until the 202 carried a `resourceId`, it could not: provisioning fills an operation's
+// ResourceID from the workflow RESULT, so a PENDING operation has none, and Create returned the
+// wait error before any State.Set. A timeout therefore left an instance that was running and
+// BILLING, which Terraform could not refresh, destroy or import, and whose name 409'd the next
+// apply. The only recovery was a human finding it in the portal.
+//
+// The mock never completes the operation, so the wait times out — exactly the case that used to
+// orphan. The assertion is not that create succeeds (it must not; nothing reached `running`) but
+// that the failure is RECOVERABLE.
+func TestCreate202TimeoutStillRecordsTheInstance(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/databases":
+			// The async shape, WITH the id — the field this depends on.
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-1", "status": "pending",
+				"resourceType": "database", "resourceId": "pg-slow",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/databases/pg-slow":
+			_ = json.NewEncoder(w).Encode(apiPostgresInstance{
+				ID: "pg-slow", Name: "test-pg", PostgresVersion: "16", FlavorID: "db.gp1.small",
+				StorageGB: 50, VPCID: "vpc-1", SubnetID: "sn-1", Status: "provisioning",
+				CreatedAt: "2025-01-01T00:00:00Z",
+			})
+		case strings.HasSuffix(r.URL.Path, "/operations/op-1"):
+			// Never completes. This is the timeout case.
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-1", "status": "running", "resourceType": "database",
+			})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	r := newResource(newClient(t, server))
+	r.pollInterval = 10 * time.Millisecond
+	r.pollTimeout = 120 * time.Millisecond
+	createResp := resource.CreateResponse{State: emptyState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: buildPlan(t, fullPlanModel())}, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("expected the create to fail: the operation never completed")
+	}
+
+	// 🔴 THE POINT. The id must be in state despite the failure, or the instance is orphaned.
+	var result PostgresInstanceModel
+	createResp.State.Get(context.Background(), &result)
+	if result.ID.ValueString() != "pg-slow" {
+		t.Fatalf("a timed-out create must still record the instance id so it can be destroyed; "+
+			"got %q", result.ID.ValueString())
+	}
+}
+
+// TestCreate202WithoutAResourceIDStillWorks is the compatibility half: an OLDER database service
+// sends no `resourceId`, and the provider must behave exactly as it did before — wait, then
+// resolve the id from the completed operation.
+//
+// Without this, the new branch would be untested against the deployment order that actually
+// happens: a provider release reaching a customer before the service change does.
+func TestCreate202WithoutAResourceIDStillWorks(t *testing.T) {
+	var polls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/databases":
+			w.WriteHeader(http.StatusAccepted)
+			// NO resourceId — the pre-change service.
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-2", "status": "pending", "resourceType": "database",
+			})
+		case strings.HasSuffix(r.URL.Path, "/operations/op-2"):
+			// Completes on the second poll, carrying the id in the result.
+			if polls.Add(1) >= 2 {
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"operationId": "op-2", "status": "completed",
+					"resourceType": "database", "resourceId": "pg-old",
+				})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-2", "status": "running", "resourceType": "database",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/databases/pg-old":
+			_ = json.NewEncoder(w).Encode(apiPostgresInstance{
+				ID: "pg-old", Name: "test-pg", PostgresVersion: "16", FlavorID: "db.gp1.small",
+				StorageGB: 50, VPCID: "vpc-1", SubnetID: "sn-1", Status: "running",
+				PrivateIP: "10.0.1.9", Port: 5432, CreatedAt: "2025-01-01T00:00:00Z",
+			})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	r := newResource(newClient(t, server))
+	r.pollInterval = 10 * time.Millisecond
+	r.pollTimeout = 3 * time.Second
+	createResp := resource.CreateResponse{State: emptyState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: buildPlan(t, fullPlanModel())}, &createResp)
+
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("a 202 without resourceId must still create: %v", createResp.Diagnostics.Errors())
+	}
+	var result PostgresInstanceModel
+	createResp.State.Get(context.Background(), &result)
+	if result.ID.ValueString() != "pg-old" {
+		t.Errorf("expected the id resolved from the completed operation, got %q", result.ID.ValueString())
+	}
+}

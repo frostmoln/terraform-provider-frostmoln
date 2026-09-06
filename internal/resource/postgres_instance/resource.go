@@ -53,12 +53,11 @@ func (r *postgresInstanceResource) getPollInterval() time.Duration {
 // as a single node. 30 minutes matches kubernetes_node_pool, the platform's other
 // multi-VM resource.
 //
-// This MOVES the cliff, it does not remove it. Create returns the wait error before
-// resp.State.Set runs, so a timeout still leaves a running, billable instance that
-// Terraform holds no id for, and the next apply re-creates it or 409s on the
-// duplicate name. Writing the id to state before waiting is the actual fix and is
-// tracked separately — it changes how a partially-created instance reads, which is
-// more than a timeout bump should carry.
+// The cliff this timeout used to sit on is GONE: Create now writes the instance id to
+// state BEFORE waiting (see the 202 branch), so a timeout leaves a tracked instance the
+// operator can destroy rather than an untracked one they must hunt for in the portal.
+// What the timeout still decides is how long an apply blocks before giving up, which is
+// all a timeout should decide.
 func (r *postgresInstanceResource) getPollTimeout() time.Duration {
 	if r.pollTimeout > 0 {
 		return r.pollTimeout
@@ -335,6 +334,43 @@ func (r *postgresInstanceResource) Create(ctx context.Context, req resource.Crea
 			resp.Diagnostics.AddError("Failed to parse PostgreSQL instance operation response", err.Error())
 			return
 		}
+		// 🔴 STATE BEFORE THE WAIT. THIS IS WHAT STOPS A TIMEOUT ORPHANING A BILLABLE INSTANCE.
+		//
+		// The wait below can take half an hour, and until this existed it ran with NOTHING in
+		// state: on a timeout Create returned the error before any Set, so Terraform held no id
+		// for an instance that was already running and billing. It could not be refreshed,
+		// destroyed or imported, and the next apply either re-created it or 409'd on the
+		// duplicate name. The only recovery was for a human to find it in the portal.
+		//
+		// The id is available now because the create 202 carries it (database service, the
+		// `resourceId` field). It could not come from the operation poll: provisioning fills an
+		// operation's ResourceID from the workflow RESULT, so a PENDING operation has none.
+		//
+		// DEGRADES CLEANLY against an older database service, which sends no resourceId: the
+		// branch is skipped and the behaviour is exactly what it was.
+		//
+		// Setting state from a CREATING instance is not novel -- the 201 branch below already
+		// does precisely that from the create body. What is in state after this point is a real
+		// instance with a real id, whose computed attributes are refreshed once the wait ends.
+		if op.ResourceID != "" {
+			if earlyResp, earlyErr := r.client.Get(ctx,
+				r.client.TenantPath("/databases/"+op.ResourceID), nil); earlyErr == nil {
+				if earlyInst, parseErr := client.ParseResponse[apiPostgresInstance](earlyResp); parseErr == nil {
+					early := plan
+					early.fromAPI(ctx, earlyInst, &resp.Diagnostics)
+					if !resp.Diagnostics.HasError() {
+						resp.Diagnostics.Append(resp.State.Set(ctx, &early)...)
+					}
+				}
+			}
+			// A failure to pre-record is NOT fatal and adds no diagnostic: the wait below is the
+			// real work, and turning a best-effort bookkeeping read into a create failure would
+			// trade a rare orphan for a common one.
+			if resp.Diagnostics.HasError() {
+				return
+			}
+		}
+
 		done, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout())
 		if err != nil {
 			resp.Diagnostics.AddError("PostgreSQL instance creation failed", err.Error())
