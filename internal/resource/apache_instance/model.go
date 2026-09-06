@@ -85,7 +85,7 @@ type apiCreateWebserverInstanceRequest struct {
 // apiUpdateWebserverInstanceRequest is the API request to update a managed
 // webserver instance via PUT. It carries only in-place-updatable fields:
 // storage_gb goes through POST /resize (grow-only) and flavor_id changes are
-// rejected at plan time, so neither is sent here (the backend PUT handler
+// refused in Update, so neither is sent here (the backend PUT handler
 // deserializes only name/tlsEnabled/phpEnabled/phpVersion and drops the rest
 // silently).
 type apiUpdateWebserverInstanceRequest struct {

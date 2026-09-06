@@ -110,7 +110,7 @@ func TestMessagingInstanceModelToUpdateRequest(t *testing.T) {
 		t.Error("expected persistenceMode update to none")
 	}
 	// flavor_id is not part of the PUT update request: flavor changes are
-	// rejected at plan time (flavor resize not yet supported).
+	// refused in Update (flavor resize not yet supported).
 }
 
 func TestMessagingInstanceModelToUpdateRequestNoChanges(t *testing.T) {
@@ -794,7 +794,7 @@ func TestUpdate(t *testing.T) {
 	})
 
 	// Rename + persistence-mode change. flavor_id is unchanged (a flavor change
-	// is rejected at plan time, so Update never receives one).
+	// is refused in Update, so Update never receives one).
 	plan := buildMessagingInstancePlan(t, MessagingInstanceModel{
 		ID:              types.StringValue("mq-123"),
 		Name:            types.StringValue("updated-broker"),
@@ -1028,5 +1028,47 @@ func TestImportState(t *testing.T) {
 	importResp.State.Get(context.Background(), &result)
 	if result.ID.ValueString() != "mq-123" {
 		t.Errorf("expected imported ID mq-123, got %s", result.ID.ValueString())
+	}
+}
+
+// TestUpdateFlavorChangeRejected pins the apply-time refusal of a flavor change.
+// The plan-time modifier only WARNS (an error there would block `terraform
+// destroy`), so this guard is the only refusal: flavorId is not in the PUT, so
+// without it the change is silently discarded and the apply ends in
+// "inconsistent result after apply" with no hint that flavor resize is unsupported.
+func TestUpdateFlavorChangeRejected(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request on a flavor change: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+
+	r := newTestMessagingResource(c)
+
+	stateModel := MessagingInstanceModel{
+		ID:              types.StringValue("mq-123"),
+		Name:            types.StringValue("my-broker"),
+		Engine:          types.StringValue("lavinmq"),
+		Version:         types.StringValue("2.3"),
+		FlavorID:        types.StringValue("mq.gp1.small"),
+		VPCID:           types.StringValue("vpc-1"),
+		SubnetID:        types.StringValue("sn-1"),
+		PersistenceMode: types.StringValue("persistent"),
+		Status:          types.StringValue("running"),
+		CreatedAt:       types.StringValue("2025-01-01T00:00:00Z"),
+	}
+	state := buildMessagingInstanceState(t, stateModel)
+
+	planModel := stateModel
+	planModel.FlavorID = types.StringValue("mq.gp1.large")
+	plan := buildMessagingInstancePlan(t, planModel)
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	if !updateResp.Diagnostics.HasError() {
+		t.Error("expected error rejecting a flavor_id change")
 	}
 }

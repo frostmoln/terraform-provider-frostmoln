@@ -90,7 +90,7 @@ type apiCreatePostgresInstanceRequest struct {
 // apiUpdatePostgresInstanceRequest is the API request to update a managed
 // PostgreSQL instance via PUT. It carries only in-place-updatable fields:
 // storage_gb goes through POST /resize (grow-only) and flavor_id changes are
-// rejected at plan time, so neither is sent here (the backend PUT handler has
+// refused in Update, so neither is sent here (the backend PUT handler has
 // no storage field and drops flavor changes silently).
 type apiUpdatePostgresInstanceRequest struct {
 	Name                *string `json:"name,omitempty"`

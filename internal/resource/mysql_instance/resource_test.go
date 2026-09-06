@@ -131,7 +131,7 @@ func TestMysqlInstanceModelToUpdateRequest(t *testing.T) {
 		t.Error("expected hasChanges to be true")
 	}
 	// flavor_id and storage_gb are not part of the PUT update request: storage
-	// grows via POST /resize and flavor changes are rejected at plan time.
+	// grows via POST /resize and flavor changes are refused in Update.
 }
 
 func TestMysqlInstanceModelToUpdateRequestNoChanges(t *testing.T) {
@@ -893,5 +893,71 @@ func TestMysqlInstanceToUpdateRequestEnableCarriesPolicy(t *testing.T) {
 	off.BackupEnabled = types.BoolValue(false)
 	if req := off.toUpdateRequest(&plan); req.BackupSchedule != nil || req.BackupRetentionDays != nil {
 		t.Error("expected a disable to carry only backupEnabled")
+	}
+}
+
+// mysqlUpdateGuardModel is the prior state the two apply-time guards below refuse
+// to move away from.
+func mysqlUpdateGuardModel() MysqlInstanceModel {
+	return MysqlInstanceModel{
+		ID:        types.StringValue("db-123"),
+		Name:      types.StringValue("my-mysql"),
+		Version:   types.StringValue("8.4"),
+		FlavorID:  types.StringValue("db.gp1.small"),
+		StorageGB: types.Int64Value(100),
+		VPCID:     types.StringValue("vpc-1"),
+		SubnetID:  types.StringValue("sn-1"),
+		Status:    types.StringValue("running"),
+		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
+	}
+}
+
+func mysqlNoRequestServer(t *testing.T, what string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request on %s: %s %s", what, r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+}
+
+func mysqlUpdate(t *testing.T, server *httptest.Server, state, plan MysqlInstanceModel) resource.UpdateResponse {
+	t.Helper()
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &mysqlInstanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+
+	s := buildMysqlInstanceState(t, state)
+	resp := resource.UpdateResponse{State: s}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: buildMysqlInstancePlan(t, plan), State: s}, &resp)
+	return resp
+}
+
+// TestUpdateStorageShrinkRejected covers the apply-time grow-only backstop. The
+// plan-time modifier only WARNS (an error there would block `terraform destroy`),
+// so this is the only refusal: storageGb is not in the PUT, so without it the
+// shrink is a silent no-op that ends in "inconsistent result after apply".
+func TestUpdateStorageShrinkRejected(t *testing.T) {
+	server := mysqlNoRequestServer(t, "a storage shrink")
+	defer server.Close()
+
+	shrunk := mysqlUpdateGuardModel()
+	shrunk.StorageGB = types.Int64Value(50)
+
+	if resp := mysqlUpdate(t, server, mysqlUpdateGuardModel(), shrunk); !resp.Diagnostics.HasError() {
+		t.Error("expected error rejecting a storage shrink")
+	}
+}
+
+// TestUpdateFlavorChangeRejected covers the apply-time flavor guard — same
+// reasoning: flavorId is not in the PUT, so the change would be discarded.
+func TestUpdateFlavorChangeRejected(t *testing.T) {
+	server := mysqlNoRequestServer(t, "a flavor change")
+	defer server.Close()
+
+	resized := mysqlUpdateGuardModel()
+	resized.FlavorID = types.StringValue("db.gp1.large")
+
+	if resp := mysqlUpdate(t, server, mysqlUpdateGuardModel(), resized); !resp.Diagnostics.HasError() {
+		t.Error("expected error rejecting a flavor_id change")
 	}
 }

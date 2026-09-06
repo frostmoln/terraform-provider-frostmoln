@@ -1122,14 +1122,19 @@ func modifyPlan(t *testing.T, plan, state SecretModel) resource.ModifyPlanRespon
 	return resp
 }
 
-// TestModifyPlanRefusesCreateTimeAttributes is the silent-no-op guard.
+// TestModifyPlanWarnsOnCreateTimeAttributes is the silent-no-op guard.
 //
 // The API's update payload is secretValue, description and tags; gin accepts
 // unknown fields and drops them, so changing max_versions used to reach the
 // wire, be discarded, and end the apply in "Provider produced inconsistent
 // result after apply" — with the platform never taking the value. Each of the
-// three must be refused at plan time, naming itself and both values.
-func TestModifyPlanRefusesCreateTimeAttributes(t *testing.T) {
+// three must be flagged at plan time, naming itself and both values.
+//
+// It must be a WARNING, never an error: an error raised while planning also
+// aborts `terraform destroy`, whose refresh phase runs ModifyPlan against an
+// ordinary non-null plan. Update carries the actual refusal
+// (TestUpdateRefusesCreateTimeAttributes).
+func TestModifyPlanWarnsOnCreateTimeAttributes(t *testing.T) {
 	cases := []struct {
 		attr             string
 		mutate           func(*SecretModel)
@@ -1145,10 +1150,13 @@ func TestModifyPlanRefusesCreateTimeAttributes(t *testing.T) {
 			tc.mutate(&plan)
 
 			resp := modifyPlan(t, plan, fullSecretModel())
-			if !resp.Diagnostics.HasError() {
-				t.Fatalf("changing %s must be refused at plan time, not sent and discarded", tc.attr)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("a plan-time error blocks terraform destroy; %s must only warn: %v", tc.attr, resp.Diagnostics.Errors())
 			}
-			d := resp.Diagnostics.Errors()[0]
+			if resp.Diagnostics.WarningsCount() == 0 {
+				t.Fatalf("changing %s must be flagged at plan time, not sent and discarded", tc.attr)
+			}
+			d := resp.Diagnostics.Warnings()[0]
 			text := d.Summary() + "\n" + d.Detail()
 			for _, want := range []string{tc.attr, tc.current, tc.request} {
 				if !strings.Contains(text, want) {

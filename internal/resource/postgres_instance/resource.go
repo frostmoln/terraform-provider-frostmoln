@@ -88,7 +88,7 @@ func (r *postgresInstanceResource) pollRunning(ctx context.Context, id string) (
 }
 
 // resizeStorage grows the instance's storage online via POST /resize, then waits
-// for it to return to "running". Grow-only: a shrink is rejected at plan time.
+// for it to return to "running". Grow-only: a shrink is refused in Update.
 //
 // The resize retries a TRANSIENT 409 (a mixed apply that also removes a replica
 // can 409 the resize while the replica is mid-delete); a permanent 409 (wrong
@@ -136,7 +136,7 @@ func (r *postgresInstanceResource) Schema(_ context.Context, _ resource.SchemaRe
 				Description: "The flavor ID/size for the database instance (e.g. \"db.gp1.small\", \"db.gp1.medium\").",
 				Required:    true,
 				PlanModifiers: []planmodifier.String{
-					planmod.StringErrorOnChange("Changing flavor_id (flavor resize) is not yet supported for managed database instances. Keep the original flavor_id, or destroy and recreate the instance to change it."),
+					planmod.StringWarnOnChange("Changing flavor_id (flavor resize) is not yet supported for managed database instances. Keep the original flavor_id, or destroy and recreate the instance to change it."),
 				},
 			},
 			"storage_gb": schema.Int64Attribute{
@@ -506,12 +506,27 @@ func (r *postgresInstanceResource) Update(ctx context.Context, req resource.Upda
 
 	id := state.ID.ValueString()
 
-	// Storage grow goes through POST /resize (online, grow-only). A shrink is
-	// rejected at plan time (storage_gb GrowOnly modifier), so in the normal case
-	// only an increase reaches here. Re-check at apply as a defensive backstop:
-	// the plan-time modifier is skipped when storage_gb is an unknown
-	// (interpolated) value, so a shrink can slip through to apply with known
-	// values here — fail with a clear message rather than a silent no-op.
+	// flavor_id cannot change in place — the platform has no flavor-resize path and the
+	// PUT below would silently drop it. The plan-time modifier only WARNS (an error there
+	// would also block `terraform destroy`; see planmod.StringWarnOnChange), so the change
+	// is refused HERE. Unknown values are skipped: they carry no comparable value.
+	// An empty prior value carries nothing to compare against either — it means the
+	// API returned no flavorId on the last read, and trapping every future update
+	// behind a refusal naming `""` would be worse than letting the change through.
+	if !plan.FlavorID.IsUnknown() && !state.FlavorID.IsUnknown() && state.FlavorID.ValueString() != "" &&
+		!plan.FlavorID.Equal(state.FlavorID) {
+		resp.Diagnostics.AddError(
+			"flavor_id cannot be changed",
+			fmt.Sprintf("Changing flavor_id (flavor resize) is not yet supported for managed database instances (currently %q, requested %q). Keep the original flavor_id, or destroy and recreate the instance to change it.",
+				state.FlavorID.ValueString(), plan.FlavorID.ValueString()),
+		)
+		return
+	}
+
+	// Storage grow goes through POST /resize (online, grow-only). A shrink is only
+	// WARNED about at plan time (storage_gb GrowOnly modifier — an error there would
+	// also block `terraform destroy`), so this is where it is actually refused: fail
+	// with a clear message rather than a silent no-op.
 	switch {
 	case plan.StorageGB.ValueInt64() < state.StorageGB.ValueInt64():
 		resp.Diagnostics.AddError(

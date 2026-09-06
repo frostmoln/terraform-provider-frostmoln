@@ -10,18 +10,28 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// Int64GrowOnly returns an Int64 plan modifier that rejects a decrease of an
-// attribute (prior state -> plan) with a plan-time error. Managed-service
-// storage can be grown online but the backend never shrinks a volume, so a
-// shrink must fail at plan rather than during apply (a RequiresReplace here
-// would silently destroy the instance).
+// Int64GrowOnly returns an Int64 plan modifier that WARNS when an attribute is
+// decreased (prior state -> plan). Managed-service storage can be grown online
+// but the backend never shrinks a volume, so the shrink is refused — the refusal
+// itself lives in the resource's Update (apply time), not here.
 //
-// Known limitation: attribute plan modifiers run even when a sibling
-// RequiresReplace attribute is simultaneously forcing a destroy+recreate, so a
-// shrink combined with a replace-triggering change in the same apply is rejected
-// here rather than allowed as part of the recreate. That combination is rare
-// (the replace-triggering attributes — version/vpc_id/subnet_id — already
-// destroy the instance) and the caller can perform the change in two steps.
+// It must stay a warning: a plan modifier that raises an ERROR also blocks
+// `terraform destroy`. Terraform's destroy plan still runs a refresh phase that
+// computes an ordinary (non-null) plan, and attribute plan modifiers DO run
+// there — the framework only skips them when the planned state is null, which
+// that phase is not. A customer who grew the volume out of band (portal, CLI)
+// and then ran `terraform destroy` got the shrink error instead of a destroy,
+// with no way out but to edit the HCL or pass -refresh=false (pilot report,
+// 2026-09-06). redis/valkey were never affected: they guard the shrink at apply
+// only, which is the shape this now matches.
+//
+// A RequiresReplace here would be worse still — a typo'd storage_gb would
+// silently destroy and recreate the instance.
+//
+// One behaviour changed with the downgrade: a shrink combined with a sibling
+// RequiresReplace change (version/vpc_id/subnet_id) used to be blocked here and
+// now applies, recreating the instance at the smaller size. Terraform shows that
+// as a -/+ replacement the practitioner approves, and the warning says so.
 func Int64GrowOnly(unit string) planmodifier.Int64 {
 	return int64GrowOnly{unit: unit}
 }
@@ -44,45 +54,48 @@ func (m int64GrowOnly) PlanModifyInt64(_ context.Context, req planmodifier.Int64
 		return
 	}
 	if req.PlanValue.ValueInt64() < req.StateValue.ValueInt64() {
-		resp.Diagnostics.AddAttributeError(
+		resp.Diagnostics.AddAttributeWarning(
 			req.Path,
 			"Attribute cannot be decreased",
 			fmt.Sprintf(
-				"%q can only be increased (currently %d %s, plan requests %d %s). Storage is grown online and cannot be shrunk; to reduce it, destroy and recreate the instance.",
+				"%q can only be increased (currently %d %s, plan requests %d %s). Storage is grown online and cannot be "+
+					"shrunk, so this apply will fail — unless this plan already replaces the instance for another "+
+					"reason, in which case it is recreated at the smaller size and its data is lost. A destroy is unaffected.",
 				req.Path, req.StateValue.ValueInt64(), m.unit, req.PlanValue.ValueInt64(), m.unit,
 			),
 		)
 	}
 }
 
-// StringErrorOnChange returns a String plan modifier that rejects any change of
-// an attribute (prior state -> plan) with a plan-time error carrying the given
-// detail. Used for attributes the backend cannot yet change in place (e.g.
-// flavor_id: flavor resize is not yet supported) so the change surfaces at plan
-// instead of being silently dropped by an in-place update.
-func StringErrorOnChange(detail string) planmodifier.String {
-	return stringErrorOnChange{detail: detail}
+// StringWarnOnChange returns a String plan modifier that WARNS on any change of
+// an attribute (prior state -> plan), carrying the given detail. Used for
+// attributes the backend cannot yet change in place (e.g. flavor_id: flavor
+// resize is not yet supported) so the change surfaces at plan; the refusal
+// itself lives in the resource's Update. See Int64GrowOnly for why this cannot
+// raise an error (it would block `terraform destroy`).
+func StringWarnOnChange(detail string) planmodifier.String {
+	return stringWarnOnChange{detail: detail}
 }
 
-type stringErrorOnChange struct {
+type stringWarnOnChange struct {
 	detail string
 }
 
-func (m stringErrorOnChange) Description(_ context.Context) string {
+func (m stringWarnOnChange) Description(_ context.Context) string {
 	return "cannot be changed in place"
 }
 
-func (m stringErrorOnChange) MarkdownDescription(ctx context.Context) string {
+func (m stringWarnOnChange) MarkdownDescription(ctx context.Context) string {
 	return m.Description(ctx)
 }
 
-func (m stringErrorOnChange) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
+func (m stringWarnOnChange) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
 	// Skip on create (no prior state) or when either value is not yet known.
 	if req.StateValue.IsNull() || req.PlanValue.IsNull() || req.PlanValue.IsUnknown() || req.StateValue.IsUnknown() {
 		return
 	}
 	if !req.PlanValue.Equal(req.StateValue) {
-		resp.Diagnostics.AddAttributeError(req.Path, "Attribute cannot be changed", m.detail)
+		resp.Diagnostics.AddAttributeWarning(req.Path, "Attribute cannot be changed", m.detail+" This apply will fail; a destroy is unaffected.")
 	}
 }
 

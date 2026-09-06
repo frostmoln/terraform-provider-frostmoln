@@ -61,7 +61,7 @@ func TestToCreateRequestFull(t *testing.T) {
 		Region:           types.StringValue("falkenberg"),
 		VPCID:            types.StringValue("vpc-1"),
 		SubnetID:         types.StringValue("sn-1"),
-		PublicIPID:       types.StringValue("11111111-2222-3333-4444-555555555555"),
+		PublicIPID:       types.StringNull(),
 		InitialNodePool: &InitialNodePoolModel{
 			Name:      types.StringValue("workers"),
 			FlavorID:  types.StringValue("k8s.gp1.medium"),
@@ -420,78 +420,65 @@ func TestSchema(t *testing.T) {
 	}
 }
 
-// TestKubernetesClusterValidateConfigRefusesPublicIPID pins the validator's ONE
-// job, and replaces TestKubernetesClusterHasNoValidateConfig.
+// TestModifyPlanRefusesPublicIPIDOnCreateOnly pins the refusal, and the shape of
+// it, and replaces TestKubernetesClusterValidateConfigRefusesPublicIPID.
 //
-// That test recorded a deliberate REMOVAL: ValidateConfig existed for exactly two
-// plan-time CROSS-FIELD checks, both about the retired worker ingress load
-// balancer (an ingress_public_ip_id without ingress_scheme="public", and the same
-// address in both public_ip_id and ingress_public_ip_id). Neither combination is
-// expressible any more, so the method had nothing left to read. That reasoning was
-// about CROSS-FIELD invariants and it still stands — do not bring those back.
+// public_ip_id is retired and the API answers 400 to any value. A
+// DeprecationMessage alone only WARNS, so the failure would land at apply — and
+// because the attribute is RequiresReplace, a replacement destroys the cluster
+// before issuing the create that then gets refused, leaving no cluster and an
+// unappliable config. That is why a plan-time ERROR exists here at all, and
+// keying it on a null prior state still covers it: Terraform plans the create
+// half of a replacement as a separate call with no prior state, before anything
+// is destroyed.
 //
-// What changed on 2026-08-27 is that a SINGLE-attribute refusal became necessary,
-// which the old rationale never spoke to. public_ip_id is retired and the API
-// answers 400 to any value. A DeprecationMessage alone only WARNS, so the failure
-// would land at apply — and because the attribute is RequiresReplace, a
-// replacement destroys the cluster before issuing the create that then gets
-// refused, leaving no cluster and an unappliable config. Refusing at plan time is
-// what stops that, and it is why this validator exists at all.
-func TestKubernetesClusterValidateConfigRefusesPublicIPID(t *testing.T) {
+// It was a ValidateConfig error until 2026-09-06, which ALSO blocked
+// `terraform destroy` — a validator runs on the destroy plan too, so the very
+// clusters this refusal targets could not be torn down. An existing cluster gets
+// a warning instead, and its destroy is left alone. Do not move this back.
+func TestModifyPlanRefusesPublicIPIDOnCreateOnly(t *testing.T) {
 	ctx := context.Background()
 	r := NewResource()
-	v, ok := r.(resource.ResourceWithValidateConfig)
+	mp, ok := r.(resource.ResourceWithModifyPlan)
 	if !ok {
-		t.Fatal("the resource must implement ValidateConfig to refuse public_ip_id at plan time")
+		t.Fatal("the resource must implement ModifyPlan to refuse public_ip_id before a replacement destroys the cluster")
 	}
-	var schemaResp resource.SchemaResponse
-	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
 
-	cfgWith := func(publicIPID interface{}) tfsdk.Config {
-		tfType := schemaResp.Schema.Type().TerraformType(ctx)
-		nullStr := func() tftypes.Value { return tftypes.NewValue(tftypes.String, nil) }
-		vals := map[string]tftypes.Value{
-			"name":         tftypes.NewValue(tftypes.String, "my-cluster"),
-			"vpc_id":       tftypes.NewValue(tftypes.String, "vpc-1"),
-			"subnet_id":    tftypes.NewValue(tftypes.String, "sn-1"),
-			"public_ip_id": tftypes.NewValue(tftypes.String, publicIPID),
+	model := func(publicIPID types.String) KubernetesClusterModel {
+		return KubernetesClusterModel{
+			Name: types.StringValue("my-cluster"), VPCID: types.StringValue("vpc-1"),
+			SubnetID: types.StringValue("sn-1"), PublicIPID: publicIPID,
+			Addons: types.SetNull(types.StringType),
 		}
-		for name := range schemaResp.Schema.Attributes {
-			if _, done := vals[name]; done {
-				continue
-			}
-			switch name {
-			case "addons":
-				vals[name] = tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, nil)
-			case "initial_node_pool":
-				vals[name] = tftypes.NewValue(
-					schemaResp.Schema.Attributes[name].GetType().TerraformType(ctx), nil,
-				)
-			case "ha_enabled":
-				vals[name] = tftypes.NewValue(tftypes.Bool, nil)
-			default:
-				vals[name] = nullStr()
-			}
-		}
-		return tfsdk.Config{Schema: schemaResp.Schema, Raw: tftypes.NewValue(tfType, vals)}
+	}
+	existing := func() tfsdk.State {
+		m := model(types.StringValue("3f2504e0-4f89-41d3-9a0c-0305e82c3301"))
+		m.ID = types.StringValue("c-1")
+		return buildState(t, m)
 	}
 
 	for name, tc := range map[string]struct {
-		publicIPID interface{}
+		publicIPID types.String
+		state      tfsdk.State
 		wantError  bool
+		wantWarn   bool
 	}{
-		"unset is fine":        {nil, false},
-		"empty string is fine": {"", false},
-		"a real id is refused": {"3f2504e0-4f89-41d3-9a0c-0305e82c3301", true},
+		"create, unset":               {types.StringNull(), emptyState(t), false, false},
+		"create, empty string":        {types.StringValue(""), emptyState(t), false, false},
+		"create, a real id":           {types.StringValue("3f2504e0-4f89-41d3-9a0c-0305e82c3301"), emptyState(t), true, false},
+		"create, unknown id":          {types.StringUnknown(), emptyState(t), false, false},
+		"existing cluster, a real id": {types.StringValue("3f2504e0-4f89-41d3-9a0c-0305e82c3301"), existing(), false, true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			resp := &resource.ValidateConfigResponse{}
-			v.ValidateConfig(ctx, resource.ValidateConfigRequest{Config: cfgWith(tc.publicIPID)}, resp)
-			if tc.wantError && !resp.Diagnostics.HasError() {
-				t.Fatal("expected public_ip_id to be refused at plan time")
+			plan := buildPlan(t, model(tc.publicIPID))
+			resp := &resource.ModifyPlanResponse{Plan: plan}
+			mp.ModifyPlan(ctx, resource.ModifyPlanRequest{Plan: plan, State: tc.state}, resp)
+
+			if got := resp.Diagnostics.HasError(); got != tc.wantError {
+				t.Fatalf("HasError() = %v, want %v (%v)", got, tc.wantError, resp.Diagnostics)
 			}
-			if !tc.wantError && resp.Diagnostics.HasError() {
-				t.Fatalf("expected no error, got: %v", resp.Diagnostics.Errors())
+			if got := resp.Diagnostics.WarningsCount() > 0; got != tc.wantWarn {
+				t.Fatalf("hasWarning = %v, want %v", got, tc.wantWarn)
 			}
 			if !tc.wantError {
 				return
@@ -508,6 +495,31 @@ func TestKubernetesClusterValidateConfigRefusesPublicIPID(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestCreateRefusesPublicIPID is the apply-time half: the plan-time check skips an
+// unknown value, so a create can still arrive carrying one.
+func TestCreateRefusesPublicIPID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request with public_ip_id set: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+
+	plan := buildPlan(t, KubernetesClusterModel{
+		Name: types.StringValue("my-cluster"), VPCID: types.StringValue("vpc-1"),
+		SubnetID:   types.StringValue("sn-1"),
+		PublicIPID: types.StringValue("3f2504e0-4f89-41d3-9a0c-0305e82c3301"),
+		Addons:     types.SetNull(types.StringType),
+	})
+	createResp := resource.CreateResponse{State: emptyState(t)}
+	testResource(c).Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+	if !createResp.Diagnostics.HasError() {
+		t.Error("expected create to refuse public_ip_id")
 	}
 }
 
@@ -710,7 +722,7 @@ func TestCreate(t *testing.T) {
 		Region:           types.StringUnknown(),
 		VPCID:            types.StringValue("vpc-1"),
 		SubnetID:         types.StringValue("sn-1"),
-		PublicIPID:       types.StringValue("11111111-2222-3333-4444-555555555555"),
+		PublicIPID:       types.StringNull(),
 		Addons:           types.SetUnknown(types.StringType),
 		InitialNodePool: &InitialNodePoolModel{
 			ID:        types.StringUnknown(),
@@ -738,9 +750,8 @@ func TestCreate(t *testing.T) {
 	if result.Version.ValueString() != "1.35" {
 		t.Errorf("expected resolved version 1.35, got %s", result.Version.ValueString())
 	}
-	if result.PublicIPID.ValueString() != "11111111-2222-3333-4444-555555555555" {
-		t.Error("expected public_ip_id preserved in state (write-only field)")
-	}
+	// public_ip_id is not asserted here any more: a create carrying it is refused
+	// (TestCreateRefusesPublicIPID), so there is no supported create that persists it.
 	if result.Kubeconfig.ValueString() != "kubeconfig-yaml" {
 		t.Errorf("expected kubeconfig from retry, got %q", result.Kubeconfig.ValueString())
 	}

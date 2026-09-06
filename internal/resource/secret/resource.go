@@ -136,7 +136,8 @@ func (r *secretResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			"content_type": schema.StringAttribute{
 				Description: "The content type of the secret value. Defaults to \"text/plain\". Fixed when the " +
 					"secret is created: the API's update accepts only the value, description and tags, so " +
-					"changing this is refused at plan time rather than applied and quietly ignored.",
+					"changing this is warned about at plan time and refused at apply rather than applied and " +
+					"quietly ignored.",
 				Optional: true,
 				Computed: true,
 				// NOT a schema Default: TransformDefaults substitutes it whenever
@@ -158,7 +159,8 @@ func (r *secretResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			"max_versions": schema.Int64Attribute{
 				Description: "The maximum number of versions to retain. Defaults to 10. Fixed when the secret " +
 					"is created: the API's update accepts only the value, description and tags, so changing " +
-					"this is refused at plan time. Choose it at create — it cannot be raised later, and Vault " +
+					"this is warned about at plan time and refused at apply. Choose it at create — it cannot be " +
+					"raised later, and Vault " +
 					"prunes against it.",
 				Optional: true,
 				Computed: true,
@@ -170,7 +172,7 @@ func (r *secretResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Description: "The number of days to retain a deleted secret before permanent removal, and the " +
 					"window during which the secret's name stays taken after a destroy. Defaults to 7. Fixed " +
 					"when the secret is created: the API's update accepts only the value, description and " +
-					"tags, so changing this is refused at plan time.",
+					"tags, so changing this is warned about at plan time and refused at apply.",
 				Optional: true,
 				Computed: true,
 				PlanModifiers: []planmodifier.Int64{
@@ -455,6 +457,23 @@ func addCreateTimeRefusals(diags *diag.Diagnostics, refused []createTimeAttr) {
 	}
 }
 
+// warnCreateTimeRefusals is the plan-time half of addCreateTimeRefusals. It must
+// stay a WARNING: an error raised while planning also aborts `terraform destroy`,
+// because the destroy plan's refresh phase computes an ordinary (non-null) plan
+// and runs ModifyPlan against it — the `req.Plan.Raw.IsNull()` guard above does
+// not cover that phase. The refusal itself is in Update, which a destroy never
+// reaches. See internal/planmod for the same reasoning on the shared modifiers.
+func warnCreateTimeRefusals(diags *diag.Diagnostics, refused []createTimeAttr) {
+	for _, a := range refused {
+		diags.AddAttributeWarning(
+			path.Root(a.name),
+			a.name+" cannot be changed after creation",
+			fmt.Sprintf(createTimeAttrDetail, a.name, a.current, a.requested)+
+				"\n\nThis apply will fail; a destroy is unaffected.",
+		)
+	}
+}
+
 func (r *secretResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
 		return // Create or destroy: nothing to compare.
@@ -475,7 +494,7 @@ func (r *secretResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 		return
 	}
 
-	addCreateTimeRefusals(&resp.Diagnostics, refusedCreateTimeChanges(plan, state))
+	warnCreateTimeRefusals(&resp.Diagnostics, refusedCreateTimeChanges(plan, state))
 }
 
 // secretValueWO is the write-only triple for the secret value.

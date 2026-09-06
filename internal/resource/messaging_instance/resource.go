@@ -88,7 +88,7 @@ func (r *messagingInstanceResource) Schema(_ context.Context, _ resource.SchemaR
 				Description: "The flavor/size for the messaging instance (e.g. \"mq.gp1.small\", \"mq.gp1.medium\").",
 				Required:    true,
 				PlanModifiers: []planmodifier.String{
-					planmod.StringErrorOnChange("Changing flavor_id (flavor resize) is not yet supported for managed messaging instances. Keep the original flavor_id, or destroy and recreate the instance to change it."),
+					planmod.StringWarnOnChange("Changing flavor_id (flavor resize) is not yet supported for managed messaging instances. Keep the original flavor_id, or destroy and recreate the instance to change it."),
 				},
 			},
 			"vpc_id": schema.StringAttribute{
@@ -303,8 +303,25 @@ func (r *messagingInstanceResource) Update(ctx context.Context, req resource.Upd
 
 	id := state.ID.ValueString()
 
+	// flavor_id cannot change in place — the platform has no flavor-resize path and the
+	// PUT below would silently drop it. The plan-time modifier only WARNS (an error there
+	// would also block `terraform destroy`; see planmod.StringWarnOnChange), so the change
+	// is refused HERE. Unknown values are skipped: they carry no comparable value.
+	// An empty prior value carries nothing to compare against either — it means the
+	// API returned no flavorId on the last read, and trapping every future update
+	// behind a refusal naming `""` would be worse than letting the change through.
+	if !plan.FlavorID.IsUnknown() && !state.FlavorID.IsUnknown() && state.FlavorID.ValueString() != "" &&
+		!plan.FlavorID.Equal(state.FlavorID) {
+		resp.Diagnostics.AddError(
+			"flavor_id cannot be changed",
+			fmt.Sprintf("Changing flavor_id (flavor resize) is not yet supported for managed messaging instances (currently %q, requested %q). Keep the original flavor_id, or destroy and recreate the instance to change it.",
+				state.FlavorID.ValueString(), plan.FlavorID.ValueString()),
+		)
+		return
+	}
+
 	// In-place field updates (name, persistence mode) via PUT. flavor_id changes
-	// are rejected at plan time, so nothing here can change size. Skip the call
+	// are refused above, so nothing here can change size. Skip the call
 	// when nothing PUT-able changed.
 	if updateReq := plan.toUpdateRequest(&state); updateReq.hasChanges() {
 		if _, err := r.client.Put(ctx, r.client.TenantPath("/messaging/"+id), updateReq); err != nil {

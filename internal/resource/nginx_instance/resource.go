@@ -93,7 +93,7 @@ func (r *nginxInstanceResource) pollRunning(ctx context.Context, id string) (str
 }
 
 // resizeStorage grows the instance's storage online via POST /resize, then waits
-// for it to return to "running". Grow-only: a shrink is rejected at plan time.
+// for it to return to "running". Grow-only: a shrink is refused in Update.
 func (r *nginxInstanceResource) resizeStorage(ctx context.Context, id string, storageGB int) error {
 	_, err := r.client.Post(ctx, r.client.TenantPath("/webservers/"+id+"/resize"), apiResizeWebserverInstanceRequest{StorageGB: storageGB})
 	if err != nil {
@@ -363,7 +363,7 @@ func (r *nginxInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				Description: "The flavor ID/size for the webserver instance (e.g. \"web.gp1.small\", \"web.gp1.medium\").",
 				Required:    true,
 				PlanModifiers: []planmodifier.String{
-					planmod.StringErrorOnChange("Changing flavor_id (flavor resize) is not yet supported for managed webserver instances. Keep the original flavor_id, or destroy and recreate the instance to change it."),
+					planmod.StringWarnOnChange("Changing flavor_id (flavor resize) is not yet supported for managed webserver instances. Keep the original flavor_id, or destroy and recreate the instance to change it."),
 				},
 			},
 			"storage_gb": schema.Int64Attribute{
@@ -689,12 +689,27 @@ func (r *nginxInstanceResource) Update(ctx context.Context, req resource.UpdateR
 
 	id := state.ID.ValueString()
 
-	// Storage grow goes through POST /resize (online, grow-only). A shrink is
-	// rejected at plan time (storage_gb GrowOnly modifier), so in the normal case
-	// only an increase reaches here. Re-check at apply as a defensive backstop:
-	// the plan-time modifier is skipped when storage_gb is an unknown
-	// (interpolated) value, so a shrink can slip through to apply with known
-	// values here — fail with a clear message rather than a silent no-op.
+	// flavor_id cannot change in place — the platform has no flavor-resize path and the
+	// PUT below would silently drop it. The plan-time modifier only WARNS (an error there
+	// would also block `terraform destroy`; see planmod.StringWarnOnChange), so the change
+	// is refused HERE. Unknown values are skipped: they carry no comparable value.
+	// An empty prior value carries nothing to compare against either — it means the
+	// API returned no flavorId on the last read, and trapping every future update
+	// behind a refusal naming `""` would be worse than letting the change through.
+	if !plan.FlavorID.IsUnknown() && !state.FlavorID.IsUnknown() && state.FlavorID.ValueString() != "" &&
+		!plan.FlavorID.Equal(state.FlavorID) {
+		resp.Diagnostics.AddError(
+			"flavor_id cannot be changed",
+			fmt.Sprintf("Changing flavor_id (flavor resize) is not yet supported for managed webserver instances (currently %q, requested %q). Keep the original flavor_id, or destroy and recreate the instance to change it.",
+				state.FlavorID.ValueString(), plan.FlavorID.ValueString()),
+		)
+		return
+	}
+
+	// Storage grow goes through POST /resize (online, grow-only). A shrink is only
+	// WARNED about at plan time (storage_gb GrowOnly modifier — an error there would
+	// also block `terraform destroy`), so this is where it is actually refused: fail
+	// with a clear message rather than a silent no-op.
 	switch {
 	case plan.StorageGB.ValueInt64() < state.StorageGB.ValueInt64():
 		resp.Diagnostics.AddError(
@@ -827,7 +842,7 @@ func (r *nginxInstanceResource) ImportState(ctx context.Context, req resource.Im
 // The rename is HCL-surface only -- the wire tag was always flavorId -- so the
 // migration is purely local: it copies the prior `flavor` value into `flavor_id`
 // and carries every other attribute through unchanged. `flavor_id` is not
-// RequiresReplace (flavor changes are now rejected at plan time), so without
+// RequiresReplace (flavor changes are refused in Update), so without
 // this the first post-upgrade plan would show a spurious diff rather than a
 // destroy; copying the same value keeps the upgrade a clean no-op.
 func (r *nginxInstanceResource) UpgradeState(ctx context.Context) map[int64]resource.StateUpgrader {

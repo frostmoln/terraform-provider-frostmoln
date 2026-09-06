@@ -156,12 +156,21 @@ func (r *webserverDeploymentResource) ModifyPlan(ctx context.Context, req resour
 		return
 	}
 
+	// An unreadable archive is a WARNING here, not an error: an error raised while
+	// planning also aborts `terraform destroy`, whose refresh phase runs ModifyPlan
+	// against an ordinary non-null plan — so an archive that CI built and cleaned up
+	// (or a path that moved) would trap the resource, undestroyable. Create/Update
+	// hash the file themselves and fail hard there, which a destroy never reaches;
+	// leaving the derived attributes unknown keeps the plan honest until then.
 	hash, err := hashArchiveFile(plan.SourceArchive.ValueString())
 	if err != nil {
-		resp.Diagnostics.AddError(
+		resp.Diagnostics.AddWarning(
 			"Cannot read source_archive",
-			fmt.Sprintf("Failed to read the deploy archive %q to compute its hash: %s", plan.SourceArchive.ValueString(), err),
+			fmt.Sprintf("Failed to read the deploy archive %q to compute its hash: %s. An apply that deploys this archive will fail; a destroy is unaffected.", plan.SourceArchive.ValueString(), err),
 		)
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("source_hash"), types.StringUnknown())...)
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("deploy_id"), types.StringUnknown())...)
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("status"), types.StringUnknown())...)
 		return
 	}
 	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("source_hash"), types.StringValue(hash))...)

@@ -59,7 +59,7 @@ type apiCreateMessagingInstanceRequest struct {
 
 // apiUpdateMessagingInstanceRequest is the API request to update a managed
 // messaging instance via PUT. flavor_id is not sent: flavor resize is not yet
-// supported (the change is rejected at plan time), and the backend PUT handler
+// supported (the change is refused in Update), and the backend PUT handler
 // drops it silently. Messaging storage is flavor-derived, so there is no
 // storage_gb attribute to resize.
 type apiUpdateMessagingInstanceRequest struct {

@@ -38,9 +38,9 @@ const (
 const kubeconfigFetchAttempts = 3
 
 var (
-	_ resource.ResourceWithValidateConfig = &kubernetesClusterResource{}
-	_ resource.Resource                   = &kubernetesClusterResource{}
-	_ resource.ResourceWithImportState    = &kubernetesClusterResource{}
+	_ resource.ResourceWithModifyPlan  = &kubernetesClusterResource{}
+	_ resource.Resource                = &kubernetesClusterResource{}
+	_ resource.ResourceWithImportState = &kubernetesClusterResource{}
 )
 
 // NewResource returns a new kubernetes_cluster resource factory.
@@ -68,7 +68,10 @@ func (r *kubernetesClusterResource) getPollTimeout() time.Duration {
 	return 30 * time.Minute
 }
 
-// ValidateConfig refuses `public_ip_id` at PLAN time.
+// ModifyPlan refuses `public_ip_id` on the plan that would CREATE a cluster with
+// it — including the create half of a replacement, which Terraform plans as a
+// SEPARATE PlanResourceChange with a null prior state, before anything is
+// destroyed (verified against Terraform 1.16.1 with a minimal provider).
 //
 // 🔴 A DeprecationMessage IS NOT ENOUGH HERE, and the difference is a destroyed
 // cluster. A deprecation is a plan-time WARNING: the plan succeeds, the apply
@@ -79,32 +82,51 @@ func (r *kubernetesClusterResource) getPollTimeout() time.Duration {
 // backend refuses. The practitioner is left with no cluster and a configuration
 // that cannot be applied until they edit it.
 //
-// Refusing in ValidateConfig moves that to `terraform plan`, before anything is
-// destroyed, and matches what `fm-cli` does with --public-ip.
-func (r *kubernetesClusterResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
-	var cfg KubernetesClusterModel
-	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
+// 🔴 AND IT MUST NOT BE A ValidateConfig ERROR, which is what this was until
+// 2026-09-06. Terraform validates the configuration on a DESTROY too, so a
+// cluster created back when the attribute was supported, whose HCL still names
+// it — exactly the population this refusal targets — could not be destroyed at
+// all: `terraform destroy` aborted on the validator, and the message's own
+// remedy (`ignore_changes`) does not suppress a validator. Keying the refusal on
+// a null prior state keeps the pre-destroy protection above and leaves every
+// operation on an EXISTING cluster (update, destroy) free; those get a warning.
+func (r *kubernetesClusterResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// Destroy: no plan to judge.
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+	var plan KubernetesClusterModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 	// Unknown (interpolated) values are skipped — the backend stays authoritative,
 	// and a value that is not yet resolved cannot be judged here.
-	if cfg.PublicIPID.IsNull() || cfg.PublicIPID.IsUnknown() || cfg.PublicIPID.ValueString() == "" {
+	if plan.PublicIPID.IsNull() || plan.PublicIPID.IsUnknown() || plan.PublicIPID.ValueString() == "" {
 		return
 	}
-	resp.Diagnostics.AddAttributeError(
+	if req.State.Raw.IsNull() {
+		resp.Diagnostics.AddAttributeError(path.Root("public_ip_id"), publicIPIDRemovedSummary, publicIPIDRemovedDetail)
+		return
+	}
+	resp.Diagnostics.AddAttributeWarning(
 		path.Root("public_ip_id"),
-		"public_ip_id is no longer supported",
-		"The Kubernetes API endpoint takes no customer-provided address, and any value is "+
-			"rejected by the API. Remove public_ip_id from this resource.\n\n"+
-			"To expose a workload, create a Kubernetes Service of type LoadBalancer inside the "+
-			"cluster; the platform provisions a load balancer for it and the address is chosen "+
-			"there, not on the cluster.\n\n"+
-			"If removing the attribute makes the plan want to REPLACE an existing cluster, add "+
-			"lifecycle { ignore_changes = [public_ip_id] } as well — the existing cluster keeps "+
-			"the address it was created with.",
+		publicIPIDRemovedSummary,
+		publicIPIDRemovedDetail+"\n\nThis cluster already exists and keeps the address it was created with, so "+
+			"nothing here fails today — but any change that replaces the cluster will be refused at plan.",
 	)
 }
+
+const publicIPIDRemovedSummary = "public_ip_id is no longer supported"
+
+const publicIPIDRemovedDetail = "The Kubernetes API endpoint takes no customer-provided address, and any value is " +
+	"rejected by the API. Remove public_ip_id from this resource.\n\n" +
+	"To expose a workload, create a Kubernetes Service of type LoadBalancer inside the " +
+	"cluster; the platform provisions a load balancer for it and the address is chosen " +
+	"there, not on the cluster.\n\n" +
+	"If removing the attribute makes the plan want to REPLACE an existing cluster, add " +
+	"lifecycle { ignore_changes = [public_ip_id] } as well — the existing cluster keeps " +
+	"the address it was created with."
 
 func (r *kubernetesClusterResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_kubernetes_cluster"
@@ -509,6 +531,14 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 	var plan KubernetesClusterModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Apply-time half of the ModifyPlan refusal above: the plan-time check skips an
+	// unknown (interpolated) value, so a create carrying one reaches here with the
+	// value resolved. The API answers 400; say why instead.
+	if !plan.PublicIPID.IsNull() && plan.PublicIPID.ValueString() != "" {
+		resp.Diagnostics.AddAttributeError(path.Root("public_ip_id"), publicIPIDRemovedSummary, publicIPIDRemovedDetail)
 		return
 	}
 

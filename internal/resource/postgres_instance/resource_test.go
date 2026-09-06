@@ -1228,3 +1228,36 @@ func TestCreate202WithoutAResourceIDStillWorks(t *testing.T) {
 		t.Errorf("expected the id resolved from the completed operation, got %q", result.ID.ValueString())
 	}
 }
+
+// TestUpdateFlavorChangeRejected pins the apply-time refusal of a flavor change.
+// The plan-time modifier only WARNS (an error there would block `terraform
+// destroy`), so this guard is the only thing standing between a flavor change and
+// a PUT that silently discards it — toUpdateRequest never carries flavorId, so
+// without it the apply ends in "inconsistent result after apply" with no hint
+// that flavor resize is unsupported.
+func TestUpdateFlavorChangeRejected(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request on a flavor change: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	r := newResource(newClient(t, server))
+	base := PostgresInstanceModel{
+		ID: types.StringValue("pg-123"), Name: types.StringValue("my-pg"),
+		Version: types.StringValue("16"), FlavorID: types.StringValue("db.gp1.small"),
+		StorageGB: types.Int64Value(50), VPCID: types.StringValue("vpc-1"),
+		SubnetID: types.StringValue("sn-1"), Status: types.StringValue("running"),
+		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
+	}
+	state := buildState(t, base)
+	resized := base
+	resized.FlavorID = types.StringValue("db.gp1.large")
+	plan := buildPlan(t, resized)
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	if !updateResp.Diagnostics.HasError() {
+		t.Error("expected error rejecting a flavor_id change")
+	}
+}

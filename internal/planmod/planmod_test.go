@@ -14,14 +14,14 @@ import (
 func TestInt64GrowOnly(t *testing.T) {
 	m := Int64GrowOnly("GB")
 	tests := []struct {
-		name      string
-		state     types.Int64
-		plan      types.Int64
-		wantError bool
+		name     string
+		state    types.Int64
+		plan     types.Int64
+		wantWarn bool
 	}{
 		{"grow ok", types.Int64Value(50), types.Int64Value(100), false},
 		{"unchanged ok", types.Int64Value(50), types.Int64Value(50), false},
-		{"shrink rejected", types.Int64Value(100), types.Int64Value(50), true},
+		{"shrink warns", types.Int64Value(100), types.Int64Value(50), true},
 		{"create (null state) ok", types.Int64Null(), types.Int64Value(50), false},
 		{"unknown plan ok", types.Int64Value(50), types.Int64Unknown(), false},
 	}
@@ -33,23 +33,30 @@ func TestInt64GrowOnly(t *testing.T) {
 				StateValue: tt.state,
 				PlanValue:  tt.plan,
 			}, resp)
-			if got := resp.Diagnostics.HasError(); got != tt.wantError {
-				t.Errorf("HasError() = %v, want %v", got, tt.wantError)
+			// NEVER an error: an error raised by a plan modifier also aborts
+			// `terraform destroy` (the destroy plan's refresh phase runs attribute
+			// plan modifiers against a real, non-null plan). The shrink is refused
+			// in the resource's Update instead.
+			if resp.Diagnostics.HasError() {
+				t.Errorf("modifier raised an error diagnostic (blocks terraform destroy): %v", resp.Diagnostics.Errors())
+			}
+			if got := resp.Diagnostics.WarningsCount() > 0; got != tt.wantWarn {
+				t.Errorf("hasWarning = %v, want %v", got, tt.wantWarn)
 			}
 		})
 	}
 }
 
-func TestStringErrorOnChange(t *testing.T) {
-	m := StringErrorOnChange("flavor resize not supported")
+func TestStringWarnOnChange(t *testing.T) {
+	m := StringWarnOnChange("flavor resize not supported")
 	tests := []struct {
-		name      string
-		state     types.String
-		plan      types.String
-		wantError bool
+		name     string
+		state    types.String
+		plan     types.String
+		wantWarn bool
 	}{
 		{"unchanged ok", types.StringValue("db.small"), types.StringValue("db.small"), false},
-		{"changed rejected", types.StringValue("db.small"), types.StringValue("db.large"), true},
+		{"changed warns", types.StringValue("db.small"), types.StringValue("db.large"), true},
 		{"create (null state) ok", types.StringNull(), types.StringValue("db.small"), false},
 		{"unknown plan ok", types.StringValue("db.small"), types.StringUnknown(), false},
 	}
@@ -61,8 +68,12 @@ func TestStringErrorOnChange(t *testing.T) {
 				StateValue: tt.state,
 				PlanValue:  tt.plan,
 			}, resp)
-			if got := resp.Diagnostics.HasError(); got != tt.wantError {
-				t.Errorf("HasError() = %v, want %v", got, tt.wantError)
+			// See TestInt64GrowOnly: an error here would block terraform destroy.
+			if resp.Diagnostics.HasError() {
+				t.Errorf("modifier raised an error diagnostic (blocks terraform destroy): %v", resp.Diagnostics.Errors())
+			}
+			if got := resp.Diagnostics.WarningsCount() > 0; got != tt.wantWarn {
+				t.Errorf("hasWarning = %v, want %v", got, tt.wantWarn)
 			}
 		})
 	}

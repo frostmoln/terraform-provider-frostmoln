@@ -41,7 +41,7 @@ func TestModelToUpdateRequestAllFields(t *testing.T) {
 		t.Error("expected name change")
 	}
 	// flavor_id and storage_gb are not part of the PUT update request: storage
-	// grows via POST /resize and flavor changes are rejected at plan time.
+	// grows via POST /resize and flavor changes are refused in Update.
 	if req.BackupEnabled == nil || *req.BackupEnabled != true {
 		t.Error("expected backup_enabled change")
 	}
