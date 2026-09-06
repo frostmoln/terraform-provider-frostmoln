@@ -47,8 +47,10 @@ resource "frostmoln_appgw_waf_policy" "main" {
   # never an accident.
   fail_mode = "open"
 
-  # Between 4096 and 40960 bytes. The ceiling is the inspection engine's frame
-  # size, not a memory budget, so it does not rise with a larger flavor.
+  # Between 4096 and 1048576 bytes; the default is 40960. A larger body is
+  # refused 413 rather than served uninspected, so this is the largest request
+  # your application receives. The gateway's flavor may bound it lower - the
+  # appliance buffers roughly 1.9x this value per in-flight request.
   request_body_limit_bytes = 32768
 
   # The methods this gateway accepts. An OVERRIDE: omit it and you run on the
@@ -179,11 +181,11 @@ The server accepts only the version the running build ships, and migrating a sto
 - `paranoia_level` (Number) How aggressively the managed ruleset matches, 1-4. Higher catches more and produces more false positives.
 
 `gateway`-scoped policies only: an overlay is not compiled with the managed ruleset, so this has nothing to act on and the server refuses it.
-- `request_body_limit_bytes` (Number) The largest request body this gateway ACCEPTS, in bytes. Between 4096 and 40960.
+- `request_body_limit_bytes` (Number) The largest request body this gateway ACCEPTS, in bytes. Between 4096 and 1048576; the default is 40960.
 
 A larger body is refused with 413 rather than passed uninspected, so lowering this lowers the maximum request size your application receives - it is not only an inspection-cost setting. Lower it only if you know your application never receives bodies above the value you choose; at the 4096 floor the gateway refuses every request with a body over 4 KiB, ordinary JSON API calls included.
 
-The ceiling is the inspection engine's frame size, not a memory budget, so it does not rise with a larger gateway flavor.
+The gateway's flavor may bound this below the range above: the appliance buffers roughly 1.9x this value per in-flight request, so a value inside the range can still be refused with 409 naming the flavor's bound.
 - `scope` (String) `gateway` (the default) or `overlay`.
 
 A `gateway` policy carries the managed ruleset and the dials that tune it. An `overlay` policy carries only your own rules and attaches to a listener or a route; `mode = "inherit"` is available to it, and the managed-ruleset dials are not.

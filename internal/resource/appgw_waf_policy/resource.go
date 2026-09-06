@@ -50,13 +50,23 @@ const (
 
 // Request body inspection bounds.
 //
-// 🔴 A FRAME CAP, NOT A MEMORY BUDGET. The body reaches the inspection engine
-// over SPOE, whose frame size bounds what crosses in one piece, so the ceiling
-// does not rise with a larger gateway. The provider previously advertised
-// 128 KiB - 512 MiB; every value in that range is now a 400.
+// 🔴 A MEMORY BUDGET, AND THIS COMMENT USED TO SAY THE OPPOSITE.
+//
+// It read "A FRAME CAP, NOT A MEMORY BUDGET... the ceiling does not rise with a
+// larger gateway". True while the inspector was coraza-spoa v0.7.2, whose SPOP
+// library errors the handshake above a 64 KiB frame -- 40960 was everything one
+// such frame could carry. v0.7.3 negotiates the frame, so the transport stopped
+// being the constraint on 2026-09-06 and the ceiling rose to 1 MiB.
+//
+// What binds now is appliance memory, and it DOES vary with the size: the
+// gateway buffers ~1.9x this value per in-flight request, so the server bounds
+// the limit PER FLAVOR as well. A value inside this range can still be refused
+// 409 naming the flavor's bound. The provider does not model that bound -- it is
+// server-side, derived from the flavor's RAM and rated connections, and a copy
+// here would be a second source of truth that drifts.
 const (
 	minRequestBodyLimitBytes = 4096
-	maxRequestBodyLimitBytes = 40960
+	maxRequestBodyLimitBytes = 1024 * 1024
 )
 
 // PolicyModel is the Terraform state model for a WAF policy.
@@ -321,15 +331,16 @@ func (r *policyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			},
 			"request_body_limit_bytes": schema.Int64Attribute{
 				Description: "The largest request body this gateway ACCEPTS, in bytes. Between " +
-					"4096 and 40960.\n\n" +
+					"4096 and 1048576; the default is 40960.\n\n" +
 					"A larger body is refused with 413 rather than passed uninspected, so lowering " +
 					"this lowers the maximum request size your application receives - it is not " +
 					"only an inspection-cost setting. Lower it only if you know your application " +
 					"never receives bodies above the value you choose; at the 4096 floor the " +
 					"gateway refuses every request with a body over 4 KiB, ordinary JSON API " +
 					"calls included.\n\n" +
-					"The ceiling is the inspection engine's frame size, not a memory budget, so it " +
-					"does not rise with a larger gateway flavor.",
+					"The gateway's flavor may bound this below the range above: the appliance " +
+					"buffers roughly 1.9x this value per in-flight request, so a value inside the " +
+					"range can still be refused with 409 naming the flavor's bound.",
 				Optional:      true,
 				Computed:      true,
 				Validators:    []validator.Int64{int64validator.Between(minRequestBodyLimitBytes, maxRequestBodyLimitBytes)},

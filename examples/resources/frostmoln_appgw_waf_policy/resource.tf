@@ -17,8 +17,10 @@ resource "frostmoln_appgw_waf_policy" "main" {
   # never an accident.
   fail_mode = "open"
 
-  # Between 4096 and 40960 bytes. The ceiling is the inspection engine's frame
-  # size, not a memory budget, so it does not rise with a larger flavor.
+  # Between 4096 and 1048576 bytes; the default is 40960. A larger body is
+  # refused 413 rather than served uninspected, so this is the largest request
+  # your application receives. The gateway's flavor may bound it lower - the
+  # appliance buffers roughly 1.9x this value per in-flight request.
   request_body_limit_bytes = 32768
 
   # The methods this gateway accepts. An OVERRIDE: omit it and you run on the

@@ -265,17 +265,22 @@ func TestValidateConfigMirrorsTheServerConstraints(t *testing.T) {
 	})
 }
 
-// TestRequestBodyLimitValidatorUsesTheFrameBounds.
+// The provider's bounds must be the SERVER's bounds, so a plan refuses what the
+// API would refuse and accepts what it would accept.
 //
-// The bounds are 4096-40960 now: 40960 is the inspection engine's frame cap,
-// not a memory budget. 131072 was the OLD floor this provider advertised, so it
-// is the value most likely to be sitting in a practitioner's HCL -- and it is
-// now a 400. The validator is exercised through the SCHEMA, because that is
-// what a plan runs; asserting on a constant would pass with the validator
-// deleted.
-func TestRequestBodyLimitValidatorUsesTheFrameBounds(t *testing.T) {
-	if minRequestBodyLimitBytes != 4096 || maxRequestBodyLimitBytes != 40960 {
-		t.Fatalf("bounds are %d-%d, want 4096-40960", minRequestBodyLimitBytes, maxRequestBodyLimitBytes)
+// The ceiling rose from 40960 to 1 MiB on 2026-09-06: 40960 was everything one
+// 64 KiB SPOE frame could carry while the inspector was coraza-spoa v0.7.2, and
+// v0.7.3 negotiates the frame instead of erroring above it. 131072 -- the OLD
+// floor this provider advertised, and so the value most likely to be sitting in
+// a practitioner's HCL -- moves from refused back to ACCEPTED.
+//
+// Literals on purpose: these mirror a server-side range this repo cannot import,
+// so the literal IS the cross-check. The validator is exercised through the
+// SCHEMA, because that is what a plan runs; asserting on a constant alone would
+// pass with the validator deleted.
+func TestRequestBodyLimitValidatorMatchesTheServerBounds(t *testing.T) {
+	if minRequestBodyLimitBytes != 4096 || maxRequestBodyLimitBytes != 1048576 {
+		t.Fatalf("bounds are %d-%d, want 4096-1048576", minRequestBodyLimitBytes, maxRequestBodyLimitBytes)
 	}
 
 	var sr resource.SchemaResponse
@@ -297,12 +302,14 @@ func TestRequestBodyLimitValidatorUsesTheFrameBounds(t *testing.T) {
 		}
 		return resp.Diagnostics.HasError()
 	}
-	for _, n := range []int64{4096, 8192, 40960} {
+	// 40961, 131072 and 1<<20 were REFUSED before the ceiling rose; they are the
+	// rows that make this test fail if someone restores the old cap.
+	for _, n := range []int64{4096, 8192, 40960, 40961, 131072, 1 << 20} {
 		if run(n) {
 			t.Errorf("%d is inside the accepted range but was refused", n)
 		}
 	}
-	for _, n := range []int64{1024, 4095, 40961, 131072, 1 << 20, 536870912} {
+	for _, n := range []int64{1024, 4095, (1 << 20) + 1, 536870912} {
 		if !run(n) {
 			t.Errorf("%d was accepted; the server refuses it", n)
 		}
