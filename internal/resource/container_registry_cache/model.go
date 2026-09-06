@@ -37,14 +37,27 @@ type ContainerRegistryCacheModel struct {
 	Namespace         types.String `tfsdk:"namespace"`
 	PullPath          types.String `tfsdk:"pull_path"`
 	Display           types.String `tfsdk:"display"`
+	// UsedBytes is observational and MOVES on every cached pull. It gets no
+	// UseStateForUnknown, unlike Namespace and PullPath: those are stable for the
+	// life of the cache, this one is not, and pinning a stale reading would be
+	// worse than showing it unknown until the read lands.
+	UsedBytes types.Int64 `tfsdk:"used_bytes"`
 }
 
 // apiCache is the API representation of a pull-through cache.
 //
-// There is deliberately no per-cache usage figure and no credential state on
-// this shape: a tenant's allowance is an aggregate across their repository
-// namespace and every cache, and no endpoint reads an upstream credential back.
-// Do not add fields the API does not send.
+// It CARRIES a usage figure (server-side since 2026-09-06). This comment said
+// the opposite, reasoning that a tenant's allowance is an aggregate. The
+// aggregate half is right and `frostmoln_container_registry.storage_used_bytes`
+// IS that aggregate — but the caps are enforced PER NAMESPACE, so a cache is
+// also the unit that refuses a pull and the total cannot say which one is close.
+//
+// Do NOT sum used_bytes across caches and expect storage_used_bytes: both skip a
+// namespace whose quota the server could not read. The settings attribute is the
+// metered one.
+//
+// There is still no credential state: no endpoint reads an upstream credential
+// back. Do not add fields the API does not send.
 type apiCache struct {
 	Upstream string `json:"upstream"`
 	// Display FALLS BACK TO THE BARE KEY for a cache whose upstream has been
@@ -53,6 +66,10 @@ type apiCache struct {
 	Display   string `json:"display"`
 	Namespace string `json:"namespace"`
 	PullPath  string `json:"pullPath"`
+	// UsedBytes is omitted by the server both for a cache that has mirrored
+	// nothing and for a quota read it could not make, so a zero here is "no
+	// number", never a measured empty.
+	UsedBytes int64 `json:"usedBytes,omitempty"`
 }
 
 // apiCacheUpstream is one row of the server's upstream catalog.
@@ -107,4 +124,12 @@ func (m *ContainerRegistryCacheModel) fromAPI(tenantID string, c *apiCache) {
 	m.Namespace = types.StringValue(c.Namespace)
 	m.PullPath = types.StringValue(c.PullPath)
 	m.Display = types.StringValue(c.Display)
+	// Zero becomes NULL, not 0. The server omits the field for an empty cache and
+	// for a failed quota read alike, and a literal 0 in state would assert the
+	// first — the same rule storage_used_bytes follows on the registry resource.
+	if c.UsedBytes > 0 {
+		m.UsedBytes = types.Int64Value(c.UsedBytes)
+	} else {
+		m.UsedBytes = types.Int64Null()
+	}
 }

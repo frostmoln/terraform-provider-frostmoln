@@ -205,7 +205,15 @@ func (r *cacheResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			},
 			"pull_path": schema.StringAttribute{
 				Description: "What to prefix an image with to pull it through this cache — the whole " +
-					"point of the resource. `docker pull <pull_path>/<image>:<tag>`.",
+					"point of the resource: `docker pull <pull_path>/<the upstream's own path for " +
+					"that image>`. USE THE UPSTREAM'S PATH EXACTLY, do not shorten it. Docker Hub " +
+					"keeps its OFFICIAL images under `library/`, so `docker pull <pull_path>/alpine` " +
+					"asks Hub for a repository that does not exist and comes back a bare 401 naming " +
+					"nothing — `docker pull <pull_path>/library/alpine:3` is the working form " +
+					"(measured 2026-09-05, nine failed pulls before the cause was found). The portal " +
+					"and the `fm` CLI render a working example per cache from the platform's own " +
+					"catalog; this provider does not read that catalog, which is why the rule is " +
+					"stated here instead.",
 				Computed: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
@@ -217,6 +225,20 @@ func (r *cacheResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 					"person sees where the images come from. FALLS BACK TO THE BARE KEY once an " +
 					"upstream is retired from the catalog — the cache keeps working and stays " +
 					"deletable, so a display equal to the key is a retired upstream, not an error.",
+				Computed: true,
+			},
+			"used_bytes": schema.Int64Attribute{
+				Description: "Storage stored in THIS cache namespace, in bytes, against this namespace's " +
+					"own cap — the cap whose crossing makes a cached pull fail. " +
+					"`frostmoln_container_registry.storage_used_bytes` is the tenant aggregate and the " +
+					"figure you are metered on; this is the per-namespace detail that says which cache is " +
+					"close to refusing. Do not sum these and expect the aggregate: both skip a namespace " +
+					"whose quota could not be read. OBSERVATIONAL: a cache fills on PULL, so this moves " +
+					"without anyone pushing and will differ on each refresh. Null for two causes with the " +
+					"same result — a cache that has mirrored nothing yet, and a quota read that failed; on " +
+					"a failure it is null for EVERY cache rather than some, so a partial picture never " +
+					"reads as a complete one. Deduplicated bytes as the registry measures them, which does " +
+					"not equal the sum of your local image sizes.",
 				Computed: true,
 			},
 		},

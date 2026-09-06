@@ -77,6 +77,9 @@ func cacheStateValue(t *testing.T, upstream, username, password string) tftypes.
 		"namespace":           tftypes.NewValue(tftypes.String, "t-abc-cache-"+upstream),
 		"pull_path":           tftypes.NewValue(tftypes.String, "registry.sweden.frostmoln.cloud/t-abc-cache-"+upstream),
 		"display":             tftypes.NewValue(tftypes.String, "GitHub Container Registry (ghcr.io)"),
+		// Null in prior state on purpose: it is observational and moves on every
+		// cached pull, so a Read that leaves it null is the interesting case.
+		"used_bytes": tftypes.NewValue(tftypes.Number, nil),
 	})
 }
 
@@ -96,9 +99,54 @@ func readCache(t *testing.T, r *cacheResource, raw tftypes.Value) (*resource.Rea
 }
 
 const ghcrListBody = `{"data":[{"upstream":"ghcr","display":"GitHub Container Registry (ghcr.io)",
+	"namespace":"t-abc-cache-ghcr","pullPath":"registry.sweden.frostmoln.cloud/t-abc-cache-ghcr",
+	"usedBytes":44409541}],
+	"totalCount":1,"limit":5,"upstreams":[{"key":"ghcr","display":"GitHub Container Registry (ghcr.io)",
+	"requiresCredentials":false}]}`
+
+// ghcrListBodyNoUsage is the same cache with the usage figure OMITTED, which the
+// server does both for a cache that has mirrored nothing and for a quota read it
+// could not make.
+const ghcrListBodyNoUsage = `{"data":[{"upstream":"ghcr","display":"GitHub Container Registry (ghcr.io)",
 	"namespace":"t-abc-cache-ghcr","pullPath":"registry.sweden.frostmoln.cloud/t-abc-cache-ghcr"}],
 	"totalCount":1,"limit":5,"upstreams":[{"key":"ghcr","display":"GitHub Container Registry (ghcr.io)",
 	"requiresCredentials":false}]}`
+
+// 🔴 AN OMITTED USAGE FIGURE IS NULL, NEVER 0.
+//
+// The server omits it for an empty cache and for a failed quota read alike, so a
+// literal 0 in state would assert the first — and a practitioner reading
+// `used_bytes == 0` would conclude the cache holds nothing while the platform
+// simply could not measure it.
+func TestReadReportsCacheUsageAndNullsAnOmittedFigure(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body string
+		want *int64
+	}{
+		"reported": {ghcrListBody, func() *int64 { v := int64(44_409_541); return &v }()},
+		"omitted":  {ghcrListBodyNoUsage, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := newMeAndCacheServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, tc.body)
+			})
+			defer server.Close()
+
+			// pragma: allowlist nextline secret
+			_, got := readCache(t, configuredCacheResource(t, server.URL), cacheStateValue(t, "ghcr", "acme", "dckr_pat_only_copy"))
+
+			if tc.want == nil {
+				if !got.UsedBytes.IsNull() {
+					t.Errorf("used_bytes = %d, want null — an omitted figure is not a measured zero", got.UsedBytes.ValueInt64())
+				}
+				return
+			}
+			if got.UsedBytes.IsNull() || got.UsedBytes.ValueInt64() != *tc.want {
+				t.Errorf("used_bytes = %v, want %d", got.UsedBytes, *tc.want)
+			}
+		})
+	}
+}
 
 // THE contract of this resource. No endpoint returns the upstream credentials,
 // so a Read that wrote them from the response would blank them — and with
