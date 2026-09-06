@@ -67,8 +67,9 @@ func (d *kubernetesAddonsDataSource) Metadata(_ context.Context, req datasource.
 
 func (d *kubernetesAddonsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Lists the available cluster addons that can be installed at Kubernetes cluster creation " +
-			"(via the addons attribute of frostmoln_kubernetes_cluster).",
+		Description: "Lists the available cluster addons (the addons attribute of " +
+			"frostmoln_kubernetes_cluster). An addon can be selected at cluster creation or ADDED to a " +
+			"running cluster afterwards; it cannot be removed without replacing the cluster.",
 		Attributes: map[string]schema.Attribute{
 			"addons": schema.ListNestedAttribute{
 				Description: "The list of available cluster addons.",
@@ -93,7 +94,7 @@ func (d *kubernetesAddonsDataSource) Schema(_ context.Context, _ datasource.Sche
 							Computed:    true,
 						},
 						"disabled": schema.BoolAttribute{
-							Description: "Whether this addon is currently disabled (not installable). Disabled addons are rejected on cluster create.",
+							Description: "Whether this addon is currently disabled (not installable). Disabled addons are rejected both on cluster create and when added to a running cluster.",
 							Computed:    true,
 						},
 					},

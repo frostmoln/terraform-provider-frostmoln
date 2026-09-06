@@ -59,21 +59,31 @@ var mustReplaceOnRealChange = map[string][]string{
 	"frostmoln_bucket":                        {"region", "storage_class"},
 	"frostmoln_image":                         {"container_format"},
 	"frostmoln_instance":                      {"zone"},
-	"frostmoln_kubernetes_cluster":            {"version", "control_plane_tier", "region", "addons", "initial_node_pool.name"},
-	"frostmoln_kubernetes_node_pool":          {"name"},
-	"frostmoln_load_balancer":                 {"scheme", "type"},
-	"frostmoln_messaging_instance":            {"engine", "version"},
-	"frostmoln_mysql_backup":                  {"type"},
-	"frostmoln_mysql_instance":                {"ha_enabled"},
-	"frostmoln_mysql_read_replica":            {"flavor_id"},
-	"frostmoln_nginx_instance":                {"php_enabled", "php_version"},
-	"frostmoln_postgres_backup":               {"type"},
-	"frostmoln_postgres_instance":             {"ha_enabled"},
-	"frostmoln_postgres_read_replica":         {"flavor_id"},
-	"frostmoln_subnet":                        {"zone", "gateway_ip", "dns_servers"},
-	"frostmoln_volume":                        {"volume_type", "zone", "encrypted"},
-	"frostmoln_volume_attachment":             {"device_path"},
-	"frostmoln_webserver_domain":              {"tls_enabled", "is_default"},
+	// `addons` is CONDITIONAL, unlike every other entry in this table: it replaces
+	// only when the plan DROPS a key the cluster has, because adding one is a
+	// supported in-place day-2 operation (PUT .../clusters/{id}/addons, add-only)
+	// while removing one is not — nothing uninstalls an addon the platform already
+	// applied. It stays listed here because this walk's "real change" swaps the whole
+	// set ({"a"} -> {"b"}), which IS a removal, so the entry is not vacuous — but it
+	// does not prove the ADD direction, and a plain RequiresReplace() would satisfy
+	// this table while destroying a customer's cluster to add an addon. That
+	// direction is pinned by TestAddonPlanModifier_AddingAnAddonDoesNotReplaceTheCluster
+	// in internal/resource/kubernetes_cluster.
+	"frostmoln_kubernetes_cluster":    {"version", "control_plane_tier", "region", "addons", "initial_node_pool.name"},
+	"frostmoln_kubernetes_node_pool":  {"name"},
+	"frostmoln_load_balancer":         {"scheme", "type"},
+	"frostmoln_messaging_instance":    {"engine", "version"},
+	"frostmoln_mysql_backup":          {"type"},
+	"frostmoln_mysql_instance":        {"ha_enabled"},
+	"frostmoln_mysql_read_replica":    {"flavor_id"},
+	"frostmoln_nginx_instance":        {"php_enabled", "php_version"},
+	"frostmoln_postgres_backup":       {"type"},
+	"frostmoln_postgres_instance":     {"ha_enabled"},
+	"frostmoln_postgres_read_replica": {"flavor_id"},
+	"frostmoln_subnet":                {"zone", "gateway_ip", "dns_servers"},
+	"frostmoln_volume":                {"volume_type", "zone", "encrypted"},
+	"frostmoln_volume_attachment":     {"device_path"},
+	"frostmoln_webserver_domain":      {"tls_enabled", "is_default"},
 }
 
 // TestOptionalComputedAttributesReplaceOnlyOnRealChange asserts, for every

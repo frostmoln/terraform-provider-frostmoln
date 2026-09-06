@@ -29,10 +29,12 @@ resource "frostmoln_kubernetes_cluster" "main" {
   # .status.loadBalancer.ingress. The cluster itself provisions none — `endpoint`
   # below is the Kubernetes API endpoint, for kubectl, not for traffic.
 
-  # Cluster addons are installed once, at creation, and cannot be changed on an
-  # existing cluster (changing this set replaces the cluster). Omit the attribute
-  # to install the platform defaults; set an empty list ([]) to install none.
-  # See the frostmoln_kubernetes_addons data source for available keys.
+  # Cluster addons. ADDING a key here is applied in place to a running cluster
+  # and reaches it within the platform's addon reconciliation period; REMOVING a
+  # key replaces the cluster, because the platform cannot uninstall an addon it
+  # has already applied. Omit the attribute to install the platform defaults; set
+  # an empty list ([]) to install none. See the frostmoln_kubernetes_addons data
+  # source for available keys.
   addons = ["external-secrets"]
 
   initial_node_pool = {
@@ -66,7 +68,7 @@ output "kubeconfig" {
 
 ### Optional
 
-- `addons` (Set of String) The set of cluster-addon catalog keys to install at cluster creation (see the frostmoln_kubernetes_addons data source for available keys). Addons are applied ONCE, at cluster creation, from first-boot manifests — they cannot be changed on an existing cluster, so changing this set REPLACES the cluster. Leave it unset to apply the platform default addons (the frostmoln_kubernetes_addons data source reports which are defaulted); set it to an explicit empty set ([]) to select none.
+- `addons` (Set of String) The set of cluster-addon catalog keys for this cluster (see the frostmoln_kubernetes_addons data source for available keys). ADDING a key is applied IN PLACE to a running cluster and reaches it within the platform's addon reconciliation period rather than immediately. REMOVING a key REPLACES the cluster, because the platform has no way to uninstall an addon it has already applied. Leave it unset to apply the platform default addons (the frostmoln_kubernetes_addons data source reports which are defaulted); set it to an explicit empty set ([]) to select none.
 - `control_plane_tier` (String) The control-plane tier key (see the frostmoln_kubernetes_tiers data source for canonical keys). Defaults to the platform default tier.
 - `public_ip_id` (String, Deprecated) REMOVED. Any value is rejected by the API with a 400, on every account — remove this attribute from your configuration.
 

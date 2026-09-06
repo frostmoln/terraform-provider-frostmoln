@@ -177,13 +177,7 @@ func (m *KubernetesClusterModel) toCreateRequest() apiCreateClusterRequest {
 	// — including an explicit empty set — send exactly the configured keys (a
 	// non-nil pointer to a possibly-empty slice serializes as `[]`).
 	if !m.Addons.IsNull() && !m.Addons.IsUnknown() {
-		elems := m.Addons.Elements()
-		addons := make([]string, 0, len(elems))
-		for _, e := range elems {
-			if s, ok := e.(types.String); ok {
-				addons = append(addons, s.ValueString())
-			}
-		}
+		addons := setToStringSlice(m.Addons)
 		req.Addons = &addons
 	}
 
@@ -250,6 +244,35 @@ func stringOrNull(s string) types.String {
 		return types.StringNull()
 	}
 	return types.StringValue(s)
+}
+
+// setToStringSlice is the inverse of stringSliceToSet: the configured keys as a plain
+// slice, always non-nil so it serializes as `[]` rather than `null`.
+//
+// EXTRACTED SO CREATE AND UPDATE CANNOT DISAGREE. The create path's tri-state
+// (null/unknown -> omit the field -> server defaults; set -> send exactly these) is
+// decided by its CALLER; this only converts. The update path has no tri-state — the
+// addons endpoint requires the field — so it calls this directly.
+func setToStringSlice(set types.Set) []string {
+	elems := set.Elements()
+	out := make([]string, 0, len(elems))
+	for _, e := range elems {
+		if s, ok := e.(types.String); ok {
+			out = append(out, s.ValueString())
+		}
+	}
+	return out
+}
+
+// apiUpdateClusterAddonsRequest is the body of PUT .../kubernetes-clusters/{id}/addons.
+//
+// `addons` is REQUIRED and is a plain slice, not the create request's pointer-to-slice:
+// the endpoint takes the full desired selection and has no "omitted means defaults"
+// case — on a running cluster that would silently mean a removal, so the server 400s a
+// null. It is also add-only, which is why a removal never reaches this type (see
+// requiresReplaceOnAddonRemoval).
+type apiUpdateClusterAddonsRequest struct {
+	Addons []string `json:"addons"`
 }
 
 // stringSliceToSet builds a Terraform set of strings. A nil OR empty slice

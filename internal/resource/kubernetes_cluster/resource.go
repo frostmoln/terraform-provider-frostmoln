@@ -198,18 +198,27 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 				},
 			},
 			"addons": schema.SetAttribute{
-				Description: "The set of cluster-addon catalog keys to install at cluster creation (see the " +
-					"frostmoln_kubernetes_addons data source for available keys). Addons are applied ONCE, at " +
-					"cluster creation, from first-boot manifests — they cannot be changed on an existing cluster, so " +
-					"changing this set REPLACES the cluster. Leave it unset to apply the platform default addons " +
-					"(the frostmoln_kubernetes_addons data source reports which are defaulted); set it to an " +
-					"explicit empty set ([]) to select none.",
+				Description: "The set of cluster-addon catalog keys for this cluster (see the " +
+					"frostmoln_kubernetes_addons data source for available keys). ADDING a key is applied " +
+					"IN PLACE to a running cluster and reaches it within the platform's addon reconciliation " +
+					"period rather than immediately. REMOVING a key REPLACES the cluster, because the platform " +
+					"has no way to uninstall an addon it has already applied. Leave it unset to apply the " +
+					"platform default addons (the frostmoln_kubernetes_addons data source reports which are " +
+					"defaulted); set it to an explicit empty set ([]) to select none.",
 				Optional:    true,
 				Computed:    true,
 				ElementType: types.StringType,
 				PlanModifiers: []planmodifier.Set{
 					setplanmodifier.UseStateForUnknown(),
-					setplanmodifier.RequiresReplace(),
+					// 🔴 REPLACE ONLY ON A REMOVAL, and the asymmetry is the API's, not a
+					// preference. Addition is a supported day-2 operation
+					// (PUT .../clusters/{id}/addons, add-only). Removal is refused by that
+					// endpoint with a 400, because nothing in the platform deletes the
+					// objects an addon has already installed — so destroying and rebuilding
+					// the cluster really IS the only way to get rid of one, and a plain
+					// RequiresReplace() over both directions would destroy a customer's
+					// cluster to perform an operation the API does in place.
+					requiresReplaceOnAddonRemoval(),
 				},
 			},
 			"initial_node_pool": schema.SingleNestedAttribute{
@@ -667,6 +676,28 @@ func (r *kubernetesClusterResource) Update(ctx context.Context, req resource.Upd
 			resp.Diagnostics.AddError("Failed to rename Kubernetes cluster", err.Error())
 			return
 		}
+	}
+
+	// ADDONS — additions only; a removal never reaches here, because
+	// requiresReplaceOnAddonRemoval planned a replacement instead.
+	// 🔴 NULL IS GUARDED ALONGSIDE UNKNOWN, and they mean different things. Unknown is
+	// "not resolved yet"; null is "the practitioner did not configure it". Neither is
+	// "the empty set" — but setToStringSlice(null) produces `{"addons": []}`, which the
+	// server reads as a removal of everything and refuses with a 400. Not reachable
+	// today (Optional+Computed with UseStateForUnknown cannot present a null plan against
+	// a non-null state), which is exactly why it is worth guarding: the day some other
+	// modifier changes that, the failure is a customer-facing error on an apply that
+	// asked for nothing.
+	if !plan.Addons.IsUnknown() && !plan.Addons.IsNull() && !plan.Addons.Equal(state.Addons) {
+		if _, err := r.client.Put(ctx, r.clusterPath(id)+"/addons", apiUpdateClusterAddonsRequest{Addons: setToStringSlice(plan.Addons)}); err != nil {
+			resp.Diagnostics.AddError("Failed to change the cluster's addons", err.Error())
+			return
+		}
+		// NO pollCluster HERE, DELIBERATELY. The addon change does not move the
+		// cluster's status — it is converged by a background reconciliation, and the
+		// cluster stays `running` throughout — so polling for `running` would return
+		// instantly and assert nothing. The final read below picks up the recorded
+		// selection, which is what the API changed.
 	}
 
 	scaled := false

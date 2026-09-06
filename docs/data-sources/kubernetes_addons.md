@@ -3,12 +3,12 @@
 page_title: "frostmoln_kubernetes_addons Data Source - Frostmoln"
 subcategory: ""
 description: |-
-  Lists the available cluster addons that can be installed at Kubernetes cluster creation (via the addons attribute of frostmoln_kubernetes_cluster).
+  Lists the available cluster addons (the addons attribute of frostmoln_kubernetes_cluster). An addon can be selected at cluster creation or ADDED to a running cluster afterwards; it cannot be removed without replacing the cluster.
 ---
 
 # frostmoln_kubernetes_addons (Data Source)
 
-Lists the available cluster addons that can be installed at Kubernetes cluster creation (via the addons attribute of frostmoln_kubernetes_cluster).
+Lists the available cluster addons (the addons attribute of frostmoln_kubernetes_cluster). An addon can be selected at cluster creation or ADDED to a running cluster afterwards; it cannot be removed without replacing the cluster.
 
 ## Example Usage
 
@@ -34,7 +34,7 @@ output "default_addons" {
 Read-Only:
 
 - `description` (String) A description of what the addon provides.
-- `disabled` (Boolean) Whether this addon is currently disabled (not installable). Disabled addons are rejected on cluster create.
+- `disabled` (Boolean) Whether this addon is currently disabled (not installable). Disabled addons are rejected both on cluster create and when added to a running cluster.
 - `is_default` (Boolean) Whether this addon is installed by default when a cluster is created without an explicit addons set.
 - `key` (String) The addon's catalog key (the value used in the cluster's addons attribute, e.g. "external-secrets").
 - `name` (String) The human-readable name of the addon.
