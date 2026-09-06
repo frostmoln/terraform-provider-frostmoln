@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.51.2] - 2026-09-06
+
+### 📚 Documentation
+
+- *(api_key)* The session scopes are enforced as their own class (#491)
+
 ## [0.51.1] - 2026-09-06
 
 ### 📚 Documentation
