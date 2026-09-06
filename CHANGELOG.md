@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.51.0] - 2026-09-06
+
+### 🚀 Features
+
+- *(appgw)* The WAF body limit range rises to 1 MiB (#487)
+
 ## [0.50.0] - 2026-09-06
 
 ### 🚀 Features
