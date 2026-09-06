@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.49.1] - 2026-09-05
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.21 (#481)
+
+### 📚 Documentation
+
+- *(appgw)* The WAF body limit is a request CAP, not an inspection budget (#482)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.11.0 (#479)
+
 ## [0.49.0] - 2026-09-05
 
 ### 🚀 Features
