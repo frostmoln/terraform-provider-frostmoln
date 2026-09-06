@@ -73,7 +73,8 @@ func (d *apiKeyScopesDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 	resp.Schema = schema.Schema{
 		Description: "List the scopes an API key (frostmoln_api_key) or workload identity (frostmoln_workload_identity_binding) can be granted, with a description of what each allows. " +
 			"The catalog is server-owned, so it needs no provider release to change. " +
-			"A scope is `<service>:<action>`; grant `:read` and `:write`, which are what the services enforce. " +
+			"A scope is `<service>:<action>`; grant `:read` and `:write`, which are what the services enforce — except the interactive-session scopes " +
+			"(`sessions:forward`, `sessions:pty`, `sessions:write`), which are their own enforced class and are not covered by any other service's wildcard. " +
 			"The global \"*\" wildcard is excluded: keys are least-privilege and the API rejects it. Per-service wildcards such as `compute:*` are listed and are accepted on an API key, but a workload identity rejects every `:*` — filter those out when feeding a binding. " +
 			"For per-resource targets, constraints or explicit denies, use an access policy (frostmoln_iam_policy_document) rather than a finer scope string.",
 		Attributes: map[string]schema.Attribute{

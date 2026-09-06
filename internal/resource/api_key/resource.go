@@ -56,7 +56,10 @@ func (r *apiKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			"scopes": schema.ListAttribute{
 				Description: "The permission scopes granted to the API key, as `<service>:<action>` strings (e.g. `compute:read`, `storage:write`). " +
 					"At least one is required, and a key can never exceed the permissions of the identity that created it. " +
-					"Grant `:read` and `:write` — those are the actions the services enforce, and `:write` covers every mutation including start/stop/restart. " +
+					"Grant `:read` and `:write` — for almost every service those are the actions enforced, and `:write` covers every mutation including start/stop/restart. " +
+					"THE EXCEPTION IS THE INTERACTIVE-SESSION SCOPES, WHICH ARE ENFORCED AS THEIR OWN CLASS: `sessions:forward` (fm forward / the managed-DB console), " +
+					"`sessions:pty` (a shell inside an instance-access instance) and `sessions:write` (the managed-Kubernetes API proxy). Nothing substitutes for them — " +
+					"`compute:action` does not open a shell and `kubernetes:*` does not open the cluster-API proxy. " +
 					"The global `*` wildcard is REJECTED (`WILDCARD_SCOPE_NOT_ALLOWED`) — keys are least-privilege — but a per-service wildcard such as `compute:*` is accepted. " +
 					"The grantable set with a description of each is served by the platform: read it with the `frostmoln_api_key_scopes` data source, or `fm account api-key scopes`. " +
 					"NOTE: identity also ACCEPTS the finer `service:resource:action` form here, but no service ENFORCES it as a key scope — a key holding only those applies cleanly and is then denied on every call. " +
