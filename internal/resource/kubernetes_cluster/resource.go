@@ -319,10 +319,15 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 			},
 			"kubeconfig": schema.StringAttribute{
 				Description: "A kubeconfig for the cluster, re-fetched from the platform on every refresh while " +
-					"the cluster is running. " + docs.StateSecretNote + " Because it is re-fetchable, state is " +
+					"the cluster is running. " + docs.StateSecretNote + " Its server address is private to the " +
+					"cluster's VPC, so a `kubernetes` or `helm` provider configured from it must run somewhere " +
+					"with a route into that VPC. Because it is re-fetchable, state is " +
 					"not the only place it can come from: if you do not need it in Terraform, leave the " +
 					"attribute unreferenced and take it out of band with " +
-					"`fm kubernetes cluster kubeconfig <cluster-id>`.",
+					"`fm kubernetes cluster kubeconfig <cluster-id> --exec`, which writes a kubeconfig that " +
+					"opens that route itself (it needs an API key with both `kubernetes:read` and " +
+					"`sessions:write`, and the `fm` binary on PATH wherever the kubeconfig is used — " +
+					"a CI runner will not have it by default).",
 				Computed:  true,
 				Sensitive: true,
 				PlanModifiers: []planmodifier.String{
