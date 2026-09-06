@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.52.3] - 2026-09-06
+
+### 🐛 Bug Fixes
+
+- A plan-time error diagnostic blocks terraform destroy (#501)
+
 ## [0.52.2] - 2026-09-06
 
 ### 📚 Documentation
