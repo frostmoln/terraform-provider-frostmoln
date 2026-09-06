@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.52.0] - 2026-09-06
+
+### 🚀 Features
+
+- *(kubernetes_cluster)* Add an addon in place; only a REMOVAL replaces the cluster (#492)
+
 ## [0.51.3] - 2026-09-06
 
 ### 🐛 Bug Fixes
