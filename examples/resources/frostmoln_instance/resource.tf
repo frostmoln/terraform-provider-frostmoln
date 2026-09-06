@@ -14,7 +14,7 @@ resource "frostmoln_instance" "example" {
   # console_password_wo (see the second block below).
   console_password = "change-me-at-the-console" # pragma: allowlist secret
 
-  # Install the Frostmoln in-guest agent at first boot for `fm ssh` terminal access.
+  # Install the Frostmoln in-guest agent at first boot for `fm shell` (formerly `fm ssh`) terminal access.
   instance_access = true
 
   # Prefer user_data_wo (see the second block below) when this document carries
