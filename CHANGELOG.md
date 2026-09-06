@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.52.2] - 2026-09-06
+
+### 📚 Documentation
+
+- *(kubernetes-cluster)* State the addon egress requirement on `addons` (#499)
+
 ## [0.52.1] - 2026-09-06
 
 ### 📚 Documentation
