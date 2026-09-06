@@ -33,7 +33,7 @@ output "default_addons" {
 
 Read-Only:
 
-- `description` (String) A description of what the addon provides.
+- `description` (String) What the addon provides, INCLUDING any prerequisites it has — the entitlement it needs, a Secret you must create, or a registry your worker nodes must reach for its images. This is where an addon's prerequisites are stated.
 - `disabled` (Boolean) Whether this addon is currently disabled (not installable). Disabled addons are rejected both on cluster create and when added to a running cluster.
 - `is_default` (Boolean) Whether this addon is installed by default when a cluster is created without an explicit addons set.
 - `key` (String) The addon's catalog key (the value used in the cluster's addons attribute, e.g. "external-secrets").

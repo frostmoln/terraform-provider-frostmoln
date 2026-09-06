@@ -86,7 +86,7 @@ func (d *kubernetesAddonsDataSource) Schema(_ context.Context, _ datasource.Sche
 							Computed:    true,
 						},
 						"description": schema.StringAttribute{
-							Description: "A description of what the addon provides.",
+							Description: "What the addon provides, INCLUDING any prerequisites it has — the entitlement it needs, a Secret you must create, or a registry your worker nodes must reach for its images. This is where an addon's prerequisites are stated.",
 							Computed:    true,
 						},
 						"is_default": schema.BoolAttribute{

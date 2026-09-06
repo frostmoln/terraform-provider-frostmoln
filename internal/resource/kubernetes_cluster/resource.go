@@ -204,7 +204,17 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 					"period rather than immediately. REMOVING a key REPLACES the cluster, because the platform " +
 					"has no way to uninstall an addon it has already applied. Leave it unset to apply the " +
 					"platform default addons (the frostmoln_kubernetes_addons data source reports which are " +
-					"defaulted); set it to an explicit empty set ([]) to select none.",
+					"defaulted); set it to an explicit empty set ([]) to select none. An addon's " +
+					"upstream container images are pulled from a public registry when its pods start " +
+					"rather than preloaded onto your nodes, so the addon needs your worker nodes to have " +
+					"outbound HTTPS to that registry; where an addon has such a prerequisite its catalog " +
+					"description states it (external-dns: registry.k8s.io, which redirects image " +
+					"downloads to cloud-hosted backing stores on other domains, so allowing that " +
+					"hostname alone is not enough if you filter egress by name). That reachability is a " +
+					"property of your own VPC at the moment of the pull, and every new node pulls again, " +
+					"so the platform does not validate it: applying a key your nodes cannot pull " +
+					"succeeds here and leaves the addon's pods in ImagePullBackOff. Nothing about the " +
+					"cluster itself depends on it.",
 				Optional:    true,
 				Computed:    true,
 				ElementType: types.StringType,
