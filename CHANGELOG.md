@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.52.1] - 2026-09-06
+
+### 📚 Documentation
+
+- *(kubernetes_cluster)* Name the VPC-private endpoint and the --exec tunnel (#497)
+
 ## [0.52.0] - 2026-09-06
 
 ### 🚀 Features
