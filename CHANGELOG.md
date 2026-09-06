@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.51.1] - 2026-09-06
+
+### 📚 Documentation
+
+- *(instance)* Name `fm shell` (formerly `fm ssh`) on instance_access (#489)
+
 ## [0.51.0] - 2026-09-06
 
 ### 🚀 Features
