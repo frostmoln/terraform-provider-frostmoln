@@ -237,24 +237,25 @@ func TestApacheInstanceModelFromAPI(t *testing.T) {
 	diags := diag.Diagnostics{}
 
 	api := &apiWebserverInstance{
-		ID:            "apache-123",
-		Name:          "my-apache",
-		Engine:        "apache",
-		EngineVersion: "2.4",
-		FlavorID:      "web.gp1.small",
-		StorageGB:     20,
-		VPCID:         "vpc-1",
-		SubnetID:      "sn-1",
-		TLSEnabled:    true,
-		PHPEnabled:    true,
-		PHPVersion:    "8.3",
-		EngineConfig:  map[string]string{"ServerTokens": "Prod"},
-		Status:        "running",
-		PrivateIP:     "10.0.1.5",
-		Port:          443,
-		CreatedAt:     "2025-01-01T00:00:00Z",
-		UpdatedAt:     "2025-01-02T00:00:00Z",
-		TenantID:      "t-1",
+		ID:              "apache-123",
+		Name:            "my-apache",
+		Engine:          "apache",
+		EngineVersion:   "2.4",
+		FlavorID:        "web.gp1.small",
+		StorageGB:       20,
+		VPCID:           "vpc-1",
+		SubnetID:        "sn-1",
+		TLSEnabled:      true,
+		PHPEnabled:      true,
+		PHPVersion:      "8.3",
+		EngineConfig:    map[string]string{"ServerTokens": "Prod"},
+		Status:          "running",
+		PrivateIP:       "10.0.1.5",
+		Port:            443,
+		CreatedAt:       "2025-01-01T00:00:00Z",
+		UpdatedAt:       "2025-01-02T00:00:00Z",
+		TenantID:        "t-1",
+		SecurityGroupID: "c617a7fd-098c-4e57-b61f-28d90ae66e31",
 	}
 
 	var model ApacheInstanceModel
@@ -291,6 +292,12 @@ func TestApacheInstanceModelFromAPI(t *testing.T) {
 	}
 	if model.TenantID.ValueString() != "t-1" {
 		t.Errorf("expected tenant_id t-1, got %s", model.TenantID.ValueString())
+	}
+	// Guards the whole point of the attribute: a computed value that is always
+	// null is indistinguishable from one that is never populated. The id below is
+	// a real platform-generated group captured from prod-fbg, not an invented UUID.
+	if model.SecurityGroupID.ValueString() != "c617a7fd-098c-4e57-b61f-28d90ae66e31" {
+		t.Errorf("expected security_group_id c617a7fd-098c-4e57-b61f-28d90ae66e31, got %s", model.SecurityGroupID.ValueString())
 	}
 	if model.Status.ValueString() != "running" {
 		t.Errorf("expected status running, got %s", model.Status.ValueString())
@@ -340,6 +347,12 @@ func TestApacheInstanceModelFromAPINulls(t *testing.T) {
 	if !model.TenantID.IsNull() {
 		t.Error("expected null tenant_id")
 	}
+	// The wire field is `omitempty` and the create saga stamps it only when the
+	// instance goes running (webserver internal/provisioning/syncer.go), so an
+	// instance still provisioning omits it entirely.
+	if !model.SecurityGroupID.IsNull() {
+		t.Error("expected null security_group_id")
+	}
 }
 
 // --- Resource unit tests ---
@@ -380,7 +393,7 @@ func TestSchema(t *testing.T) {
 		}
 	}
 
-	computedAttrs := []string{"id", "status", "private_ip", "port", "created_at", "updated_at", "tenant_id"}
+	computedAttrs := []string{"id", "status", "private_ip", "port", "created_at", "updated_at", "tenant_id", "security_group_id"}
 	for _, attr := range computedAttrs {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected computed attribute %s in schema", attr)

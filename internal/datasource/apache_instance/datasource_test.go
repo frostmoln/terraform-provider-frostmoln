@@ -40,7 +40,7 @@ func TestSchema(t *testing.T) {
 	expectedAttrs := []string{
 		"id", "name", "version", "flavor_id", "storage_gb", "vpc_id", "subnet_id",
 		"tls_enabled", "php_enabled", "php_version", "config", "public", "public_ip", "status", "private_ip",
-		"port", "created_at", "updated_at", "tenant_id",
+		"port", "created_at", "updated_at", "tenant_id", "security_group_id",
 	}
 	for _, attr := range expectedAttrs {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
@@ -110,25 +110,26 @@ func configVal(t *testing.T, id string) tftypes.Value {
 	schemaResp := getDSSchema(t)
 	tfType := schemaResp.Schema.Type().TerraformType(context.Background())
 	return tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":          tftypes.NewValue(tftypes.String, id),
-		"name":        tftypes.NewValue(tftypes.String, nil),
-		"version":     tftypes.NewValue(tftypes.String, nil),
-		"flavor_id":   tftypes.NewValue(tftypes.String, nil),
-		"storage_gb":  tftypes.NewValue(tftypes.Number, nil),
-		"vpc_id":      tftypes.NewValue(tftypes.String, nil),
-		"subnet_id":   tftypes.NewValue(tftypes.String, nil),
-		"tls_enabled": tftypes.NewValue(tftypes.Bool, nil),
-		"php_enabled": tftypes.NewValue(tftypes.Bool, nil),
-		"php_version": tftypes.NewValue(tftypes.String, nil),
-		"config":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"public":      tftypes.NewValue(tftypes.Bool, nil),
-		"public_ip":   tftypes.NewValue(tftypes.String, nil),
-		"status":      tftypes.NewValue(tftypes.String, nil),
-		"private_ip":  tftypes.NewValue(tftypes.String, nil),
-		"port":        tftypes.NewValue(tftypes.Number, nil),
-		"created_at":  tftypes.NewValue(tftypes.String, nil),
-		"updated_at":  tftypes.NewValue(tftypes.String, nil),
-		"tenant_id":   tftypes.NewValue(tftypes.String, nil),
+		"id":                tftypes.NewValue(tftypes.String, id),
+		"name":              tftypes.NewValue(tftypes.String, nil),
+		"version":           tftypes.NewValue(tftypes.String, nil),
+		"flavor_id":         tftypes.NewValue(tftypes.String, nil),
+		"storage_gb":        tftypes.NewValue(tftypes.Number, nil),
+		"vpc_id":            tftypes.NewValue(tftypes.String, nil),
+		"subnet_id":         tftypes.NewValue(tftypes.String, nil),
+		"tls_enabled":       tftypes.NewValue(tftypes.Bool, nil),
+		"php_enabled":       tftypes.NewValue(tftypes.Bool, nil),
+		"php_version":       tftypes.NewValue(tftypes.String, nil),
+		"config":            tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"public":            tftypes.NewValue(tftypes.Bool, nil),
+		"public_ip":         tftypes.NewValue(tftypes.String, nil),
+		"status":            tftypes.NewValue(tftypes.String, nil),
+		"private_ip":        tftypes.NewValue(tftypes.String, nil),
+		"port":              tftypes.NewValue(tftypes.Number, nil),
+		"created_at":        tftypes.NewValue(tftypes.String, nil),
+		"updated_at":        tftypes.NewValue(tftypes.String, nil),
+		"tenant_id":         tftypes.NewValue(tftypes.String, nil),
+		"security_group_id": tftypes.NewValue(tftypes.String, nil),
 	})
 }
 
@@ -137,24 +138,25 @@ func TestReadByID(t *testing.T) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/webservers/ws-1" {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
-				ID:            "ws-1",
-				Name:          "my-apache",
-				Engine:        "apache",
-				EngineVersion: "2.4",
-				FlavorID:      "web.small",
-				StorageGB:     20,
-				VPCID:         "vpc-1",
-				SubnetID:      "sn-1",
-				TLSEnabled:    true,
-				PHPEnabled:    true,
-				PHPVersion:    "8.3",
-				EngineConfig:  map[string]string{"ServerTokens": "Prod"},
-				Status:        "running",
-				PrivateIP:     "10.0.1.5",
-				Port:          443,
-				CreatedAt:     "2025-01-01T00:00:00Z",
-				UpdatedAt:     "2025-01-02T00:00:00Z",
-				TenantID:      "tenant-1",
+				ID:              "ws-1",
+				Name:            "my-apache",
+				Engine:          "apache",
+				EngineVersion:   "2.4",
+				FlavorID:        "web.small",
+				StorageGB:       20,
+				VPCID:           "vpc-1",
+				SubnetID:        "sn-1",
+				TLSEnabled:      true,
+				PHPEnabled:      true,
+				PHPVersion:      "8.3",
+				EngineConfig:    map[string]string{"ServerTokens": "Prod"},
+				Status:          "running",
+				PrivateIP:       "10.0.1.5",
+				Port:            443,
+				CreatedAt:       "2025-01-01T00:00:00Z",
+				UpdatedAt:       "2025-01-02T00:00:00Z",
+				TenantID:        "tenant-1",
+				SecurityGroupID: "c617a7fd-098c-4e57-b61f-28d90ae66e31",
 			})
 			return
 		}
@@ -224,6 +226,12 @@ func TestReadByID(t *testing.T) {
 	if state.TenantID.ValueString() != "tenant-1" {
 		t.Errorf("expected TenantID tenant-1, got %s", state.TenantID.ValueString())
 	}
+	// The point of the attribute: prove it arrives NON-EMPTY off a real response
+	// shape. c617a7fd-098c-4e57-b61f-28d90ae66e31 is a real platform-generated
+	// group id captured from prod-fbg, not an invented UUID.
+	if state.SecurityGroupID.ValueString() != "c617a7fd-098c-4e57-b61f-28d90ae66e31" {
+		t.Errorf("expected security_group_id c617a7fd-098c-4e57-b61f-28d90ae66e31, got %s", state.SecurityGroupID.ValueString())
+	}
 }
 
 func TestReadByIDNullableFieldsEmpty(t *testing.T) {
@@ -284,6 +292,11 @@ func TestReadByIDNullableFieldsEmpty(t *testing.T) {
 	}
 	if !state.UpdatedAt.IsNull() {
 		t.Error("expected null updated_at")
+	}
+	// `securityGroupId` is omitempty and the create saga stamps it only when the
+	// instance goes running, so a provisioning instance omits it entirely.
+	if !state.SecurityGroupID.IsNull() {
+		t.Error("expected null security_group_id")
 	}
 	if !state.TenantID.IsNull() {
 		t.Error("expected null tenant_id")

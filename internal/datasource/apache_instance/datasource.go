@@ -26,25 +26,26 @@ type apacheInstanceDataSource struct {
 
 // apacheInstanceModel is the Terraform state model for an Apache instance data source.
 type apacheInstanceModel struct {
-	ID         types.String `tfsdk:"id"`
-	Name       types.String `tfsdk:"name"`
-	Version    types.String `tfsdk:"version"`
-	FlavorID   types.String `tfsdk:"flavor_id"`
-	StorageGB  types.Int64  `tfsdk:"storage_gb"`
-	VPCID      types.String `tfsdk:"vpc_id"`
-	SubnetID   types.String `tfsdk:"subnet_id"`
-	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
-	PHPEnabled types.Bool   `tfsdk:"php_enabled"`
-	PHPVersion types.String `tfsdk:"php_version"`
-	Config     types.Map    `tfsdk:"config"`
-	Public     types.Bool   `tfsdk:"public"`
-	PublicIP   types.String `tfsdk:"public_ip"`
-	Status     types.String `tfsdk:"status"`
-	PrivateIP  types.String `tfsdk:"private_ip"`
-	Port       types.Int64  `tfsdk:"port"`
-	CreatedAt  types.String `tfsdk:"created_at"`
-	UpdatedAt  types.String `tfsdk:"updated_at"`
-	TenantID   types.String `tfsdk:"tenant_id"`
+	ID              types.String `tfsdk:"id"`
+	Name            types.String `tfsdk:"name"`
+	Version         types.String `tfsdk:"version"`
+	FlavorID        types.String `tfsdk:"flavor_id"`
+	StorageGB       types.Int64  `tfsdk:"storage_gb"`
+	VPCID           types.String `tfsdk:"vpc_id"`
+	SubnetID        types.String `tfsdk:"subnet_id"`
+	TLSEnabled      types.Bool   `tfsdk:"tls_enabled"`
+	PHPEnabled      types.Bool   `tfsdk:"php_enabled"`
+	PHPVersion      types.String `tfsdk:"php_version"`
+	Config          types.Map    `tfsdk:"config"`
+	Public          types.Bool   `tfsdk:"public"`
+	PublicIP        types.String `tfsdk:"public_ip"`
+	Status          types.String `tfsdk:"status"`
+	PrivateIP       types.String `tfsdk:"private_ip"`
+	Port            types.Int64  `tfsdk:"port"`
+	CreatedAt       types.String `tfsdk:"created_at"`
+	UpdatedAt       types.String `tfsdk:"updated_at"`
+	TenantID        types.String `tfsdk:"tenant_id"`
+	SecurityGroupID types.String `tfsdk:"security_group_id"`
 }
 
 // apiWebserverInstance is the API representation of a managed webserver instance.
@@ -71,6 +72,9 @@ type apiWebserverInstance struct {
 	CreatedAt     string            `json:"createdAt"`
 	UpdatedAt     string            `json:"updatedAt,omitempty"`
 	TenantID      string            `json:"tenantId,omitempty"`
+	// Platform-managed SG built by the create saga and attached to the instance
+	// port; read-only to the customer (network refuses customer-plane writes).
+	SecurityGroupID string `json:"securityGroupId,omitempty"`
 }
 
 func (d *apacheInstanceDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -156,6 +160,10 @@ func (d *apacheInstanceDataSource) Schema(_ context.Context, _ datasource.Schema
 			},
 			"tenant_id": schema.StringAttribute{
 				Description: "The tenant ID that owns this instance.",
+				Computed:    true,
+			},
+			"security_group_id": schema.StringAttribute{
+				Description: "The platform-managed security group attached to this instance. The platform creates and owns it: the group is not intended for customer modification, and changes to it are normally rejected. Do not import it as a frostmoln_security_group -- reads succeed, but applies including destroy are refused. It allows inbound tcp/80 and tcp/443 from any source (0.0.0.0/0), and outbound is unrestricted. Empty until the instance has finished provisioning.",
 				Computed:    true,
 			},
 		},
@@ -251,6 +259,12 @@ func (d *apacheInstanceDataSource) Read(ctx context.Context, req datasource.Read
 		state.TenantID = types.StringValue(inst.TenantID)
 	} else {
 		state.TenantID = types.StringNull()
+	}
+
+	if inst.SecurityGroupID != "" {
+		state.SecurityGroupID = types.StringValue(inst.SecurityGroupID)
+	} else {
+		state.SecurityGroupID = types.StringNull()
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)

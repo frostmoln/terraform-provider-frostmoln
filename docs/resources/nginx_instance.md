@@ -90,6 +90,7 @@ Setting it true makes this instance depend on the VPC having a gateway, which Te
 - `port` (Number) The port number the Nginx instance is listening on.
 - `private_ip` (String) The private IP address of the Nginx instance.
 - `public_ip` (String) The public IP address associated with the instance while it is exposed (empty when not public).
+- `security_group_id` (String) The platform-managed security group attached to this instance. The platform creates and owns it: the group is not intended for customer modification, and changes to it are normally rejected. Do not import it as a frostmoln_security_group -- reads succeed, but applies including destroy are refused. It allows inbound tcp/80 and tcp/443 from any source (0.0.0.0/0), and outbound is unrestricted. Empty until the instance has finished provisioning.
 - `status` (String) The current status of the Nginx instance.
 - `tenant_id` (String) The tenant ID that owns this instance.
 - `updated_at` (String) The timestamp when the instance was last updated.

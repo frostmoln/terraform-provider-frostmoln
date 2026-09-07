@@ -489,6 +489,13 @@ func (r *nginxInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"security_group_id": schema.StringAttribute{
+				Description: "The platform-managed security group attached to this instance. The platform creates and owns it: the group is not intended for customer modification, and changes to it are normally rejected. Do not import it as a frostmoln_security_group -- reads succeed, but applies including destroy are refused. It allows inbound tcp/80 and tcp/443 from any source (0.0.0.0/0), and outbound is unrestricted. Empty until the instance has finished provisioning.",
+				Computed:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseNonNullStateForUnknown(),
+				},
+			},
 		},
 	}
 }

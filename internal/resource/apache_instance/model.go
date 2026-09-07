@@ -10,25 +10,26 @@ import (
 
 // ApacheInstanceModel is the Terraform state model for a managed Apache webserver instance.
 type ApacheInstanceModel struct {
-	ID         types.String `tfsdk:"id"`
-	Name       types.String `tfsdk:"name"`
-	Version    types.String `tfsdk:"version"`
-	FlavorID   types.String `tfsdk:"flavor_id"`
-	StorageGB  types.Int64  `tfsdk:"storage_gb"`
-	VPCID      types.String `tfsdk:"vpc_id"`
-	SubnetID   types.String `tfsdk:"subnet_id"`
-	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
-	PHPEnabled types.Bool   `tfsdk:"php_enabled"`
-	PHPVersion types.String `tfsdk:"php_version"`
-	Config     types.Map    `tfsdk:"config"`
-	Public     types.Bool   `tfsdk:"public"`
-	PublicIP   types.String `tfsdk:"public_ip"`
-	Status     types.String `tfsdk:"status"`
-	PrivateIP  types.String `tfsdk:"private_ip"`
-	Port       types.Int64  `tfsdk:"port"`
-	CreatedAt  types.String `tfsdk:"created_at"`
-	UpdatedAt  types.String `tfsdk:"updated_at"`
-	TenantID   types.String `tfsdk:"tenant_id"`
+	ID              types.String `tfsdk:"id"`
+	Name            types.String `tfsdk:"name"`
+	Version         types.String `tfsdk:"version"`
+	FlavorID        types.String `tfsdk:"flavor_id"`
+	StorageGB       types.Int64  `tfsdk:"storage_gb"`
+	VPCID           types.String `tfsdk:"vpc_id"`
+	SubnetID        types.String `tfsdk:"subnet_id"`
+	TLSEnabled      types.Bool   `tfsdk:"tls_enabled"`
+	PHPEnabled      types.Bool   `tfsdk:"php_enabled"`
+	PHPVersion      types.String `tfsdk:"php_version"`
+	Config          types.Map    `tfsdk:"config"`
+	Public          types.Bool   `tfsdk:"public"`
+	PublicIP        types.String `tfsdk:"public_ip"`
+	Status          types.String `tfsdk:"status"`
+	PrivateIP       types.String `tfsdk:"private_ip"`
+	Port            types.Int64  `tfsdk:"port"`
+	CreatedAt       types.String `tfsdk:"created_at"`
+	UpdatedAt       types.String `tfsdk:"updated_at"`
+	TenantID        types.String `tfsdk:"tenant_id"`
+	SecurityGroupID types.String `tfsdk:"security_group_id"`
 }
 
 // apiWebserverInstance is the API representation of a managed webserver instance.
@@ -60,6 +61,11 @@ type apiWebserverInstance struct {
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
 	TenantID  string `json:"tenantId,omitempty"`
+	// SecurityGroupID is the platform-managed security group the create saga
+	// builds for this instance (provisioning CreateWebserverSecurityGroup) and
+	// attaches to its port. Surfaced read-only: the customer may inspect it, but
+	// network refuses every customer-plane write against a platform-managed group.
+	SecurityGroupID string `json:"securityGroupId,omitempty"`
 }
 
 // apiCreateWebserverInstanceRequest is the API request to create a managed
@@ -261,5 +267,11 @@ func (m *ApacheInstanceModel) fromAPI(ctx context.Context, inst *apiWebserverIns
 		m.TenantID = types.StringValue(inst.TenantID)
 	} else {
 		m.TenantID = types.StringNull()
+	}
+
+	if inst.SecurityGroupID != "" {
+		m.SecurityGroupID = types.StringValue(inst.SecurityGroupID)
+	} else {
+		m.SecurityGroupID = types.StringNull()
 	}
 }
