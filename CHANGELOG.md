@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.53.0] - 2026-09-07
+
+### 🚀 Features
+
+- *(webserver)* Expose the platform-managed security group id read-only (#503)
+
 ## [0.52.3] - 2026-09-06
 
 ### 🐛 Bug Fixes
