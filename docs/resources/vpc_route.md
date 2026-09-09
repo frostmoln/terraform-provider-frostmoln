@@ -40,17 +40,27 @@ resource "frostmoln_subnet" "app" {
   zone   = "falkenberg"
 }
 
-# Reach a partner network through an appliance running in the VPC.
+# The appliance the routes below point at.
+resource "frostmoln_instance" "appliance" {
+  name      = "appliance"
+  flavor_id = data.frostmoln_flavor.medium.id
+  image_id  = data.frostmoln_image.ubuntu.id
+  vpc_id    = frostmoln_vpc.main.id
+  subnet_id = frostmoln_subnet.app.id
+}
+
+# Reach a partner network through the appliance.
 #
-# The next hop must be an address on a subnet attached to the VPC, so the route
-# depends on the subnet: created the other way round, the write is refused with
-# ROUTE_NEXT_HOP_UNREACHABLE.
+# The next hop is the appliance's COMPUTED private_ip, never a literal
+# address: the reference is what lets the graph see that the route needs the
+# instance (and, through it, the subnet) — a literal "10.0.1.10" plus
+# depends_on says the same thing by hand, goes stale when the appliance is
+# replaced, and can tie the instance and the route into a dependency cycle
+# when the instance's own configuration references the route's VPC.
 resource "frostmoln_vpc_route" "partner" {
   vpc_id      = frostmoln_vpc.main.id
   destination = "203.0.113.0/24"
-  next_hop    = "10.0.1.10"
-
-  depends_on = [frostmoln_subnet.app]
+  next_hop    = frostmoln_instance.appliance.private_ip
 }
 
 # Route the whole VPC through a VPN appliance, and keep the appliance's own
@@ -73,9 +83,7 @@ resource "frostmoln_gateway" "main" {
 resource "frostmoln_vpc_route" "forced_tunnel" {
   vpc_id      = frostmoln_vpc.main.id
   destination = "0.0.0.0/0"
-  next_hop    = "10.0.1.10"
-
-  depends_on = [frostmoln_subnet.app]
+  next_hop    = frostmoln_instance.appliance.private_ip
 }
 
 resource "frostmoln_vpc_route" "tunnel_peer_exception" {
@@ -83,9 +91,10 @@ resource "frostmoln_vpc_route" "tunnel_peer_exception" {
   destination = "198.51.100.7/32"
 
   # `internet` is a reserved token, not an address: "out this VPC's own internet
-  # gateway". It is the only way to write this route, because the platform's own
-  # default route has no address a customer could name. It needs the gateway to
-  # exist, hence the dependency — without it the write is refused with
+  # gateway". It is the one place a literal next_hop is still correct — no
+  # attribute can express the route, because the platform's own default gateway
+  # has no address a customer could name. It needs the gateway to exist, hence
+  # the dependency — without it the write is refused with
   # ROUTE_NO_INTERNET_GATEWAY.
   next_hop = "internet"
 

@@ -165,6 +165,33 @@ returns a default-bearing attribute untouched, so a null config never makes its
 plan value unknown. (An unknown *config expression* still can, but no ordering
 helps there — `UseStateForUnknown` bails on an unknown config value by design.)
 
+A second exempt class: a create-time behaviour flag carried in state, with a
+schema `Default` and no `RequiresReplace`, whose change on an existing resource
+is a documented no-op — `frostmoln_security_group`'s `delete_default_egress`
+is the example. It takes no `mustReplaceOnRealChange` entry (nothing replaces)
+and no plan modifiers (the Default covers the null-config case); its
+plan-time honesty is a `ModifyPlan` warning instead.
+
+### Surface Contract doctrine
+
+One collection, one owner, one shape: a parent resource owns each child
+collection authoritatively and the child members are separate per-ID resources
+— never inline a child collection into a parent schema, never mix the two
+shapes on one collection. References between resources point at computed
+attributes (`frostmoln_instance.x.private_ip`), never literal addresses the
+graph cannot see. Platform-invented defaults carry an explicit per-default
+policy (delete-on-create vs adopt-as-managed vs keep-with-docs) — the
+security-group default egress pair is delete-on-create via
+`delete_default_egress` (opt-in; the default flips to true at v2). The full
+doctrine with its big-3 evidence and the per-family honesty matrix:
+`templates/guides/surface-contract.md.tmpl` (rendered to
+`docs/guides/surface-contract.md`). Enforced by `TestSurfaceContract` in
+`internal/provider/surface_contract_test.go`, which walks every resource's
+schema and fails on ANY inline child collection (nested list/set/map of
+objects, attribute or block) not in its two-way-checked
+`allowedInlineCollections` — default-deny, so the shape cannot return under a
+novel name.
+
 ### Managed-service instance resource conventions
 
 Managed-service offers (databases, caches, web servers, messaging, and the

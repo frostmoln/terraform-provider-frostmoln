@@ -6,7 +6,7 @@ description: |-
   Manages a security group in the Frostmoln Cloud Platform.
   This resource manages the GROUP ONLY, never its rules. Rules are separate frostmoln_security_group_rule resources — the same shape the AWS provider uses. Nothing in this resource describes the rules the group carries: there is no rules attribute and Read does not fetch any, so a terraform plan on this resource NEVER reports rule drift, whatever the group's rules have become.
   A rule added out of band is invisible to Terraform. A rule created through the portal, the fm CLI or the API — by a colleague, a script, or an incident fix — appears in no plan, is never flagged, and is never removed by terraform apply or terraform destroy. The reverse case IS caught: a frostmoln_security_group_rule this configuration owns that is deleted out of band is detected on refresh and planned for re-creation. Reconciling added rules means listing the group outside Terraform — fm, the portal and the API all return its full rule set — and then importing each rule that should be managed with terraform import frostmoln_security_group_rule.<name> <security_group_id>/<rule_id>.
-  Every new security group starts with two allow-all egress rules that Terraform does not manage. Frostmoln adds no default rules of its own to a group created here, but the underlying network service unconditionally creates one "any protocol to everywhere" egress rule per address family — IPv4 and IPv6 — on every security group, each carrying an EMPTY remote prefix. They are live and permissive from the moment the group exists, they are returned by the API (so fm, the portal and the API all show them), and this provider does not manage them: they appear in no plan and survive a terraform destroy of every rule this configuration declares. Adding egress rules of your own does not narrow them either — security group rules are additive, so traffic matching any rule is allowed. A group that must not egress freely has to have those two rules removed deliberately: either delete them outside Terraform, or import each as a frostmoln_security_group_rule ONLY IN ORDER TO DESTROY IT, and remove the block from configuration again once the destroy has run. Leaving the block in place makes the next apply try to RE-CREATE the rule, and the platform refuses a rule with no remote. frostmoln_security_group_rule also has no ether_type attribute, so the IPv4 and IPv6 defaults are indistinguishable in configuration — only one of the two could ever be expressed.
+  Every new security group starts with two allow-all egress rules. Frostmoln adds no default rules of its own to a group created here, but the underlying network service unconditionally creates one "any protocol to everywhere" egress rule per address family — IPv4 and IPv6 — on every security group, each carrying an EMPTY remote prefix. They are live and permissive from the moment the group exists, they are returned by the API (so fm, the portal and the API all show them), and adding egress rules of your own does not narrow them — security group rules are additive, so traffic matching any rule is allowed. Setting delete_default_egress = true removes both as part of creating the group. Without it they are unmanaged: they appear in no plan and survive a terraform destroy of every rule this configuration declares, and a group that must not egress freely has to have them removed deliberately — either delete them outside Terraform, or import each as a frostmoln_security_group_rule ONLY IN ORDER TO DESTROY IT, and remove the block from configuration again once the destroy has run. Leaving the block in place makes the next apply try to RE-CREATE the rule, and the platform refuses a rule with no remote. frostmoln_security_group_rule also has no ether_type attribute, so the IPv4 and IPv6 defaults are indistinguishable in configuration — only one of the two could ever be expressed.
   A security group Frostmoln provisioned for a managed service cannot be managed here. Groups created for a managed database, cache, webserver, messaging instance, Kubernetes cluster or Application Gateway are visible in your account and returned by the API, so they can be imported — but every write against one is refused with 409 / resource_in_use, permanently. Reads still work, so an imported group that matches its configuration plans empty and applies clean; what fails, every time, is terraform destroy and any apply that plans a change to it. There is no attribute that predicts this and no force flag, so the only exit is terraform state rm. Do not import one.
 ---
 
@@ -18,7 +18,7 @@ Manages a security group in the Frostmoln Cloud Platform.
 
 **A rule added out of band is invisible to Terraform.** A rule created through the portal, the `fm` CLI or the API — by a colleague, a script, or an incident fix — appears in no plan, is never flagged, and is never removed by `terraform apply` or `terraform destroy`. The reverse case IS caught: a `frostmoln_security_group_rule` this configuration owns that is deleted out of band is detected on refresh and planned for re-creation. Reconciling added rules means listing the group outside Terraform — `fm`, the portal and the API all return its full rule set — and then importing each rule that should be managed with `terraform import frostmoln_security_group_rule.<name> <security_group_id>/<rule_id>`.
 
-**Every new security group starts with two allow-all egress rules that Terraform does not manage.** Frostmoln adds no default rules of its own to a group created here, but the underlying network service unconditionally creates one "any protocol to everywhere" egress rule per address family — IPv4 and IPv6 — on every security group, each carrying an EMPTY remote prefix. They are live and permissive from the moment the group exists, they are returned by the API (so `fm`, the portal and the API all show them), and this provider does not manage them: they appear in no plan and survive a `terraform destroy` of every rule this configuration declares. Adding egress rules of your own does not narrow them either — security group rules are additive, so traffic matching any rule is allowed. A group that must not egress freely has to have those two rules removed deliberately: either delete them outside Terraform, or import each as a `frostmoln_security_group_rule` ONLY IN ORDER TO DESTROY IT, and remove the block from configuration again once the destroy has run. Leaving the block in place makes the next apply try to RE-CREATE the rule, and the platform refuses a rule with no remote. `frostmoln_security_group_rule` also has no `ether_type` attribute, so the IPv4 and IPv6 defaults are indistinguishable in configuration — only one of the two could ever be expressed.
+**Every new security group starts with two allow-all egress rules.** Frostmoln adds no default rules of its own to a group created here, but the underlying network service unconditionally creates one "any protocol to everywhere" egress rule per address family — IPv4 and IPv6 — on every security group, each carrying an EMPTY remote prefix. They are live and permissive from the moment the group exists, they are returned by the API (so `fm`, the portal and the API all show them), and adding egress rules of your own does not narrow them — security group rules are additive, so traffic matching any rule is allowed. Setting `delete_default_egress = true` removes both as part of creating the group. Without it they are unmanaged: they appear in no plan and survive a `terraform destroy` of every rule this configuration declares, and a group that must not egress freely has to have them removed deliberately — either delete them outside Terraform, or import each as a `frostmoln_security_group_rule` ONLY IN ORDER TO DESTROY IT, and remove the block from configuration again once the destroy has run. Leaving the block in place makes the next apply try to RE-CREATE the rule, and the platform refuses a rule with no remote. `frostmoln_security_group_rule` also has no `ether_type` attribute, so the IPv4 and IPv6 defaults are indistinguishable in configuration — only one of the two could ever be expressed.
 
 **A security group Frostmoln provisioned for a managed service cannot be managed here.** Groups created for a managed database, cache, webserver, messaging instance, Kubernetes cluster or Application Gateway are visible in your account and returned by the API, so they can be imported — but every write against one is refused with `409` / `resource_in_use`, permanently. Reads still work, so an imported group that matches its configuration plans empty and applies clean; what fails, every time, is `terraform destroy` and any `apply` that plans a change to it. There is no attribute that predicts this and no force flag, so the only exit is `terraform state rm`. Do not import one.
 
@@ -30,9 +30,30 @@ resource "frostmoln_security_group" "web" {
   description = "Security group for web servers"
   vpc_id      = frostmoln_vpc.example.id
 
+  # Delete the two allow-all egress rules the platform injects into every new
+  # group (one per address family, empty remote prefix) as part of creating
+  # it. Rules are additive and those defaults allow everything outbound, so
+  # until they are gone the egress declared below narrows nothing. Opting in
+  # here is also what a configuration wants ahead of provider v2, where this
+  # becomes the default.
+  delete_default_egress = true
+
   tags = {
     tier = "web"
   }
+}
+
+# Declare the group's egress explicitly. With the injected defaults deleted
+# above, this is the egress the group actually carries — not an addition to
+# an allow-all baseline.
+resource "frostmoln_security_group_rule" "web_egress_https" {
+  security_group_id = frostmoln_security_group.web.id
+  direction         = "egress"
+  protocol          = "tcp"
+  port_range_min    = 443
+  port_range_max    = 443
+  remote_cidr       = "0.0.0.0/0"
+  description       = "Allow HTTPS egress"
 }
 ```
 
@@ -45,6 +66,9 @@ resource "frostmoln_security_group" "web" {
 
 ### Optional
 
+- `delete_default_egress` (Boolean) Delete the two allow-all egress rules the network service injects into every new group (one per address family, each with an EMPTY remote prefix) as part of creating it. Those defaults allow all outbound traffic, and declaring egress rules of your own does not narrow them — rules are additive. When this is true, Create deletes both right after the group exists, matched on direction and empty remote prefix, never on address family — a rule has no `ether_type`, so the IPv4 and IPv6 defaults are indistinguishable and both must go. A deletion failure is reported as a WARNING, never as a failed create: the group is live either way.
+
+This is create-time behaviour only. The value is carried in state so plans stay clean, changing it on an existing group does nothing, and Read never lists or manages rules. Defaults to `false` today; at provider v2 the default flips to `true`, announced by a deprecation notice in the v1 line ahead of the flip.
 - `description` (String) A description of the security group.
 - `tags` (Map of String) Tags for the security group.
 - `vpc_id` (String) The ID of the VPC this security group belongs to.

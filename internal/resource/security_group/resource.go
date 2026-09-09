@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -21,6 +23,7 @@ import (
 var (
 	_ resource.Resource                = &securityGroupResource{}
 	_ resource.ResourceWithImportState = &securityGroupResource{}
+	_ resource.ResourceWithModifyPlan  = &securityGroupResource{}
 )
 
 type securityGroupResource struct {
@@ -53,23 +56,23 @@ func (r *securityGroupResource) Schema(_ context.Context, _ resource.SchemaReque
 			"Terraform — `fm`, the portal and the API all return its full rule set — and then " +
 			"importing each rule that should be managed with `terraform import " +
 			"frostmoln_security_group_rule.<name> <security_group_id>/<rule_id>`.\n\n" +
-			"**Every new security group starts with two allow-all egress rules that Terraform does " +
-			"not manage.** Frostmoln adds no default rules of its own to a group created here, but " +
-			"the underlying network service unconditionally creates one \"any protocol to " +
-			"everywhere\" egress rule per address family — IPv4 and IPv6 — on every security group, " +
-			"each carrying an EMPTY remote prefix. They are live and permissive from the moment the " +
-			"group exists, they are returned by the API (so `fm`, the portal and the API all show " +
-			"them), and this provider does not manage them: they appear in no plan and survive a " +
-			"`terraform destroy` of every rule this configuration declares. Adding egress rules of " +
-			"your own does not narrow them either — security group rules are additive, so traffic " +
-			"matching any rule is allowed. A group that must not egress freely has to have those " +
-			"two rules removed deliberately: either delete them outside Terraform, or import each " +
-			"as a `frostmoln_security_group_rule` ONLY IN ORDER TO DESTROY IT, and remove the " +
-			"block from configuration again once the destroy has run. Leaving the block in place " +
-			"makes the next apply try to RE-CREATE the rule, and the platform refuses a rule with " +
-			"no remote. `frostmoln_security_group_rule` also has no `ether_type` attribute, so the " +
-			"IPv4 and IPv6 defaults are indistinguishable in configuration — only one of the two " +
-			"could ever be expressed." +
+			"**Every new security group starts with two allow-all egress rules.** Frostmoln adds no " +
+			"default rules of its own to a group created here, but the underlying network service " +
+			"unconditionally creates one \"any protocol to everywhere\" egress rule per address " +
+			"family — IPv4 and IPv6 — on every security group, each carrying an EMPTY remote " +
+			"prefix. They are live and permissive from the moment the group exists, they are " +
+			"returned by the API (so `fm`, the portal and the API all show them), and adding egress " +
+			"rules of your own does not narrow them — security group rules are additive, so traffic " +
+			"matching any rule is allowed. Setting `delete_default_egress = true` removes both as " +
+			"part of creating the group. Without it they are unmanaged: they appear in no plan and " +
+			"survive a `terraform destroy` of every rule this configuration declares, and a group " +
+			"that must not egress freely has to have them removed deliberately — either delete " +
+			"them outside Terraform, or import each as a `frostmoln_security_group_rule` ONLY IN " +
+			"ORDER TO DESTROY IT, and remove the block from configuration again once the destroy " +
+			"has run. Leaving the block in place makes the next apply try to RE-CREATE the rule, " +
+			"and the platform refuses a rule with no remote. `frostmoln_security_group_rule` also " +
+			"has no `ether_type` attribute, so the IPv4 and IPv6 defaults are indistinguishable in " +
+			"configuration — only one of the two could ever be expressed." +
 			"\n\n**A security group Frostmoln provisioned for a managed service cannot be managed " +
 			"here.** Groups created for a managed database, cache, webserver, messaging instance, " +
 			"Kubernetes cluster or Application Gateway are visible in your account and returned by " +
@@ -116,6 +119,23 @@ func (r *securityGroupResource) Schema(_ context.Context, _ resource.SchemaReque
 				PlanModifiers: []planmodifier.Bool{
 					boolplanmodifier.UseStateForUnknown(),
 				},
+			},
+			"delete_default_egress": schema.BoolAttribute{
+				Description: "Delete the two allow-all egress rules the network service injects into " +
+					"every new group (one per address family, each with an EMPTY remote prefix) as part " +
+					"of creating it. Those defaults allow all outbound traffic, and declaring egress " +
+					"rules of your own does not narrow them — rules are additive. When this is true, " +
+					"Create deletes both right after the group exists, matched on direction and empty " +
+					"remote prefix, never on address family — a rule has no `ether_type`, so the IPv4 " +
+					"and IPv6 defaults are indistinguishable and both must go. A deletion failure is " +
+					"reported as a WARNING, never as a failed create: the group is live either way.\n\n" +
+					"This is create-time behaviour only. The value is carried in state so plans stay " +
+					"clean, changing it on an existing group does nothing, and Read never lists or " +
+					"manages rules. Defaults to `false` today; at provider v2 the default flips to " +
+					"`true`, announced by a deprecation notice in the v1 line ahead of the flip.",
+				Optional: true,
+				Computed: true,
+				Default:  booldefault.StaticBool(false),
 			},
 			"created_at": schema.StringAttribute{
 				Description: "The creation timestamp.",
@@ -167,6 +187,11 @@ func (r *securityGroupResource) Create(ctx context.Context, req resource.CreateR
 	// envelope (operationId only). Poll the operation, then read by its resolved
 	// resourceId. A non-202 body is parsed directly for a sync backend.
 	var sg apiSecurityGroup
+	// rules holds the group's rules when the create path already fetched them,
+	// so the delete_default_egress opt-in below does not re-list. Nil means
+	// "not fetched" — the helper lists them itself (the sync path's POST body
+	// may not embed rules).
+	var rules []apiSecurityGroupRule
 	if apiResp.IsAccepted() {
 		op, opErr := client.ParseResponse[client.Operation](apiResp)
 		if opErr != nil {
@@ -192,9 +217,20 @@ func (r *securityGroupResource) Create(ctx context.Context, req resource.CreateR
 			resp.Diagnostics.AddError("Failed to Parse Security Group Response", err.Error())
 			return
 		}
+		// The same read-back embeds the rules (it is the GET
+		// frostmoln_security_group_rule reads through). A parse miss costs one
+		// extra GET in the helper, nothing more.
+		var withRules apiSecurityGroupWithRules
+		if err := json.Unmarshal(readResp.Body, &withRules); err == nil {
+			rules = withRules.Rules
+		}
 	} else if err := json.Unmarshal(apiResp.Body, &sg); err != nil {
 		resp.Diagnostics.AddError("Failed to Parse Security Group Response", err.Error())
 		return
+	}
+
+	if plan.DeleteDefaultEgress.ValueBool() {
+		r.deleteDefaultEgressRules(ctx, sg.ID, rules, &resp.Diagnostics)
 	}
 
 	plan.fromAPI(ctx, &sg, &resp.Diagnostics)
@@ -203,6 +239,106 @@ func (r *securityGroupResource) Create(ctx context.Context, req resource.CreateR
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// ModifyPlan is the plan-time control for delete_default_egress's one lie:
+// flipped on (or off) for a group that already exists, the change is a
+// documented no-op — Create-time behaviour only, Update never touches rules.
+// A schema description cannot say that during a CI apply, so the plan does.
+func (r *securityGroupResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return // create or destroy: nothing to warn about
+	}
+
+	var planVal, stateVal types.Bool
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("delete_default_egress"), &planVal)...)
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("delete_default_egress"), &stateVal)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if planVal.IsUnknown() || planVal.IsNull() || stateVal.IsNull() || planVal.Equal(stateVal) {
+		return
+	}
+
+	resp.Diagnostics.AddWarning("delete_default_egress Is Create-Time Only",
+		"This change takes no effect: the attribute is applied only when a security group is created, "+
+			"and this group already exists. Its rules are untouched — the platform-injected default egress "+
+			"rules remain exactly as they were, whichever way the value flipped. To remove them, delete "+
+			"them outside Terraform or recreate the group. Terraform will not retry this on a later apply.")
+}
+
+// deleteDefaultEgressRules removes the allow-all egress pair the network
+// service injects into every new group: one rule per address family, each
+// with an EMPTY remote prefix and no remote group. The match is on
+// direction+empty-prefix, never on family — a rule carries no ether_type, so
+// the IPv4 and IPv6 defaults are indistinguishable and both must go.
+//
+// listed carries the rules when the caller already fetched them (the async
+// create path's read-back embeds them); nil means list them here.
+//
+// The group was created moments ago, so the defaults are the only rules it
+// can carry: no frostmoln_security_group_rule can have targeted it yet, and
+// only the platform can create a rule with no remote at all (the API refuses
+// one). The protocol guard keeps the match pinned to the allow-all pair even
+// so. Every failure is a warning, never a failed create — the group is live,
+// and failing here would strand it unmanaged.
+func (r *securityGroupResource) deleteDefaultEgressRules(ctx context.Context, sgID string, listed []apiSecurityGroupRule, diags *diag.Diagnostics) {
+	rules := listed
+	if rules == nil {
+		apiResp, err := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf("/security-groups/%s", sgID)), nil)
+		if err != nil {
+			diags.AddWarning("Could Not List Default Egress Rules",
+				fmt.Sprintf("Security group %s was created, but listing its rules to delete the platform-injected "+
+					"default egress rules failed: %s. The two allow-all egress rules (IPv4 and IPv6) may still be "+
+					"present — check the group outside Terraform and remove them if so. Terraform will not retry "+
+					"this on a later apply — the deletion only happens at create.", sgID, err.Error()))
+			return
+		}
+
+		var group apiSecurityGroupWithRules
+		if err := json.Unmarshal(apiResp.Body, &group); err != nil {
+			diags.AddWarning("Could Not List Default Egress Rules",
+				fmt.Sprintf("Security group %s was created, but parsing its rule list to delete the platform-injected "+
+					"default egress rules failed: %s. The two allow-all egress rules (IPv4 and IPv6) may still be "+
+					"present — check the group outside Terraform and remove them if so. Terraform will not retry "+
+					"this on a later apply — the deletion only happens at create.", sgID, err.Error()))
+			return
+		}
+		rules = group.Rules
+	}
+
+	matched := 0
+	for _, rule := range rules {
+		if rule.Direction != "egress" || rule.RemoteCIDR != "" || rule.RemoteGroupID != "" {
+			continue
+		}
+		// The injected pair is allow-all ("any protocol to everywhere"); a
+		// narrower empty-remote rule could only be a future platform helper,
+		// which is not this attribute's to delete.
+		if rule.Protocol != "" && rule.Protocol != "any" {
+			continue
+		}
+		matched++
+		if _, err := r.client.Delete(ctx, r.client.TenantPath(fmt.Sprintf("/security-groups/%s/rules/%s", sgID, rule.ID))); err != nil {
+			diags.AddWarning("Could Not Delete A Default Egress Rule",
+				fmt.Sprintf("Security group %s was created, but deleting the platform-injected default egress "+
+					"rule %s failed: %s. It may still be present — check the group outside Terraform and "+
+					"remove it if so. Terraform will not retry this on a later apply — the deletion only "+
+					"happens at create.", sgID, rule.ID, err.Error()))
+		}
+	}
+
+	// The pair is documented as unconditional, so finding nothing to delete
+	// means the platform changed under the contract — say so, or the opt-in
+	// reports success while the group egresses freely.
+	if matched == 0 {
+		diags.AddWarning("No Default Egress Rules Found",
+			fmt.Sprintf("Security group %s was created with delete_default_egress, but none of its rules is "+
+				"an egress rule with an empty remote prefix — the platform-injected allow-all pair this "+
+				"attribute deletes was not there. The platform's behaviour may have changed; verify the "+
+				"group's egress outside Terraform. Terraform will not retry this on a later apply — the "+
+				"deletion only happens at create.", sgID))
+	}
 }
 
 func (r *securityGroupResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {

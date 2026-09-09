@@ -286,13 +286,14 @@ func sgSchema(t *testing.T) schema.Schema {
 func sgObjectType() tftypes.Object {
 	return tftypes.Object{
 		AttributeTypes: map[string]tftypes.Type{
-			"id":          tftypes.String,
-			"name":        tftypes.String,
-			"description": tftypes.String,
-			"vpc_id":      tftypes.String,
-			"tags":        tftypes.Map{ElementType: tftypes.String},
-			"is_default":  tftypes.Bool,
-			"created_at":  tftypes.String,
+			"id":                    tftypes.String,
+			"name":                  tftypes.String,
+			"description":           tftypes.String,
+			"vpc_id":                tftypes.String,
+			"tags":                  tftypes.Map{ElementType: tftypes.String},
+			"is_default":            tftypes.Bool,
+			"delete_default_egress": tftypes.Bool,
+			"created_at":            tftypes.String,
 		},
 	}
 }
@@ -323,7 +324,7 @@ func TestSchema(t *testing.T) {
 	if resp.Schema.Description == "" {
 		t.Error("expected non-empty schema description")
 	}
-	for _, attr := range []string{"id", "name", "description", "vpc_id", "tags", "is_default", "created_at"} {
+	for _, attr := range []string{"id", "name", "description", "vpc_id", "tags", "is_default", "delete_default_egress", "created_at"} {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %s in schema", attr)
 		}
@@ -390,13 +391,14 @@ func TestResourceCreate(t *testing.T) {
 
 	s := sgSchema(t)
 	planVal := tftypes.NewValue(sgObjectType(), map[string]tftypes.Value{
-		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"name":        tftypes.NewValue(tftypes.String, "web-sg"),
-		"description": tftypes.NewValue(tftypes.String, nil),
-		"vpc_id":      tftypes.NewValue(tftypes.String, "vpc-abc"),
-		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"is_default":  tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
-		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"id":                    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":                  tftypes.NewValue(tftypes.String, "web-sg"),
+		"description":           tftypes.NewValue(tftypes.String, nil),
+		"vpc_id":                tftypes.NewValue(tftypes.String, "vpc-abc"),
+		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
+		"is_default":            tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
+		"created_at":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 	})
 
 	plan := tfsdk.Plan{Schema: s, Raw: planVal}
@@ -445,13 +447,14 @@ func TestResourceRead(t *testing.T) {
 
 	s := sgSchema(t)
 	stateVal := tftypes.NewValue(sgObjectType(), map[string]tftypes.Value{
-		"id":          tftypes.NewValue(tftypes.String, "sg-read-1"),
-		"name":        tftypes.NewValue(tftypes.String, "read-sg"),
-		"description": tftypes.NewValue(tftypes.String, nil),
-		"vpc_id":      tftypes.NewValue(tftypes.String, nil),
-		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"is_default":  tftypes.NewValue(tftypes.Bool, false),
-		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"id":                    tftypes.NewValue(tftypes.String, "sg-read-1"),
+		"name":                  tftypes.NewValue(tftypes.String, "read-sg"),
+		"description":           tftypes.NewValue(tftypes.String, nil),
+		"vpc_id":                tftypes.NewValue(tftypes.String, nil),
+		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
+		"is_default":            tftypes.NewValue(tftypes.Bool, false),
+		"created_at":            tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
 	state := tfsdk.State{Schema: s, Raw: stateVal}
@@ -487,13 +490,14 @@ func TestResourceReadNotFoundRemovesState(t *testing.T) {
 
 	s := sgSchema(t)
 	stateVal := tftypes.NewValue(sgObjectType(), map[string]tftypes.Value{
-		"id":          tftypes.NewValue(tftypes.String, "sg-gone"),
-		"name":        tftypes.NewValue(tftypes.String, "gone-sg"),
-		"description": tftypes.NewValue(tftypes.String, nil),
-		"vpc_id":      tftypes.NewValue(tftypes.String, nil),
-		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"is_default":  tftypes.NewValue(tftypes.Bool, false),
-		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"id":                    tftypes.NewValue(tftypes.String, "sg-gone"),
+		"name":                  tftypes.NewValue(tftypes.String, "gone-sg"),
+		"description":           tftypes.NewValue(tftypes.String, nil),
+		"vpc_id":                tftypes.NewValue(tftypes.String, nil),
+		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
+		"is_default":            tftypes.NewValue(tftypes.Bool, false),
+		"created_at":            tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 	})
 
 	state := tfsdk.State{Schema: s, Raw: stateVal}
@@ -544,23 +548,25 @@ func TestResourceUpdate(t *testing.T) {
 
 	s := sgSchema(t)
 	stateVal := tftypes.NewValue(sgObjectType(), map[string]tftypes.Value{
-		"id":          tftypes.NewValue(tftypes.String, "sg-upd-1"),
-		"name":        tftypes.NewValue(tftypes.String, "old-name"),
-		"description": tftypes.NewValue(tftypes.String, nil),
-		"vpc_id":      tftypes.NewValue(tftypes.String, nil),
-		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"is_default":  tftypes.NewValue(tftypes.Bool, false),
-		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"id":                    tftypes.NewValue(tftypes.String, "sg-upd-1"),
+		"name":                  tftypes.NewValue(tftypes.String, "old-name"),
+		"description":           tftypes.NewValue(tftypes.String, nil),
+		"vpc_id":                tftypes.NewValue(tftypes.String, nil),
+		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
+		"is_default":            tftypes.NewValue(tftypes.Bool, false),
+		"created_at":            tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
 	planVal := tftypes.NewValue(sgObjectType(), map[string]tftypes.Value{
-		"id":          tftypes.NewValue(tftypes.String, "sg-upd-1"),
-		"name":        tftypes.NewValue(tftypes.String, "updated-name"),
-		"description": tftypes.NewValue(tftypes.String, "updated desc"),
-		"vpc_id":      tftypes.NewValue(tftypes.String, nil),
-		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"is_default":  tftypes.NewValue(tftypes.Bool, false),
-		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"id":                    tftypes.NewValue(tftypes.String, "sg-upd-1"),
+		"name":                  tftypes.NewValue(tftypes.String, "updated-name"),
+		"description":           tftypes.NewValue(tftypes.String, "updated desc"),
+		"vpc_id":                tftypes.NewValue(tftypes.String, nil),
+		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
+		"is_default":            tftypes.NewValue(tftypes.Bool, false),
+		"created_at":            tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
 	state := tfsdk.State{Schema: s, Raw: stateVal}
@@ -607,13 +613,14 @@ func TestResourceDelete(t *testing.T) {
 
 	s := sgSchema(t)
 	stateVal := tftypes.NewValue(sgObjectType(), map[string]tftypes.Value{
-		"id":          tftypes.NewValue(tftypes.String, "sg-del-1"),
-		"name":        tftypes.NewValue(tftypes.String, "delete-me"),
-		"description": tftypes.NewValue(tftypes.String, nil),
-		"vpc_id":      tftypes.NewValue(tftypes.String, nil),
-		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"is_default":  tftypes.NewValue(tftypes.Bool, false),
-		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"id":                    tftypes.NewValue(tftypes.String, "sg-del-1"),
+		"name":                  tftypes.NewValue(tftypes.String, "delete-me"),
+		"description":           tftypes.NewValue(tftypes.String, nil),
+		"vpc_id":                tftypes.NewValue(tftypes.String, nil),
+		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
+		"is_default":            tftypes.NewValue(tftypes.Bool, false),
+		"created_at":            tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 	})
 
 	state := tfsdk.State{Schema: s, Raw: stateVal}
@@ -643,13 +650,14 @@ func TestResourceDeleteAlreadyGone(t *testing.T) {
 
 	s := sgSchema(t)
 	stateVal := tftypes.NewValue(sgObjectType(), map[string]tftypes.Value{
-		"id":          tftypes.NewValue(tftypes.String, "sg-already-gone"),
-		"name":        tftypes.NewValue(tftypes.String, "gone"),
-		"description": tftypes.NewValue(tftypes.String, nil),
-		"vpc_id":      tftypes.NewValue(tftypes.String, nil),
-		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"is_default":  tftypes.NewValue(tftypes.Bool, false),
-		"created_at":  tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"id":                    tftypes.NewValue(tftypes.String, "sg-already-gone"),
+		"name":                  tftypes.NewValue(tftypes.String, "gone"),
+		"description":           tftypes.NewValue(tftypes.String, nil),
+		"vpc_id":                tftypes.NewValue(tftypes.String, nil),
+		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
+		"is_default":            tftypes.NewValue(tftypes.Bool, false),
+		"created_at":            tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 	})
 
 	state := tfsdk.State{Schema: s, Raw: stateVal}

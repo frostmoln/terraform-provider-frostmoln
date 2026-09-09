@@ -12,13 +12,14 @@ import (
 
 // SecurityGroupModel is the Terraform state model for a security group.
 type SecurityGroupModel struct {
-	ID          types.String `tfsdk:"id"`
-	Name        types.String `tfsdk:"name"`
-	Description types.String `tfsdk:"description"`
-	VPCID       types.String `tfsdk:"vpc_id"`
-	Tags        types.Map    `tfsdk:"tags"`
-	IsDefault   types.Bool   `tfsdk:"is_default"`
-	CreatedAt   types.String `tfsdk:"created_at"`
+	ID                  types.String `tfsdk:"id"`
+	Name                types.String `tfsdk:"name"`
+	Description         types.String `tfsdk:"description"`
+	VPCID               types.String `tfsdk:"vpc_id"`
+	Tags                types.Map    `tfsdk:"tags"`
+	IsDefault           types.Bool   `tfsdk:"is_default"`
+	DeleteDefaultEgress types.Bool   `tfsdk:"delete_default_egress"`
+	CreatedAt           types.String `tfsdk:"created_at"`
 }
 
 // apiSecurityGroup is the API representation of a security group.
@@ -30,6 +31,26 @@ type apiSecurityGroup struct {
 	IsDefault   bool              `json:"isDefault"`
 	Tags        map[string]string `json:"tags,omitempty"`
 	CreatedAt   string            `json:"createdAt"`
+}
+
+// apiSecurityGroupRule is the read model of a rule carried by a group. It
+// exists only to find the platform-injected default egress rules for
+// delete_default_egress — managing rules is frostmoln_security_group_rule's
+// job, never this resource's. The wire tags match that resource's model: the
+// network service serializes the remote group as `remoteSecurityGroupId` and
+// the remote CIDR as `remoteCidr`.
+type apiSecurityGroupRule struct {
+	ID            string `json:"id"`
+	Direction     string `json:"direction"`
+	Protocol      string `json:"protocol"`
+	RemoteCIDR    string `json:"remoteCidr"`
+	RemoteGroupID string `json:"remoteSecurityGroupId"`
+}
+
+// apiSecurityGroupWithRules is the group read with its rules embedded — rules
+// are not directly listable, only reachable through the parent group.
+type apiSecurityGroupWithRules struct {
+	Rules []apiSecurityGroupRule `json:"rules"`
 }
 
 // apiCreateSecurityGroupRequest is the API request to create a security group.
@@ -121,5 +142,14 @@ func (m *SecurityGroupModel) fromAPI(ctx context.Context, sg *apiSecurityGroup, 
 		m.Tags = types.MapNull(types.StringType)
 	} else {
 		m.Tags = types.MapNull(types.StringType)
+	}
+
+	// delete_default_egress is create-time behaviour the API knows nothing
+	// about, so state carries it. A group imported (or created before the
+	// attribute existed) has no value; adopt the false default here, which is
+	// what its next plan resolves to anyway — this is what lets an import of
+	// such a group plan empty.
+	if m.DeleteDefaultEgress.IsNull() {
+		m.DeleteDefaultEgress = types.BoolValue(false)
 	}
 }
