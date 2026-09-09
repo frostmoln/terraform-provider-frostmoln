@@ -7,6 +7,7 @@ description: |-
   Priority is explicit and lower wins. There is no implicit longest-prefix rule, because that would make one route's effect depend on another route's contents — adding a route would silently reorder the others while the plan showed no change. Leave priority unset and the server places the route last.
   The route API has no update operation, so every attribute forces a new resource.
   A route is authored, not live: it starts serving on the gateway's next configuration apply.
+  ~> Only on an http or https listener. A tcp listener has no routes at all — routing is host, path and header matching, which needs bytes the gateway does not parse at layer 4 — so it names its one pool with backend_pool_id instead, and a route pointed at one is refused.
 ---
 
 # frostmoln_appgw_route (Resource)
@@ -18,6 +19,8 @@ Manages a route on an Application Gateway listener: a host and path match that f
 The route API has no update operation, so every attribute forces a new resource.
 
 A route is authored, not live: it starts serving on the gateway's next configuration apply.
+
+~> **Only on an `http` or `https` listener.** A `tcp` listener has no routes at all — routing is host, path and header matching, which needs bytes the gateway does not parse at layer 4 — so it names its one pool with `backend_pool_id` instead, and a route pointed at one is refused.
 
 ## Example Usage
 

@@ -3,21 +3,28 @@
 page_title: "frostmoln_appgw_listener Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a listener on a Frostmoln Application Gateway: one bound port, with its TLS settings and its network firewall.
-  Routes hang off a listener rather than off the gateway.
+  Manages a listener on a Frostmoln Application Gateway: one bound port — or, on a tcp listener, a range of them — with its TLS settings and its network firewall.
+  There are two shapes, and they are not interchangeable:
+  http / https are inspected, routed and (for https) TLS-terminated. Routes hang off the listener and each route names the backend pool it forwards to.tcp forwards bytes at layer 4. It has no routes, so it names its one backend_pool_id directly; it terminates no TLS and is not inspected by the WAF. The source-CIDR, geo, rate-limit and connection controls all still apply — that is what makes it worth having over a plain load balancer.
   The listener API has no update operation, so every attribute forces a new resource.
-  A listener is authored, not live: it starts serving on the gateway's next configuration apply.
+  A listener is authored, not live: its ROUTING starts serving on the gateway's next configuration apply. Its port is the one exception on this whole API: it is opened on the gateway's public ingress when the listener is created and closed when it is destroyed, without an apply. So replacing a listener on the same port leaves that port closed between the destroy and the create, and traffic to it is dropped for that window — create_before_destroy where you can.
+  Two listeners on one gateway may not overlap in port space; a second one claiming a port an existing listener binds is refused with LISTENER_PORT_IN_USE. A few ports belong to the gateway appliance itself and are refused for every protocol.
 ---
 
 # frostmoln_appgw_listener (Resource)
 
-Manages a listener on a Frostmoln Application Gateway: one bound port, with its TLS settings and its network firewall.
+Manages a listener on a Frostmoln Application Gateway: one bound port — or, on a `tcp` listener, a range of them — with its TLS settings and its network firewall.
 
-Routes hang off a listener rather than off the gateway.
+There are two shapes, and they are not interchangeable:
+
+* **`http` / `https`** are inspected, routed and (for `https`) TLS-terminated. Routes hang off the listener and each route names the backend pool it forwards to.
+* **`tcp`** forwards bytes at layer 4. It has **no routes**, so it names its one `backend_pool_id` directly; it terminates no TLS and is not inspected by the WAF. The source-CIDR, geo, rate-limit and connection controls all still apply — that is what makes it worth having over a plain load balancer.
 
 The listener API has no update operation, so **every** attribute forces a new resource.
 
-A listener is authored, not live: it starts serving on the gateway's next configuration apply.
+A listener is authored, not live: its ROUTING starts serving on the gateway's next configuration apply. Its **port** is the one exception on this whole API: it is opened on the gateway's public ingress when the listener is created and closed when it is destroyed, without an apply. So replacing a listener on the same port leaves that port closed between the destroy and the create, and traffic to it is dropped for that window — `create_before_destroy` where you can.
+
+Two listeners on one gateway may not overlap in port space; a second one claiming a port an existing listener binds is refused with `LISTENER_PORT_IN_USE`. A few ports belong to the gateway appliance itself and are refused for every protocol.
 
 ## Example Usage
 
@@ -54,6 +61,50 @@ resource "frostmoln_appgw_listener" "https" {
   rate_limit_rps   = 200
   rate_limit_burst = 400
 }
+
+# A tcp listener forwards bytes at layer 4: no routes, no TLS termination, no
+# request inspection. It names the ONE pool it forwards to, and the source-CIDR,
+# geo and rate-limit controls above all still apply.
+#
+# rate_limit_rps counts CONNECTIONS here, not requests. For SMTP, where one
+# connection carries a whole session, an HTTP-shaped figure is orders of
+# magnitude too permissive.
+resource "frostmoln_appgw_listener" "smtp" {
+  gateway_id      = frostmoln_application_gateway.edge.id
+  name            = "smtp"
+  protocol        = "tcp"
+  port            = 25
+  backend_pool_id = frostmoln_appgw_backend_pool.mail.id
+
+  rate_limit_rps   = 10
+  rate_limit_burst = 20
+}
+
+# A RANGE, inclusive, at most 512 ports. Each connection is forwarded to the
+# SAME port on the backend that the client connected to, so 50000-50100 reaches
+# 50000-50100 on your servers -- which is why the pool's health check has to name
+# a port of its own: those backends have no fixed port to probe.
+#
+# NOTE THE SECOND POOL. A ranged listener and a single-port listener cannot share
+# one pool: the ranged one forwards to whatever port the client used, the
+# single-port one forwards to the port each backend declares, and a pool holds
+# one answer. Pointing both at `mail` above is accepted by the API and then
+# refused at every configuration apply -- including applies that change something
+# else entirely -- while both listeners have already opened their public ports.
+resource "frostmoln_appgw_backend_pool" "ftp" {
+  gateway_id = frostmoln_application_gateway.edge.id
+  name       = "ftp-data"
+  protocol   = "tcp"
+}
+
+resource "frostmoln_appgw_listener" "ftp_passive" {
+  gateway_id      = frostmoln_application_gateway.edge.id
+  name            = "ftp-passive"
+  protocol        = "tcp"
+  port            = 50000
+  port_range_end  = 50100
+  backend_pool_id = frostmoln_appgw_backend_pool.ftp.id
+}
 ```
 
 <!-- schema generated by tfplugindocs -->
@@ -63,25 +114,35 @@ resource "frostmoln_appgw_listener" "https" {
 
 - `gateway_id` (String) The Application Gateway this listener belongs to.
 - `name` (String) The name of the listener.
-- `port` (Number) The port to bind.
-- `protocol` (String) The listener protocol: `http` or `https`.
+- `port` (Number) The port to bind, or the FIRST port of the range when `port_range_end` is set.
+- `protocol` (String) The listener protocol: `http`, `https` or `tcp`.
 
-`tcp` is reserved for a future listener type and is refused today.
+A `tcp` listener requires `backend_pool_id` and refuses certificates, `tls_min_version`, `tls_cipher_profile`, `redirect_to_https`, a WAF policy and any `frostmoln_appgw_route` beneath it — none of them exist at layer 4.
 
 ### Optional
 
 - `allowed_cidrs` (List of String) Source CIDRs allowed to reach this listener. Omit to allow all sources.
+- `backend_pool_id` (String) The pool a `tcp` listener forwards to. **Required** on `tcp` and refused on `http`/`https`, where each `frostmoln_appgw_route` names its own pool.
+
+The pool must be on this gateway, must have `protocol = "http"`, must not use `session_affinity = "cookie"` (a cookie is an HTTP header the gateway never writes at layer 4) and must not already be the target of an http route: the gateway serves a pool in one protocol mode.
 - `default_certificate_id` (String) The certificate served when no SNI matches. `https` listeners only.
 - `denied_cidrs` (List of String) Source CIDRs refused by this listener.
 - `geo_block_mode` (String) Country filtering: `off`, `allow` (only `geo_countries`) or `deny` (everything except `geo_countries`).
 - `geo_countries` (List of String) ISO 3166-1 alpha-2 country codes. Required when `geo_block_mode` is `allow` or `deny`.
 - `max_connections` (Number) Maximum concurrent connections on this listener. Must not exceed the flavor's `max_concurrent_connections`, which is enforced server-side — a larger value is refused at create with `FLAVOR_LIMIT_EXCEEDED` naming the flavor.
-- `rate_limit_burst` (Number) Burst allowance above `rate_limit_rps`.
-- `rate_limit_rps` (Number) Requests per second permitted per source address.
+- `port_range_end` (Number) The last port of a range, **inclusive**. `tcp` listeners only; on an `http` or `https` listener it is refused rather than ignored.
+
+Omit it for a single port. It must be strictly greater than `port` and the span may cover at most 512 ports — the appliance opens one socket per port in the range.
+
+A ranged listener forwards each connection to the **same** port on the backend that the client connected to, so `8000-8100` reaches `8000-8100` on your servers. Those backends therefore have no fixed port to probe, and the pool's `frostmoln_appgw_health_check` must set its own `port`.
+- `rate_limit_burst` (Number) Ceiling inside any one second, above `rate_limit_rps`. Same unit as `rate_limit_rps`: requests on `http`/`https`, connections on `tcp`.
+- `rate_limit_rps` (Number) Sustained rate permitted per source address.
+
+~> **The unit depends on `protocol`.** On `http`/`https` it counts **requests** per second; on `tcp` it counts **connections** per second, because layer 4 has no request to count. For a protocol where one connection carries a whole session — SMTP, IMAP, MQTT — the same number is a far tighter limit than it is for HTTP, so set it against the connections you expect rather than reusing an HTTP figure.
 - `redirect_to_https` (Boolean) Redirect requests to the https listener instead of serving them.
 - `sni_certificate_ids` (List of String) Additional certificates selected by SNI. `https` listeners only.
-- `tls_cipher_profile` (String) The cipher profile: `modern` or `intermediate`.
-- `tls_min_version` (String) The minimum TLS version accepted: `1.2` or `1.3`.
+- `tls_cipher_profile` (String) The cipher profile: `modern` or `intermediate`. `https` listeners only — a `tcp` listener terminates no TLS and reports none, so this reads null on one.
+- `tls_min_version` (String) The minimum TLS version accepted: `1.2` or `1.3`. `https` listeners only — a `tcp` listener terminates no TLS and reports none, so this reads null on one.
 
 ### Read-Only
 

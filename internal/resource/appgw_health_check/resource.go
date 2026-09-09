@@ -35,6 +35,7 @@ type HealthCheckModel struct {
 	Protocol           types.String `tfsdk:"protocol"`
 	Path               types.String `tfsdk:"path"`
 	ExpectedStatus     types.String `tfsdk:"expected_status"`
+	Port               types.Int64  `tfsdk:"port"`
 	IntervalSeconds    types.Int64  `tfsdk:"interval_seconds"`
 	TimeoutSeconds     types.Int64  `tfsdk:"timeout_seconds"`
 	HealthyThreshold   types.Int64  `tfsdk:"healthy_threshold"`
@@ -42,25 +43,37 @@ type HealthCheckModel struct {
 }
 
 type apiHealthCheck struct {
-	ID                 string `json:"id"`
-	PoolID             string `json:"poolId"`
-	Protocol           string `json:"protocol"`
-	Path               string `json:"path,omitempty"`
-	ExpectedStatus     string `json:"expectedStatus"`
-	IntervalSeconds    int    `json:"intervalSeconds"`
-	TimeoutSeconds     int    `json:"timeoutSeconds"`
-	HealthyThreshold   int    `json:"healthyThreshold"`
-	UnhealthyThreshold int    `json:"unhealthyThreshold"`
+	ID             string `json:"id"`
+	PoolID         string `json:"poolId"`
+	Protocol       string `json:"protocol"`
+	Path           string `json:"path,omitempty"`
+	ExpectedStatus string `json:"expectedStatus"`
+
+	// Port is the port PROBED when it is not the backend's own, and a POINTER
+	// because null is a meaning here rather than an absence: null says "probe
+	// the backend's own port". The server emits the key unconditionally.
+	Port *int `json:"port"`
+
+	IntervalSeconds    int `json:"intervalSeconds"`
+	TimeoutSeconds     int `json:"timeoutSeconds"`
+	HealthyThreshold   int `json:"healthyThreshold"`
+	UnhealthyThreshold int `json:"unhealthyThreshold"`
 }
 
 type apiPutHealthCheckRequest struct {
-	Protocol           string `json:"protocol,omitempty"`
-	Path               string `json:"path,omitempty"`
-	ExpectedStatus     string `json:"expectedStatus,omitempty"`
-	IntervalSeconds    int    `json:"intervalSeconds,omitempty"`
-	TimeoutSeconds     int    `json:"timeoutSeconds,omitempty"`
-	HealthyThreshold   int    `json:"healthyThreshold,omitempty"`
-	UnhealthyThreshold int    `json:"unhealthyThreshold,omitempty"`
+	Protocol       string `json:"protocol,omitempty"`
+	Path           string `json:"path,omitempty"`
+	ExpectedStatus string `json:"expectedStatus,omitempty"`
+
+	// `omitempty` on a pointer, so an unset port sends NO key -- which is what
+	// returns the probe to the backend's own port. A `*int` holding 0 would be
+	// a port the server refuses; only nil is "unset".
+	Port *int `json:"port,omitempty"`
+
+	IntervalSeconds    int `json:"intervalSeconds,omitempty"`
+	TimeoutSeconds     int `json:"timeoutSeconds,omitempty"`
+	HealthyThreshold   int `json:"healthyThreshold,omitempty"`
+	UnhealthyThreshold int `json:"unhealthyThreshold,omitempty"`
 }
 
 type healthCheckResource struct {
@@ -84,10 +97,16 @@ func (r *healthCheckResource) Schema(_ context.Context, _ resource.SchemaRequest
 			"The endpoint is a PUT, so each write sends the whole check. Removing an attribute " +
 			"from your configuration does **not** reset it, though: the value is remembered from " +
 			"state and re-sent, so the plan shows no change. To return an attribute to the " +
-			"platform default, set it explicitly to that default.\n\n" +
-			"~> **The API has no delete for a health check.** Destroying this resource removes it " +
-			"from state and warns; the check itself goes away with its pool. Removing a check from a " +
-			"pool that keeps running is not expressible today.",
+			"platform default, set it explicitly to that default. **`port` is the exception** — it " +
+			"is `Optional` and not `Computed`, because there is no platform default to remember, so " +
+			"removing it from your configuration really does return the probe to the backend's own " +
+			"port.\n\n" +
+			"Destroying this resource removes the check from the pool, which keeps running: from " +
+			"the next configuration apply the gateway stops probing this pool's backends and treats " +
+			"every enabled one as available. Do that when the backends decide their own " +
+			"availability — a supervised service, or one behind its own load balancer. Otherwise " +
+			"keep a check: without one, a backend that has stopped answering still receives its " +
+			"share of traffic.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description:   "The unique identifier of the health check.",
@@ -106,8 +125,9 @@ func (r *healthCheckResource) Schema(_ context.Context, _ resource.SchemaRequest
 			},
 			"protocol": schema.StringAttribute{
 				Description: "How the backend is probed: `http`, `https` or `tcp`.\n\n" +
-					"Note this enum is NOT the listener's: a `tcp` probe is available here and a " +
-					"`tcp` listener is not.",
+					"`http` and `https` send a request and compare the response against " +
+					"`expected_status`. `tcp` opens a connection to the port and closes it, so " +
+					"`path` and `expected_status` do not apply and are refused with it.",
 				Optional:      true,
 				Computed:      true,
 				Validators:    []validator.String{stringvalidator.OneOf("http", "https", "tcp")},
@@ -124,6 +144,35 @@ func (r *healthCheckResource) Schema(_ context.Context, _ resource.SchemaRequest
 				Optional:      true,
 				Computed:      true,
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"port": schema.Int64Attribute{
+				Description: "Probe **this** port instead of the backend's own. Omit it to probe " +
+					"the port each backend declares.\n\n" +
+					"Useful when the service being fronted answers its health check somewhere else " +
+					"— a mail server on 25 with a health endpoint on 8080. It is **required** for a " +
+					"pool behind a ranged `tcp` listener (one with `port_range_end`): those backends " +
+					"are forwarded to on whatever port the client used, so the probe has none to " +
+					"dial.\n\n" +
+					"Unlike every other attribute here it is not `Computed`: there is no platform " +
+					"default to fall back to, so removing it from your configuration returns the " +
+					"probe to the backend's own port rather than re-sending the last value.",
+				// Optional ONLY -- no Computed, no Default. The server has no
+				// default for this and reports `port: null` when it is unset, so
+				// there is nothing to compute; a Default would have to be a
+				// port, and the server refuses 0.
+				//
+				// 🔴 MARKED Computed, DELETING THIS LINE FROM A CONFIGURATION IS
+				// A NO-OP -- Terraform carries a Computed attribute's prior value
+				// into the proposed new state when the configuration is null, and
+				// the framework marks such an attribute unknown only when the
+				// proposed state DIFFERS from the prior one. Measured against
+				// this schema with Computed added: "expected Update, got
+				// action(s): [no-op]", with the old port still planned. The probe
+				// keeps dialling 8080 while the configuration says it should be
+				// dialling the backend's own port, and Terraform reports success
+				// (TestAccHealthCheckRemovingThePortIsLegibleInThePlan).
+				Optional:   true,
+				Validators: []validator.Int64{int64validator.Between(1, 65535)},
 			},
 			"interval_seconds": schema.Int64Attribute{
 				Description: "Seconds between probes.",
@@ -185,6 +234,7 @@ func (r *healthCheckResource) ValidateConfig(ctx context.Context, req resource.V
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	validateTCPShape(&cfg, resp)
 	if cfg.TimeoutSeconds.IsNull() || cfg.TimeoutSeconds.IsUnknown() ||
 		cfg.IntervalSeconds.IsNull() || cfg.IntervalSeconds.IsUnknown() {
 		return
@@ -194,6 +244,33 @@ func (r *healthCheckResource) ValidateConfig(ctx context.Context, req resource.V
 		resp.Diagnostics.AddAttributeError(path.Root("timeout_seconds"),
 			"timeout_seconds Must Be Less Than interval_seconds",
 			fmt.Sprintf("A probe allowed %ds cannot finish before the next one starts every %ds.", to, iv))
+	}
+}
+
+// validateTCPShape mirrors the server's refusal so a tcp probe carrying HTTP
+// fields fails at PLAN rather than at apply. Only an explicitly-set value is
+// refused, exactly as the server does it -- both attributes are Computed, so a
+// value arriving from state is not something the practitioner wrote, and
+// toRequest already drops those.
+func validateTCPShape(cfg *HealthCheckModel, resp *resource.ValidateConfigResponse) {
+	if cfg.Protocol.ValueString() != "tcp" {
+		return
+	}
+	for _, f := range []struct {
+		name string
+		v    types.String
+	}{
+		{"path", cfg.Path},
+		{"expected_status", cfg.ExpectedStatus},
+	} {
+		if f.v.IsNull() || f.v.IsUnknown() {
+			continue
+		}
+		resp.Diagnostics.AddAttributeError(path.Root(f.name),
+			f.name+" Does Not Apply To A tcp Probe",
+			"A `tcp` probe opens a connection to the port and closes it. It sends no request "+
+				"and reads no status, so `"+f.name+"` has nothing to act on and the server "+
+				"refuses it. Remove it, or set `protocol` to `http` or `https`.")
 	}
 }
 
@@ -222,6 +299,14 @@ func (m *HealthCheckModel) fromAPI(hc *apiHealthCheck) {
 	m.Protocol = types.StringValue(hc.Protocol)
 	m.Path = types.StringValue(hc.Path)
 	m.ExpectedStatus = types.StringValue(hc.ExpectedStatus)
+	// nil is "probe the backend's own port", which is the same absence a
+	// configuration states by omitting the attribute. Read as 0 it would be a
+	// port, and one the schema itself refuses.
+	if hc.Port == nil {
+		m.Port = types.Int64Null()
+	} else {
+		m.Port = types.Int64Value(int64(*hc.Port))
+	}
 	m.IntervalSeconds = types.Int64Value(int64(hc.IntervalSeconds))
 	m.TimeoutSeconds = types.Int64Value(int64(hc.TimeoutSeconds))
 	m.HealthyThreshold = types.Int64Value(int64(hc.HealthyThreshold))
@@ -229,15 +314,48 @@ func (m *HealthCheckModel) fromAPI(hc *apiHealthCheck) {
 }
 
 func (m *HealthCheckModel) toRequest() apiPutHealthCheckRequest {
-	return apiPutHealthCheckRequest{
+	req := apiPutHealthCheckRequest{
 		Protocol:           str(m.Protocol),
-		Path:               str(m.Path),
-		ExpectedStatus:     str(m.ExpectedStatus),
+		Path:               tcpDropped(m, m.Path),
+		ExpectedStatus:     tcpDropped(m, m.ExpectedStatus),
 		IntervalSeconds:    int(m.IntervalSeconds.ValueInt64()),
 		TimeoutSeconds:     int(m.TimeoutSeconds.ValueInt64()),
 		HealthyThreshold:   int(m.HealthyThreshold.ValueInt64()),
 		UnhealthyThreshold: int(m.UnhealthyThreshold.ValueInt64()),
 	}
+	if !m.Port.IsNull() && !m.Port.IsUnknown() {
+		v := int(m.Port.ValueInt64())
+		req.Port = &v
+	}
+	return req
+}
+
+// 🔴 A tcp PROBE MUST NOT SEND BACK THE HTTP FIELDS THE SERVER GAVE IT, OR IT
+// CAN BE CREATED AND THEN NEVER UPDATED.
+//
+// The server refuses an EXPLICIT `path`/`expectedStatus` on a tcp probe
+// (appgw internal/domain/backendpool.go: "path and expectedStatus only apply to
+// a http or https probe"), but its PutHealthCheck defaults both unconditionally
+// -- storing `/` and `200-299` on a tcp probe and RETURNING them. Both
+// attributes are Optional+Computed with UseStateForUnknown, so those defaults
+// land in state on the first apply and are planned back on every later one.
+//
+// The sequence that broke: create a tcp probe with `path` omitted (accepted,
+// 202), change `interval_seconds`, and the PUT now carries protocol=tcp with
+// path="/" and expectedStatus="200-299" read out of state -- 400
+// INVALID_REQUEST, with no in-place escape. Every change after a
+// `terraform import`, and every switch of an existing http probe to tcp, hit
+// the same wall.
+//
+// Dropping them here rather than clearing them in state is deliberate: state
+// must keep recording what the server actually holds, and what the server holds
+// on a tcp probe is those two defaults. This is the one place that knows the
+// values are unsendable.
+func tcpDropped(m *HealthCheckModel, v types.String) string {
+	if m.Protocol.ValueString() == "tcp" {
+		return ""
+	}
+	return str(v)
 }
 
 // Create and Update are the SAME call: the endpoint is a PUT keyed on the pool,
@@ -309,51 +427,44 @@ func (r *healthCheckResource) Read(ctx context.Context, req resource.ReadRequest
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-// Delete removes the resource from state and says what it could not do.
+// Delete removes the health check from the pool.
 //
-// 🔴 THE API HAS NO DELETE FOR A HEALTH CHECK -- the router registers GET and
-// PUT on this path and nothing else. Three options, and this is the least bad:
+// 🔴 THIS USED TO BE AN APOLOGY. The endpoint did not exist, so Delete dropped
+// the resource from state, warned that the check was still probing, and told
+// the practitioner to replace the pool to stop it -- which for a pool behind a
+// tcp listener means deleting that listener first and closing its public port
+// that instant. `DELETE .../backend-pools/{poolId}/health-check` shipped and
+// removes the check from a pool that keeps running, so the real operation is
+// what runs here now and the resource no longer lies about what a destroy did.
 //
-//   - Erroring would wedge `terraform destroy` for the whole stack, including
-//     the pool that is about to take the check with it.
-//   - Silently removing it from state is how a provider claims a change
-//     happened when it did not.
-//   - Removing it and SAYING so is truthful. When the pool is being destroyed
-//     in the same run -- the overwhelmingly common case -- the check really is
-//     gone, and the warning costs a line. When the pool survives, the check
-//     survives too, and the practitioner is told rather than left to discover
-//     it from a probe that keeps running.
-//
-// Removing a check from a pool that keeps running is a genuine API gap.
+// A 404 is SUCCESS, not an error: the endpoint answers 404 when the pool has no
+// check to remove, and "there is no check on this pool" is the state a destroy
+// is asking for. It is also what a concurrent destroy, or a check removed
+// outside Terraform, leaves behind -- erroring on it would wedge every
+// subsequent destroy of the surrounding stack for a condition that is already
+// the desired one. A missing POOL reaches this code as the same 404 and means
+// the same thing: the check went with it.
 func (r *healthCheckResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state HealthCheckModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// If the pool is already gone, the check went with it and there is nothing
-	// to warn about.
-	if _, err := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf(
-		"/application-gateways/%s/backend-pools/%s",
-		state.GatewayID.ValueString(), state.PoolID.ValueString(),
-	)), nil); err != nil {
-		if client.IsNotFound(err) {
-			return
-		}
-		// Neither branch fired here before, so a 500 or a timeout dropped the
-		// resource from state in complete silence — precisely the "claims a
-		// change happened when it did not" this function's comment rejects.
-		resp.Diagnostics.AddWarning("Could Not Confirm Whether The Health Check Is Gone",
-			"The pool could not be read, so this provider cannot tell whether the health check "+
-				"went away with it: "+err.Error()+"\n\nThe resource has been removed from state. "+
-				"If the pool still exists, the check is still probing your backends.")
-	} else {
-		resp.Diagnostics.AddWarning("Health Check Removed From State But Not From The Pool",
-			"The Application Gateway API has no operation to remove a health check from a pool "+
-				"that still exists, so this resource has been dropped from state while the check "+
-				"itself keeps running. It will go away when the pool does. To stop probing sooner, "+
-				"replace the pool.")
+	_, err := r.client.Delete(ctx, r.path(state.GatewayID.ValueString(), state.PoolID.ValueString()))
+	if err != nil && !client.IsNotFound(err) {
+		resp.Diagnostics.AddError("Failed to Delete Health Check", err.Error())
+		return
 	}
+	// The pool keeps running with no probe, and that is a change in how it
+	// behaves rather than only a change in what Terraform tracks. Said once,
+	// here, because it is invisible everywhere else: every enabled backend now
+	// receives traffic whether or not it is answering.
+	resp.Diagnostics.AddWarning("Backends Are No Longer Probed",
+		"The health check has been removed from the pool. From the gateway's next configuration "+
+			"apply it stops probing this pool's backends and treats every enabled one as "+
+			"available, so a backend that has stopped answering still receives its share of "+
+			"traffic. That is the right outcome when the backends decide their own availability; "+
+			"otherwise keep a check on the pool.")
 }
 
 func (r *healthCheckResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {

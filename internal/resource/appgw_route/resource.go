@@ -57,7 +57,11 @@ func (r *routeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"route would silently reorder the others while the plan showed no change. Leave `priority` " +
 			"unset and the server places the route last.\n\n" +
 			"The route API has no update operation, so every attribute forces a new resource.\n\n" +
-			"A route is authored, not live: it starts serving on the gateway's next configuration apply.",
+			"A route is authored, not live: it starts serving on the gateway's next configuration apply.\n\n" +
+			"~> **Only on an `http` or `https` listener.** A `tcp` listener has no routes at all — " +
+			"routing is host, path and header matching, which needs bytes the gateway does not " +
+			"parse at layer 4 — so it names its one pool with `backend_pool_id` instead, and a " +
+			"route pointed at one is refused.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description:   "The unique identifier of the route.",

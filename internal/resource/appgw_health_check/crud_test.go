@@ -88,10 +88,10 @@ var (
 	_ = types.StringValue
 )
 
-const (
-	hcPath     = "/v1/tenants/t-1/application-gateways/agw-1/backend-pools/pool-1/health-check"
-	hcPoolPath = "/v1/tenants/t-1/application-gateways/agw-1/backend-pools/pool-1"
-)
+// hcPath is the health check's own endpoint. The pool's path is deliberately
+// NOT kept alongside it any more: Delete used to probe the pool to decide which
+// apology to print, and now calls the real delete route instead.
+const hcPath = "/v1/tenants/t-1/application-gateways/agw-1/backend-pools/pool-1/health-check"
 
 func hcFixture() apiHealthCheck {
 	return apiHealthCheck{
@@ -154,18 +154,23 @@ func TestHealthCheckCreateReadUpdate(t *testing.T) {
 	}
 }
 
-// TestHealthCheckDeleteWarnsWhenThePoolSurvives.
+// TestHealthCheckDeleteCallsTheRealEndpoint.
 //
-// 🔴 THE API HAS NO DELETE FOR A HEALTH CHECK. Removing it from state while it
-// keeps running is the least bad option, but only if it is SAID — a silent
-// removal is a provider claiming a change that did not happen.
-func TestHealthCheckDeleteWarnsWhenThePoolSurvives(t *testing.T) {
+// 🔴 THIS RESOURCE USED TO APOLOGISE INSTEAD OF DELETING. There was no delete
+// route, so Delete dropped the resource from state and warned that the check
+// was still probing. `DELETE .../backend-pools/{poolId}/health-check` shipped;
+// the assertion that matters is that the call is MADE -- a destroy that removes
+// the resource from state without it is the provider reporting a change that
+// did not happen, which is precisely what the old apology was.
+func TestHealthCheckDeleteCallsTheRealEndpoint(t *testing.T) {
+	var seen []string
 	c, _ := serve(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == hcPoolPath {
-			// The pool is still there, so the check is still probing.
-			_ = json.NewEncoder(w).Encode(map[string]string{"id": "pool-1", "name": "web"})
+		seen = append(seen, r.Method+" "+r.URL.Path)
+		if r.Method == http.MethodDelete && r.URL.Path == hcPath {
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		w.WriteHeader(http.StatusNotFound)
 	})
 	hr := &healthCheckResource{client: c}
@@ -174,29 +179,56 @@ func TestHealthCheckDeleteWarnsWhenThePoolSurvives(t *testing.T) {
 	resp := resource.DeleteResponse{State: stateOf(t, m)}
 	hr.Delete(context.Background(), resource.DeleteRequest{State: stateOf(t, m)}, &resp)
 	if resp.Diagnostics.HasError() {
-		t.Fatalf("delete must not error, or terraform destroy wedges: %v", resp.Diagnostics.Errors())
+		t.Fatalf("delete: %v", resp.Diagnostics.Errors())
 	}
+	if len(seen) != 1 || seen[0] != "DELETE "+hcPath {
+		t.Fatalf("requests = %v; the destroy must call DELETE %s, not drop the resource "+
+			"from state and leave the check probing", seen, hcPath)
+	}
+	// The pool keeps running with no probe: every enabled backend now receives
+	// traffic whether or not it answers. Said once, here.
 	if resp.Diagnostics.WarningsCount() == 0 {
-		t.Fatal("a health check that keeps running must be reported, not silently dropped")
+		t.Error("removing the last probe from a live pool must be reported")
 	}
 }
 
-// TestHealthCheckDeleteIsSilentWhenThePoolIsGone. In the common case -- the
-// pool is being destroyed in the same run -- the check really is gone, and a
-// warning would be noise.
-func TestHealthCheckDeleteIsSilentWhenThePoolIsGone(t *testing.T) {
+// TestHealthCheckDeleteTreatsA404AsSuccess. The endpoint answers 404 when the
+// pool has no check to remove -- which is the state a destroy is asking for.
+// The same 404 arrives when the pool itself is already gone, the common case
+// when both are destroyed in one run.
+func TestHealthCheckDeleteTreatsA404AsSuccess(t *testing.T) {
 	c, _ := serve(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "gone"})
+		// The FLAT refusal envelope, which is what client.IsNotFound requires
+		// and what appgw's respondError renders. A bare 404 with no code is an
+		// unrouted path, and must NOT read as "the resource is gone".
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "no health check"})
 	})
 	hr := &healthCheckResource{client: c}
 	m := hcModel()
 	m.ID = types.StringValue("hc-1")
 	resp := resource.DeleteResponse{State: stateOf(t, m)}
 	hr.Delete(context.Background(), resource.DeleteRequest{State: stateOf(t, m)}, &resp)
-	if resp.Diagnostics.HasError() || resp.Diagnostics.WarningsCount() != 0 {
-		t.Fatalf("destroying a check whose pool is already gone must be silent: %v",
-			resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("a 404 is the desired state, not a failure: %v", resp.Diagnostics.Errors())
+	}
+}
+
+// TestHealthCheckDeleteSurfacesARealFailure. Anything that is not a 404 leaves
+// the check in place, and saying so is the difference between a failed destroy
+// and a probe that keeps running with nothing in state to describe it.
+func TestHealthCheckDeleteSurfacesARealFailure(t *testing.T) {
+	c, _ := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "INTERNAL", "message": "boom"})
+	})
+	hr := &healthCheckResource{client: c}
+	m := hcModel()
+	m.ID = types.StringValue("hc-1")
+	resp := resource.DeleteResponse{State: stateOf(t, m)}
+	hr.Delete(context.Background(), resource.DeleteRequest{State: stateOf(t, m)}, &resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a 500 must fail the destroy: the check is still probing")
 	}
 }
 

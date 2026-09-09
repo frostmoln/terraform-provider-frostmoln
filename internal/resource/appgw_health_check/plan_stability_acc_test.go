@@ -1,0 +1,328 @@
+package appgw_health_check_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"testing"
+
+	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
+	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/acctest"
+)
+
+// The empty-plan proofs for the health check's new `port`, plus the proof that
+// a destroy now REMOVES the check instead of apologising for not being able to.
+//
+// TF_ACC-gated, but self-contained: the API is an httptest server in-process.
+//
+//	TF_ACC=1 go test ./internal/resource/appgw_health_check/ -run TestAccHealthCheck
+
+// healthCheckAPI is a scripted PUT/GET/DELETE health-check endpoint. It applies
+// the endpoint's own rule -- the PUT states the WHOLE check, so an omitted field
+// returns to its default, `port` included -- because that rule is exactly what
+// makes `port` Optional rather than Optional+Computed.
+type healthCheckAPI struct {
+	mu      sync.Mutex
+	check   map[string]any
+	deletes int
+}
+
+func (a *healthCheckAPI) handler() http.Handler {
+	const path = "/v1/tenants/t-1/application-gateways/agw-1/backend-pools/pool-1/health-check"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "u-1", "tenantId": "t-1"})
+
+		case r.Method == http.MethodPut && r.URL.Path == path:
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			// 🔴 THE FAKE MODELS THE SERVER'S REFUSAL, NOT JUST ITS DEFAULTS.
+			//
+			// appgw refuses an EXPLICIT path/expectedStatus on a tcp probe
+			// (internal/domain/backendpool.go) while defaulting both
+			// unconditionally just below. Without this arm the fake accepts
+			// anything, and the round-trip test cannot fail against a provider
+			// that echoes the two defaults straight back -- which is exactly
+			// the defect it exists to catch.
+			if str(body["protocol"]) == "tcp" &&
+				(str(body["path"]) != "" || str(body["expectedStatus"]) != "") {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"code": "INVALID_REQUEST",
+					"message": "path and expectedStatus only apply to a http or https probe; " +
+						"a tcp probe opens a connection to the port and closes it, and has " +
+						"no status to compare",
+				})
+				return
+			}
+			a.check = map[string]any{
+				"id": "hc-1", "poolId": "pool-1",
+				"protocol":       or(body["protocol"], "http"),
+				"path":           or(body["path"], "/"),
+				"expectedStatus": or(body["expectedStatus"], "200-299"),
+				// 🔴 THE WHOLE POINT. An omitted `port` reverts to the
+				// backend's own port and is answered as null -- there is no
+				// remembered previous value, unlike every other field here,
+				// which is why the attribute is not Computed.
+				"port":               body["port"],
+				"intervalSeconds":    orNum(body["intervalSeconds"], 10),
+				"timeoutSeconds":     orNum(body["timeoutSeconds"], 5),
+				"healthyThreshold":   orNum(body["healthyThreshold"], 2),
+				"unhealthyThreshold": orNum(body["unhealthyThreshold"], 3),
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(a.check)
+
+		case r.Method == http.MethodGet && r.URL.Path == path:
+			if a.check == nil {
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "no check"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(a.check)
+
+		case r.Method == http.MethodDelete && r.URL.Path == path:
+			a.deletes++
+			if a.check == nil {
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "no check"})
+				return
+			}
+			a.check = nil
+			w.WriteHeader(http.StatusNoContent)
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"code": "NOT_FOUND", "message": r.Method + " " + r.URL.Path,
+			})
+		}
+	})
+}
+
+func str(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+func or(v any, def string) any {
+	if s, ok := v.(string); ok && s != "" {
+		return s
+	}
+	return def
+}
+
+func orNum(v any, def float64) any {
+	if n, ok := v.(float64); ok && n != 0 {
+		return n
+	}
+	return def
+}
+
+func startHealthCheckAPI(t *testing.T) *healthCheckAPI {
+	t.Helper()
+	api := &healthCheckAPI{}
+	srv := httptest.NewServer(api.handler())
+	t.Cleanup(srv.Close)
+	t.Setenv("FROSTMOLN_API_ENDPOINT", srv.URL)
+	t.Setenv("FROSTMOLN_API_KEY", "acc-test-key") // pragma: allowlist secret
+	return api
+}
+
+const hcWithoutPort = `
+resource "frostmoln_appgw_health_check" "web" {
+  gateway_id = "agw-1"
+  pool_id    = "pool-1"
+  protocol   = "http"
+  path       = "/healthz"
+}
+`
+
+const hcWithPort = `
+resource "frostmoln_appgw_health_check" "web" {
+  gateway_id = "agw-1"
+  pool_id    = "pool-1"
+  protocol   = "http"
+  path       = "/healthz"
+  port       = 8080
+}
+`
+
+// TestAccHealthCheckPortIsPlanStable covers both halves: unset stays null, set
+// stays what the configuration said.
+func TestAccHealthCheckPortIsPlanStable(t *testing.T) {
+	startHealthCheckAPI(t)
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: acctest.TestAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: hcWithoutPort,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr("frostmoln_appgw_health_check.web", "port"),
+					// The Optional+Computed neighbours still adopt their
+					// server-chosen defaults, which is the behaviour `port`
+					// deliberately does NOT get.
+					resource.TestCheckResourceAttr("frostmoln_appgw_health_check.web", "interval_seconds", "10"),
+				),
+			},
+			{Config: hcWithoutPort, PlanOnly: true},
+			{
+				Config: hcWithPort,
+				Check:  resource.TestCheckResourceAttr("frostmoln_appgw_health_check.web", "port", "8080"),
+			},
+			{Config: hcWithPort, PlanOnly: true},
+		},
+	})
+}
+
+// TestAccHealthCheckRemovingThePortIsLegibleInThePlan is the assertion that
+// separates Optional from Optional+Computed here, and an empty-plan test cannot
+// make it.
+//
+// 🔴 Computed, DELETING `port` FROM THE CONFIGURATION WOULD BE A NO-OP. Terraform
+// carries a Computed attribute's prior value into the proposed new state when the
+// configuration is null, and the framework only marks such an attribute unknown
+// when the proposed state DIFFERS from the prior one -- so the plan comes back
+// empty, Terraform reports success, and the probe goes on dialling 8080 while
+// the configuration says it should be dialling the backend's own port. Optional,
+// the plan reads `port: 8080 -> null`, the PUT omits it, and the server reverts.
+//
+// The same shape is why the attribute has no schema Default: a Default(0) would
+// be a port, and the server refuses 0.
+func TestAccHealthCheckRemovingThePortIsLegibleInThePlan(t *testing.T) {
+	startHealthCheckAPI(t)
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: acctest.TestAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: hcWithPort,
+				Check:  resource.TestCheckResourceAttr("frostmoln_appgw_health_check.web", "port", "8080"),
+			},
+			{
+				Config: hcWithoutPort,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction(
+							"frostmoln_appgw_health_check.web", plancheck.ResourceActionUpdate),
+						plancheck.ExpectKnownValue("frostmoln_appgw_health_check.web",
+							tfjsonpath.New("port"), knownvalue.Null()),
+					},
+				},
+				Check: resource.TestCheckNoResourceAttr("frostmoln_appgw_health_check.web", "port"),
+			},
+			{Config: hcWithoutPort, PlanOnly: true},
+		},
+	})
+}
+
+// TestAccHealthCheckDestroyRemovesTheCheck is the proof that the destroy is a
+// real one.
+//
+// 🔴 THIS RESOURCE USED TO APOLOGISE. With no delete route, Delete dropped the
+// resource from state, warned that the check was still probing, and told the
+// practitioner to replace the pool to stop it. terraform-plugin-testing runs a
+// CheckDestroy after the last step; asserting through the scripted server that
+// the check is really gone is what an apology could never satisfy.
+func TestAccHealthCheckDestroyRemovesTheCheck(t *testing.T) {
+	api := startHealthCheckAPI(t)
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: acctest.TestAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: hcWithPort},
+		},
+	})
+
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.deletes == 0 {
+		t.Fatal("terraform destroy never called DELETE on the health check; the check is still " +
+			"probing and nothing in state says so")
+	}
+	if api.check != nil {
+		t.Fatal("the health check survived the destroy")
+	}
+}
+
+const hcTCP = `
+resource "frostmoln_appgw_health_check" "mail" {
+  gateway_id       = "agw-1"
+  pool_id          = "pool-1"
+  protocol         = "tcp"
+  port             = 8080
+  interval_seconds = 10
+}
+`
+
+const hcTCPChanged = `
+resource "frostmoln_appgw_health_check" "mail" {
+  gateway_id       = "agw-1"
+  pool_id          = "pool-1"
+  protocol         = "tcp"
+  port             = 8080
+  interval_seconds = 20
+}
+`
+
+// 🔴 A tcp PROBE HAS TO SURVIVE A SECOND APPLY.
+//
+// This is a ROUND-TRIP assertion, and it has to be: a test that only checks
+// "an explicit path on a tcp probe is refused" passes against the broken
+// provider, because the break is not in what the practitioner wrote -- it is in
+// what the provider reads back and then sends again.
+//
+// The server stores `path: "/"` and `expectedStatus: "200-299"` on a tcp probe
+// even though it refuses them as input. Both attributes are Optional+Computed
+// with UseStateForUnknown, so those two defaults land in state on the first
+// apply and are planned back on every subsequent one. Before the fix, step two
+// here failed with:
+//
+//	Error: Failed to Update Health Check
+//	API error 400: path and expectedStatus only apply to a http or https probe
+//
+// and there was no in-place escape -- the resource could be created and never
+// changed again. The same wall stood in front of every change after a
+// `terraform import`, and every switch of an existing http probe to tcp.
+func TestAccHealthCheckTCPProbeSurvivesAnUpdate(t *testing.T) {
+	startHealthCheckAPI(t)
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: acctest.TestAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: hcTCP,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("frostmoln_appgw_health_check.mail", "protocol", "tcp"),
+					// State records what the server actually holds, defaults
+					// included. Clearing them here would hide the defect rather
+					// than fix it -- the next read would put them straight back.
+					resource.TestCheckResourceAttr("frostmoln_appgw_health_check.mail", "path", "/"),
+				),
+			},
+			{Config: hcTCP, PlanOnly: true},
+			{
+				Config: hcTCPChanged,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction(
+							"frostmoln_appgw_health_check.mail", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.TestCheckResourceAttr(
+					"frostmoln_appgw_health_check.mail", "interval_seconds", "20"),
+			},
+		},
+	})
+}

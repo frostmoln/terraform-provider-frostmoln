@@ -69,5 +69,8 @@ resource "frostmoln_appgw_backend" "web_2" {
 - `created_at` (String) The creation timestamp.
 - `enabled` (Boolean) Whether the backend is receiving traffic.
 - `id` (String) The unique identifier of the backend.
-- `status` (String) The backend's health as the gateway sees it.
+- `status` (String) The backend's health as the gateway sees it: `healthy`, `unhealthy`, `draining` or `unknown`. An observation older than five minutes reads `unknown` rather than continuing to report what was last seen, so silence is never reported as `healthy`.
+
+~> **It reads `unknown` for every backend today.** The ingest that reports observations is separate work that has not shipped, so nothing writes `status` or `status_observed_at` yet and every backend reads `unknown` whatever its real state. Do not build a health display, an alert or a `lifecycle` condition on this field until that lands.
+- `status_observed_at` (String) When `status` was last observed, or null if it never has been. Null for every backend today — see `status`.
 - `updated_at` (String) The last update timestamp.

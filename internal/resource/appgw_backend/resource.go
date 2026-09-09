@@ -39,9 +39,12 @@ type BackendModel struct {
 	Port       types.Int64  `tfsdk:"port"`
 	Weight     types.Int64  `tfsdk:"weight"`
 	Status     types.String `tfsdk:"status"`
-	Enabled    types.Bool   `tfsdk:"enabled"`
-	CreatedAt  types.String `tfsdk:"created_at"`
-	UpdatedAt  types.String `tfsdk:"updated_at"`
+
+	StatusObservedAt types.String `tfsdk:"status_observed_at"`
+
+	Enabled   types.Bool   `tfsdk:"enabled"`
+	CreatedAt types.String `tfsdk:"created_at"`
+	UpdatedAt types.String `tfsdk:"updated_at"`
 }
 
 type apiBackend struct {
@@ -53,9 +56,16 @@ type apiBackend struct {
 	Port       int    `json:"port"`
 	Weight     int    `json:"weight"`
 	Status     string `json:"status"`
-	Enabled    bool   `json:"enabled"`
-	CreatedAt  string `json:"createdAt"`
-	UpdatedAt  string `json:"updatedAt,omitempty"`
+
+	// StatusObservedAt is a POINTER because null is the meaning "it has never
+	// been observed" rather than an absent key -- the server emits it
+	// unconditionally. Decoded as a plain string, the zero value would be
+	// indistinguishable from a real timestamp of "".
+	StatusObservedAt *string `json:"statusObservedAt"`
+
+	Enabled   bool   `json:"enabled"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
 }
 
 type apiBackendListResponse struct {
@@ -157,8 +167,27 @@ func (r *backendResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown(), int64planmodifier.RequiresReplace()},
 			},
 			"status": schema.StringAttribute{
-				Description: "The backend's health as the gateway sees it.",
-				Computed:    true,
+				Description: "The backend's health as the gateway sees it: `healthy`, `unhealthy`, " +
+					"`draining` or `unknown`. An observation older than five minutes reads " +
+					"`unknown` rather than continuing to report what was last seen, so silence is " +
+					"never reported as `healthy`.\n\n" +
+					"~> **It reads `unknown` for every backend today.** The ingest that reports " +
+					"observations is separate work that has not shipped, so nothing writes `status` " +
+					"or `status_observed_at` yet and every backend reads `unknown` whatever its real " +
+					"state. Do not build a health display, an alert or a `lifecycle` condition on " +
+					"this field until that lands.",
+				Computed: true,
+			},
+			"status_observed_at": schema.StringAttribute{
+				Description: "When `status` was last observed, or null if it never has been. Null " +
+					"for every backend today — see `status`.",
+				// Computed ONLY, and never Optional: this is the gateway
+				// reporting what it saw. A practitioner cannot assert when a
+				// probe happened, and an Optional attribute would invite a
+				// configuration to try -- which the create body has no field
+				// for, so it would be silently dropped and then show as a diff
+				// on every plan.
+				Computed: true,
 			},
 			"enabled": schema.BoolAttribute{
 				Description: "Whether the backend is receiving traffic.",
@@ -262,6 +291,13 @@ func (m *BackendModel) fromAPI(b *apiBackend) {
 	m.Port = types.Int64Value(int64(b.Port))
 	m.Weight = types.Int64Value(int64(b.Weight))
 	m.Status = types.StringValue(b.Status)
+	// null means "never observed", which is what every backend reports until
+	// the health-ingest workstream ships. Read as "" it would be a timestamp.
+	if b.StatusObservedAt == nil {
+		m.StatusObservedAt = types.StringNull()
+	} else {
+		m.StatusObservedAt = types.StringValue(*b.StatusObservedAt)
+	}
 	m.Enabled = types.BoolValue(b.Enabled)
 	m.CreatedAt = types.StringValue(b.CreatedAt)
 	m.UpdatedAt = types.StringValue(b.UpdatedAt)

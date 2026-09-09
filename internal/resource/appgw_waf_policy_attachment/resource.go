@@ -120,6 +120,10 @@ func (r *attachmentResource) Schema(_ context.Context, _ resource.SchemaRequest,
 			"The scope has to match the level and the provider checks it before sending: attaching " +
 			"an overlay to the gateway would leave the gateway with no managed protection at all, " +
 			"and that is not a mistake worth discovering from a 400.\n\n" +
+			"~> **A `tcp` listener cannot carry a policy, and neither can anything beneath it.** " +
+			"The firewall inspects HTTP requests; a tcp listener forwards bytes and parses none, so " +
+			"attaching a policy to one is refused. Its traffic is filtered by the listener's own " +
+			"source-CIDR, geo, rate-limit and connection controls instead.\n\n" +
 			"## Attaching is not authoring\n\n" +
 			"The policy is a separate resource with its own rules and version history. Destroying " +
 			"this attachment detaches the policy; it does not delete it, and the policy can be " +

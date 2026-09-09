@@ -7,6 +7,7 @@ description: |-
   Three levels, two scopes
   With neither listener_id nor route_id this attaches to the gateway, which takes a gateway-scoped policy — the one carrying the managed ruleset. With listener_id, or with listener_id and route_id, it attaches an overlay-scoped policy to that listener or route.
   The scope has to match the level and the provider checks it before sending: attaching an overlay to the gateway would leave the gateway with no managed protection at all, and that is not a mistake worth discovering from a 400.
+  ~> A tcp listener cannot carry a policy, and neither can anything beneath it. The firewall inspects HTTP requests; a tcp listener forwards bytes and parses none, so attaching a policy to one is refused. Its traffic is filtered by the listener's own source-CIDR, geo, rate-limit and connection controls instead.
   Attaching is not authoring
   The policy is a separate resource with its own rules and version history. Destroying this attachment detaches the policy; it does not delete it, and the policy can be attached again.
   ~> Detaching the gateway policy changes every inheriting overlay. An overlay whose mode is inherit resolves against the gateway policy; with no gateway policy there is nothing blocking to inherit, so those overlays fall back to detect and stop refusing anything.
@@ -22,6 +23,8 @@ Attaches a Web Application Firewall policy to an Application Gateway, to one of 
 With neither `listener_id` nor `route_id` this attaches to the **gateway**, which takes a `gateway`-scoped policy — the one carrying the managed ruleset. With `listener_id`, or with `listener_id` and `route_id`, it attaches an **overlay**-scoped policy to that listener or route.
 
 The scope has to match the level and the provider checks it before sending: attaching an overlay to the gateway would leave the gateway with no managed protection at all, and that is not a mistake worth discovering from a 400.
+
+~> **A `tcp` listener cannot carry a policy, and neither can anything beneath it.** The firewall inspects HTTP requests; a tcp listener forwards bytes and parses none, so attaching a policy to one is refused. Its traffic is filtered by the listener's own source-CIDR, geo, rate-limit and connection controls instead.
 
 ## Attaching is not authoring
 

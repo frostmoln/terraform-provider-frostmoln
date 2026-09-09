@@ -9,6 +9,8 @@ import (
 
 	tfpath "github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
@@ -249,6 +251,231 @@ func TestListenerValidateConfig(t *testing.T) {
 	}
 }
 
+// tcpModel is a valid single-port tcp listener: the shape every case below
+// perturbs by exactly one field.
+func tcpModel() ListenerModel {
+	m := lsnModel()
+	m.Name = types.StringValue("smtp")
+	m.Protocol = types.StringValue("tcp")
+	m.Port = types.Int64Value(25)
+	m.BackendPoolID = types.StringValue("pool-1")
+	return m
+}
+
+// TestListenerValidateConfigProtocolShape pins the http/https-versus-tcp split.
+//
+// 🔴 EVERY CASE HERE IS A 400 THE PRACTITIONER WOULD OTHERWISE MEET MID-APPLY,
+// and on this resource that is worse than usual: creating a listener OPENS A
+// PUBLIC PORT immediately rather than on the next configuration apply, so an
+// apply that gets three listeners in and fails on the fourth has already
+// changed what the internet can reach.
+//
+// Both directions of each rule, because a guard that refuses only the surplus
+// field lets the missing one straight through: `tcp` REQUIRES backend_pool_id
+// and http/https REFUSE it, and the same inversion holds for port_range_end.
+func TestListenerValidateConfigProtocolShape(t *testing.T) {
+	r := NewResource().(resource.ResourceWithValidateConfig)
+	check := func(m ListenerModel) []string {
+		p := planOf(t, m)
+		var resp resource.ValidateConfigResponse
+		r.ValidateConfig(context.Background(),
+			resource.ValidateConfigRequest{Config: tfsdk.Config(p)}, &resp)
+		var out []string
+		for _, e := range resp.Diagnostics.Errors() {
+			out = append(out, e.Summary())
+		}
+		return out
+	}
+
+	// The valid shapes first, so a guard that refuses everything cannot pass.
+	if errs := check(tcpModel()); len(errs) != 0 {
+		t.Fatalf("a valid single-port tcp listener was refused: %v", errs)
+	}
+	ranged := tcpModel()
+	ranged.Port = types.Int64Value(8000)
+	ranged.PortRangeEnd = types.Int64Value(8100)
+	if errs := check(ranged); len(errs) != 0 {
+		t.Fatalf("a valid ranged tcp listener was refused: %v", errs)
+	}
+	if errs := check(lsnModel()); len(errs) != 0 {
+		t.Fatalf("a valid https listener was refused: %v", errs)
+	}
+
+	for name, tc := range map[string]struct {
+		m    ListenerModel
+		want string
+	}{
+		"a single-port listener on the appliance's own port": {
+			m: func() ListenerModel {
+				m := tcpModel()
+				m.Port = types.Int64Value(9000)
+				return m
+			}(),
+			want: "Port 9000 Is Reserved By The Gateway Appliance",
+		},
+		"a range that swallows the appliance's own port": {
+			m: func() ListenerModel {
+				m := tcpModel()
+				m.Port = types.Int64Value(8990)
+				m.PortRangeEnd = types.Int64Value(9010)
+				return m
+			}(),
+			want: "Port 9000 Is Reserved By The Gateway Appliance",
+		},
+		"the reserved port is refused on an L7 listener too": {
+			m: func() ListenerModel {
+				m := lsnModel()
+				m.Port = types.Int64Value(9000)
+				return m
+			}(),
+			want: "Port 9000 Is Reserved By The Gateway Appliance",
+		},
+		"tcp without a pool has nothing to forward to": {
+			m:    func() ListenerModel { m := tcpModel(); m.BackendPoolID = types.StringNull(); return m }(),
+			want: "backend_pool_id Is Required With protocol = \"tcp\"",
+		},
+		"https with a pool: the ROUTES name the pool": {
+			m: func() ListenerModel {
+				m := lsnModel()
+				m.BackendPoolID = types.StringValue("pool-1")
+				return m
+			}(),
+			want: "backend_pool_id Requires protocol = \"tcp\"",
+		},
+		"an https listener binds exactly one port": {
+			m: func() ListenerModel {
+				m := lsnModel()
+				m.PortRangeEnd = types.Int64Value(8100)
+				return m
+			}(),
+			want: "port_range_end Requires protocol = \"tcp\"",
+		},
+		"a range must be above its start, not equal to it": {
+			m: func() ListenerModel {
+				m := tcpModel()
+				m.Port = types.Int64Value(8000)
+				m.PortRangeEnd = types.Int64Value(8000)
+				return m
+			}(),
+			want: "port_range_end Must Be Greater Than port",
+		},
+		"an inverted range": {
+			m: func() ListenerModel {
+				m := tcpModel()
+				m.Port = types.Int64Value(8100)
+				m.PortRangeEnd = types.Int64Value(8000)
+				return m
+			}(),
+			want: "port_range_end Must Be Greater Than port",
+		},
+		// One socket per port in the range, so the span is a tenant-settable
+		// multiplier on the appliance's descriptor budget.
+		"a span above the cap": {
+			m: func() ListenerModel {
+				m := tcpModel()
+				m.Port = types.Int64Value(1000)
+				m.PortRangeEnd = types.Int64Value(1000 + maxPortRangeSpan)
+				return m
+			}(),
+			want: "port_range_end Spans Too Many Ports",
+		},
+		"tcp terminates no TLS, so a minimum version is never negotiated": {
+			m: func() ListenerModel {
+				m := tcpModel()
+				m.TLSMinVersion = types.StringValue("1.3")
+				return m
+			}(),
+			want: "tls_min_version Requires an https Listener",
+		},
+		"tcp terminates no TLS, so a cipher profile is never chosen": {
+			m: func() ListenerModel {
+				m := tcpModel()
+				m.TLSCipherProfile = types.StringValue("modern")
+				return m
+			}(),
+			want: "tls_cipher_profile Requires an https Listener",
+		},
+		"a redirect is an HTTP response and tcp sends none": {
+			m: func() ListenerModel {
+				m := tcpModel()
+				m.RedirectToHTTPS = types.BoolValue(true)
+				return m
+			}(),
+			want: "redirect_to_https Requires an http Listener",
+		},
+		"a certificate on a tcp listener would never be served": {
+			m: func() ListenerModel {
+				m := tcpModel()
+				m.DefaultCertificateID = types.StringValue("cert-1")
+				return m
+			}(),
+			want: "Certificates Require protocol = \"https\"",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			errs := check(tc.m)
+			for _, e := range errs {
+				if e == tc.want {
+					return
+				}
+			}
+			t.Errorf("got %v, want an error %q", errs, tc.want)
+		})
+	}
+
+	// The largest LEGAL span, so the cap is off-by-one-proof in both
+	// directions: exactly maxPortRangeSpan ports must be accepted.
+	atCap := tcpModel()
+	atCap.Port = types.Int64Value(1000)
+	atCap.PortRangeEnd = types.Int64Value(1000 + maxPortRangeSpan - 1)
+	if errs := check(atCap); len(errs) != 0 {
+		t.Errorf("a span of exactly %d ports was refused: %v", maxPortRangeSpan, errs)
+	}
+}
+
+// TestListenerCreateSendsTheTCPShape. The two new fields have to reach the wire
+// under the names the server reads, and -- just as importantly -- must leave NO
+// key behind when unset: the server REFUSES either on an http/https listener
+// rather than ignoring it, so an empty-but-present key is a 400.
+func TestListenerCreateSendsTheTCPShape(t *testing.T) {
+	capture := func(m ListenerModel) map[string]any {
+		var body map[string]any
+		c, _ := serve(t, func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(lsnFixture())
+		})
+		lr := &listenerResource{client: c}
+		resp := resource.CreateResponse{State: emptyState(t)}
+		lr.Create(context.Background(), resource.CreateRequest{Plan: planOf(t, m)}, &resp)
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("create: %v", resp.Diagnostics.Errors())
+		}
+		return body
+	}
+
+	ranged := tcpModel()
+	ranged.Port = types.Int64Value(8000)
+	ranged.PortRangeEnd = types.Int64Value(8100)
+	body := capture(ranged)
+	if v, ok := body["portRangeEnd"].(float64); !ok || int(v) != 8100 {
+		t.Errorf("portRangeEnd = %v, want 8100", body["portRangeEnd"])
+	}
+	if body["backendPoolId"] != "pool-1" {
+		t.Errorf("backendPoolId = %v, want pool-1", body["backendPoolId"])
+	}
+
+	body = capture(lsnModel())
+	if _, present := body["portRangeEnd"]; present {
+		t.Errorf("portRangeEnd was sent on an https listener (%v); the server refuses the key "+
+			"rather than ignoring it", body["portRangeEnd"])
+	}
+	if _, present := body["backendPoolId"]; present {
+		t.Errorf("backendPoolId was sent on an https listener (%v); the server refuses the key "+
+			"rather than ignoring it", body["backendPoolId"])
+	}
+}
+
 // TestImportState pins the composite id format.
 //
 // An import id is the only interface a practitioner has for adopting an
@@ -309,4 +536,52 @@ func importState(t *testing.T) tfsdk.State {
 		attrs[name] = tftypes.NewValue(at, nil)
 	}
 	return tfsdk.State{Schema: s, Raw: tftypes.NewValue(obj, attrs)}
+}
+
+// 🔴 max_connections HAS ITS OWN CEILING, LOWER THAN ITS TWO NEIGHBOURS'.
+//
+// rate_limit_rps and rate_limit_burst are bounded at 1_000_000 server-side;
+// max_connections is bounded at domain.MaxConnectionCeiling (200000), and the
+// renderer clamps above it regardless. The 1_000_000 literal was reused for all
+// three, so 200001..1000000 passed plan and 400'd at apply.
+//
+// Asserted from BOTH sides: the ceiling itself is accepted, one above it is
+// refused. A one-sided assertion passes against a validator that refuses
+// everything.
+func TestListenerMaxConnectionsCeilingMatchesTheServer(t *testing.T) {
+	r := NewResource()
+	var sr resource.SchemaResponse
+	r.Schema(context.Background(), resource.SchemaRequest{}, &sr)
+
+	attr, ok := sr.Schema.Attributes["max_connections"].(schema.Int64Attribute)
+	if !ok {
+		t.Fatalf("max_connections is not an Int64Attribute; got %T", sr.Schema.Attributes["max_connections"])
+	}
+	if len(attr.Validators) == 0 {
+		t.Fatal("max_connections has no validators; any value would reach the server")
+	}
+
+	run := func(v int64) []string {
+		var out []string
+		for _, val := range attr.Validators {
+			var resp validator.Int64Response
+			val.ValidateInt64(context.Background(), validator.Int64Request{
+				Path:        tfpath.Root("max_connections"),
+				ConfigValue: types.Int64Value(v),
+			}, &resp)
+			for _, e := range resp.Diagnostics.Errors() {
+				out = append(out, e.Summary())
+			}
+		}
+		return out
+	}
+
+	if errs := run(maxConnectionCeiling); len(errs) != 0 {
+		t.Errorf("the ceiling itself (%d) was refused: %v", maxConnectionCeiling, errs)
+	}
+	if errs := run(maxConnectionCeiling + 1); len(errs) == 0 {
+		t.Errorf("max_connections = %d passed plan; the server refuses anything above %d, so "+
+			"this reaches apply as a 400 instead of a plan error",
+			maxConnectionCeiling+1, maxConnectionCeiling)
+	}
 }

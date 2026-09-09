@@ -184,11 +184,183 @@ func TestPoolCreateOmitsTLSVerifyWhenUnset(t *testing.T) {
 	}
 }
 
-func TestPoolUpdateIsRefused(t *testing.T) {
-	var resp resource.UpdateResponse
-	(&poolResource{}).Update(context.Background(), resource.UpdateRequest{}, &resp)
+// patchPool runs an Update and returns the PATCH body the server saw, or nil if
+// no request was made.
+func patchPool(t *testing.T, plan, state PoolModel, echo apiPool) (map[string]any, resource.UpdateResponse) {
+	t.Helper()
+	var body map[string]any
+	var calls int
+	c, _ := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != http.MethodPatch || r.URL.Path != poolBase+"/pool-1" {
+			t.Errorf("unexpected request %s %s; the settings endpoint is PATCH %s",
+				r.Method, r.URL.Path, poolBase+"/pool-1")
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(echo)
+	})
+	pr := &poolResource{client: c}
+	resp := resource.UpdateResponse{State: stateOf(t, state)}
+	pr.Update(context.Background(), resource.UpdateRequest{
+		Plan: planOf(t, plan), State: stateOf(t, state),
+	}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update: %v", resp.Diagnostics.Errors())
+	}
+	if calls == 0 {
+		return nil, resp
+	}
+	return body, resp
+}
+
+// TestPoolUpdatePatchesInPlace.
+//
+// 🔴 THIS RESOURCE USED TO REFUSE EVERY UPDATE. The pool API had no update, so
+// every attribute carried RequiresReplace and Update was unreachable. `PATCH
+// .../backend-pools/{poolId}` shipped, and it exists precisely so
+// proxy_protocol can be turned on for a pool that already exists: the old path
+// meant deleting the pool, which first means deleting the tcp listener holding
+// it and CLOSING ITS PUBLIC PORT that instant.
+//
+// A replacement would also be a plan Terraform cannot execute -- the destroy
+// 409s with BACKEND_POOL_IN_USE while anything forwards to the pool.
+func TestPoolUpdatePatchesInPlace(t *testing.T) {
+	state := poolModel()
+	state.ID = types.StringValue("pool-1")
+	state.Protocol = types.StringValue("http")
+	state.Algorithm = types.StringValue("round_robin")
+	state.SessionAffinity = types.StringValue("none")
+	state.TimeoutConnectMS = types.Int64Value(2000)
+	state.TimeoutResponseMS = types.Int64Value(30000)
+	state.TLSVerifyBackend = types.BoolValue(true)
+	state.ProxyProtocol = types.BoolValue(false)
+
+	plan := state
+	plan.ProxyProtocol = types.BoolValue(true)
+
+	echo := poolFixture()
+	echo.ProxyProtocol = true
+	body, resp := patchPool(t, plan, state, echo)
+
+	if body == nil {
+		t.Fatal("turning proxy_protocol on must reach the API")
+	}
+	if v, ok := body["proxyProtocol"].(bool); !ok || !v {
+		t.Errorf("proxyProtocol = %v (present=%v), want true", body["proxyProtocol"], ok)
+	}
+	var got PoolModel
+	resp.State.Get(context.Background(), &got)
+	if !got.ProxyProtocol.ValueBool() {
+		t.Error("state must carry the new value the server echoed")
+	}
+}
+
+// TestPoolUpdateSendsOnlyWhatChanged.
+//
+// 🔴 AN OMITTED FIELD IS LEFT UNCHANGED AND AN EXPLICIT null IS REFUSED, so the
+// body is a diff and not a snapshot. A patch that echoed every current value
+// would still be accepted -- the server validates the RESULT, not the patch --
+// but it makes the plan and the wire disagree about what was asked for, and a
+// refusal then names a field nobody touched.
+func TestPoolUpdateSendsOnlyWhatChanged(t *testing.T) {
+	state := poolModel()
+	state.ID = types.StringValue("pool-1")
+	state.Protocol = types.StringValue("http")
+	state.Algorithm = types.StringValue("round_robin")
+	state.SessionAffinity = types.StringValue("none")
+	state.TimeoutConnectMS = types.Int64Value(2000)
+	state.TimeoutResponseMS = types.Int64Value(30000)
+	state.ProxyProtocol = types.BoolValue(false)
+
+	plan := state
+	plan.TimeoutResponseMS = types.Int64Value(60000)
+
+	echo := poolFixture()
+	echo.TimeoutResponseMS = 60000
+	body, _ := patchPool(t, plan, state, echo)
+
+	if len(body) != 1 {
+		t.Fatalf("patch body = %v; only the changed field belongs on the wire", body)
+	}
+	if v, ok := body["timeoutResponseMs"].(float64); !ok || int(v) != 60000 {
+		t.Errorf("timeoutResponseMs = %v, want 60000", body["timeoutResponseMs"])
+	}
+}
+
+// TestPoolUpdateClearsAFreeTextFieldWithAnEmptyString.
+//
+// The three free-text fields accept "" and it CLEARS them; the three enum
+// fields do NOT accept "" and are omitted to be left alone. Dropping
+// tls_server_name from a configuration therefore has to reach the server as
+// `""` -- omitted, the plan would show it going away while the pool kept it.
+func TestPoolUpdateClearsAFreeTextFieldWithAnEmptyString(t *testing.T) {
+	state := poolModel()
+	state.ID = types.StringValue("pool-1")
+	state.Protocol = types.StringValue("https")
+	state.Algorithm = types.StringValue("round_robin")
+	state.SessionAffinity = types.StringValue("none")
+	state.TLSServerName = types.StringValue("backend.internal")
+	state.ProxyProtocol = types.BoolValue(false)
+
+	plan := state
+	plan.TLSServerName = types.StringNull()
+
+	echo := poolFixture()
+	echo.Protocol = "https"
+	body, _ := patchPool(t, plan, state, echo)
+
+	v, present := body["tlsServerName"]
+	if !present {
+		t.Fatalf("patch body = %v; a removed tls_server_name must be sent as \"\" to clear it, "+
+			"not omitted -- omitted leaves it in place while the plan says it is gone", body)
+	}
+	if v != "" {
+		t.Errorf("tlsServerName = %v, want the empty string", v)
+	}
+}
+
+// TestPoolUpdateWithNothingChangedSendsNoRequest. Terraform does not normally
+// call Update in this case; if it ever does, an empty PATCH body is not a
+// request worth making.
+func TestPoolUpdateWithNothingChangedSendsNoRequest(t *testing.T) {
+	state := poolModel()
+	state.ID = types.StringValue("pool-1")
+	state.Protocol = types.StringValue("http")
+	state.ProxyProtocol = types.BoolValue(false)
+
+	if body, _ := patchPool(t, state, state, poolFixture()); body != nil {
+		t.Fatalf("an unchanged pool must send nothing, got %v", body)
+	}
+}
+
+// TestPoolUpdateSurfacesAnAPIError. The server refuses two changes outright
+// while a tcp listener forwards to the pool -- `session_affinity = "cookie"` is
+// an HTTP cookie it cannot set at layer 4, and `protocol = "https"` would
+// re-encrypt bytes that are already whatever the client sent. Either must fail
+// the apply rather than land in state.
+func TestPoolUpdateSurfacesAnAPIError(t *testing.T) {
+	c, _ := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"code": "INVALID_REQUEST", "message": "a tcp listener forwards to this pool",
+		})
+	})
+	pr := &poolResource{client: c}
+
+	state := poolModel()
+	state.ID = types.StringValue("pool-1")
+	state.Protocol = types.StringValue("http")
+	state.ProxyProtocol = types.BoolValue(false)
+	plan := state
+	plan.Protocol = types.StringValue("https")
+
+	resp := resource.UpdateResponse{State: stateOf(t, state)}
+	pr.Update(context.Background(), resource.UpdateRequest{
+		Plan: planOf(t, plan), State: stateOf(t, state),
+	}, &resp)
 	if !resp.Diagnostics.HasError() {
-		t.Fatal("Update must refuse: the API has no backend pool update")
+		t.Fatal("a refused PATCH must fail the apply, not be written to state")
 	}
 }
 

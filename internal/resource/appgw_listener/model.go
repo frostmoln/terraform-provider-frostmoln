@@ -17,6 +17,9 @@ type ListenerModel struct {
 	Protocol  types.String `tfsdk:"protocol"`
 	Port      types.Int64  `tfsdk:"port"`
 
+	PortRangeEnd  types.Int64  `tfsdk:"port_range_end"`
+	BackendPoolID types.String `tfsdk:"backend_pool_id"`
+
 	DefaultCertificateID types.String `tfsdk:"default_certificate_id"`
 	SNICertificateIDs    types.List   `tfsdk:"sni_certificate_ids"`
 	TLSMinVersion        types.String `tfsdk:"tls_min_version"`
@@ -43,10 +46,20 @@ type apiListener struct {
 	Name      string `json:"name"`
 	Protocol  string `json:"protocol"`
 	Port      int    `json:"port"`
-	// PortRangeEnd belongs to the future tcp listener type. It is carried so
-	// the field means the same thing the day it is accepted; an http or https
-	// listener binds exactly one port and the server refuses it with a 400.
-	PortRangeEnd *int `json:"portRangeEnd,omitempty"`
+	// PortRangeEnd is the INCLUSIVE last port of a `tcp` listener's range.
+	//
+	// A POINTER because the server distinguishes "no range" from a value, and
+	// it emits the key UNCONDITIONALLY -- `portRangeEnd: null` on every
+	// single-port listener, not an absent key (appgw domain.Listener carries no
+	// `omitempty` on it, deliberately, so the document's `nullable: true`
+	// matches the bytes). Either spelling decodes to nil here, so this side
+	// does not care which; what matters is that nil means "one port" and is
+	// mapped to a NULL attribute rather than to 0.
+	PortRangeEnd *int `json:"portRangeEnd"`
+
+	// BackendPoolID is set on a `tcp` listener and ABSENT on http/https, where
+	// each route names its own pool (the server tags it `omitempty`).
+	BackendPoolID string `json:"backendPoolId,omitempty"`
 
 	DefaultCertificateID string   `json:"defaultCertificateId,omitempty"`
 	SNICertificateIDs    []string `json:"sniCertificateIds,omitempty"`
@@ -73,6 +86,11 @@ type apiCreateListenerRequest struct {
 	Protocol string `json:"protocol"`
 	Port     int    `json:"port"`
 
+	// Both `omitempty`: the server REFUSES either on an http/https listener
+	// rather than ignoring it, so an unset attribute must leave no key behind.
+	PortRangeEnd  *int   `json:"portRangeEnd,omitempty"`
+	BackendPoolID string `json:"backendPoolId,omitempty"`
+
 	DefaultCertificateID string   `json:"defaultCertificateId,omitempty"`
 	SNICertificateIDs    []string `json:"sniCertificateIds,omitempty"`
 	TLSMinVersion        string   `json:"tlsMinVersion,omitempty"`
@@ -94,6 +112,13 @@ func (m *ListenerModel) toCreateRequest(ctx context.Context, diags *diag.Diagnos
 		Protocol:        m.Protocol.ValueString(),
 		Port:            int(m.Port.ValueInt64()),
 		RedirectToHTTPS: m.RedirectToHTTPS.ValueBool(),
+	}
+	if !m.PortRangeEnd.IsNull() && !m.PortRangeEnd.IsUnknown() {
+		v := int(m.PortRangeEnd.ValueInt64())
+		req.PortRangeEnd = &v
+	}
+	if v := stringOrEmpty(m.BackendPoolID); v != "" {
+		req.BackendPoolID = v
 	}
 	if v := stringOrEmpty(m.DefaultCertificateID); v != "" {
 		req.DefaultCertificateID = v
@@ -123,11 +148,23 @@ func (m *ListenerModel) fromAPI(ctx context.Context, l *apiListener, diags *diag
 	m.Name = types.StringValue(l.Name)
 	m.Protocol = types.StringValue(l.Protocol)
 	m.Port = types.Int64Value(int64(l.Port))
+	m.PortRangeEnd = optionalIntPtr(l.PortRangeEnd)
+	m.BackendPoolID = optionalString(l.BackendPoolID)
 
 	m.DefaultCertificateID = optionalString(l.DefaultCertificateID)
 	m.SNICertificateIDs = optionalList(ctx, l.SNICertificateIDs, diags)
-	m.TLSMinVersion = types.StringValue(l.TLSMinVersion)
-	m.TLSCipherProfile = types.StringValue(l.TLSCipherProfile)
+	// 🔴 "" IS THE tcp ANSWER, AND IT MUST NOT LAND IN STATE AS "".
+	//
+	// A tcp listener terminates no TLS, so the server presents both of these as
+	// "" (appgw presentListener) while http/https keep returning "1.2" /
+	// "intermediate" as they always have. "" is in neither attribute's OneOf
+	// set, so storing it would put a value in state that the same schema
+	// refuses in configuration -- and any practitioner who later reads state
+	// back into config, or imports the listener, meets a validation error for a
+	// value the provider wrote itself. Null is what the wire is saying: this
+	// listener has no TLS settings.
+	m.TLSMinVersion = optionalString(l.TLSMinVersion)
+	m.TLSCipherProfile = optionalString(l.TLSCipherProfile)
 	m.RedirectToHTTPS = types.BoolValue(l.RedirectToHTTPS)
 
 	m.AllowedCIDRs = optionalList(ctx, l.AllowedCIDRs, diags)
@@ -184,6 +221,18 @@ func optionalInt(n int) types.Int64 {
 		return types.Int64Null()
 	}
 	return types.Int64Value(int64(n))
+}
+
+// optionalIntPtr maps the server's nullable integers to a null attribute.
+//
+// Distinct from optionalInt: this one is fed a POINTER, so 0 is a real value
+// and only nil is "unset". portRangeEnd is never 0 in practice, but reading nil
+// as 0 would put a port on a single-port listener that binds none.
+func optionalIntPtr(n *int) types.Int64 {
+	if n == nil {
+		return types.Int64Null()
+	}
+	return types.Int64Value(int64(*n))
 }
 
 func optionalString(s string) types.String {
