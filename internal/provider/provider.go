@@ -54,6 +54,7 @@ import (
 	valkeyinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/valkey_instance"
 	volumetiersds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/volume_tiers"
 	vpcds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/vpc"
+	vpcroutesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/vpc_routes"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/apache_instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/api_key"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_backend"
@@ -644,6 +645,11 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		flavords.NewDataSource,
 		flavorsds.NewDataSource,
 		vpcds.NewDataSource,
+		// The VPC's tenant-visible route table. READ-ONLY: `frostmoln_vpc_route`
+		// is deliberately one resource per route and owns no table, so an
+		// out-of-band addition is invisible to every plan — this listing is what
+		// a check block pins to turn that drift into a failed plan.
+		vpcroutesds.NewDataSource,
 		subnetds.NewDataSource,
 		dnszoneds.NewDataSource,
 		gatewayds.NewDataSource,
