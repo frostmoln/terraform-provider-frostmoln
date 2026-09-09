@@ -50,6 +50,7 @@ import (
 	redisinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/redis_instance"
 	regionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/regions"
 	secretds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/secret"
+	securitygrouprulesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/security_group_rules"
 	subnetds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/subnet"
 	valkeyinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/valkey_instance"
 	volumetiersds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/volume_tiers"
@@ -651,6 +652,12 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		// a check block pins to turn that drift into a failed plan.
 		vpcroutesds.NewDataSource,
 		subnetds.NewDataSource,
+		// The security group's whole stored rule set. READ-ONLY: rules are one
+		// resource per rule and the group manages the group and nothing else, so
+		// a rule added out of band is invisible to every plan — this listing is
+		// what a check block pins to turn that drift into a failed plan (the
+		// group read embeds its rules; rules have no GET of their own).
+		securitygrouprulesds.NewDataSource,
 		dnszoneds.NewDataSource,
 		gatewayds.NewDataSource,
 		publicipds.NewDataSource,

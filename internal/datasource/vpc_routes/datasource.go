@@ -235,7 +235,7 @@ func (d *vpcRoutesDataSource) Read(ctx context.Context, req datasource.ReadReque
 			fmt.Sprintf("The response carried no `routes` set to render. Whatever answered is "+
 				"not the route collection this provider builds its contract on, so the listing "+
 				"refuses rather than render an empty table that no service promised.\n\n"+
-				"The escaped route-collection path was %s. Check the deployment and retry; the "+
+				"The route-collection path was %q. Check the deployment and retry; the "+
 				"error persists if what answers this path is not the route API.", routesPath),
 		)
 		return

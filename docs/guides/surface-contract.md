@@ -134,17 +134,18 @@ not flagged in any plan, not removed by any apply or destroy. Per family:
 
 | Resource family | Detected on refresh | Invisible to Terraform |
 |-----------------|--------------------|------------------------|
-| Security groups | Group changes or deletion; a **declared** rule deleted out of band (planned for re-creation) | A rule **added** out of band — by the portal, `fm`, the API, or a colleague. List the group outside Terraform and import what should be managed. The injected egress pair (unless deleted at create). |
+| Security groups | Group changes or deletion; a **declared** rule deleted out of band (planned for re-creation) | A rule **added** out of band — by the portal, `fm`, the API, or a colleague. A `frostmoln_security_group_rules` data source sees them — but only where your configuration reads it: it lists one group's whole stored set, so a `check` block over it turns an addition into a failed plan; import what should be managed. The injected egress pair (unless deleted at create). |
 | VPC routes | A **declared** route deleted out of band | A route added out of band, and all platform-owned routes. A `frostmoln_vpc_routes` data source sees them — but only where your configuration reads it: it lists the tenant-visible table, so a `check` block over it turns an addition into a failed plan. |
 | Instances, volumes, and other single objects | Drift in every fetched attribute; deletion removes the resource from state | Nothing about the object itself — but children it owns follow their own row here. |
 
 The rule of thumb: Terraform watches exactly what your configuration owns, by
 ID. It cannot tell you the set grew. Reconciling additions means listing the
 collection outside Terraform — `fm`, the portal or the API — and importing
-each member that should be managed. The one exception is VPC routes: the
-`frostmoln_vpc_routes` data source lists the visible table inside Terraform,
-so a `check` block can turn an addition into a failed plan where your
-configuration reads it.
+each member that should be managed. The exceptions are the listing data
+sources: `frostmoln_vpc_routes` lists the tenant-visible route table and
+`frostmoln_security_group_rules` one group's whole stored rule set inside
+Terraform, so a `check` block can turn an addition into a failed plan where
+your configuration reads it.
 
 ## The never-mix rule, once more
 
