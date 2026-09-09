@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.55.0] - 2026-09-09
+
+### 🚀 Features
+
+- *(appgw)* Tcp listeners, a configurable backend probe, and PROXY protocol (#508)
+- *(vpc_routes)* Add a read-only listing data source for route drift visibility (#507)
+- *(security_group_rules)* Add a read-only listing data source for rule drift visibility (#511)
+
 ## [0.54.0] - 2026-09-09
 
 ### 🚀 Features
