@@ -4,11 +4,17 @@ page_title: "frostmoln_iam_policy_attachment Resource - Frostmoln"
 subcategory: ""
 description: |-
   Attaches an IAM access policy (frostmoln_iam_policy) to a machine principal (an API key or workload identity) or a group. The attachment is immutable — changing any attribute detaches and re-attaches. Use one attachment resource per policy/principal pair.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Create-immutable — attachee_id, attachee_type, policy_id: the attachment is identified by its policy and attachee; changing one is a different attachment.
 ---
 
 # frostmoln_iam_policy_attachment (Resource)
 
 Attaches an IAM access policy (`frostmoln_iam_policy`) to a machine principal (an API key or workload identity) or a group. The attachment is immutable — changing any attribute detaches and re-attaches. Use one attachment resource per policy/principal pair.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Create-immutable** — `attachee_id`, `attachee_type`, `policy_id`: the attachment is identified by its policy and attachee; changing one is a different attachment.
 
 ## Example Usage
 

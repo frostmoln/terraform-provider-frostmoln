@@ -4,11 +4,38 @@ page_title: "frostmoln_instance Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a compute instance in the Frostmoln platform.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — console_password, console_password_wo_version, image_id, ssh_key_names, subnet_id, vpc_id: the platform has no in-place update for it — a change destroys and re-creates the instance.
+  Create-immutable — instance_access: the in-guest agent is installed at first boot; enabling or disabling it later means a new instance.
+  Create-immutable — user_data: it runs at first boot only — changing it later cannot affect the running instance, so a change re-creates it.
+  Create-immutable — user_data_wo_version: it versions the first-boot user data — bumping it re-creates the instance so the new document runs.
+  Create-immutable — zone: the platform pins the zone at create; there is no in-place migration between zones.
+  Not enacted state — console_password_wo: write-only: sent, never stored or read back — the console_password_wo_version companion carries change detection. user_data_wo: write-only: sent, never stored or read back — the user_data_wo_version companion carries change detection.
+  Observed, not enacted — private_ip: platform-assigned from the subnet at create. public_ip: platform-attached; an association made out of band is read back, not fought.
 ---
 
 # frostmoln_instance (Resource)
 
 Manages a compute instance in the Frostmoln platform.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `console_password`, `console_password_wo_version`, `image_id`, `ssh_key_names`, `subnet_id`, `vpc_id`: the platform has no in-place update for it — a change destroys and re-creates the instance.
+
+**Create-immutable** — `instance_access`: the in-guest agent is installed at first boot; enabling or disabling it later means a new instance.
+
+**Create-immutable** — `user_data`: it runs at first boot only — changing it later cannot affect the running instance, so a change re-creates it.
+
+**Create-immutable** — `user_data_wo_version`: it versions the first-boot user data — bumping it re-creates the instance so the new document runs.
+
+**Create-immutable** — `zone`: the platform pins the zone at create; there is no in-place migration between zones.
+
+**Not enacted state** — `console_password_wo`: write-only: sent, never stored or read back — the `console_password_wo_version` companion carries change detection. `user_data_wo`: write-only: sent, never stored or read back — the `user_data_wo_version` companion carries change detection.
+
+**Observed, not enacted** — `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-attached; an association made out of band is read back, not fought.
 
 ## Example Usage
 

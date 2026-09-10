@@ -7,6 +7,9 @@ description: |-
   Creating a backend does not make it reachable. The platform never edits your security groups implicitly, so this is the explicit, audited step that does.
   ~> The rule is per (security group, protocol, port), not per backend. Two backends behind the same security group and port share one authorization. If you declare this resource for both, the second reports adopted = true and destroying either one closes the path for both. Declare it once per (security group, port), not once per backend.
   Every authorize and revoke is recorded in the gateway's audit trail.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Create-immutable — adopt_existing: it decides whether this resource may take over an ingress rule that already exists — changing it changes what a destroy will do to other backends, so it is create-only.
+  Create-immutable — backend_id, gateway_id, pool_id, security_group_id: the authorization is identified by its backend, pool, gateway and security group; changing one is a different authorization.
 ---
 
 # frostmoln_appgw_backend_authorization (Resource)
@@ -18,6 +21,12 @@ Creating a backend does not make it reachable. The platform never edits your sec
 ~> **The rule is per (security group, protocol, port), not per backend.** Two backends behind the same security group and port **share one authorization**. If you declare this resource for both, the second reports `adopted = true` and destroying either one closes the path for both. Declare it **once per (security group, port)**, not once per backend.
 
 Every authorize and revoke is recorded in the gateway's audit trail.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Create-immutable** — `adopt_existing`: it decides whether this resource may take over an ingress rule that already exists — changing it changes what a destroy will do to other backends, so it is create-only.
+
+**Create-immutable** — `backend_id`, `gateway_id`, `pool_id`, `security_group_id`: the authorization is identified by its backend, pool, gateway and security group; changing one is a different authorization.
 
 ## Example Usage
 

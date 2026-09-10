@@ -24,6 +24,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/appgwvalidate"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -61,7 +62,8 @@ func (r *routeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"~> **Only on an `http` or `https` listener.** A `tcp` listener has no routes at all — " +
 			"routing is host, path and header matching, which needs bytes the gateway does not " +
 			"parse at layer 4 — so it names its one pool with `backend_pool_id` instead, and a " +
-			"route pointed at one is refused.",
+			"route pointed at one is refused." +
+			"\n\n" + scopedecl.Summary("frostmoln_appgw_route"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description:   "The unique identifier of the route.",

@@ -18,6 +18,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
 )
 
@@ -112,7 +113,7 @@ func (r *postgresInstanceResource) Schema(_ context.Context, _ resource.SchemaRe
 		// flagship frostmoln_instance and the cache/messaging offers (the wire
 		// tag was always flavorId). See UpgradeState for the v0->v1 migration.
 		Version:     1,
-		Description: "Manages a managed PostgreSQL database instance in the Frostmoln platform.",
+		Description: "Manages a managed PostgreSQL database instance in the Frostmoln platform." + "\n\n" + scopedecl.Summary("frostmoln_postgres_instance"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the PostgreSQL instance.",

@@ -4,11 +4,20 @@ page_title: "frostmoln_lb_listener Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a listener on a Frostmoln load balancer.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — load_balancer_id, protocol, protocol_port: the listener's identity is its load balancer, protocol and port; changing one is a different listener.
 ---
 
 # frostmoln_lb_listener (Resource)
 
 Manages a listener on a Frostmoln load balancer.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `load_balancer_id`, `protocol`, `protocol_port`: the listener's identity is its load balancer, protocol and port; changing one is a different listener.
 
 ## Example Usage
 

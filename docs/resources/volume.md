@@ -4,11 +4,26 @@ page_title: "frostmoln_volume Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a block storage volume in the Frostmoln platform.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — encrypted, volume_type: the platform has no in-place migration for it — re-typing, re-zoning or re-encrypting a volume means a new volume.
+  Create-immutable — snapshot_id: a volume's origin is fixed at create.
+  Create-immutable — zone: the platform pins the zone at create; there is no in-place migration between zones.
 ---
 
 # frostmoln_volume (Resource)
 
 Manages a block storage volume in the Frostmoln platform.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `encrypted`, `volume_type`: the platform has no in-place migration for it — re-typing, re-zoning or re-encrypting a volume means a new volume.
+
+**Create-immutable** — `snapshot_id`: a volume's origin is fixed at create.
+
+**Create-immutable** — `zone`: the platform pins the zone at create; there is no in-place migration between zones.
 
 ## Example Usage
 

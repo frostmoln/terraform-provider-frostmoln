@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -103,7 +104,8 @@ func (r *listenerResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"window — `create_before_destroy` where you can.\n\n" +
 			"Two listeners on one gateway may not overlap in port space; a second one claiming a " +
 			"port an existing listener binds is refused with `LISTENER_PORT_IN_USE`. A few ports " +
-			"belong to the gateway appliance itself and are refused for every protocol.",
+			"belong to the gateway appliance itself and are refused for every protocol." +
+			"\n\n" + scopedecl.Summary("frostmoln_appgw_listener"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description:   "The unique identifier of the listener.",

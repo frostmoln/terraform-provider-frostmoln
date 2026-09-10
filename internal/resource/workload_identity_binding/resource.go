@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -95,7 +96,8 @@ func (r *workloadIdentityBindingResource) Schema(_ context.Context, _ resource.S
 			"a non-home `tenant_id` and previously applied has its bindings in the HOME tenant: " +
 			"the first plan after upgrading reads a 404, drops them from state and proposes a " +
 			"create in the selected tenant. `terraform state rm` + re-`import` against the " +
-			"selected tenant, or point `tenant_id` at the home tenant.",
+			"selected tenant, or point `tenant_id` at the home tenant." +
+			"\n\n" + scopedecl.Summary("frostmoln_workload_identity_binding"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the binding.",

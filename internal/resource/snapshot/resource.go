@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -37,7 +38,7 @@ func (r *snapshotResource) Metadata(_ context.Context, req resource.MetadataRequ
 
 func (r *snapshotResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a volume snapshot in the Frostmoln platform. Snapshots are immutable after creation.",
+		Description: "Manages a volume snapshot in the Frostmoln platform. Snapshots are immutable after creation." + "\n\n" + scopedecl.Summary("frostmoln_snapshot"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the snapshot.",

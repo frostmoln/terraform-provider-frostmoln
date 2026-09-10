@@ -9,6 +9,11 @@ description: |-
   An overlay defaults to mode = "inherit": it takes the gateway policy's mode, so it blocks when the gateway policy blocks. Read effective_mode, never mode, to decide whether a policy is refusing requests.
   ~> These settings are AUTHORED, not enforced. Changing mode (or any other setting) writes the policy immediately, but what the gateway inspects with is the last published version's snapshot. A policy can read block here while the gateway is still only logging, until a frostmoln_appgw_waf_policy_publication publishes and the gateway applies its configuration.
   Settings are part of what a dry-run is taken against, so changing one invalidates the current dry-run and the next publish needs a fresh one. That is deliberate: the dry-run must describe the ruleset that is about to go live, settings included.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — gateway_id: the policy belongs to its gateway; moving it is a different policy.
+  Create-immutable — name: the policy's name is its identity on the gateway.
+  Create-immutable — scope: scope decides what the policy is COMPILED FROM — a gateway policy carries the managed ruleset, an overlay does not; the server's update body has no scope field at all.
 ---
 
 # frostmoln_appgw_waf_policy (Resource)
@@ -24,6 +29,16 @@ An overlay defaults to `mode = "inherit"`: it takes the gateway policy's mode, s
 ~> **These settings are AUTHORED, not enforced.** Changing `mode` (or any other setting) writes the policy immediately, but what the gateway inspects with is the last **published** version's snapshot. A policy can read `block` here while the gateway is still only logging, until a `frostmoln_appgw_waf_policy_publication` publishes and the gateway applies its configuration.
 
 Settings are part of what a dry-run is taken against, so changing one invalidates the current dry-run and the next publish needs a fresh one. That is deliberate: the dry-run must describe the ruleset that is about to go live, settings included.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `gateway_id`: the policy belongs to its gateway; moving it is a different policy.
+
+**Create-immutable** — `name`: the policy's name is its identity on the gateway.
+
+**Create-immutable** — `scope`: scope decides what the policy is COMPILED FROM — a gateway policy carries the managed ruleset, an overlay does not; the server's update body has no scope field at all.
 
 ## Example Usage
 

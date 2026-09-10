@@ -4,11 +4,17 @@ page_title: "frostmoln_ssh_key Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages an SSH key in the Frostmoln platform.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Create-immutable — name, public_key: the platform stores the key material under its name and has no update route for either — a change re-creates the key.
 ---
 
 # frostmoln_ssh_key (Resource)
 
 Manages an SSH key in the Frostmoln platform.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Create-immutable** — `name`, `public_key`: the platform stores the key material under its name and has no update route for either — a change re-creates the key.
 
 ## Example Usage
 

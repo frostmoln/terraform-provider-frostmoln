@@ -4,11 +4,20 @@ page_title: "frostmoln_lb_health_monitor Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages the health monitor of a Frostmoln load balancer pool. A pool has at most one health monitor (singleton).
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — load_balancer_id, pool_id, type: the monitor's identity is its pool and check type; changing one is a different monitor.
 ---
 
 # frostmoln_lb_health_monitor (Resource)
 
 Manages the health monitor of a Frostmoln load balancer pool. A pool has at most one health monitor (singleton).
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `load_balancer_id`, `pool_id`, `type`: the monitor's identity is its pool and check type; changing one is a different monitor.
 
 ## Example Usage
 

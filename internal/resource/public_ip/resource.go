@@ -18,6 +18,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
@@ -77,7 +78,8 @@ func (r *publicIPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"-auto-approve` stops before anything is sent. This provider additionally refuses to " +
 			"release an address that is serving a VPC's outbound path unless `acknowledge_address_loss = " +
 			"true` — see that attribute.\n\n" +
-			MutualExclusivityNote,
+			MutualExclusivityNote +
+			"\n\n" + scopedecl.Summary("frostmoln_public_ip"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the public IP.",

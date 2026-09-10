@@ -4,11 +4,20 @@ page_title: "frostmoln_launch_template Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a launch template for compute instances in the Frostmoln platform.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Not enacted state — user_data_wo: write-only: sent, never stored or read back — the user_data_wo_version companion carries change detection.
 ---
 
 # frostmoln_launch_template (Resource)
 
 Manages a launch template for compute instances in the Frostmoln platform.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Not enacted state** — `user_data_wo`: write-only: sent, never stored or read back — the `user_data_wo_version` companion carries change detection.
 
 ## Example Usage
 

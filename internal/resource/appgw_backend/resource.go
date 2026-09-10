@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -106,7 +107,8 @@ func (r *backendResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			"2. **Creating a backend does not open the path to it.** The platform never edits your " +
 			"security groups implicitly. Use `frostmoln_appgw_backend_authorization` to add the one " +
 			"ingress rule, which is audited.\n\n" +
-			"The backend API has no update operation, so every attribute forces a new resource.",
+			"The backend API has no update operation, so every attribute forces a new resource." +
+			"\n\n" + scopedecl.Summary("frostmoln_appgw_backend"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description:   "The unique identifier of the backend.",

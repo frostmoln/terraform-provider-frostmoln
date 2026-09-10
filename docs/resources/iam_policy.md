@@ -5,6 +5,7 @@ subcategory: ""
 description: |-
   Manages a reusable IAM access policy. A policy is a set of allow/deny rules over operations, targets (FRNs) and constraints; attach it to an API key, workload identity, or group with frostmoln_iam_policy_attachment. The policy is owned by the provider's selected tenant (tenant_id, else the credential's default). Authoring requires an fm CLI / OIDC session — a machine token may not author or attach a policy.
   ~> Upgrade note. Before provider v0.37.9 this resource ignored tenant_id and always acted on the credential's home tenant. If your configuration sets a non-home tenant_id, existing policies live in the HOME tenant: the first plan after upgrading reads a 404, drops them from state and proposes a create in the selected tenant, leaving the originals orphaned and no longer managed. Either terraform state rm + re-import them against the selected tenant, or point tenant_id at the home tenant to keep managing them where they are.
+  Authoritative scope. Every configurable attribute of this resource is enacted and reconciled: the platform applies it and a refresh reads the truth back. No attribute forces replacement, and no platform-invented default attaches. Declared in internal/scopedecl, machine-checked against the schema.
 ---
 
 # frostmoln_iam_policy (Resource)
@@ -12,6 +13,8 @@ description: |-
 Manages a reusable IAM access policy. A policy is a set of allow/deny rules over operations, targets (FRNs) and constraints; attach it to an API key, workload identity, or group with `frostmoln_iam_policy_attachment`. The policy is owned by the provider's selected tenant (`tenant_id`, else the credential's default). Authoring requires an fm CLI / OIDC session — a machine token may not author or attach a policy.
 
 ~> **Upgrade note.** Before provider v0.37.9 this resource ignored `tenant_id` and always acted on the credential's home tenant. If your configuration sets a non-home `tenant_id`, existing policies live in the HOME tenant: the first plan after upgrading reads a 404, drops them from state and proposes a create in the selected tenant, leaving the originals orphaned and no longer managed. Either `terraform state rm` + re-`import` them against the selected tenant, or point `tenant_id` at the home tenant to keep managing them where they are.
+
+**Authoritative scope.** Every configurable attribute of this resource is **enacted and reconciled**: the platform applies it and a refresh reads the truth back. No attribute forces replacement, and no platform-invented default attaches. Declared in `internal/scopedecl`, machine-checked against the schema.
 
 ## Example Usage
 

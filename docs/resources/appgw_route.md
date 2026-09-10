@@ -8,6 +8,8 @@ description: |-
   The route API has no update operation, so every attribute forces a new resource.
   A route is authored, not live: it starts serving on the gateway's next configuration apply.
   ~> Only on an http or https listener. A tcp listener has no routes at all — routing is host, path and header matching, which needs bytes the gateway does not parse at layer 4 — so it names its one pool with backend_pool_id instead, and a route pointed at one is refused.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Create-immutable — action, backend_pool_id, gateway_id, host, listener_id, name, path, path_match_type, priority, request_headers_remove, request_headers_set, response_headers_set, rewrite_path_prefix: the API has no update route for a route — the server registers POST, GET and DELETE and nothing else — so any change destroys and re-creates it.
 ---
 
 # frostmoln_appgw_route (Resource)
@@ -21,6 +23,10 @@ The route API has no update operation, so every attribute forces a new resource.
 A route is authored, not live: it starts serving on the gateway's next configuration apply.
 
 ~> **Only on an `http` or `https` listener.** A `tcp` listener has no routes at all — routing is host, path and header matching, which needs bytes the gateway does not parse at layer 4 — so it names its one pool with `backend_pool_id` instead, and a route pointed at one is refused.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Create-immutable** — `action`, `backend_pool_id`, `gateway_id`, `host`, `listener_id`, `name`, `path`, `path_match_type`, `priority`, `request_headers_remove`, `request_headers_set`, `response_headers_set`, `rewrite_path_prefix`: the API has no update route for a route — the server registers POST, GET and DELETE and nothing else — so any change destroys and re-creates it.
 
 ## Example Usage
 

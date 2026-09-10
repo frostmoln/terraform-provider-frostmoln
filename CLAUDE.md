@@ -115,8 +115,15 @@ Unit tests use `httptest` for HTTP mocking. Each resource test should:
 3. Create `resource.go` implementing `resource.Resource` interface (Metadata, Schema, Create, Read, Update, Delete)
 4. Create `resource_test.go` with unit tests
 5. Register the resource in `internal/provider/provider.go` `Resources()` method
-6. Add example HCL in `examples/resources/frostmoln_<name>/resource.tf`
-7. For any Optional+Computed attribute that is create-only, follow *Plan modifier
+6. Declare its authoritative scope: add an entry to
+   `internal/scopedecl/declarations.go` (create-immutable fields with their
+   reasons, platform-mutable computed fields, platform-invented defaults) and
+   append `scopedecl.Summary("frostmoln_<name>")` to the resource-level
+   `Description` — `TestScopeDeclarations` fails on a missing entry, a
+   replacing attribute without a declared reason, or a `Description` that
+   does not carry the summary.
+7. Add example HCL in `examples/resources/frostmoln_<name>/resource.tf`
+8. For any Optional+Computed attribute that is create-only, follow *Plan modifier
    order* below and add it to `mustReplaceOnRealChange`
 
 ### Plan modifier order: `UseStateForUnknown()` before `RequiresReplace()`
@@ -191,6 +198,21 @@ schema and fails on ANY inline child collection (nested list/set/map of
 objects, attribute or block) not in its two-way-checked
 `allowedInlineCollections` — default-deny, so the shape cannot return under a
 novel name.
+
+### Authoritative-scope declarations
+
+Every resource declares who owns what: `internal/scopedecl/declarations.go`
+maps each type to its create-immutable fields WITH the reason (the schema's
+`RequiresReplace` carries no reason), the computed fields the platform may
+assign or change under the customer (OBSERVES — the managed-webserver security
+group, platform-assigned addresses), refusals-instead-of-replacements
+(`ImmutableWithoutReplace` — the frostmoln_secret pattern), and the policy on
+each platform-invented default. `scopedecl.Summary` renders it into every
+resource's page; `TestScopeDeclarations` asserts it against the live schema in
+both directions (every replacing attribute declared with a reason, every
+declared path real) and fails if a resource's `Description` does not carry
+its summary — from which the generated page is rendered.
+A new resource ships only with its declaration.
 
 ### Managed-service instance resource conventions
 

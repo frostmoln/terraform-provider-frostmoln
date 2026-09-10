@@ -6,6 +6,9 @@ description: |-
   Manages the CORS configuration of an object storage bucket, so browsers may call the bucket's S3 endpoint directly from a web application.
   REPLACE SEMANTICS, AND ONE CONSEQUENCE WORTH KNOWING: a bucket carries a single CORS configuration, and applying this resource replaces it whole. Frostmoln adds a default CORS rule for the customer portal's origin to every new bucket, which is what lets the portal's object browser upload and list objects browser-direct via presigned URLs. Taking the bucket's CORS under Terraform removes that rule unless you declare it yourself, and the portal's object browser will stop working for this bucket. The plan warns and names the origins it is about to stop allowing; declare the ones you want to keep.
   That default is applied only when a bucket is created, so nothing restores it later: terraform destroy on this resource leaves the bucket with NO CORS configuration at all, not with the rule it had beforehand. Read the current configuration (terraform import, or the API) before you take it over, and re-declare what is actually there — the portal's origin is deployment configuration, so do not assume a particular hostname.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — bucket: the configuration document belongs to its bucket — the bucket IS the resource's identity.
 ---
 
 # frostmoln_bucket_cors_configuration (Resource)
@@ -15,6 +18,12 @@ Manages the CORS configuration of an object storage bucket, so browsers may call
 REPLACE SEMANTICS, AND ONE CONSEQUENCE WORTH KNOWING: a bucket carries a single CORS configuration, and applying this resource replaces it whole. Frostmoln adds a default CORS rule for the customer portal's origin to every new bucket, which is what lets the portal's object browser upload and list objects browser-direct via presigned URLs. Taking the bucket's CORS under Terraform removes that rule unless you declare it yourself, and the portal's object browser will stop working for this bucket. The plan warns and names the origins it is about to stop allowing; declare the ones you want to keep.
 
 That default is applied only when a bucket is created, so nothing restores it later: `terraform destroy` on this resource leaves the bucket with NO CORS configuration at all, not with the rule it had beforehand. Read the current configuration (terraform import, or the API) before you take it over, and re-declare what is actually there — the portal's origin is deployment configuration, so do not assume a particular hostname.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `bucket`: the configuration document belongs to its bucket — the bucket IS the resource's identity.
 
 ## Example Usage
 

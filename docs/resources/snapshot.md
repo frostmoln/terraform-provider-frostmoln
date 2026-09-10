@@ -4,11 +4,17 @@ page_title: "frostmoln_snapshot Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a volume snapshot in the Frostmoln platform. Snapshots are immutable after creation.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Create-immutable — description, name, tags, volume_id: a snapshot is immutable after create — changing any attribute destroys it and takes a new snapshot of the volume.
 ---
 
 # frostmoln_snapshot (Resource)
 
 Manages a volume snapshot in the Frostmoln platform. Snapshots are immutable after creation.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Create-immutable** — `description`, `name`, `tags`, `volume_id`: a snapshot is immutable after create — changing any attribute destroys it and takes a new snapshot of the volume.
 
 ## Example Usage
 

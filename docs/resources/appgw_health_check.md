@@ -8,6 +8,9 @@ description: |-
   The endpoint is a PUT, so each write sends the whole check. Removing an attribute from your configuration does not reset it, though: the value is remembered from state and re-sent, so the plan shows no change. To return an attribute to the platform default, set it explicitly to that default.
   port and proxy_protocol are the exceptions. Deleting either from your configuration really does return it to the platform default, and the plan says so: port reverts to the backend's own port, proxy_protocol to false. They get there differently — port is Optional and not Computed, because there is no platform default to remember, while proxy_protocol carries a schema default of false, which is what the server does with an omitted one.
   Destroying this resource removes the check from the pool, which keeps running: from the next configuration apply the gateway stops probing this pool's backends and treats every enabled one as available. Do that when the backends decide their own availability — a supervised service, or one behind its own load balancer. Otherwise keep a check: without one, a backend that has stopped answering still receives its share of traffic.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — gateway_id, pool_id: the check belongs to its pool on its gateway; moving it is a different check.
 ---
 
 # frostmoln_appgw_health_check (Resource)
@@ -21,6 +24,12 @@ The endpoint is a PUT, so each write sends the whole check. Removing an attribut
 **`port` and `proxy_protocol` are the exceptions.** Deleting either from your configuration really does return it to the platform default, and the plan says so: `port` reverts to the backend's own port, `proxy_protocol` to `false`. They get there differently — `port` is `Optional` and not `Computed`, because there is no platform default to remember, while `proxy_protocol` carries a schema default of `false`, which is what the server does with an omitted one.
 
 Destroying this resource removes the check from the pool, which keeps running: from the next configuration apply the gateway stops probing this pool's backends and treats every enabled one as available. Do that when the backends decide their own availability — a supervised service, or one behind its own load balancer. Otherwise keep a check: without one, a backend that has stopped answering still receives its share of traffic.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `gateway_id`, `pool_id`: the check belongs to its pool on its gateway; moving it is a different check.
 
 ## Example Usage
 

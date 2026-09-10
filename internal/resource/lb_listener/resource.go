@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -40,7 +41,7 @@ func (r *listenerResource) Metadata(_ context.Context, req resource.MetadataRequ
 
 func (r *listenerResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a listener on a Frostmoln load balancer.",
+		Description: "Manages a listener on a Frostmoln load balancer." + "\n\n" + scopedecl.Summary("frostmoln_lb_listener"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the listener.",

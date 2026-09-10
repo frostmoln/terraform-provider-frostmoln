@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -81,7 +82,8 @@ func (r *securityGroupResource) Schema(_ context.Context, _ resource.SchemaReque
 			"that matches its configuration plans empty and applies clean; what fails, every " +
 			"time, is `terraform destroy` and any `apply` that plans a change to it. There is " +
 			"no attribute that predicts this and no force flag, so the only exit is " +
-			"`terraform state rm`. Do not import one.",
+			"`terraform state rm`. Do not import one." +
+			"\n\n" + scopedecl.Summary("frostmoln_security_group"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the security group.",

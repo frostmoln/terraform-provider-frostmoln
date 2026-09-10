@@ -4,11 +4,20 @@ page_title: "frostmoln_lb_pool Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a backend pool on a Frostmoln load balancer.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — listener_id, load_balancer_id, protocol: the pool's identity is its listener, load balancer and protocol; changing one is a different pool.
 ---
 
 # frostmoln_lb_pool (Resource)
 
 Manages a backend pool on a Frostmoln load balancer.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `listener_id`, `load_balancer_id`, `protocol`: the pool's identity is its listener, load balancer and protocol; changing one is a different pool.
 
 ## Example Usage
 

@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -39,7 +40,7 @@ func (r *healthMonitorResource) Metadata(_ context.Context, req resource.Metadat
 
 func (r *healthMonitorResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages the health monitor of a Frostmoln load balancer pool. A pool has at most one health monitor (singleton).",
+		Description: "Manages the health monitor of a Frostmoln load balancer pool. A pool has at most one health monitor (singleton)." + "\n\n" + scopedecl.Summary("frostmoln_lb_health_monitor"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the health monitor.",

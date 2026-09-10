@@ -6,6 +6,10 @@ description: |-
   Manages a TLS certificate on a Frostmoln Application Gateway.
   ~> private_key_pem is written to Terraform state. The provider never adopts a key from an API response, so on that attribute your state is the only place it is kept across refreshes — which means your state file holds key material and must be treated as a secret: a remote backend with encryption at rest and restricted access. Keeping the PEM out of your .tf files does not keep it out of state — a value read from a variable or a secret store is persisted exactly like a literal once it is assigned to private_key_pem. Use private_key_pem_wo instead: it carries the same key on apply and is never written to the plan or to state. The other way to keep a key out of Terraform is not to hand it one — a platform-issued ACME certificate (source = acmeDns01, obtained out of band — this resource only uploads) is attached to a listener by ID and never carries key material. See the Secrets in Terraform state https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets guide.
   The certificate API has no update operation, so every attribute forces a new resource. Rotating a certificate therefore creates a new one and destroys the old — attach it to the listener via create_before_destroy if you cannot take the interruption.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — chain_pem, gateway_id, name, private_key_pem, private_key_pem_wo_version: certificate material and its name are fixed once uploaded — changing one uploads a new certificate.
+  Not enacted state — private_key_pem_wo: write-only: sent, never stored or read back — the private_key_pem_wo_version companion carries change detection.
 ---
 
 # frostmoln_appgw_certificate (Resource)
@@ -15,6 +19,14 @@ Manages a TLS certificate on a Frostmoln Application Gateway.
 ~> **`private_key_pem` is written to Terraform state.** The provider never adopts a key from an API response, so on that attribute your state is the only place it is kept across refreshes — which means your state file holds key material and must be treated as a secret: a remote backend with encryption at rest and restricted access. Keeping the PEM out of your `.tf` files does not keep it out of state — a value read from a variable or a secret store is persisted exactly like a literal once it is assigned to `private_key_pem`. Use `private_key_pem_wo` instead: it carries the same key on apply and is never written to the plan or to state. The other way to keep a key out of Terraform is not to hand it one — a platform-issued ACME certificate (`source` = `acmeDns01`, obtained out of band — this resource only uploads) is attached to a listener by ID and never carries key material. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide.
 
 The certificate API has no update operation, so every attribute forces a new resource. Rotating a certificate therefore creates a new one and destroys the old — attach it to the listener via `create_before_destroy` if you cannot take the interruption.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `chain_pem`, `gateway_id`, `name`, `private_key_pem`, `private_key_pem_wo_version`: certificate material and its name are fixed once uploaded — changing one uploads a new certificate.
+
+**Not enacted state** — `private_key_pem_wo`: write-only: sent, never stored or read back — the `private_key_pem_wo_version` companion carries change detection.
 
 ## Example Usage
 

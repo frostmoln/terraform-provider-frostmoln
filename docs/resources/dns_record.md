@@ -4,11 +4,20 @@ page_title: "frostmoln_dns_record Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a DNS record (recordset) within a Frostmoln managed DNS zone. A recordset is one (name, type) pair with a single TTL and one or more values.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — name, type, zone_id: a record is identified by its zone, name and type; changing one is a different record.
 ---
 
 # frostmoln_dns_record (Resource)
 
 Manages a DNS record (recordset) within a Frostmoln managed DNS zone. A recordset is one (name, type) pair with a single TTL and one or more values.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `name`, `type`, `zone_id`: a record is identified by its zone, name and type; changing one is a different record.
 
 ## Example Usage
 

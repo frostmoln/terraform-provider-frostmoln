@@ -10,6 +10,11 @@ description: |-
   It works only where the gateway is a frostmoln_gateway RESOURCE in the same configuration. A data "frostmoln_gateway" cannot carry the order — a data source is read, never created or destroyed — so depending on one defers a read and sequences nothing.
   Do not write it the other way about — on the gateway, listing what attaches. depends_on orders the resource it is written on, so that reverses both orders and turns a race that sometimes passed into a teardown that fails every time.
   It changes ORDER only: nothing is created and nothing is released. It does not arm the gateway's own destroy either — without acknowledge_connectivity_loss the teardown stops at that refusal instead, and never reaches the ordering at all. And if a gateway was already adopted, nothing needs importing or rebuilding: it is in state already — add the ordering so it cannot recur, then give the gateway the address you meant with public_ip_id, which is applied in place.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — php_enabled, php_version, subnet_id, version, vpc_id: the managed offer has no in-place migration for it — a change re-creates the instance.
+  Observed, not enacted — private_ip: platform-assigned from the subnet at create. public_ip: platform-allocated and attached when public is true. security_group_id: the platform creates and owns the managed group; reads succeed but every write is refused (409 resource_in_use), permanently.
+  Platform-invented default — security group provisioned for the managed web server: keep-with-docs. Platform-provisioned and platform-owned; do not import it as a frostmoln_security_group — applies including destroy are refused.
 ---
 
 # frostmoln_apache_instance (Resource)
@@ -27,6 +32,16 @@ It works only where the gateway is a `frostmoln_gateway` RESOURCE in the same co
 Do not write it the other way about — on the gateway, listing what attaches. `depends_on` orders the resource it is written on, so that reverses both orders and turns a race that sometimes passed into a teardown that fails every time.
 
 It changes ORDER only: nothing is created and nothing is released. It does not arm the gateway's own destroy either — without `acknowledge_connectivity_loss` the teardown stops at that refusal instead, and never reaches the ordering at all. And if a gateway was already adopted, nothing needs importing or rebuilding: it is in state already — add the ordering so it cannot recur, then give the gateway the address you meant with `public_ip_id`, which is applied in place.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `php_enabled`, `php_version`, `subnet_id`, `version`, `vpc_id`: the managed offer has no in-place migration for it — a change re-creates the instance.
+
+**Observed, not enacted** — `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-allocated and attached when `public` is true. `security_group_id`: the platform creates and owns the managed group; reads succeed but every write is refused (`409 resource_in_use`), permanently.
+
+**Platform-invented default** — security group provisioned for the managed web server: **keep-with-docs**. Platform-provisioned and platform-owned; do not import it as a `frostmoln_security_group` — applies including destroy are refused.
 
 ## Example Usage
 

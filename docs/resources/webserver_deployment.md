@@ -4,11 +4,23 @@ page_title: "frostmoln_webserver_deployment Resource - Frostmoln"
 subcategory: ""
 description: |-
   Deploys static/PHP site content to a managed Apache or Nginx webserver instance. The provider runs the full deploy flow: it requests a presigned upload from the platform, uploads the local archive, starts the deploy with the archive checksum, and waits for the in-guest agent to verify, extract, and publish the release. A changed archive (detected via source_hash) triggers a new deploy. Destroying the resource only drops it from Terraform state — content already published on the instance is left in place (there is no "undeploy" API; destroy the instance to remove it).
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — instance_id: the deployment belongs to its instance.
+  Observed, not enacted — deploy_id: platform-issued for each deploy the pipeline runs. status: the platform's deploy pipeline moves it.
 ---
 
 # frostmoln_webserver_deployment (Resource)
 
 Deploys static/PHP site content to a managed Apache or Nginx webserver instance. The provider runs the full deploy flow: it requests a presigned upload from the platform, uploads the local archive, starts the deploy with the archive checksum, and waits for the in-guest agent to verify, extract, and publish the release. A changed archive (detected via source_hash) triggers a new deploy. Destroying the resource only drops it from Terraform state — content already published on the instance is left in place (there is no "undeploy" API; destroy the instance to remove it).
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `instance_id`: the deployment belongs to its instance.
+
+**Observed, not enacted** — `deploy_id`: platform-issued for each deploy the pipeline runs. `status`: the platform's deploy pipeline moves it.
 
 ## Example Usage
 

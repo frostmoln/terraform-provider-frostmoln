@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -51,7 +52,7 @@ func (r *mysqlBackupResource) Metadata(_ context.Context, req resource.MetadataR
 
 func (r *mysqlBackupResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a backup of a managed MySQL instance. Backups are immutable after creation.",
+		Description: "Manages a backup of a managed MySQL instance. Backups are immutable after creation." + "\n\n" + scopedecl.Summary("frostmoln_mysql_backup"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the backup.",

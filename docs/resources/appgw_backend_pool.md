@@ -6,6 +6,10 @@ description: |-
   Manages a backend pool on a Frostmoln Application Gateway: a set of backends sharing a protocol, a load-balancing algorithm and a health check.
   Every setting below is changed in place. Only name forces a new resource — the API has no rename — and replacing a pool is refused with BACKEND_POOL_IN_USE while anything still forwards to it, so destroy the frostmoln_appgw_route or the tcp frostmoln_appgw_listener that holds it first.
   Changes are authored, not live: they reach the appliance on the gateway's next configuration apply.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — gateway_id: the pool belongs to its gateway; moving it is a different pool.
+  Create-immutable — name: the pool's name is its identity on the gateway.
 ---
 
 # frostmoln_appgw_backend_pool (Resource)
@@ -15,6 +19,14 @@ Manages a backend pool on a Frostmoln Application Gateway: a set of backends sha
 Every setting below is changed in place. Only `name` forces a new resource — the API has no rename — and replacing a pool is refused with `BACKEND_POOL_IN_USE` while anything still forwards to it, so destroy the `frostmoln_appgw_route` or the `tcp` `frostmoln_appgw_listener` that holds it first.
 
 Changes are authored, not live: they reach the appliance on the gateway's next configuration apply.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `gateway_id`: the pool belongs to its gateway; moving it is a different pool.
+
+**Create-immutable** — `name`: the pool's name is its identity on the gateway.
 
 ## Example Usage
 

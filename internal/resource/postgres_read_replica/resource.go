@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -51,7 +52,7 @@ func (r *postgresReadReplicaResource) Metadata(_ context.Context, req resource.M
 
 func (r *postgresReadReplicaResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a read replica of a managed PostgreSQL instance. Read replicas are immutable after creation.",
+		Description: "Manages a read replica of a managed PostgreSQL instance. Read replicas are immutable after creation." + "\n\n" + scopedecl.Summary("frostmoln_postgres_read_replica"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the read replica.",

@@ -6,6 +6,9 @@ description: |-
   Narrows a WAF rule so it stops matching a request shape you know is good — a field that legitimately contains SQL, an upload endpoint, an API that posts XML.
   Like a rule, an exclusion lands on the policy's draft and takes effect only when it is published and the gateway applies its configuration.
   Target exactly one of target_secrule_id or target_tag.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — gateway_id, policy_id, rule_key: the exclusion is identified by its key within its policy; changing one is a different exclusion.
 ---
 
 # frostmoln_appgw_waf_exclusion (Resource)
@@ -15,6 +18,12 @@ Narrows a WAF rule so it stops matching a request shape you know is good — a f
 Like a rule, an exclusion lands on the policy's **draft** and takes effect only when it is published and the gateway applies its configuration.
 
 Target exactly one of `target_secrule_id` or `target_tag`.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `gateway_id`, `policy_id`, `rule_key`: the exclusion is identified by its key within its policy; changing one is a different exclusion.
 
 ## Example Usage
 

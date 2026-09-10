@@ -19,6 +19,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/writeonly"
 )
 
@@ -135,7 +136,8 @@ func (r *certificateResource) Schema(_ context.Context, _ resource.SchemaRequest
 			"[Secrets in Terraform state](" + docs.StateSecretsGuide + ") guide.\n\n" +
 			"The certificate API has no update operation, so every attribute forces a new resource. " +
 			"Rotating a certificate therefore creates a new one and destroys the old — attach it to " +
-			"the listener via `create_before_destroy` if you cannot take the interruption.",
+			"the listener via `create_before_destroy` if you cannot take the interruption." +
+			"\n\n" + scopedecl.Summary("frostmoln_appgw_certificate"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description:   "The unique identifier of the certificate.",

@@ -9,6 +9,9 @@ description: |-
   A route is matched on its DESTINATION ONLY — a VPC router has no per-source routing — so a route applies to every instance in the VPC, not to one of them. That is what makes the forced-tunnel pattern (0.0.0.0/0 to an appliance, plus <peer>/32 to internet so the appliance's own tunnel still works) take every instance off the tunnel for the peer's address, not just the appliance.
   Platform-owned routes are invisible here: they are not listed, cannot be created, and cannot be imported.
   Every attribute forces replacement. A route has no server-side identity beyond its destination and there is no in-place update for one, so a change destroys and re-creates the route.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Create-immutable — destination, next_hop, vpc_id: a route has no server-side identity beyond its destination and there is no in-place update for one, so a change destroys and re-creates the route.
+  Platform-invented default — platform-owned VPC routes (the system routes DNS and managed services ride): keep-with-docs. Invisible by design — not listed, cannot be created, cannot be imported; the frostmoln_vpc_routes data source sees exactly the tenant-visible table.
 ---
 
 # frostmoln_vpc_route (Resource)
@@ -24,6 +27,12 @@ A route is matched on its DESTINATION ONLY — a VPC router has no per-source ro
 Platform-owned routes are invisible here: they are not listed, cannot be created, and cannot be imported.
 
 Every attribute forces replacement. A route has no server-side identity beyond its destination and there is no in-place update for one, so a change destroys and re-creates the route.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Create-immutable** — `destination`, `next_hop`, `vpc_id`: a route has no server-side identity beyond its destination and there is no in-place update for one, so a change destroys and re-creates the route.
+
+**Platform-invented default** — platform-owned VPC routes (the system routes DNS and managed services ride): **keep-with-docs**. Invisible by design — not listed, cannot be created, cannot be imported; the `frostmoln_vpc_routes` data source sees exactly the tenant-visible table.
 
 ## Example Usage
 

@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -64,7 +65,8 @@ func (r *vpcResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 			"just that instance, and the gateway reports `origin` = \"implicit_public_ip\". It is a " +
 			"real gateway that Terraform did not declare — so prefer declaring `frostmoln_gateway` " +
 			"explicitly, and see that resource for how an implicit gateway and an explicit one " +
-			"interact.",
+			"interact." +
+			"\n\n" + scopedecl.Summary("frostmoln_vpc"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the VPC.",

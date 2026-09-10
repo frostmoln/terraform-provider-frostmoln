@@ -4,11 +4,26 @@ page_title: "frostmoln_messaging_instance Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a managed messaging (LavinMQ) instance in the Frostmoln platform.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — engine: the engine is chosen at create — one engine's instance does not become another's in place.
+  Create-immutable — subnet_id, version, vpc_id: the platform has no in-place migration for it — a change re-creates the instance.
+  Observed, not enacted — private_ip: platform-assigned from the subnet at create.
 ---
 
 # frostmoln_messaging_instance (Resource)
 
 Manages a managed messaging (LavinMQ) instance in the Frostmoln platform.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `engine`: the engine is chosen at create — one engine's instance does not become another's in place.
+
+**Create-immutable** — `subnet_id`, `version`, `vpc_id`: the platform has no in-place migration for it — a change re-creates the instance.
+
+**Observed, not enacted** — `private_ip`: platform-assigned from the subnet at create.
 
 ## Example Usage
 

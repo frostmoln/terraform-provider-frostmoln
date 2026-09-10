@@ -4,11 +4,20 @@ page_title: "frostmoln_image Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a customer custom image (bring-your-own-image). The provider runs the full flow: it creates the image record, uploads the local disk image straight to Frostmoln object storage with the presigned form the platform returns, asks the platform to import it, and waits for the image to reach "active". Only name, description, default_user, min_disk_gb and min_ram_mb can be changed in place — every other attribute, including source_file, replaces the image. Create waits up to 60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import still holds the image; neither budget is configurable.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — architecture, container_format, disk_format, os_distro, os_version, source_file, source_file_hash: the image's content and format are fixed once imported — changing one imports a new image.
 ---
 
 # frostmoln_image (Resource)
 
 Manages a customer custom image (bring-your-own-image). The provider runs the full flow: it creates the image record, uploads the local disk image straight to Frostmoln object storage with the presigned form the platform returns, asks the platform to import it, and waits for the image to reach "active". Only name, description, default_user, min_disk_gb and min_ram_mb can be changed in place — every other attribute, including source_file, replaces the image. Create waits up to 60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import still holds the image; neither budget is configurable.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `architecture`, `container_format`, `disk_format`, `os_distro`, `os_version`, `source_file`, `source_file_hash`: the image's content and format are fixed once imported — changing one imports a new image.
 
 ## Example Usage
 

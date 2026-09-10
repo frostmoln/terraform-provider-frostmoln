@@ -4,11 +4,23 @@ page_title: "frostmoln_lb_member Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a backend member of a Frostmoln load balancer pool.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — address, load_balancer_id, pool_id, protocol_port, subnet_id: the member is identified by its pool and address:port; changing one is a different member.
+  Create-immutable — cross_vpc: a write-only acknowledgement flag preserved in state but never returned by the API — changing it between two known values forces a new member (a first apply that supplies it after import reconciles instead).
 ---
 
 # frostmoln_lb_member (Resource)
 
 Manages a backend member of a Frostmoln load balancer pool.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `address`, `load_balancer_id`, `pool_id`, `protocol_port`, `subnet_id`: the member is identified by its pool and address:port; changing one is a different member.
+
+**Create-immutable** — `cross_vpc`: a write-only acknowledgement flag preserved in state but never returned by the API — changing it between two known values forces a new member (a first apply that supplies it after import reconciles instead).
 
 ## Example Usage
 

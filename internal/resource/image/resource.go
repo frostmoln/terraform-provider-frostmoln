@@ -27,6 +27,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -108,7 +109,8 @@ func (r *imageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"can be changed " +
 			"in place — every other attribute, including source_file, replaces the image. Create waits up to " +
 			"60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import " +
-			"still holds the image; neither budget is configurable.",
+			"still holds the image; neither budget is configurable." +
+			"\n\n" + scopedecl.Summary("frostmoln_image"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the image.",

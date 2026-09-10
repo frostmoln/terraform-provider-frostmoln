@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -44,7 +45,8 @@ func (r *dnsZoneResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 		Description: "Manages a managed DNS zone in the Frostmoln Cloud Platform. " +
 			"Each primary zone is assigned a delegation nameserver set, exposed as " +
 			"the read-only name_servers attribute — delegate your domain at your " +
-			"registrar to those name servers.",
+			"registrar to those name servers." +
+			"\n\n" + scopedecl.Summary("frostmoln_dns_zone"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the zone.",

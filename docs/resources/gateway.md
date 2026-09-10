@@ -4,11 +4,26 @@ page_title: "frostmoln_gateway Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a VPC's outbound internet path. A VPC has at most one gateway; a VPC without one is an isolated network with no inbound and no outbound connectivity. Removing this gateway, or changing its mode, takes the VPC's outbound internet path down — and with it platform DNS resolution and managed-service connectivity, which are reached over routes that exist only while the gateway does. Instances in the VPC lose name resolution, not just internet access.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — vpc_id: a gateway belongs to its VPC; moving it is a new gateway.
+  Not enacted state — acknowledge_connectivity_loss: an acknowledgement flag for a destroy that severs the VPC's connectivity — carried in state, not a platform setting the apply pushes.
+  Observed, not enacted — origin: records whether the gateway was declared or platform-attached (implicit_public_ip) — the platform set it, not the configuration. source_address: a platform-attached gateway carries whatever address the platform chose for it.
 ---
 
 # frostmoln_gateway (Resource)
 
 Manages a VPC's outbound internet path. A VPC has at most one gateway; a VPC without one is an isolated network with no inbound and no outbound connectivity. Removing this gateway, or changing its mode, takes the VPC's outbound internet path down — and with it platform DNS resolution and managed-service connectivity, which are reached over routes that exist only while the gateway does. Instances in the VPC lose name resolution, not just internet access.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `vpc_id`: a gateway belongs to its VPC; moving it is a new gateway.
+
+**Not enacted state** — `acknowledge_connectivity_loss`: an acknowledgement flag for a destroy that severs the VPC's connectivity — carried in state, not a platform setting the apply pushes.
+
+**Observed, not enacted** — `origin`: records whether the gateway was declared or platform-attached (`implicit_public_ip`) — the platform set it, not the configuration. `source_address`: a platform-attached gateway carries whatever address the platform chose for it.
 
 ## Example Usage
 

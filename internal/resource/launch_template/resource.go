@@ -18,6 +18,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/writeonly"
 )
 
@@ -41,7 +42,7 @@ func (r *launchTemplateResource) Metadata(_ context.Context, req resource.Metada
 
 func (r *launchTemplateResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a launch template for compute instances in the Frostmoln platform.",
+		Description: "Manages a launch template for compute instances in the Frostmoln platform." + "\n\n" + scopedecl.Summary("frostmoln_launch_template"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the launch template.",

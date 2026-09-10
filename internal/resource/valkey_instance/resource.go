@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -52,7 +53,7 @@ func (r *valkeyInstanceResource) Metadata(_ context.Context, req resource.Metada
 
 func (r *valkeyInstanceResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a managed Valkey instance in the Frostmoln platform.",
+		Description: "Manages a managed Valkey instance in the Frostmoln platform." + "\n\n" + scopedecl.Summary("frostmoln_valkey_instance"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the Valkey instance.",

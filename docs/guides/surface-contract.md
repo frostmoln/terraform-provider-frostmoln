@@ -147,6 +147,20 @@ sources: `frostmoln_vpc_routes` lists the tenant-visible route table and
 Terraform, so a `check` block can turn an addition into a failed plan where
 your configuration reads it.
 
+## The per-resource authoritative-scope declaration
+
+Every resource page carries an **Authoritative scope** section, and this guide
+is its general form: which attributes the platform enacts and the provider
+reconciles on refresh, which are create-immutable with the reason recorded,
+which computed fields the platform may assign or change under the customer
+(honestly labelled — the managed-webserver security group, platform-allocated
+addresses), and the policy on each platform-invented default touching the
+resource. The declaration lives in the provider's own source
+(`internal/scopedecl`), is rendered into every generated page, and is asserted
+against the live schema by the provider's test suite — an attribute that
+starts forcing replacement without its declaration and its reason fails the
+build, so the contract cannot quietly drift from the behaviour.
+
 ## The never-mix rule, once more
 
 If one thing survives from this guide: **one collection, one owner, one

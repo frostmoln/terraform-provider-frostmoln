@@ -4,11 +4,29 @@ page_title: "frostmoln_kubernetes_cluster Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a managed Kubernetes cluster in the Frostmoln platform. The cluster owns its initial node pool (created embedded, scaled in-place). Additional node pools are managed with the frostmoln_kubernetes_node_pool resource.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — addons: adding an addon is a supported in-place day-2 operation, but REMOVING one is not — nothing uninstalls an addon the platform already applied, so a removal forces replacement.
+  Create-immutable — control_plane_tier, initial_node_pool.flavor_id, initial_node_pool.name, region, subnet_id, version, vpc_id: the platform has no in-place migration for it — a change destroys and re-creates the cluster.
+  Create-immutable — public_ip_id: retained and deprecated: every new cluster's apiserver is a private VIP and the API refuses any value with a 400 — the attribute exists so a stale configuration is told so.
+  Observed, not enacted — endpoint: platform-issued once the apiserver is up. kubeconfig: platform-issued once the apiserver is up. load_balancer_id: the platform provisions the load balancer the cluster rides on.
 ---
 
 # frostmoln_kubernetes_cluster (Resource)
 
 Manages a managed Kubernetes cluster in the Frostmoln platform. The cluster owns its initial node pool (created embedded, scaled in-place). Additional node pools are managed with the frostmoln_kubernetes_node_pool resource.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `addons`: adding an addon is a supported in-place day-2 operation, but REMOVING one is not — nothing uninstalls an addon the platform already applied, so a removal forces replacement.
+
+**Create-immutable** — `control_plane_tier`, `initial_node_pool.flavor_id`, `initial_node_pool.name`, `region`, `subnet_id`, `version`, `vpc_id`: the platform has no in-place migration for it — a change destroys and re-creates the cluster.
+
+**Create-immutable** — `public_ip_id`: retained and deprecated: every new cluster's apiserver is a private VIP and the API refuses any value with a 400 — the attribute exists so a stale configuration is told so.
+
+**Observed, not enacted** — `endpoint`: platform-issued once the apiserver is up. `kubeconfig`: platform-issued once the apiserver is up. `load_balancer_id`: the platform provisions the load balancer the cluster rides on.
 
 ## Example Usage
 

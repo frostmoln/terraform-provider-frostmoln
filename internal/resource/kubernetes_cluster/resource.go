@@ -21,6 +21,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 // Cluster and node-pool statuses (kubernetes service vocabulary). Deletes are
@@ -141,7 +142,8 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 		// cannot arise. See schemadoc.NotAttaching for the recorded reason.
 		Description: "Manages a managed Kubernetes cluster in the Frostmoln platform. " +
 			"The cluster owns its initial node pool (created embedded, scaled in-place). " +
-			"Additional node pools are managed with the frostmoln_kubernetes_node_pool resource.",
+			"Additional node pools are managed with the frostmoln_kubernetes_node_pool resource." +
+			"\n\n" + scopedecl.Summary("frostmoln_kubernetes_cluster"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the cluster.",

@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -41,7 +42,8 @@ func (r *dnsRecordResource) Metadata(_ context.Context, req resource.MetadataReq
 func (r *dnsRecordResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Manages a DNS record (recordset) within a Frostmoln managed DNS zone. " +
-			"A recordset is one (name, type) pair with a single TTL and one or more values.",
+			"A recordset is one (name, type) pair with a single TTL and one or more values." +
+			"\n\n" + scopedecl.Summary("frostmoln_dns_record"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the recordset. Stable across value and TTL edits.",

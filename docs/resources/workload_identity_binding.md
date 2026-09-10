@@ -5,6 +5,9 @@ subcategory: ""
 description: |-
   Manages a Workload Identity Federation binding, mapping a managed Kubernetes (namespace, service account) to a least-privilege Frostmoln grant. A pod running as that service account can exchange its projected token for a short-lived, scoped Frostmoln credential. The grant is either flat scopes or an access policy attached with frostmoln_iam_policy_attachment — a policy expresses far narrower least privilege (per-resource targets, constraints, explicit denies), so prefer it for new bindings. The binding is owned by the provider's selected tenant (tenant_id, else the credential's default), and its cluster_id must belong to that same tenant.
   ~> Upgrade note. Before provider v0.37.9 this resource ignored tenant_id and always acted on the credential's home tenant — a binding for a non-home cluster failed at apply rather than landing in the wrong place. A configuration that sets a non-home tenant_id and previously applied has its bindings in the HOME tenant: the first plan after upgrading reads a 404, drops them from state and proposes a create in the selected tenant. terraform state rm + re-import against the selected tenant, or point tenant_id at the home tenant.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — cluster_id, namespace, service_account: the binding is identified by its cluster, namespace and service account; changing one is a different binding.
 ---
 
 # frostmoln_workload_identity_binding (Resource)
@@ -12,6 +15,12 @@ description: |-
 Manages a Workload Identity Federation binding, mapping a managed Kubernetes (namespace, service account) to a least-privilege Frostmoln grant. A pod running as that service account can exchange its projected token for a short-lived, scoped Frostmoln credential. The grant is either flat `scopes` or an access policy attached with `frostmoln_iam_policy_attachment` — a policy expresses far narrower least privilege (per-resource targets, constraints, explicit denies), so prefer it for new bindings. The binding is owned by the provider's selected tenant (`tenant_id`, else the credential's default), and its `cluster_id` must belong to that same tenant.
 
 ~> **Upgrade note.** Before provider v0.37.9 this resource ignored `tenant_id` and always acted on the credential's home tenant — a binding for a non-home cluster failed at apply rather than landing in the wrong place. A configuration that sets a non-home `tenant_id` and previously applied has its bindings in the HOME tenant: the first plan after upgrading reads a 404, drops them from state and proposes a create in the selected tenant. `terraform state rm` + re-`import` against the selected tenant, or point `tenant_id` at the home tenant.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `cluster_id`, `namespace`, `service_account`: the binding is identified by its cluster, namespace and service account; changing one is a different binding.
 
 ## Example Usage
 

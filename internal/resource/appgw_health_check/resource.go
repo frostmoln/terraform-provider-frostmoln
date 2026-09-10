@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -123,7 +124,8 @@ func (r *healthCheckResource) Schema(_ context.Context, _ resource.SchemaRequest
 			"every enabled one as available. Do that when the backends decide their own " +
 			"availability — a supervised service, or one behind its own load balancer. Otherwise " +
 			"keep a check: without one, a backend that has stopped answering still receives its " +
-			"share of traffic.",
+			"share of traffic." +
+			"\n\n" + scopedecl.Summary("frostmoln_appgw_health_check"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description:   "The unique identifier of the health check.",

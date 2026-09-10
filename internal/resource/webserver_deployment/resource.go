@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -74,7 +75,8 @@ func (r *webserverDeploymentResource) Schema(_ context.Context, _ resource.Schem
 			"waits for the in-guest agent to verify, extract, and publish the release. A changed archive " +
 			"(detected via source_hash) triggers a new deploy. Destroying the resource only drops it from " +
 			"Terraform state — content already published on the instance is left in place (there is no " +
-			"\"undeploy\" API; destroy the instance to remove it).",
+			"\"undeploy\" API; destroy the instance to remove it)." +
+			"\n\n" + scopedecl.Summary("frostmoln_webserver_deployment"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "Synthetic resource identifier (equal to instance_id — one deployment per instance).",

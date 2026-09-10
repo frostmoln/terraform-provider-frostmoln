@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -74,7 +75,8 @@ func (r *securityGroupRuleResource) Schema(_ context.Context, _ resource.SchemaR
 			"Every attribute here forces replacement, so any change to a declared rule is a " +
 			"destroy-and-create and fails on both halves. The apply keeps failing until the " +
 			"block is removed (and `terraform state rm` used for anything already imported). " +
-			"Point these resources only at groups you created.",
+			"Point these resources only at groups you created." +
+			"\n\n" + scopedecl.Summary("frostmoln_security_group_rule"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the rule.",

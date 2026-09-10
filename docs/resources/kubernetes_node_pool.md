@@ -4,11 +4,26 @@ page_title: "frostmoln_kubernetes_node_pool Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages an additional node pool on a managed Kubernetes cluster. The cluster's INITIAL node pool is owned by the frostmoln_kubernetes_cluster resource (its initial_node_pool block) and cannot be managed here. A cluster must keep at least one node pool — deleting the last one is refused by the API.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — cluster_id: the pool belongs to its cluster; moving it is a different pool.
+  Create-immutable — flavor_id: the platform does not re-flavor a pool in place.
+  Create-immutable — name: the pool's name is its identity within the cluster.
 ---
 
 # frostmoln_kubernetes_node_pool (Resource)
 
 Manages an additional node pool on a managed Kubernetes cluster. The cluster's INITIAL node pool is owned by the frostmoln_kubernetes_cluster resource (its initial_node_pool block) and cannot be managed here. A cluster must keep at least one node pool — deleting the last one is refused by the API.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `cluster_id`: the pool belongs to its cluster; moving it is a different pool.
+
+**Create-immutable** — `flavor_id`: the platform does not re-flavor a pool in place.
+
+**Create-immutable** — `name`: the pool's name is its identity within the cluster.
 
 ## Example Usage
 

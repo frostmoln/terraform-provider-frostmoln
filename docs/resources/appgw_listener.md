@@ -9,6 +9,8 @@ description: |-
   The listener API has no update operation, so every attribute forces a new resource.
   A listener is authored, not live: its ROUTING starts serving on the gateway's next configuration apply. Its port is the one exception on this whole API: it is opened on the gateway's public ingress when the listener is created and closed when it is destroyed, without an apply. So replacing a listener on the same port leaves that port closed between the destroy and the create, and traffic to it is dropped for that window — create_before_destroy where you can.
   Two listeners on one gateway may not overlap in port space; a second one claiming a port an existing listener binds is refused with LISTENER_PORT_IN_USE. A few ports belong to the gateway appliance itself and are refused for every protocol.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Create-immutable — allowed_cidrs, backend_pool_id, default_certificate_id, denied_cidrs, gateway_id, geo_block_mode, geo_countries, max_connections, name, port, port_range_end, protocol, rate_limit_burst, rate_limit_rps, redirect_to_https, sni_certificate_ids, tls_cipher_profile, tls_min_version: the API has no update route for a listener — the server registers POST, GET and DELETE and nothing else — so any change destroys and re-creates it.
 ---
 
 # frostmoln_appgw_listener (Resource)
@@ -25,6 +27,10 @@ The listener API has no update operation, so **every** attribute forces a new re
 A listener is authored, not live: its ROUTING starts serving on the gateway's next configuration apply. Its **port** is the one exception on this whole API: it is opened on the gateway's public ingress when the listener is created and closed when it is destroyed, without an apply. So replacing a listener on the same port leaves that port closed between the destroy and the create, and traffic to it is dropped for that window — `create_before_destroy` where you can.
 
 Two listeners on one gateway may not overlap in port space; a second one claiming a port an existing listener binds is refused with `LISTENER_PORT_IN_USE`. A few ports belong to the gateway appliance itself and are refused for every protocol.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Create-immutable** — `allowed_cidrs`, `backend_pool_id`, `default_certificate_id`, `denied_cidrs`, `gateway_id`, `geo_block_mode`, `geo_countries`, `max_connections`, `name`, `port`, `port_range_end`, `protocol`, `rate_limit_burst`, `rate_limit_rps`, `redirect_to_https`, `sni_certificate_ids`, `tls_cipher_profile`, `tls_min_version`: the API has no update route for a listener — the server registers POST, GET and DELETE and nothing else — so any change destroys and re-creates it.
 
 ## Example Usage
 

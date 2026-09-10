@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 // maxLifecycleRules mirrors the service-side cap (storage BucketServiceConfig).
@@ -54,7 +55,8 @@ func (r *bucketLifecycleConfigurationResource) Schema(_ context.Context, _ resou
 			"For a rule that expires objects, losing its filter means the rewritten rule DELETES EVERY " +
 			"OBJECT IN THE BUCKET on the schedule that was meant for a subset. The plan shows this as a " +
 			"filter disappearing rather than as a deletion scope widening, so read any plan that removes a " +
-			"prefix from an expiration rule carefully.",
+			"prefix from an expiration rule carefully." +
+			"\n\n" + scopedecl.Summary("frostmoln_bucket_lifecycle_configuration"),
 		Attributes: map[string]schema.Attribute{
 			"bucket": schema.StringAttribute{
 				Description: "The name of the bucket whose lifecycle configuration this is. Also the import ID.",

@@ -22,6 +22,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/appgwvalidate"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -190,7 +191,8 @@ func (r *poolResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			"anything still forwards to it, so destroy the `frostmoln_appgw_route` or the `tcp` " +
 			"`frostmoln_appgw_listener` that holds it first.\n\n" +
 			"Changes are authored, not live: they reach the appliance on the gateway's next " +
-			"configuration apply.",
+			"configuration apply." +
+			"\n\n" + scopedecl.Summary("frostmoln_appgw_backend_pool"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description:   "The unique identifier of the backend pool.",

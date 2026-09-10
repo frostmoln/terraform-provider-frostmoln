@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var ruleKeyPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$`)
@@ -97,7 +98,8 @@ func (r *exclusionResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			"field that legitimately contains SQL, an upload endpoint, an API that posts XML.\n\n" +
 			"Like a rule, an exclusion lands on the policy's **draft** and takes effect only when it " +
 			"is published and the gateway applies its configuration.\n\n" +
-			"Target exactly one of `target_secrule_id` or `target_tag`.",
+			"Target exactly one of `target_secrule_id` or `target_tag`." +
+			"\n\n" + scopedecl.Summary("frostmoln_appgw_waf_exclusion"),
 		Attributes: map[string]schema.Attribute{
 			"gateway_id": schema.StringAttribute{
 				Description:   "The Application Gateway the policy belongs to.",

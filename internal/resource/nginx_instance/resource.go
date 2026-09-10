@@ -21,6 +21,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
 )
 
@@ -339,7 +340,8 @@ func (r *nginxInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 		Version: 1,
 		Description: "Manages a managed Nginx webserver instance in the Frostmoln platform." +
 			"\n\n" +
-			schemadoc.GatewayOrderingNote("frostmoln_nginx_instance"),
+			schemadoc.GatewayOrderingNote("frostmoln_nginx_instance") +
+			"\n\n" + scopedecl.Summary("frostmoln_nginx_instance"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the Nginx instance.",

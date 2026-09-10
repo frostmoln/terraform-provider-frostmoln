@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var _ resource.Resource = &containerRegistryResource{}
@@ -52,7 +53,8 @@ func (r *containerRegistryResource) Schema(_ context.Context, _ resource.SchemaR
 			"fm CLI, or another Terraform state) ADOPTS the existing registry rather than failing.\n\n" +
 			"DESTROYING THIS RESOURCE DOES NOT DELETE THE REGISTRY. There is no teardown endpoint: " +
 			"registry teardown belongs to tenant closure. `terraform destroy` removes it from state and " +
-			"warns; the namespace, its images and its billable state all survive.",
+			"warns; the namespace, its images and its billable state all survive." +
+			"\n\n" + scopedecl.Summary("frostmoln_container_registry"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The tenant id. A tenant has exactly one registry and its id is the tenant's.",

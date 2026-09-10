@@ -4,11 +4,23 @@ page_title: "frostmoln_dns_zone Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a managed DNS zone in the Frostmoln Cloud Platform. Each primary zone is assigned a delegation nameserver set, exposed as the read-only name_servers attribute — delegate your domain at your registrar to those name servers.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — name: the zone's name is its identity — the zone IS the name.
+  Observed, not enacted — name_servers: platform-assigned when the zone is created; delegate to these. serial: the platform bumps it on every record change, including changes made out of band.
 ---
 
 # frostmoln_dns_zone (Resource)
 
 Manages a managed DNS zone in the Frostmoln Cloud Platform. Each primary zone is assigned a delegation nameserver set, exposed as the read-only name_servers attribute — delegate your domain at your registrar to those name servers.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `name`: the zone's name is its identity — the zone IS the name.
+
+**Observed, not enacted** — `name_servers`: platform-assigned when the zone is created; delegate to these. `serial`: the platform bumps it on every record change, including changes made out of band.
 
 ## Example Usage
 

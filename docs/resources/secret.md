@@ -4,11 +4,26 @@ page_title: "frostmoln_secret Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a secret in the Frostmoln platform.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — name: the secret's name is its identity — unique per tenant.
+  Create-only, change refused (not replaced) — content_type, max_versions, recovery_window_days: a delete is a soft delete and the name stays taken for the recovery window, so replacing would destroy the secret and then fail to re-create it under the same name — a change is warned about at plan and refused at apply instead.
+  Not enacted state — secret_value: sensitive: sent, never read back — new versions are what a change creates. secret_value_wo: write-only: sent, never stored or read back — the secret_value_wo_version companion carries change detection.
 ---
 
 # frostmoln_secret (Resource)
 
 Manages a secret in the Frostmoln platform.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `name`: the secret's name is its identity — unique per tenant.
+
+**Create-only, change refused (not replaced)** — `content_type`, `max_versions`, `recovery_window_days`: a delete is a soft delete and the name stays taken for the recovery window, so replacing would destroy the secret and then fail to re-create it under the same name — a change is warned about at plan and refused at apply instead.
+
+**Not enacted state** — `secret_value`: sensitive: sent, never read back — new versions are what a change creates. `secret_value_wo`: write-only: sent, never stored or read back — the `secret_value_wo_version` companion carries change detection.
 
 ## Example Usage
 

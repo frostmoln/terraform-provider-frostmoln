@@ -19,6 +19,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var _ resource.Resource = &credentialResource{}
@@ -59,7 +60,8 @@ func (r *credentialResource) Schema(_ context.Context, _ resource.SchemaRequest,
 			"Credentials are immutable: there is no update route, so changing any argument replaces " +
 			"the credential and issues a new secret. Update your downstream consumers.\n\n" +
 			"This resource cannot be imported: an imported credential's `secret` could never be " +
-			"populated, and every subsequent plan would show it as unknown. Revoke and mint instead.",
+			"populated, and every subsequent plan would show it as unknown. Revoke and mint instead." +
+			"\n\n" + scopedecl.Summary("frostmoln_container_registry_credential"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The credential's id.",

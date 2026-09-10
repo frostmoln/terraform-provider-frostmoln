@@ -4,11 +4,17 @@ page_title: "frostmoln_volume_attachment Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a volume attachment to a compute instance in the Frostmoln platform.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Create-immutable — device_path, instance_id, volume_id: the attachment is identified by its volume, instance and device path; changing one is a different attachment.
 ---
 
 # frostmoln_volume_attachment (Resource)
 
 Manages a volume attachment to a compute instance in the Frostmoln platform.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Create-immutable** — `device_path`, `instance_id`, `volume_id`: the attachment is identified by its volume, instance and device path; changing one is a different attachment.
 
 ## Example Usage
 

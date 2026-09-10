@@ -12,6 +12,9 @@ description: |-
   The policy is a separate resource with its own rules and version history. Destroying this attachment detaches the policy; it does not delete it, and the policy can be attached again.
   ~> Detaching the gateway policy changes every inheriting overlay. An overlay whose mode is inherit resolves against the gateway policy; with no gateway policy there is nothing blocking to inherit, so those overlays fall back to detect and stop refusing anything.
   ~> Attaching is not applying. The attachment reaches the appliance on the gateway's next configuration apply — see frostmoln_appgw_config_apply.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — gateway_id, listener_id, route_id: the attachment is identified by where it attaches — gateway, listener or route; moving it is a different attachment (policy_id itself swaps in place).
 ---
 
 # frostmoln_appgw_waf_policy_attachment (Resource)
@@ -33,6 +36,12 @@ The policy is a separate resource with its own rules and version history. Destro
 ~> **Detaching the gateway policy changes every inheriting overlay.** An overlay whose `mode` is `inherit` resolves against the gateway policy; with no gateway policy there is nothing blocking to inherit, so those overlays fall back to detect and stop refusing anything.
 
 ~> **Attaching is not applying.** The attachment reaches the appliance on the gateway's next configuration apply — see `frostmoln_appgw_config_apply`.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `gateway_id`, `listener_id`, `route_id`: the attachment is identified by where it attaches — gateway, listener or route; moving it is a different attachment (`policy_id` itself swaps in place).
 
 ## Example Usage
 

@@ -268,6 +268,9 @@ func replayModifiers(t *testing.T, attrPath string, a schema.Attribute) (onChang
 			for _, m := range a.PlanModifiers {
 				resp := &planmodifier.StringResponse{PlanValue: req.PlanValue}
 				m.PlanModifyString(context.Background(), req, resp)
+				if resp.Diagnostics.HasError() {
+					t.Fatalf("%s: plan modifier errored under the synthetic replay — it likely reads sibling attributes this walk does not populate; extend the replay before trusting the ordering verdict", attrPath)
+				}
 				req.PlanValue = resp.PlanValue
 				replace = replace || resp.RequiresReplace
 			}
@@ -286,6 +289,9 @@ func replayModifiers(t *testing.T, attrPath string, a schema.Attribute) (onChang
 			for _, m := range a.PlanModifiers {
 				resp := &planmodifier.BoolResponse{PlanValue: req.PlanValue}
 				m.PlanModifyBool(context.Background(), req, resp)
+				if resp.Diagnostics.HasError() {
+					t.Fatalf("%s: plan modifier errored under the synthetic replay — it likely reads sibling attributes this walk does not populate; extend the replay before trusting the ordering verdict", attrPath)
+				}
 				req.PlanValue = resp.PlanValue
 				replace = replace || resp.RequiresReplace
 			}
@@ -304,6 +310,9 @@ func replayModifiers(t *testing.T, attrPath string, a schema.Attribute) (onChang
 			for _, m := range a.PlanModifiers {
 				resp := &planmodifier.Int64Response{PlanValue: req.PlanValue}
 				m.PlanModifyInt64(context.Background(), req, resp)
+				if resp.Diagnostics.HasError() {
+					t.Fatalf("%s: plan modifier errored under the synthetic replay — it likely reads sibling attributes this walk does not populate; extend the replay before trusting the ordering verdict", attrPath)
+				}
 				req.PlanValue = resp.PlanValue
 				replace = replace || resp.RequiresReplace
 			}
@@ -323,6 +332,9 @@ func replayModifiers(t *testing.T, attrPath string, a schema.Attribute) (onChang
 			for _, m := range a.PlanModifiers {
 				resp := &planmodifier.ListResponse{PlanValue: req.PlanValue}
 				m.PlanModifyList(context.Background(), req, resp)
+				if resp.Diagnostics.HasError() {
+					t.Fatalf("%s: plan modifier errored under the synthetic replay — it likely reads sibling attributes this walk does not populate; extend the replay before trusting the ordering verdict", attrPath)
+				}
 				req.PlanValue = resp.PlanValue
 				replace = replace || resp.RequiresReplace
 			}
@@ -342,6 +354,9 @@ func replayModifiers(t *testing.T, attrPath string, a schema.Attribute) (onChang
 			for _, m := range a.PlanModifiers {
 				resp := &planmodifier.SetResponse{PlanValue: req.PlanValue}
 				m.PlanModifySet(context.Background(), req, resp)
+				if resp.Diagnostics.HasError() {
+					t.Fatalf("%s: plan modifier errored under the synthetic replay — it likely reads sibling attributes this walk does not populate; extend the replay before trusting the ordering verdict", attrPath)
+				}
 				req.PlanValue = resp.PlanValue
 				replace = replace || resp.RequiresReplace
 			}
@@ -361,6 +376,9 @@ func replayModifiers(t *testing.T, attrPath string, a schema.Attribute) (onChang
 			for _, m := range a.PlanModifiers {
 				resp := &planmodifier.MapResponse{PlanValue: req.PlanValue}
 				m.PlanModifyMap(context.Background(), req, resp)
+				if resp.Diagnostics.HasError() {
+					t.Fatalf("%s: plan modifier errored under the synthetic replay — it likely reads sibling attributes this walk does not populate; extend the replay before trusting the ordering verdict", attrPath)
+				}
 				req.PlanValue = resp.PlanValue
 				replace = replace || resp.RequiresReplace
 			}

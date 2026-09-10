@@ -4,11 +4,23 @@ page_title: "frostmoln_api_key Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages an API key in the Frostmoln platform.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — expires_at: the key's expiry is fixed when it is minted.
+  Observed, not enacted — key: returned once at create and never again — only this configuration's copy survives; a refresh cannot recover it.
 ---
 
 # frostmoln_api_key (Resource)
 
 Manages an API key in the Frostmoln platform.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `expires_at`: the key's expiry is fixed when it is minted.
+
+**Observed, not enacted** — `key`: returned once at create and never again — only this configuration's copy survives; a refresh cannot recover it.
 
 ## Example Usage
 

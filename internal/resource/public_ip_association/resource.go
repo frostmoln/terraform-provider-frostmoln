@@ -19,6 +19,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/public_ip"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -78,7 +79,8 @@ func (r *publicIPAssociationResource) Schema(_ context.Context, _ resource.Schem
 			"the platform refuses the second attachment with `409 Public IP is already associated` and " +
 			"the apply fails, leaving the original attachment in place. There is one address and it can " +
 			"be in one place at a time, so a replacement is necessarily destroy-then-create. Plan for " +
-			"the gap instead — the address is off the instance for the duration of the two calls.",
+			"the gap instead — the address is off the instance for the duration of the two calls." +
+			"\n\n" + scopedecl.Summary("frostmoln_public_ip_association"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The composite identifier of the association ({public_ip_id}/{instance_id}).",

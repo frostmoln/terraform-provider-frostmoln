@@ -4,11 +4,17 @@ page_title: "frostmoln_webserver_domain Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a domain binding for a webserver instance in the Frostmoln platform. This resource is create/delete only — domains cannot be updated in place.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Create-immutable — domain_name, instance_id, is_default, tls_enabled: the domain binding is identified by its name on its instance; changing one is a different binding.
 ---
 
 # frostmoln_webserver_domain (Resource)
 
 Manages a domain binding for a webserver instance in the Frostmoln platform. This resource is create/delete only — domains cannot be updated in place.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Create-immutable** — `domain_name`, `instance_id`, `is_default`, `tls_enabled`: the domain binding is identified by its name on its instance; changing one is a different binding.
 
 ## Example Usage
 

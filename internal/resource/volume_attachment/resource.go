@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -35,7 +36,7 @@ func (r *volumeAttachmentResource) Metadata(_ context.Context, req resource.Meta
 
 func (r *volumeAttachmentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a volume attachment to a compute instance in the Frostmoln platform.",
+		Description: "Manages a volume attachment to a compute instance in the Frostmoln platform." + "\n\n" + scopedecl.Summary("frostmoln_volume_attachment"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The composite identifier of the attachment ({volume_id}/{instance_id}).",

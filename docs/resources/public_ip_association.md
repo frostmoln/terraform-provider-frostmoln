@@ -18,6 +18,8 @@ description: |-
   It changes ORDER only: nothing is created and nothing is released. It does not arm the gateway's own destroy either — without acknowledge_connectivity_loss the teardown stops at that refusal instead, and never reaches the ordering at all. And if a gateway was already adopted, nothing needs importing or rebuilding: it is in state already — add the ordering so it cannot recur, then give the gateway the address you meant with public_ip_id, which is applied in place.
   Every configurable attribute forces replacement. The platform has no in-place re-point — moving an address is a disassociate followed by an associate — so Terraform sequences it as a destroy and a create, and the instance is without the address in between.
   ~> create_before_destroy does not work on this resource. With it, Terraform creates the replacement BEFORE destroying the old one, and the old one still holds the address: the platform refuses the second attachment with 409 Public IP is already associated and the apply fails, leaving the original attachment in place. There is one address and it can be in one place at a time, so a replacement is necessarily destroy-then-create. Plan for the gap instead — the address is off the instance for the duration of the two calls.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Create-immutable — instance_id, port_id, public_ip_id: the attachment is identified by its three endpoints — address, instance and port; changing one is a different attachment.
 ---
 
 # frostmoln_public_ip_association (Resource)
@@ -51,6 +53,10 @@ It changes ORDER only: nothing is created and nothing is released. It does not a
 Every configurable attribute forces replacement. The platform has no in-place re-point — moving an address is a disassociate followed by an associate — so Terraform sequences it as a destroy and a create, and the instance is without the address in between.
 
 ~> **`create_before_destroy` does not work on this resource.** With it, Terraform creates the replacement BEFORE destroying the old one, and the old one still holds the address: the platform refuses the second attachment with `409 Public IP is already associated` and the apply fails, leaving the original attachment in place. There is one address and it can be in one place at a time, so a replacement is necessarily destroy-then-create. Plan for the gap instead — the address is off the instance for the duration of the two calls.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Create-immutable** — `instance_id`, `port_id`, `public_ip_id`: the attachment is identified by its three endpoints — address, instance and port; changing one is a different attachment.
 
 ## Example Usage
 

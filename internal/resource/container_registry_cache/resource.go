@@ -19,6 +19,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/writeonly"
 )
 
@@ -73,7 +74,8 @@ func (r *cacheResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"something still at the upstream, so a later pull simply re-fetches, but your stored-bytes " +
 			"figure falls as the content goes.\n\n" +
 			"The registry must already exist: a cache cannot be created before the tenant has opted " +
-			"in with a `frostmoln_container_registry` resource.",
+			"in with a `frostmoln_container_registry` resource." +
+			"\n\n" + scopedecl.Summary("frostmoln_container_registry_cache"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The upstream key. A tenant holds at most one cache per upstream and the " +

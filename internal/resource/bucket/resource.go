@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -38,7 +39,7 @@ func (r *bucketResource) Metadata(_ context.Context, req resource.MetadataReques
 
 func (r *bucketResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages an object storage bucket in the Frostmoln platform.",
+		Description: "Manages an object storage bucket in the Frostmoln platform." + "\n\n" + scopedecl.Summary("frostmoln_bucket"),
 		Attributes: map[string]schema.Attribute{
 			"name": schema.StringAttribute{
 				Description: "The name of the bucket. Also serves as the unique identifier.",

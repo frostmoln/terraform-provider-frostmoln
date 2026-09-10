@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -171,7 +172,8 @@ func (r *vpcRouteResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"cannot be imported.\n\n" +
 			"Every attribute forces replacement. A route has no server-side identity beyond its " +
 			"destination and there is no in-place update for one, so a change destroys and " +
-			"re-creates the route.",
+			"re-creates the route." +
+			"\n\n" + scopedecl.Summary("frostmoln_vpc_route"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The identifier of the route, `{vpc_id}/{destination}`. A route has no " +

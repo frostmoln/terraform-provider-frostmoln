@@ -4,11 +4,20 @@ page_title: "frostmoln_mysql_read_replica Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a read replica of a managed MySQL instance. Read replicas are immutable after creation.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Create-immutable — flavor_id, instance_id, name: a replica's source, name and flavor are fixed at create — a change re-creates the replica.
+  Observed, not enacted — replication_lag_bytes: the live replication position as the platform reports it — it moves continuously.
 ---
 
 # frostmoln_mysql_read_replica (Resource)
 
 Manages a read replica of a managed MySQL instance. Read replicas are immutable after creation.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Create-immutable** — `flavor_id`, `instance_id`, `name`: a replica's source, name and flavor are fixed at create — a change re-creates the replica.
+
+**Observed, not enacted** — `replication_lag_bytes`: the live replication position as the platform reports it — it moves continuously.
 
 ## Example Usage
 

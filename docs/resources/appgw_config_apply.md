@@ -7,6 +7,9 @@ description: |-
   Authoring is not applying. A listener, route, backend, certificate or published WAF version is recorded when you apply it, but the gateway keeps serving what it last acknowledged until a configuration apply dispatches the change. Without this resource in your configuration, terraform apply records your intent and the gateway does not serve it.
   Feed each child's updated_at into triggers — see the example. Because the server sets those timestamps on every write, any change to a listener, route, pool, backend or certificate changes an input here, so Terraform's own graph orders this last and re-runs it exactly when something changed. This resource also re-plans on its own whenever the gateway has authored changes it is not serving, which covers a deleted child and an edit made outside Terraform.
   ~> This resource FAILS the apply if the appliance refuses the configuration, quoting the proxy's own words. That is deliberate: a terraform apply that succeeds while the gateway is serving something else is worse than one that fails.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — gateway_id: the apply belongs to its gateway.
 ---
 
 # frostmoln_appgw_config_apply (Resource)
@@ -18,6 +21,12 @@ Dispatches an Application Gateway's authored configuration to the appliance, and
 Feed each child's `updated_at` into `triggers` — see the example. Because the server sets those timestamps on every write, any change to a listener, route, pool, backend or certificate changes an input here, so Terraform's own graph orders this last and re-runs it exactly when something changed. This resource also re-plans on its own whenever the gateway has authored changes it is not serving, which covers a deleted child and an edit made outside Terraform.
 
 ~> This resource FAILS the apply if the appliance refuses the configuration, quoting the proxy's own words. That is deliberate: a `terraform apply` that succeeds while the gateway is serving something else is worse than one that fails.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `gateway_id`: the apply belongs to its gateway.
 
 ## Example Usage
 

@@ -7,6 +7,9 @@ description: |-
   There is no storage-class transition rule and no per-object-tag filter: objects are not moved between storage classes on a schedule, and the lifecycle API does not model tag filters. Neither is offered here, so scope a rule with prefix.
   REPLACE SEMANTICS: a bucket carries a single lifecycle configuration and applying this resource replaces it whole.
   DO NOT MANAGE THE SAME BUCKET BOTH HERE AND OVER S3. A rule created with your own S3 credentials using a feature this API does not model — a tag filter, a date-based expiry, an object-size filter — is read back WITHOUT that feature, and Terraform then rewrites it stripped. For a rule that expires objects, losing its filter means the rewritten rule DELETES EVERY OBJECT IN THE BUCKET on the schedule that was meant for a subset. The plan shows this as a filter disappearing rather than as a deletion scope widening, so read any plan that removes a prefix from an expiration rule carefully.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — bucket: the configuration document belongs to its bucket — the bucket IS the resource's identity.
 ---
 
 # frostmoln_bucket_lifecycle_configuration (Resource)
@@ -18,6 +21,12 @@ There is no storage-class transition rule and no per-object-tag filter: objects 
 REPLACE SEMANTICS: a bucket carries a single lifecycle configuration and applying this resource replaces it whole.
 
 DO NOT MANAGE THE SAME BUCKET BOTH HERE AND OVER S3. A rule created with your own S3 credentials using a feature this API does not model — a tag filter, a date-based expiry, an object-size filter — is read back WITHOUT that feature, and Terraform then rewrites it stripped. For a rule that expires objects, losing its filter means the rewritten rule DELETES EVERY OBJECT IN THE BUCKET on the schedule that was meant for a subset. The plan shows this as a filter disappearing rather than as a deletion scope widening, so read any plan that removes a prefix from an expiration rule carefully.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `bucket`: the configuration document belongs to its bucket — the bucket IS the resource's identity.
 
 ## Example Usage
 

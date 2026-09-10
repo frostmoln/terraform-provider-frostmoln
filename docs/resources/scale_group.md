@@ -4,11 +4,20 @@ page_title: "frostmoln_scale_group Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages an auto-scaling group in the Frostmoln platform.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Observed, not enacted — current_size: the autoscaler moves it continuously under the customer — desired_capacity is the intent, this is the truth.
 ---
 
 # frostmoln_scale_group (Resource)
 
 Manages an auto-scaling group in the Frostmoln platform.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Observed, not enacted** — `current_size`: the autoscaler moves it continuously under the customer — `desired_capacity` is the intent, this is the truth.
 
 ## Example Usage
 

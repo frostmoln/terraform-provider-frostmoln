@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 // Node-pool statuses (kubernetes service vocabulary). Deletes are SOFT: a
@@ -85,7 +86,8 @@ func (r *kubernetesNodePoolResource) Schema(_ context.Context, _ resource.Schema
 		Description: "Manages an additional node pool on a managed Kubernetes cluster. " +
 			"The cluster's INITIAL node pool is owned by the frostmoln_kubernetes_cluster " +
 			"resource (its initial_node_pool block) and cannot be managed here. " +
-			"A cluster must keep at least one node pool — deleting the last one is refused by the API.",
+			"A cluster must keep at least one node pool — deleting the last one is refused by the API." +
+			"\n\n" + scopedecl.Summary("frostmoln_kubernetes_node_pool"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the node pool.",

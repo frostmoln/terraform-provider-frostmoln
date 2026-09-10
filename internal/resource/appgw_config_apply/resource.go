@@ -55,6 +55,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -172,7 +173,8 @@ func (r *applyResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"deleted child and an edit made outside Terraform.\n\n" +
 			"~> This resource FAILS the apply if the appliance refuses the configuration, quoting " +
 			"the proxy's own words. That is deliberate: a `terraform apply` that succeeds while the " +
-			"gateway is serving something else is worse than one that fails.",
+			"gateway is serving something else is worse than one that fails." +
+			"\n\n" + scopedecl.Summary("frostmoln_appgw_config_apply"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description:   "The gateway id and the applied revision, joined.",

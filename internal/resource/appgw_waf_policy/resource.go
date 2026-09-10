@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -223,7 +224,8 @@ func (r *policyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			"gateway applies its configuration.\n\n" +
 			"Settings are part of what a dry-run is taken against, so changing one invalidates the " +
 			"current dry-run and the next publish needs a fresh one. That is deliberate: the dry-run " +
-			"must describe the ruleset that is about to go live, settings included.",
+			"must describe the ruleset that is about to go live, settings included." +
+			"\n\n" + scopedecl.Summary("frostmoln_appgw_waf_policy"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description:   "The unique identifier of the WAF policy.",
@@ -603,11 +605,15 @@ func (r *policyResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 		changed bool
 		known   types.List
 	}{
-		{"effective_allowed_methods",
-			!plan.AllowedMethods.Equal(state.AllowedMethods), state.EffectiveAllowedMethods},
-		{"effective_allowed_request_content_types",
+		{
+			"effective_allowed_methods",
+			!plan.AllowedMethods.Equal(state.AllowedMethods), state.EffectiveAllowedMethods,
+		},
+		{
+			"effective_allowed_request_content_types",
 			!plan.AllowedRequestContentTypes.Equal(state.AllowedRequestContentTypes),
-			state.EffectiveAllowedRequestContentTypes},
+			state.EffectiveAllowedRequestContentTypes,
+		},
 	} {
 		if eff.changed {
 			resp.Plan.SetAttribute(ctx, path.Root(eff.attr), types.ListUnknown(types.StringType))

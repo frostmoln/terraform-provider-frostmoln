@@ -7,6 +7,9 @@ description: |-
   Writing a rule changes nothing a request sees. It lands on the draft, and takes effect when a frostmoln_appgw_waf_policy_publication publishes it and the gateway applies its configuration.
   rule_key is the rule's identity everywhere: it is this resource's id, the anchor a diff is keyed on, and what a report points at. Changing it replaces the rule.
   This resource manages tenant-owned rules only. Platform rules cannot be created, edited or deleted; read them with the frostmoln_appgw_waf_platform_rules data source.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — gateway_id, policy_id, rule_key: the rule is identified by its key within its policy; changing one is a different rule.
 ---
 
 # frostmoln_appgw_waf_rule (Resource)
@@ -18,6 +21,12 @@ Writing a rule changes nothing a request sees. It lands on the draft, and takes 
 `rule_key` is the rule's identity everywhere: it is this resource's id, the anchor a diff is keyed on, and what a report points at. Changing it replaces the rule.
 
 This resource manages **tenant-owned** rules only. Platform rules cannot be created, edited or deleted; read them with the `frostmoln_appgw_waf_platform_rules` data source.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `gateway_id`, `policy_id`, `rule_key`: the rule is identified by its key within its policy; changing one is a different rule.
 
 ## Example Usage
 

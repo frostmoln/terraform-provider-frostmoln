@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -55,7 +56,7 @@ func (r *scaleGroupResource) Metadata(_ context.Context, req resource.MetadataRe
 
 func (r *scaleGroupResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages an auto-scaling group in the Frostmoln platform.",
+		Description: "Manages an auto-scaling group in the Frostmoln platform." + "\n\n" + scopedecl.Summary("frostmoln_scale_group"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the scale group.",

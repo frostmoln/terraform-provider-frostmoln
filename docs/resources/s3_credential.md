@@ -4,11 +4,20 @@ page_title: "frostmoln_s3_credential Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages an S3 credential in the Frostmoln platform. Credentials are immutable: changing the name, description, or any scope attribute (allowed_buckets/allowed_actions/ip_whitelist) replaces the credential and issues a new secret_access_key, so update any downstream consumers. Per-credential scoping requires an IAM-capable object-storage backend.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Create-immutable — allowed_actions, allowed_buckets, description, ip_whitelist, name: a credential has no update route — changing what it may do re-mints it and issues a new secret.
+  Observed, not enacted — secret_access_key: returned once at create and never again — a refresh cannot read it back.
 ---
 
 # frostmoln_s3_credential (Resource)
 
 Manages an S3 credential in the Frostmoln platform. Credentials are immutable: changing the name, description, or any scope attribute (allowed_buckets/allowed_actions/ip_whitelist) replaces the credential and issues a new secret_access_key, so update any downstream consumers. Per-credential scoping requires an IAM-capable object-storage backend.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Create-immutable** — `allowed_actions`, `allowed_buckets`, `description`, `ip_whitelist`, `name`: a credential has no update route — changing what it may do re-mints it and issues a new secret.
+
+**Observed, not enacted** — `secret_access_key`: returned once at create and never again — a refresh cannot read it back.
 
 ## Example Usage
 

@@ -21,6 +21,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
 )
 
@@ -339,7 +340,8 @@ func (r *apacheInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 		Version: 1,
 		Description: "Manages a managed Apache webserver instance in the Frostmoln platform." +
 			"\n\n" +
-			schemadoc.GatewayOrderingNote("frostmoln_apache_instance"),
+			schemadoc.GatewayOrderingNote("frostmoln_apache_instance") +
+			"\n\n" + scopedecl.Summary("frostmoln_apache_instance"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the Apache instance.",

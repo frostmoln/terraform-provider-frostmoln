@@ -4,11 +4,17 @@ page_title: "frostmoln_mysql_backup Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a backup of a managed MySQL instance. Backups are immutable after creation.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Create-immutable — instance_id, name, type: a backup is a point-in-time artefact of its instance; changing one is a different backup.
 ---
 
 # frostmoln_mysql_backup (Resource)
 
 Manages a backup of a managed MySQL instance. Backups are immutable after creation.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Create-immutable** — `instance_id`, `name`, `type`: a backup is a point-in-time artefact of its instance; changing one is a different backup.
 
 ## Example Usage
 

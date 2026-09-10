@@ -16,6 +16,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -56,7 +57,8 @@ func (r *s3CredentialResource) Schema(_ context.Context, _ resource.SchemaReques
 		Description: "Manages an S3 credential in the Frostmoln platform. Credentials are immutable: " +
 			"changing the name, description, or any scope attribute (allowed_buckets/allowed_actions/" +
 			"ip_whitelist) replaces the credential and issues a new secret_access_key, so update any " +
-			"downstream consumers. Per-credential scoping requires an IAM-capable object-storage backend.",
+			"downstream consumers. Per-credential scoping requires an IAM-capable object-storage backend." +
+			"\n\n" + scopedecl.Summary("frostmoln_s3_credential"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The access key ID of the S3 credential — the identifier used with secret_access_key when talking to the S3 endpoint, and the value to pass to terraform import.",

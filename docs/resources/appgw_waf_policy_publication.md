@@ -15,6 +15,9 @@ description: |-
   frostmoln_appgw_waf_rule will not manage a platform-owned rule — the tenant may only opt out of one, and only where the platform allows it, using the CLI or the portal. Both of those write the draft, which changes its content hash, which this resource sees as hasUnpublishedChanges. So the next apply publishes that opt-out: a platform protection is switched off by a change that appears in no HCL.
   This provider cannot own that decision, so it makes it visible instead. The plan warns and names each rule, and platform_opt_outs records what the published ruleset disables. Read them: an opt-out is normally a false-positive workaround for an emergency virtual patch, and it is the single most consequential edit a tenant can make to a WAF.
   ~> Destroying this resource does not unpublish anything. A published version stays published — there is no unpublish, by design, because history is never rewritten. Destroy removes it from state and warns; use a rollback to go back to an earlier version.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — gateway_id, policy_id: a publication belongs to its policy on its gateway.
 ---
 
 # frostmoln_appgw_waf_policy_publication (Resource)
@@ -42,6 +45,12 @@ A published version reaches the appliance on the gateway's next configuration ap
 This provider cannot own that decision, so it makes it visible instead. The plan warns and names each rule, and `platform_opt_outs` records what the published ruleset disables. Read them: an opt-out is normally a false-positive workaround for an emergency virtual patch, and it is the single most consequential edit a tenant can make to a WAF.
 
 ~> **Destroying this resource does not unpublish anything.** A published version stays published — there is no unpublish, by design, because history is never rewritten. Destroy removes it from state and warns; use a rollback to go back to an earlier version.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `gateway_id`, `policy_id`: a publication belongs to its policy on its gateway.
 
 ## Example Usage
 

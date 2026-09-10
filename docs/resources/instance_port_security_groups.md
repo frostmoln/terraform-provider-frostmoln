@@ -4,11 +4,20 @@ page_title: "frostmoln_instance_port_security_groups Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages the security groups on a SINGLE network port of a multi-NIC compute instance, leaving the instance's other ports untouched. Use this when an instance's ports need DIFFERENT security-group sets; for one set applied uniformly across every port, set security_groups on the frostmoln_instance resource instead (the two are mutually exclusive ways to manage the same ports).
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — instance_id, port_id: the resource is identified by its instance and port; changing one is a different attachment.
 ---
 
 # frostmoln_instance_port_security_groups (Resource)
 
 Manages the security groups on a SINGLE network port of a multi-NIC compute instance, leaving the instance's other ports untouched. Use this when an instance's ports need DIFFERENT security-group sets; for one set applied uniformly across every port, set security_groups on the frostmoln_instance resource instead (the two are mutually exclusive ways to manage the same ports).
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `instance_id`, `port_id`: the resource is identified by its instance and port; changing one is a different attachment.
 
 ## Example Usage
 

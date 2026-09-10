@@ -14,6 +14,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -36,7 +37,7 @@ func (r *apiKeyResource) Metadata(_ context.Context, req resource.MetadataReques
 
 func (r *apiKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages an API key in the Frostmoln platform.",
+		Description: "Manages an API key in the Frostmoln platform." + "\n\n" + scopedecl.Summary("frostmoln_api_key"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the API key.",

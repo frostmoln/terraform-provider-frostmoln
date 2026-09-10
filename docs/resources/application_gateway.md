@@ -11,6 +11,10 @@ description: |-
   It works only where the gateway is a frostmoln_gateway RESOURCE in the same configuration. A data "frostmoln_gateway" cannot carry the order — a data source is read, never created or destroyed — so depending on one defers a read and sequences nothing.
   Do not write it the other way about — on the gateway, listing what attaches. depends_on orders the resource it is written on, so that reverses both orders and turns a race that sometimes passed into a teardown that fails every time.
   It changes ORDER only: nothing is created and nothing is released. It does not arm the gateway's own destroy either — without acknowledge_connectivity_loss the teardown stops at that refusal instead, and never reaches the ordering at all. And if a gateway was already adopted, nothing needs importing or rebuilding: it is in state already — add the ordering so it cannot recur, then give the gateway the address you meant with public_ip_id, which is applied in place.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — flavor_id, public_ip_id, public_ip_mode, subnet_id, vpc_id: the platform has no in-place migration for it — a change destroys and re-creates the gateway.
+  Observed, not enacted — public_ip: pool-allocated by the platform when the configuration names no public_ip_id. version: platform-managed: chosen by the server at create and upgraded by the platform, never by configuration.
 ---
 
 # frostmoln_application_gateway (Resource)
@@ -30,6 +34,14 @@ It works only where the gateway is a `frostmoln_gateway` RESOURCE in the same co
 Do not write it the other way about — on the gateway, listing what attaches. `depends_on` orders the resource it is written on, so that reverses both orders and turns a race that sometimes passed into a teardown that fails every time.
 
 It changes ORDER only: nothing is created and nothing is released. It does not arm the gateway's own destroy either — without `acknowledge_connectivity_loss` the teardown stops at that refusal instead, and never reaches the ordering at all. And if a gateway was already adopted, nothing needs importing or rebuilding: it is in state already — add the ordering so it cannot recur, then give the gateway the address you meant with `public_ip_id`, which is applied in place.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `flavor_id`, `public_ip_id`, `public_ip_mode`, `subnet_id`, `vpc_id`: the platform has no in-place migration for it — a change destroys and re-creates the gateway.
+
+**Observed, not enacted** — `public_ip`: pool-allocated by the platform when the configuration names no `public_ip_id`. `version`: platform-managed: chosen by the server at create and upgraded by the platform, never by configuration.
 
 ## Example Usage
 

@@ -7,6 +7,8 @@ description: |-
   Two things gate a backend, both deliberately:
   The address must lie inside the gateway's own VPC range. Anything else is refused — without that check the gateway would be an open proxy.Creating a backend does not open the path to it. The platform never edits your security groups implicitly. Use frostmoln_appgw_backend_authorization to add the one ingress rule, which is audited.
   The backend API has no update operation, so every attribute forces a new resource.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Create-immutable — address, gateway_id, pool_id, port, source_id, source_kind, weight: the API has no update route for a backend — a change destroys and re-creates it.
 ---
 
 # frostmoln_appgw_backend (Resource)
@@ -19,6 +21,10 @@ Two things gate a backend, both deliberately:
 2. **Creating a backend does not open the path to it.** The platform never edits your security groups implicitly. Use `frostmoln_appgw_backend_authorization` to add the one ingress rule, which is audited.
 
 The backend API has no update operation, so every attribute forces a new resource.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Create-immutable** — `address`, `gateway_id`, `pool_id`, `port`, `source_id`, `source_kind`, `weight`: the API has no update route for a backend — a change destroys and re-creates it.
 
 ## Example Usage
 

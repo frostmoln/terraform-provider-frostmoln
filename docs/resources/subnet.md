@@ -4,11 +4,23 @@ page_title: "frostmoln_subnet Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a subnet in the Frostmoln Cloud Platform.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — cidr, dns_servers, gateway_ip, vpc_id: the network service has no in-place update for it — a change destroys and re-creates the subnet.
+  Create-immutable — zone: the platform pins the zone at create; there is no in-place migration between zones.
 ---
 
 # frostmoln_subnet (Resource)
 
 Manages a subnet in the Frostmoln Cloud Platform.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `cidr`, `dns_servers`, `gateway_ip`, `vpc_id`: the network service has no in-place update for it — a change destroys and re-creates the subnet.
+
+**Create-immutable** — `zone`: the platform pins the zone at create; there is no in-place migration between zones.
 
 ## Example Usage
 

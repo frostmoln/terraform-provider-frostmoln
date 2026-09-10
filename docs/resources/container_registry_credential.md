@@ -7,6 +7,9 @@ description: |-
   THE SECRET IS RETURNED ONCE, AT CREATION, and there is no rotation endpoint. Terraform persists it to state (so keep your state encrypted and access-controlled) and never expects it on read. A secret lost outside Terraform is recovered by revoking the credential and minting a new one — terraform taint or changing name/capability both do exactly that.
   Credentials are immutable: there is no update route, so changing any argument replaces the credential and issues a new secret. Update your downstream consumers.
   This resource cannot be imported: an imported credential's secret could never be populated, and every subsequent plan would show it as unknown. Revoke and mint instead.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Create-immutable — capability, name: a registry credential has no update route at all — its capability is fixed when minted, so a change replaces the credential and issues a new secret.
+  Observed, not enacted — secret: returned once at create and never again — a refresh cannot read it back.
 ---
 
 # frostmoln_container_registry_credential (Resource)
@@ -18,6 +21,12 @@ THE SECRET IS RETURNED ONCE, AT CREATION, and there is no rotation endpoint. Ter
 Credentials are immutable: there is no update route, so changing any argument replaces the credential and issues a new secret. Update your downstream consumers.
 
 This resource cannot be imported: an imported credential's `secret` could never be populated, and every subsequent plan would show it as unknown. Revoke and mint instead.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Create-immutable** — `capability`, `name`: a registry credential has no update route at all — its capability is fixed when minted, so a change replaces the credential and issues a new secret.
+
+**Observed, not enacted** — `secret`: returned once at create and never again — a refresh cannot read it back.
 
 ## Example Usage
 

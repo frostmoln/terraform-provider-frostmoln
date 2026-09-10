@@ -27,6 +27,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -133,7 +134,8 @@ func (r *attachmentResource) Schema(_ context.Context, _ resource.SchemaRequest,
 			"is nothing blocking to inherit, so those overlays fall back to detect and stop refusing " +
 			"anything.\n\n" +
 			"~> **Attaching is not applying.** The attachment reaches the appliance on the " +
-			"gateway's next configuration apply — see `frostmoln_appgw_config_apply`.",
+			"gateway's next configuration apply — see `frostmoln_appgw_config_apply`." +
+			"\n\n" + scopedecl.Summary("frostmoln_appgw_waf_policy_attachment"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The identifier of this attachment: the point it attaches to.",

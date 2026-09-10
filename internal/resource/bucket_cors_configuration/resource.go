@@ -21,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 // maxCORSRules mirrors the service-side cap (storage BucketServiceConfig).
@@ -60,7 +61,8 @@ func (r *bucketCORSConfigurationResource) Schema(_ context.Context, _ resource.S
 			"`terraform destroy` on this resource leaves the bucket with NO CORS configuration at all, not " +
 			"with the rule it had beforehand. Read the current configuration (terraform import, or the API) " +
 			"before you take it over, and re-declare what is actually there — the portal's origin is " +
-			"deployment configuration, so do not assume a particular hostname.",
+			"deployment configuration, so do not assume a particular hostname." +
+			"\n\n" + scopedecl.Summary("frostmoln_bucket_cors_configuration"),
 		Attributes: map[string]schema.Attribute{
 			"bucket": schema.StringAttribute{
 				Description: "The name of the bucket whose CORS configuration this is. Also the import ID.",

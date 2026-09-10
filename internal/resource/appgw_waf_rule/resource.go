@@ -21,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 // ruleKeyPattern mirrors the server's own rule-key regexp. Matching it here
@@ -125,7 +126,8 @@ func (r *ruleResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			"`rule_key` is the rule's identity everywhere: it is this resource's id, the anchor a " +
 			"diff is keyed on, and what a report points at. Changing it replaces the rule.\n\n" +
 			"This resource manages **tenant-owned** rules only. Platform rules cannot be created, " +
-			"edited or deleted; read them with the `frostmoln_appgw_waf_platform_rules` data source.",
+			"edited or deleted; read them with the `frostmoln_appgw_waf_platform_rules` data source." +
+			"\n\n" + scopedecl.Summary("frostmoln_appgw_waf_rule"),
 		Attributes: map[string]schema.Attribute{
 			"gateway_id": schema.StringAttribute{
 				Description:   "The Application Gateway the policy belongs to.",

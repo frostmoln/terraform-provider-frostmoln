@@ -18,6 +18,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -64,7 +65,8 @@ func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 		Version: 1,
 		Description: "Manages a load balancer in the Frostmoln Cloud Platform. Load balancer creation and " +
 			"deletion are asynchronous, so applies wait on the provisioning operation to complete.\n\n" +
-			schemadoc.GatewayOrderingNote("frostmoln_load_balancer"),
+			schemadoc.GatewayOrderingNote("frostmoln_load_balancer") + "\n\n" +
+			scopedecl.Summary("frostmoln_load_balancer"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the load balancer.",

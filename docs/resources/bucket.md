@@ -4,11 +4,23 @@ page_title: "frostmoln_bucket Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages an object storage bucket in the Frostmoln platform.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — name: the bucket's name IS its identity on the wire — buckets are addressed by name.
+  Create-immutable — region, storage_class: the platform pins it at create; there is no in-place migration.
 ---
 
 # frostmoln_bucket (Resource)
 
 Manages an object storage bucket in the Frostmoln platform.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `name`: the bucket's name IS its identity on the wire — buckets are addressed by name.
+
+**Create-immutable** — `region`, `storage_class`: the platform pins it at create; there is no in-place migration.
 
 ## Example Usage
 

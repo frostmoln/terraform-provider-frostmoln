@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -68,7 +69,8 @@ func (r *iamPolicyAttachmentResource) Schema(_ context.Context, _ resource.Schem
 	resp.Schema = schema.Schema{
 		Description: "Attaches an IAM access policy (`frostmoln_iam_policy`) to a machine principal " +
 			"(an API key or workload identity) or a group. The attachment is immutable — changing " +
-			"any attribute detaches and re-attaches. Use one attachment resource per policy/principal pair.",
+			"any attribute detaches and re-attaches. Use one attachment resource per policy/principal pair." +
+			"\n\n" + scopedecl.Summary("frostmoln_iam_policy_attachment"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "Synthetic identifier: `policy_id/attachee_type/attachee_id`.",

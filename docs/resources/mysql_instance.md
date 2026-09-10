@@ -4,11 +4,23 @@ page_title: "frostmoln_mysql_instance Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a managed MySQL database instance in the Frostmoln platform.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — ha_enabled, subnet_id, version, vpc_id: the platform has no in-place migration for it — a change re-creates the instance.
+  Observed, not enacted — private_ip: platform-assigned from the subnet at create. public_ip: platform-assigned where the offer exposes one.
 ---
 
 # frostmoln_mysql_instance (Resource)
 
 Manages a managed MySQL database instance in the Frostmoln platform.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `ha_enabled`, `subnet_id`, `version`, `vpc_id`: the platform has no in-place migration for it — a change re-creates the instance.
+
+**Observed, not enacted** — `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-assigned where the offer exposes one.
 
 ## Example Usage
 

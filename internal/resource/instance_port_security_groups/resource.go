@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 const (
@@ -66,7 +67,8 @@ func (r *instancePortSecurityGroupsResource) Schema(_ context.Context, _ resourc
 		Description: "Manages the security groups on a SINGLE network port of a multi-NIC compute instance, " +
 			"leaving the instance's other ports untouched. Use this when an instance's ports need DIFFERENT " +
 			"security-group sets; for one set applied uniformly across every port, set security_groups on the " +
-			"frostmoln_instance resource instead (the two are mutually exclusive ways to manage the same ports).",
+			"frostmoln_instance resource instead (the two are mutually exclusive ways to manage the same ports)." +
+			"\n\n" + scopedecl.Summary("frostmoln_instance_port_security_groups"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "Composite identifier ({instance_id}/{port_id}).",

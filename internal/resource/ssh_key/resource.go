@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -37,7 +38,7 @@ func (r *sshKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 		// v1: the resource ID moved from the backend uuid to the key name. See
 		// UpgradeState for the v0→v1 migration.
 		Version:     1,
-		Description: "Manages an SSH key in the Frostmoln platform.",
+		Description: "Manages an SSH key in the Frostmoln platform." + "\n\n" + scopedecl.Summary("frostmoln_ssh_key"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The identifier of the SSH key. Compute identifies keys by name " +

@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -88,7 +89,8 @@ func (r *authorizationResource) Schema(_ context.Context, _ resource.SchemaReque
 			"this resource for both, the second reports `adopted = true` and destroying either one " +
 			"closes the path for both. Declare it **once per (security group, port)**, not once per " +
 			"backend.\n\n" +
-			"Every authorize and revoke is recorded in the gateway's audit trail.",
+			"Every authorize and revoke is recorded in the gateway's audit trail." +
+			"\n\n" + scopedecl.Summary("frostmoln_appgw_backend_authorization"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The authorization's identifier. This — not the backend — is what a " +

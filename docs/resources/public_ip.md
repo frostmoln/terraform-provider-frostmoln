@@ -9,6 +9,10 @@ description: |-
   ~> frostmoln_public_ip.instance_id and the frostmoln_public_ip_association resource are mutually exclusive — never use both for the same address. Both express the SAME attachment, so both would manage it: whichever applies second undoes what the first did, every subsequent plan proposes the change again, and the configuration never converges. (It is the same conflict the AWS provider documents between aws_eip.instance and aws_eip_association.)
   Pick one per address. Use frostmoln_public_ip.instance_id when the SAME configuration allocates the address, so the address and its attachment are created and destroyed together.
   Use frostmoln_public_ip_association when the address ALREADY EXISTS (look it up with the frostmoln_public_ip data source), or when it has to outlive the instance it is attached to. Destroying that resource detaches the address and leaves it allocated to your tenant, whereas destroying a frostmoln_public_ip RELEASES the address for good.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Not enacted state — acknowledge_address_loss: an acknowledgement flag for a destroy that would drop the address — carried in state, not a platform setting the apply pushes.
+  Observed, not enacted — address: platform-assigned at allocation. attachment.kind: the platform attaches addresses for load balancers, clusters and managed web servers under the customer — an attachment made out of band is read back, not fought. attachment.resource_id: the platform attaches addresses for load balancers, clusters and managed web servers under the customer — an attachment made out of band is read back, not fought. attachment.vpc_id: the platform attaches addresses for load balancers, clusters and managed web servers under the customer — an attachment made out of band is read back, not fought.
 ---
 
 # frostmoln_public_ip (Resource)
@@ -24,6 +28,14 @@ There is no undo and no support request that recovers it, so an address anyone e
 Pick one per address. Use **`frostmoln_public_ip.instance_id`** when the SAME configuration allocates the address, so the address and its attachment are created and destroyed together.
 
 Use **`frostmoln_public_ip_association`** when the address ALREADY EXISTS (look it up with the `frostmoln_public_ip` data source), or when it has to outlive the instance it is attached to. Destroying that resource detaches the address and leaves it allocated to your tenant, whereas destroying a `frostmoln_public_ip` RELEASES the address for good.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Not enacted state** — `acknowledge_address_loss`: an acknowledgement flag for a destroy that would drop the address — carried in state, not a platform setting the apply pushes.
+
+**Observed, not enacted** — `address`: platform-assigned at allocation. `attachment.kind`: the platform attaches addresses for load balancers, clusters and managed web servers under the customer — an attachment made out of band is read back, not fought. `attachment.resource_id`: the platform attaches addresses for load balancers, clusters and managed web servers under the customer — an attachment made out of band is read back, not fought. `attachment.vpc_id`: the platform attaches addresses for load balancers, clusters and managed web servers under the customer — an attachment made out of band is read back, not fought.
 
 ## Example Usage
 

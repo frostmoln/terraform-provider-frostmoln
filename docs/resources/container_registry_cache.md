@@ -8,6 +8,10 @@ description: |-
   CACHED BYTES COUNT AGAINST YOUR STORAGE ALLOWANCE. A cache is your storage: one quota, one meter, shared with your repository namespace. It fills on PULL, so it can consume the allowance with no push from you.
   THERE IS NO UPDATE ROUTE. Every argument here is replace-only, including password: changing credentials means destroying the cache and creating it again. DESTROYING A CACHE DELETES ITS CACHED IMAGES, and does not ask — every byte in it is a copy of something still at the upstream, so a later pull simply re-fetches, but your stored-bytes figure falls as the content goes.
   The registry must already exist: a cache cannot be created before the tenant has opted in with a frostmoln_container_registry resource.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — password, password_wo_version, upstream, username: the cache's upstream and its credentials are fixed at create — a change re-creates the cache.
+  Not enacted state — password_wo: write-only: sent, never stored or read back — the password_wo_version companion carries change detection.
 ---
 
 # frostmoln_container_registry_cache (Resource)
@@ -21,6 +25,14 @@ CACHED BYTES COUNT AGAINST YOUR STORAGE ALLOWANCE. A cache is your storage: one 
 THERE IS NO UPDATE ROUTE. Every argument here is replace-only, including `password`: changing credentials means destroying the cache and creating it again. DESTROYING A CACHE DELETES ITS CACHED IMAGES, and does not ask — every byte in it is a copy of something still at the upstream, so a later pull simply re-fetches, but your stored-bytes figure falls as the content goes.
 
 The registry must already exist: a cache cannot be created before the tenant has opted in with a `frostmoln_container_registry` resource.
+
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `password`, `password_wo_version`, `upstream`, `username`: the cache's upstream and its credentials are fixed at create — a change re-creates the cache.
+
+**Not enacted state** — `password_wo`: write-only: sent, never stored or read back — the `password_wo_version` companion carries change detection.
 
 ## Example Usage
 

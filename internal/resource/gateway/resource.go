@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -42,7 +43,8 @@ func (r *gatewayResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 	resp.Schema = schema.Schema{
 		Description: "Manages a VPC's outbound internet path. A VPC has at most one " +
 			"gateway; a VPC without one is an isolated network with no inbound and no " +
-			"outbound connectivity. " + connectivityLossWarning,
+			"outbound connectivity. " + connectivityLossWarning +
+			"\n\n" + scopedecl.Summary("frostmoln_gateway"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The gateway's identifier. It survives a mode change, so it is stable " +

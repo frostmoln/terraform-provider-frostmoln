@@ -35,6 +35,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -221,7 +222,8 @@ func (r *publicationResource) Schema(_ context.Context, _ resource.SchemaRequest
 			"make to a WAF.\n\n" +
 			"~> **Destroying this resource does not unpublish anything.** A published version stays " +
 			"published — there is no unpublish, by design, because history is never rewritten. " +
-			"Destroy removes it from state and warns; use a rollback to go back to an earlier version.",
+			"Destroy removes it from state and warns; use a rollback to go back to an earlier version." +
+			"\n\n" + scopedecl.Summary("frostmoln_appgw_waf_policy_publication"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The identifier of this publication: the policy id and the version it published.",

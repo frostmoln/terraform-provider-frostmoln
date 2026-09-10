@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -62,7 +63,8 @@ func (r *iamPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			"after upgrading reads a 404, drops them from state and proposes a create in the " +
 			"selected tenant, leaving the originals orphaned and no longer managed. Either " +
 			"`terraform state rm` + re-`import` them against the selected tenant, or point " +
-			"`tenant_id` at the home tenant to keep managing them where they are.",
+			"`tenant_id` at the home tenant to keep managing them where they are." +
+			"\n\n" + scopedecl.Summary("frostmoln_iam_policy"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the policy.",

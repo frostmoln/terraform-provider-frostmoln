@@ -16,6 +16,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
 var (
@@ -56,7 +57,8 @@ func (r *gatewayResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			"appliance. `config_generation` is what has been authored; `config_revision` is what the " +
 			"appliance has acknowledged. When they differ there is a change the gateway is not serving." +
 			"\n\n" +
-			schemadoc.GatewayOrderingNote("frostmoln_application_gateway"),
+			schemadoc.GatewayOrderingNote("frostmoln_application_gateway") +
+			"\n\n" + scopedecl.Summary("frostmoln_application_gateway"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the Application Gateway.",
