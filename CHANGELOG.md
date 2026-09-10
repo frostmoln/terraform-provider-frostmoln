@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.56.0] - 2026-09-10
+
+### 🚀 Features
+
+- *(appgw)* The health check's proxy_protocol, and a refresh guard the plan tests could not give (#513)
+- *(provider)* Per-resource authoritative-scope declarations (Mechanic 1) (#515)
+
 ## [0.55.0] - 2026-09-09
 
 ### 🚀 Features
