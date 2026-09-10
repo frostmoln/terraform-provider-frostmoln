@@ -5,7 +5,8 @@ subcategory: ""
 description: |-
   Manages the health check on an Application Gateway backend pool.
   A pool has at most one health check, so this resource is keyed on the pool rather than on an id of its own.
-  The endpoint is a PUT, so each write sends the whole check. Removing an attribute from your configuration does not reset it, though: the value is remembered from state and re-sent, so the plan shows no change. To return an attribute to the platform default, set it explicitly to that default. port is the exception — it is Optional and not Computed, because there is no platform default to remember, so removing it from your configuration really does return the probe to the backend's own port.
+  The endpoint is a PUT, so each write sends the whole check. Removing an attribute from your configuration does not reset it, though: the value is remembered from state and re-sent, so the plan shows no change. To return an attribute to the platform default, set it explicitly to that default.
+  port and proxy_protocol are the exceptions. Deleting either from your configuration really does return it to the platform default, and the plan says so: port reverts to the backend's own port, proxy_protocol to false. They get there differently — port is Optional and not Computed, because there is no platform default to remember, while proxy_protocol carries a schema default of false, which is what the server does with an omitted one.
   Destroying this resource removes the check from the pool, which keeps running: from the next configuration apply the gateway stops probing this pool's backends and treats every enabled one as available. Do that when the backends decide their own availability — a supervised service, or one behind its own load balancer. Otherwise keep a check: without one, a backend that has stopped answering still receives its share of traffic.
 ---
 
@@ -15,7 +16,9 @@ Manages the health check on an Application Gateway backend pool.
 
 A pool has at most one health check, so this resource is keyed on the pool rather than on an id of its own.
 
-The endpoint is a PUT, so each write sends the whole check. Removing an attribute from your configuration does **not** reset it, though: the value is remembered from state and re-sent, so the plan shows no change. To return an attribute to the platform default, set it explicitly to that default. **`port` is the exception** — it is `Optional` and not `Computed`, because there is no platform default to remember, so removing it from your configuration really does return the probe to the backend's own port.
+The endpoint is a PUT, so each write sends the whole check. Removing an attribute from your configuration does **not** reset it, though: the value is remembered from state and re-sent, so the plan shows no change. To return an attribute to the platform default, set it explicitly to that default.
+
+**`port` and `proxy_protocol` are the exceptions.** Deleting either from your configuration really does return it to the platform default, and the plan says so: `port` reverts to the backend's own port, `proxy_protocol` to `false`. They get there differently — `port` is `Optional` and not `Computed`, because there is no platform default to remember, while `proxy_protocol` carries a schema default of `false`, which is what the server does with an omitted one.
 
 Destroying this resource removes the check from the pool, which keeps running: from the next configuration apply the gateway stops probing this pool's backends and treats every enabled one as available. Do that when the backends decide their own availability — a supervised service, or one behind its own load balancer. Otherwise keep a check: without one, a backend that has stopped answering still receives its share of traffic.
 
@@ -55,6 +58,14 @@ resource "frostmoln_appgw_health_check" "mail" {
   protocol = "tcp"
   port     = 8080
 
+  # Naming a probe port opts the probe OUT of the pool's connection settings --
+  # including the PROXY protocol header that pool sends on port 25. Leave this
+  # off when the health endpoint beside the real service does not parse the
+  # header, which is the usual case; set it true when it does. `false` here does
+  # NOT mean "no header on probes": a probe with no `port` of its own inherits
+  # the pool's setting and carries the header already.
+  proxy_protocol = false
+
   interval_seconds = 10
   timeout_seconds  = 3
 }
@@ -82,6 +93,15 @@ Unlike every other attribute here it is not `Computed`: there is no platform def
 - `protocol` (String) How the backend is probed: `http`, `https` or `tcp`.
 
 `http` and `https` send a request and compare the response against `expected_status`. `tcp` opens a connection to the port and closes it, so `path` and `expected_status` do not apply and are refused with it.
+- `proxy_protocol` (Boolean) Send the PROXY protocol v2 header on the **probe** connection, as the pool's own `proxy_protocol` does on the connections carrying traffic. Defaults to `false`.
+
+~> **It only means anything when you set `port`, and `false` does not mean "no header on probes".** A probe with no `port` of its own dials the backend's own address and port, so it inherits the pool's connection settings — this header among them — and already carries it whenever the pool's `proxy_protocol` is on, with this attribute left at `false`. Setting `port` opts the probe out of those settings and takes the header with it; this attribute is how you put it back.
+
+Set it when the port you probe expects the header, and leave it off when it does not — the ordinary case for a health endpoint beside the real service. A server that is not expecting the header reads it as the first bytes of your protocol, the probe fails, and **every** backend in the pool is marked unhealthy while the backends themselves are fine.
+
+~> **The pool's `proxy_protocol` has to be on.** `true` on a pool that sends no header is refused, and so is turning the pool's `proxy_protocol` off while this is on. Terraform updates the pool before the check that references it, so a single apply turning both off fails on the pool: turn this one off first, and the pool's in a later apply.
+
+~> **After `terraform import`, set this explicitly if the check has it on.** It carries a `false` default, so a check whose probe header is already enabled — set through the portal, the CLI or the API — plans `proxy_protocol = true -> false` against a configuration that omits it, and the probe stops sending the header at the next configuration apply. The plan says so; read it.
 - `timeout_seconds` (Number) Seconds a probe may take. Must be strictly less than `interval_seconds`.
 - `unhealthy_threshold` (Number) Consecutive failures before a backend is taken out of rotation.
 

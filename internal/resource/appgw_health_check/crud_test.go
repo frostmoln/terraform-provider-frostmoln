@@ -308,3 +308,107 @@ func importState(t *testing.T) tfsdk.State {
 	}
 	return tfsdk.State{Schema: s, Raw: tftypes.NewValue(obj, attrs)}
 }
+
+// TestHealthCheckReadPicksUpProxyProtocolDrift.
+//
+// 🔴 THE ROUND-TRIP ACCEPTANCE TESTS CANNOT SEE THIS ONE. Both put and Read
+// call fromAPI on a model that ALREADY carries the value -- the plan's in put,
+// state's in Read -- so a fromAPI that simply never assigns proxy_protocol
+// leaves the value that was there and every apply still agrees with itself.
+// Measured: deleting the assignment leaves TestAccHealthCheckProxyProtocolIsPlanStable
+// green. What it breaks is REFRESH: a probe header turned off in the portal, or
+// on, is never noticed, and `terraform plan` reports no change against a server
+// that disagrees with state.
+//
+// So the assertion has to be the one thing the round trip never arranges -- a
+// server answering something state does not already say.
+func TestHealthCheckReadPicksUpProxyProtocolDrift(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		inState  bool
+		onServer bool
+	}{
+		{"turned on elsewhere", false, true},
+		{"turned off elsewhere", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := serve(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != hcPath {
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				hc := hcFixture()
+				hc.ProxyProtocol = tc.onServer
+				_ = json.NewEncoder(w).Encode(hc)
+			})
+			hr := &healthCheckResource{client: c}
+
+			m := hcModel()
+			m.ID = types.StringValue("hc-1")
+			m.ProxyProtocol = types.BoolValue(tc.inState)
+
+			resp := resource.ReadResponse{State: stateOf(t, m)}
+			hr.Read(context.Background(), resource.ReadRequest{State: stateOf(t, m)}, &resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("read: %v", resp.Diagnostics.Errors())
+			}
+			var got HealthCheckModel
+			resp.State.Get(context.Background(), &got)
+			if got.ProxyProtocol.ValueBool() != tc.onServer {
+				t.Fatalf("state kept %v; a refresh must report what the server holds (%v), or the "+
+					"probe header can be changed outside Terraform and no plan ever says so",
+					got.ProxyProtocol.ValueBool(), tc.onServer)
+			}
+		})
+	}
+}
+
+// TestHealthCheckPutSendsProxyProtocol pins the WIRE side of the same
+// attribute: the key spelling and that `false` is encoded by OMISSION, which is
+// what the endpoint reads as false. A PUT states the whole check, so an omitted
+// key is not "leave it as it was" and the two encodings mean one thing.
+func TestHealthCheckPutSendsProxyProtocol(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		set      bool
+		wantKey  bool
+		wantTrue bool
+	}{
+		{"on sends the key", true, true, true},
+		{"off omits the key", false, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var body map[string]any
+			c, _ := serve(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPut || r.URL.Path != hcPath {
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				hc := hcFixture()
+				hc.ProxyProtocol = tc.set
+				w.WriteHeader(http.StatusAccepted)
+				_ = json.NewEncoder(w).Encode(hc)
+			})
+			hr := &healthCheckResource{client: c}
+
+			m := hcModel()
+			m.ProxyProtocol = types.BoolValue(tc.set)
+			resp := resource.CreateResponse{State: emptyState(t)}
+			hr.Create(context.Background(), resource.CreateRequest{Plan: planOf(t, m)}, &resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("create: %v", resp.Diagnostics.Errors())
+			}
+
+			v, present := body["proxyProtocol"]
+			if present != tc.wantKey {
+				t.Fatalf("proxyProtocol present=%v, want %v; body was %v", present, tc.wantKey, body)
+			}
+			if present && v != tc.wantTrue {
+				t.Fatalf("proxyProtocol=%v, want %v", v, tc.wantTrue)
+			}
+		})
+	}
+}

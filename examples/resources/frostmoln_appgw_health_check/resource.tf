@@ -31,6 +31,14 @@ resource "frostmoln_appgw_health_check" "mail" {
   protocol = "tcp"
   port     = 8080
 
+  # Naming a probe port opts the probe OUT of the pool's connection settings --
+  # including the PROXY protocol header that pool sends on port 25. Leave this
+  # off when the health endpoint beside the real service does not parse the
+  # header, which is the usual case; set it true when it does. `false` here does
+  # NOT mean "no header on probes": a probe with no `port` of its own inherits
+  # the pool's setting and carries the header already.
+  proxy_protocol = false
+
   interval_seconds = 10
   timeout_seconds  = 3
 }

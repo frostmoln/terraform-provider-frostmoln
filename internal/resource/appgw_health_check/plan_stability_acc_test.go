@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"sync"
 	"testing"
 
@@ -30,6 +31,13 @@ type healthCheckAPI struct {
 	mu      sync.Mutex
 	check   map[string]any
 	deletes int
+
+	// poolProxyProtocol is the POOL's own proxyProtocol, which this endpoint
+	// CONSULTS: appgw refuses a probe header on a pool that sends none, because
+	// there would be nothing to send. There is no pool resource in this test, so
+	// the setting is a field a test sets before it applies. False by default, as
+	// the platform's is.
+	poolProxyProtocol bool
 }
 
 func (a *healthCheckAPI) handler() http.Handler {
@@ -65,6 +73,20 @@ func (a *healthCheckAPI) handler() http.Handler {
 				})
 				return
 			}
+			// 🔴 THE FAKE MODELS THE CROSS-RESOURCE REFUSAL TOO. appgw rejects
+			// `proxyProtocol: true` when the POOL's own proxyProtocol is off
+			// (internal/domain/backendpool.go). A fake that stored it anyway would
+			// let the provider look correct on a configuration the platform will
+			// not accept.
+			if body["proxyProtocol"] == true && !a.poolProxyProtocol {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"code": "INVALID_REQUEST",
+					"message": "proxyProtocol requires the pool's own proxyProtocol to be enabled; " +
+						"the pool sends no PROXY header, so there would be none to send on the probe",
+				})
+				return
+			}
 			a.check = map[string]any{
 				"id": "hc-1", "poolId": "pool-1",
 				"protocol":       or(body["protocol"], "http"),
@@ -74,7 +96,16 @@ func (a *healthCheckAPI) handler() http.Handler {
 				// backend's own port and is answered as null -- there is no
 				// remembered previous value, unlike every other field here,
 				// which is why the attribute is not Computed.
-				"port":               body["port"],
+				"port": body["port"],
+				// 🔴 THE SAME WHOLE-CHECK RULE AS `port`, AND THE REASON THE
+				// ATTRIBUTE CARRIES A SCHEMA DEFAULT RATHER THAN
+				// UseStateForUnknown. An omitted proxyProtocol is stored FALSE --
+				// it is not left as it was -- so a fake that echoed only what it
+				// was sent, or remembered the previous value, could not fail
+				// against a provider that quietly re-sends `true` for ever.
+				// Always present in the response, never omitted, exactly as the
+				// server emits it.
+				"proxyProtocol":      body["proxyProtocol"] == true,
 				"intervalSeconds":    orNum(body["intervalSeconds"], 10),
 				"timeoutSeconds":     orNum(body["timeoutSeconds"], 5),
 				"healthyThreshold":   orNum(body["healthyThreshold"], 2),
@@ -322,6 +353,127 @@ func TestAccHealthCheckTCPProbeSurvivesAnUpdate(t *testing.T) {
 				},
 				Check: resource.TestCheckResourceAttr(
 					"frostmoln_appgw_health_check.mail", "interval_seconds", "20"),
+			},
+		},
+	})
+}
+
+const hcProbePortWithProxy = `
+resource "frostmoln_appgw_health_check" "mail" {
+  gateway_id       = "agw-1"
+  pool_id          = "pool-1"
+  protocol         = "tcp"
+  port             = 8080
+  proxy_protocol   = true
+  interval_seconds = 10
+}
+`
+
+// The same check with the `proxy_protocol` LINE DELETED -- not set to false.
+// The distinction is the entire subject of the removal test below.
+const hcProbePortNoProxy = `
+resource "frostmoln_appgw_health_check" "mail" {
+  gateway_id       = "agw-1"
+  pool_id          = "pool-1"
+  protocol         = "tcp"
+  port             = 8080
+  interval_seconds = 10
+}
+`
+
+// TestAccHealthCheckProxyProtocolIsPlanStable covers both halves: unset settles
+// on the server's `false` and stays there, set stays what the configuration
+// said.
+func TestAccHealthCheckProxyProtocolIsPlanStable(t *testing.T) {
+	api := startHealthCheckAPI(t)
+	api.poolProxyProtocol = true
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: acctest.TestAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: hcProbePortNoProxy,
+				Check: resource.TestCheckResourceAttr(
+					"frostmoln_appgw_health_check.mail", "proxy_protocol", "false"),
+			},
+			{Config: hcProbePortNoProxy, PlanOnly: true},
+			{
+				Config: hcProbePortWithProxy,
+				Check: resource.TestCheckResourceAttr(
+					"frostmoln_appgw_health_check.mail", "proxy_protocol", "true"),
+			},
+			{Config: hcProbePortWithProxy, PlanOnly: true},
+		},
+	})
+}
+
+// TestAccHealthCheckRemovingProxyProtocolIsLegibleInThePlan is the assertion
+// that discriminates, and no empty-plan or import test can make it.
+//
+// 🔴 WITH UseStateForUnknown INSTEAD OF A Default, DELETING `proxy_protocol`
+// FROM THE CONFIGURATION IS A SILENT NO-OP. toRequest reads the PLAN, and for a
+// null config on an Optional+Computed+UseStateForUnknown attribute the plan
+// value is the STATE value -- so the removed `true` resolves back to true, the
+// plan shows no change, no PUT is sent, and the practitioner is told the apply
+// succeeded while the probe goes on prepending a PROXY header to a port that
+// never asked for one. Nothing reports it: it is not drift, it is a change that
+// was never attempted.
+//
+// A schema Default is the escape. MarkComputedNilsAsUnknown
+// (terraform-plugin-framework, internal/fwserver/server_planresourcechange.go)
+// returns a default-bearing attribute untouched, so the null config plans
+// `false` and the plan reads `proxy_protocol = true -> false`. Against
+// UseStateForUnknown this test fails with
+// "expected Update, got action(s): [no-op]".
+//
+// The step-two Check is the other half: the fake stores an omitted
+// proxyProtocol as FALSE, as the PUT's whole-check rule requires, so a provider
+// that planned false and then re-sent true would be caught by the read-back
+// even if the plan somehow read correctly.
+func TestAccHealthCheckRemovingProxyProtocolIsLegibleInThePlan(t *testing.T) {
+	api := startHealthCheckAPI(t)
+	api.poolProxyProtocol = true
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: acctest.TestAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: hcProbePortWithProxy,
+				Check: resource.TestCheckResourceAttr(
+					"frostmoln_appgw_health_check.mail", "proxy_protocol", "true"),
+			},
+			{
+				Config: hcProbePortNoProxy,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction(
+							"frostmoln_appgw_health_check.mail", plancheck.ResourceActionUpdate),
+						plancheck.ExpectKnownValue("frostmoln_appgw_health_check.mail",
+							tfjsonpath.New("proxy_protocol"), knownvalue.Bool(false)),
+					},
+				},
+				Check: resource.TestCheckResourceAttr(
+					"frostmoln_appgw_health_check.mail", "proxy_protocol", "false"),
+			},
+			{Config: hcProbePortNoProxy, PlanOnly: true},
+		},
+	})
+}
+
+// TestAccHealthCheckProxyProtocolNeedsThePoolsHeader pins the cross-resource
+// refusal the provider CANNOT check locally: it never reads the pool, so the
+// only place this rule exists is the server, and the only honest thing to do
+// with it is surface it. Turning it into a plan-time validator would mean
+// guessing at a value this resource does not hold.
+func TestAccHealthCheckProxyProtocolNeedsThePoolsHeader(t *testing.T) {
+	startHealthCheckAPI(t) // poolProxyProtocol stays false
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: acctest.TestAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      hcProbePortWithProxy,
+				ExpectError: regexp.MustCompile(`proxyProtocol requires the pool's own proxyProtocol`),
 			},
 		},
 	})

@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -36,6 +37,7 @@ type HealthCheckModel struct {
 	Path               types.String `tfsdk:"path"`
 	ExpectedStatus     types.String `tfsdk:"expected_status"`
 	Port               types.Int64  `tfsdk:"port"`
+	ProxyProtocol      types.Bool   `tfsdk:"proxy_protocol"`
 	IntervalSeconds    types.Int64  `tfsdk:"interval_seconds"`
 	TimeoutSeconds     types.Int64  `tfsdk:"timeout_seconds"`
 	HealthyThreshold   types.Int64  `tfsdk:"healthy_threshold"`
@@ -54,6 +56,12 @@ type apiHealthCheck struct {
 	// the backend's own port". The server emits the key unconditionally.
 	Port *int `json:"port"`
 
+	// ProxyProtocol is on the PROBE connection, and is a different setting from
+	// the POOL's field of the same name -- that one is about the connections
+	// carrying traffic. No `omitempty`: the server emits the key on every read,
+	// so a missing key would be a shape change rather than a false.
+	ProxyProtocol bool `json:"proxyProtocol"`
+
 	IntervalSeconds    int `json:"intervalSeconds"`
 	TimeoutSeconds     int `json:"timeoutSeconds"`
 	HealthyThreshold   int `json:"healthyThreshold"`
@@ -69,6 +77,12 @@ type apiPutHealthCheckRequest struct {
 	// returns the probe to the backend's own port. A `*int` holding 0 would be
 	// a port the server refuses; only nil is "unset".
 	Port *int `json:"port,omitempty"`
+
+	// `omitempty` is CORRECT here, unlike on the response above: the server
+	// reads an absent proxyProtocol as false, which is the same value, so the
+	// two encodings mean one thing. A PUT states the whole check, so this is
+	// never "leave it as it was".
+	ProxyProtocol bool `json:"proxyProtocol,omitempty"`
 
 	IntervalSeconds    int `json:"intervalSeconds,omitempty"`
 	TimeoutSeconds     int `json:"timeoutSeconds,omitempty"`
@@ -97,10 +111,13 @@ func (r *healthCheckResource) Schema(_ context.Context, _ resource.SchemaRequest
 			"The endpoint is a PUT, so each write sends the whole check. Removing an attribute " +
 			"from your configuration does **not** reset it, though: the value is remembered from " +
 			"state and re-sent, so the plan shows no change. To return an attribute to the " +
-			"platform default, set it explicitly to that default. **`port` is the exception** — it " +
-			"is `Optional` and not `Computed`, because there is no platform default to remember, so " +
-			"removing it from your configuration really does return the probe to the backend's own " +
-			"port.\n\n" +
+			"platform default, set it explicitly to that default.\n\n" +
+			"**`port` and `proxy_protocol` are the exceptions.** Deleting either from your " +
+			"configuration really does return it to the platform default, and the plan says so: " +
+			"`port` reverts to the backend's own port, `proxy_protocol` to `false`. They get there " +
+			"differently — `port` is `Optional` and not `Computed`, because there is no platform " +
+			"default to remember, while `proxy_protocol` carries a schema default of `false`, which " +
+			"is what the server does with an omitted one.\n\n" +
 			"Destroying this resource removes the check from the pool, which keeps running: from " +
 			"the next configuration apply the gateway stops probing this pool's backends and treats " +
 			"every enabled one as available. Do that when the backends decide their own " +
@@ -173,6 +190,56 @@ func (r *healthCheckResource) Schema(_ context.Context, _ resource.SchemaRequest
 				// (TestAccHealthCheckRemovingThePortIsLegibleInThePlan).
 				Optional:   true,
 				Validators: []validator.Int64{int64validator.Between(1, 65535)},
+			},
+			"proxy_protocol": schema.BoolAttribute{
+				Description: "Send the PROXY protocol v2 header on the **probe** connection, as the pool's " +
+					"own `proxy_protocol` does on the connections carrying traffic. Defaults to `false`.\n\n" +
+					"~> **It only means anything when you set `port`, and `false` does not mean \"no " +
+					"header on probes\".** A probe with no `port` of its own dials the backend's own " +
+					"address and port, so it inherits the pool's connection settings — this header " +
+					"among them — and already carries it whenever the pool's `proxy_protocol` is on, " +
+					"with this attribute left at `false`. Setting `port` opts the probe out of those " +
+					"settings and takes the header with it; this attribute is how you put it back.\n\n" +
+					"Set it when the port you probe expects the header, and leave it off when it does " +
+					"not — the ordinary case for a health endpoint beside the real service. A server " +
+					"that is not expecting the header reads it as the first bytes of your protocol, the " +
+					"probe fails, and **every** backend in the pool is marked unhealthy while the " +
+					"backends themselves are fine.\n\n" +
+					"~> **The pool's `proxy_protocol` has to be on.** `true` on a pool that sends no " +
+					"header is refused, and so is turning the pool's `proxy_protocol` off while this is " +
+					"on. Terraform updates the pool before the check that references it, so a single " +
+					"apply turning both off fails on the pool: turn this one off first, and the pool's " +
+					"in a later apply.\n\n" +
+					"~> **After `terraform import`, set this explicitly if the check has it on.** It " +
+					"carries a `false` default, so a check whose probe header is already enabled — set " +
+					"through the portal, the CLI or the API — plans `proxy_protocol = true -> false` " +
+					"against a configuration that omits it, and the probe stops sending the header at " +
+					"the next configuration apply. The plan says so; read it.",
+				Optional: true,
+				Computed: true,
+				// 🔴 A schema Default, and NO UseStateForUnknown — the opposite of
+				// every other Optional+Computed attribute here, on purpose.
+				//
+				// toRequest reads the PLAN, and for a null config on an
+				// Optional+Computed+UseStateForUnknown attribute the plan value is
+				// the STATE value. So deleting `proxy_protocol = true` from a
+				// configuration would resolve back to true, the plan would show no
+				// change, nothing would be sent, and the practitioner would believe
+				// they had turned the header off while the probe kept sending it.
+				// That is a silent no-op, not drift: nothing anywhere reports it.
+				//
+				// A Default is the escape because MarkComputedNilsAsUnknown
+				// (terraform-plugin-framework, internal/fwserver/server_planresourcechange.go)
+				// returns a default-bearing attribute UNTOUCHED, so the null config
+				// plans false rather than the remembered true, and the plan reads
+				// `proxy_protocol = true -> false`. Same shape as the pool's own
+				// proxy_protocol, and honest for the same reason: the server's
+				// default really is false, it echoes proxyProtocol unconditionally
+				// on every read, and a PUT states the whole check — so the value
+				// predicted from a null config is the value that comes back.
+				//
+				// Pinned by TestAccHealthCheckRemovingProxyProtocolIsLegibleInThePlan.
+				Default: booldefault.StaticBool(false),
 			},
 			"interval_seconds": schema.Int64Attribute{
 				Description: "Seconds between probes.",
@@ -307,6 +374,7 @@ func (m *HealthCheckModel) fromAPI(hc *apiHealthCheck) {
 	} else {
 		m.Port = types.Int64Value(int64(*hc.Port))
 	}
+	m.ProxyProtocol = types.BoolValue(hc.ProxyProtocol)
 	m.IntervalSeconds = types.Int64Value(int64(hc.IntervalSeconds))
 	m.TimeoutSeconds = types.Int64Value(int64(hc.TimeoutSeconds))
 	m.HealthyThreshold = types.Int64Value(int64(hc.HealthyThreshold))
@@ -318,6 +386,7 @@ func (m *HealthCheckModel) toRequest() apiPutHealthCheckRequest {
 		Protocol:           str(m.Protocol),
 		Path:               tcpDropped(m, m.Path),
 		ExpectedStatus:     tcpDropped(m, m.ExpectedStatus),
+		ProxyProtocol:      m.ProxyProtocol.ValueBool(),
 		IntervalSeconds:    int(m.IntervalSeconds.ValueInt64()),
 		TimeoutSeconds:     int(m.TimeoutSeconds.ValueInt64()),
 		HealthyThreshold:   int(m.HealthyThreshold.ValueInt64()),
