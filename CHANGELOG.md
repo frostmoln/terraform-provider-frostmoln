@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.58.0] - 2026-09-11
+
+### 🚀 Features
+
+- *(provider)* [**breaking**] Remove "engine" — the customer chooses a type (#519)
+
 ## [0.57.0] - 2026-09-11
 
 ### 🚀 Features
