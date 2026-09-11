@@ -114,7 +114,8 @@ func (r *cacheResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"username": schema.StringAttribute{
 				Description: "Your own username at the upstream registry. Required for upstreams whose " +
 					"catalog entry says `requires_credentials` (Docker Hub today — read the flag, do " +
-					"not special-case the key); the server enforces it either way. WRITE-ONLY: no " +
+					"not special-case the key); the server enforces it either way. Never echoed back " +
+					"by the API: no " +
 					"endpoint returns it, so Terraform reports whatever it last wrote and cannot " +
 					"detect a change made elsewhere. Changing it replaces the cache.",
 				Optional: true,
@@ -133,7 +134,7 @@ func (r *cacheResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"password": schema.StringAttribute{
 				Description: "Your own password or access token at the upstream registry. Required for " +
 					"upstreams whose catalog entry says `requires_credentials`, together with `username`. " +
-					"WRITE-ONLY AT THE API: no endpoint returns it and there is no update route, so " +
+					"Never echoed back by the API and there is no update route, so " +
 					"changing it REPLACES the cache and deletes what it had cached. NOT VALIDATED at " +
 					"creation — a wrong password surfaces as a failed pull, never as an error from " +
 					"`terraform apply`. " + docs.StateSecretNote +
@@ -579,7 +580,7 @@ func addCreateRefusal(diags interface{ AddError(string, string) }, upstream stri
 			fmt.Sprintf("The %q upstream requires your own credentials", upstream),
 			"This upstream is refused without credentials, because an anonymous mirror of it draws on "+
 				"an allowance shared with other customers. Set `username` and `password` to your own "+
-				"account at that upstream. They are write-only and cannot be changed in place: a later "+
+				"account at that upstream. They are never echoed back by the API and cannot be changed in place: a later "+
 				"change replaces the cache.\n\nError: "+err.Error(),
 		)
 	case isCacheCapReached(err):

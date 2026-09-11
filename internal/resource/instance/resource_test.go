@@ -403,7 +403,7 @@ func TestInstanceModelToCreateRequest(t *testing.T) {
 		Name:            types.StringValue("web-1"),
 		FlavorID:        types.StringValue("flavor-small"),
 		ImageID:         types.StringValue("img-ubuntu"),
-		Zone:            types.StringValue("sweden-a"),
+		Zone:            types.StringValue("falkenberg"),
 		VPCID:           types.StringValue("vpc-123"),
 		SubnetID:        types.StringValue("subnet-456"),
 		SecurityGroups:  sgs,
@@ -428,8 +428,8 @@ func TestInstanceModelToCreateRequest(t *testing.T) {
 	if req.ImageID != "img-ubuntu" {
 		t.Errorf("expected image_id img-ubuntu, got %s", req.ImageID)
 	}
-	if req.Zone != "sweden-a" {
-		t.Errorf("expected zone sweden-a, got %s", req.Zone)
+	if req.Zone != "falkenberg" {
+		t.Errorf("expected zone falkenberg, got %s", req.Zone)
 	}
 	if req.VPCID != "vpc-123" {
 		t.Errorf("expected vpc_id vpc-123, got %s", req.VPCID)
@@ -689,7 +689,7 @@ func TestInstanceModelFromAPI(t *testing.T) {
 		Flavor:     &apiNestedRef{Name: "Small"},
 		ImageID:    "img-ubuntu",
 		Image:      &apiNestedRef{Name: "Ubuntu 24.04"},
-		Zone:       "sweden-a",
+		Zone:       "falkenberg",
 		Networks:   []apiInstanceNetwork{{NetworkID: "vpc-123", SubnetID: "subnet-456"}},
 		PrivateIPs: []string{"10.0.1.5"},
 		PublicIPs:  []string{"203.0.113.10"},
@@ -738,8 +738,8 @@ func TestInstanceModelFromAPI(t *testing.T) {
 	if model.ImageName.ValueString() != "Ubuntu 24.04" {
 		t.Errorf("expected image_name Ubuntu 24.04, got %s", model.ImageName.ValueString())
 	}
-	if model.Zone.ValueString() != "sweden-a" {
-		t.Errorf("expected zone sweden-a, got %s", model.Zone.ValueString())
+	if model.Zone.ValueString() != "falkenberg" {
+		t.Errorf("expected zone falkenberg, got %s", model.Zone.ValueString())
 	}
 	if model.VPCID.ValueString() != "vpc-123" {
 		t.Errorf("expected vpc_id vpc-123, got %s", model.VPCID.ValueString())
@@ -1090,7 +1090,7 @@ func TestInstanceRead(t *testing.T) {
 				Flavor:         &apiNestedRef{Name: "Small"},
 				ImageID:        "img-ubuntu",
 				Image:          &apiNestedRef{Name: "Ubuntu 24.04"},
-				Zone:           "sweden-a",
+				Zone:           "falkenberg",
 				Networks:       []apiInstanceNetwork{{NetworkID: "vpc-123", SubnetID: "subnet-456"}},
 				PrivateIPs:     []string{"10.0.1.5"},
 				PublicIPs:      []string{"203.0.113.10"},

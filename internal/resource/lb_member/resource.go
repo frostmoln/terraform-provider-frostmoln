@@ -150,7 +150,7 @@ func (r *memberResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				},
 			},
 			"cross_vpc": schema.BoolAttribute{
-				Description: "Whether the member is in a different VPC than the load balancer. Write-only acknowledgement flag; preserved in state but never returned by the API. Changing this between two known values forces a new resource. On import this flag cannot be recovered from the API, so it is left null and reconciled (not destroyed) on the first apply that supplies it.",
+				Description: "Whether the member is in a different VPC than the load balancer. Acknowledgement flag: recorded in state but never returned by the API. Changing this between two known values forces a new resource. On import this flag cannot be recovered from the API, so it is left null and reconciled (not destroyed) on the first apply that supplies it.",
 				Optional:    true,
 				PlanModifiers: []planmodifier.Bool{
 					boolplanmodifier.RequiresReplaceIf(

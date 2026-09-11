@@ -86,6 +86,51 @@ func TestModelFromAPIEmptyDescriptionPreservesEmpty(t *testing.T) {
 	}
 }
 
+// TestModelFromAPIDescriptionTriState pins the description echo contract cell
+// by cell — the backend "" echo and the omit-on-the-wire echo are equivalent
+// for a string, and each must land in the right state cell whether the value
+// is prior-configured or prior-unset (the 01a06218 description honesty work
+// pins the WHY: network's neutron layer drops customer descriptions at the
+// storage layer, so the dropped-echo rows are the REAL rows in production, see
+// 01a041f8-4738).
+func TestModelFromAPIDescriptionTriState(t *testing.T) {
+	ctx := context.Background()
+	cases := map[string]struct {
+		prior  types.String
+		echoed *string
+		want   *string // nil = expect null
+	}{
+		"unset stays null on absent echo":       {prior: types.StringNull(), echoed: nil, want: nil},
+		"unset stays null on empty echo":        {prior: types.StringNull(), echoed: strPtr(""), want: nil},
+		"unset adopts a real echo":              {prior: types.StringNull(), echoed: strPtr("platform description"), want: strPtr("platform description")},
+		"configured degrades to empty on drop":  {prior: types.StringValue("mine"), echoed: nil, want: strPtr("")},
+		"configured degrades to empty on \"\"":  {prior: types.StringValue("mine"), echoed: strPtr(""), want: strPtr("")},
+		"configured adopts a real echo":         {prior: types.StringValue("mine"), echoed: strPtr("platform description"), want: strPtr("platform description")},
+		"cleared stays empty, not adopted null": {prior: types.StringValue(""), echoed: nil, want: strPtr("")},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			m := SecurityGroupModel{Description: tc.prior}
+			sg := &apiSecurityGroup{ID: "sg-1", Name: "n", CreatedAt: "t"}
+			if tc.echoed != nil {
+				sg.Description = *tc.echoed
+			}
+			m.fromAPI(ctx, sg, &diag.Diagnostics{})
+			if tc.want == nil {
+				if !m.Description.IsNull() {
+					t.Errorf("expected cell null, got %q", m.Description.ValueString())
+				}
+				return
+			}
+			if m.Description.ValueString() != *tc.want || m.Description.IsNull() {
+				t.Errorf("expected cell %q, got %q (null=%v)", *tc.want, m.Description.ValueString(), m.Description.IsNull())
+			}
+		})
+	}
+}
+
+func strPtr(s string) *string { return &s }
+
 // --- ImportState ---
 
 func TestImportState(t *testing.T) {

@@ -7,7 +7,7 @@ description: |-
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — address, load_balancer_id, pool_id, protocol_port, subnet_id: the member is identified by its pool and address:port; changing one is a different member.
-  Create-immutable — cross_vpc: a write-only acknowledgement flag preserved in state but never returned by the API — changing it between two known values forces a new member (a first apply that supplies it after import reconciles instead).
+  Create-immutable — cross_vpc: an acknowledgement flag carried in state, never returned by the API — changing it between two known values forces a new member (a first apply that supplies it after import reconciles instead).
 ---
 
 # frostmoln_lb_member (Resource)
@@ -20,7 +20,7 @@ Manages a backend member of a Frostmoln load balancer pool.
 
 **Create-immutable** — `address`, `load_balancer_id`, `pool_id`, `protocol_port`, `subnet_id`: the member is identified by its pool and address:port; changing one is a different member.
 
-**Create-immutable** — `cross_vpc`: a write-only acknowledgement flag preserved in state but never returned by the API — changing it between two known values forces a new member (a first apply that supplies it after import reconciles instead).
+**Create-immutable** — `cross_vpc`: an acknowledgement flag carried in state, never returned by the API — changing it between two known values forces a new member (a first apply that supplies it after import reconciles instead).
 
 ## Example Usage
 
@@ -47,7 +47,7 @@ resource "frostmoln_lb_member" "backend_1" {
 
 ### Optional
 
-- `cross_vpc` (Boolean) Whether the member is in a different VPC than the load balancer. Write-only acknowledgement flag; preserved in state but never returned by the API. Changing this between two known values forces a new resource. On import this flag cannot be recovered from the API, so it is left null and reconciled (not destroyed) on the first apply that supplies it.
+- `cross_vpc` (Boolean) Whether the member is in a different VPC than the load balancer. Acknowledgement flag: recorded in state but never returned by the API. Changing this between two known values forces a new resource. On import this flag cannot be recovered from the API, so it is left null and reconciled (not destroyed) on the first apply that supplies it.
 - `name` (String) The name of the member.
 - `subnet_id` (String) The subnet ID the member resides in. Changing this forces a new resource.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))

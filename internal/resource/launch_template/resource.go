@@ -90,7 +90,7 @@ func (r *launchTemplateResource) Schema(_ context.Context, _ resource.SchemaRequ
 					"change made outside Terraform is not detected. " +
 					docs.UserDataStateNote + " Prefer `user_data_wo`, which carries the same document but is " +
 					"never written to state; the two are mutually exclusive.\n\n" +
-					"**Write the document as plain text — `file(\"cloud-init.yaml\")`, not " +
+					"    **Write the document as plain text — `file(\"cloud-init.yaml\")`, not " +
 					"`base64encode(file(...))`.** Base64 is accepted by the API, but it must NOT be " +
 					"used when instances launched from this template also get SSH keys, a console " +
 					"password or `instance_access`. In those cases the platform merges its own " +
@@ -101,7 +101,7 @@ func (r *launchTemplateResource) Schema(_ context.Context, _ resource.SchemaRequ
 					"never runs as cloud-config. Plain text is correct in both directions: a " +
 					"`#cloud-config` document is merged in place, and a `#!` script is combined as " +
 					"intended. See the example below.\n\n" +
-					"Changing this updates the template in place; instances already launched from it " +
+					"    Changing this updates the template in place; instances already launched from it " +
 					"keep the user data they were created with. A cloud-init step that installs " +
 					"packages or calls an external endpoint needs the launched instance's VPC to have " +
 					"an outbound path — declare a `frostmoln_gateway` for the VPC, or the step fails " +

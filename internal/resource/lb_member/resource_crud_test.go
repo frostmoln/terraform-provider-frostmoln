@@ -235,7 +235,7 @@ func TestMemberCreate(t *testing.T) {
 		t.Errorf("expected lbID preserved, got %s", result.LoadBalancerID.ValueString())
 	}
 	if !result.CrossVPC.ValueBool() {
-		t.Error("expected cross_vpc preserved as true (write-only)")
+		t.Error("expected cross_vpc preserved as true (never echoed by the API)")
 	}
 }
 

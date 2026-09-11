@@ -264,7 +264,7 @@ var Declarations = map[string]Decl{
 		ImmutableWhy: "the member is identified by its pool and address:port; changing one is a different member",
 		Immutable: []Field{
 			{Path: "address"},
-			{Path: "cross_vpc", Why: "a write-only acknowledgement flag preserved in state but never returned by the API — changing it between two known values forces a new member (a first apply that supplies it after import reconciles instead)"},
+			{Path: "cross_vpc", Why: "an acknowledgement flag carried in state, never returned by the API — changing it between two known values forces a new member (a first apply that supplies it after import reconciles instead)"},
 			{Path: "load_balancer_id"},
 			{Path: "pool_id"},
 			{Path: "protocol_port"},

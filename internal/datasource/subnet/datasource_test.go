@@ -116,7 +116,7 @@ func TestReadByID(t *testing.T) {
 			VPCID:        "vpc-1",
 			Description:  "Web tier subnet",
 			CIDR:         "10.0.1.0/24",
-			Zone:         "sweden-a",
+			Zone:         "falkenberg",
 			GatewayIP:    "10.0.1.1",
 			Status:       "active",
 			AvailableIPs: 250,
@@ -267,7 +267,7 @@ func TestTFSDK_ReadSubnetByID(t *testing.T) {
 			VPCID:        "vpc-1",
 			Description:  "Web tier",
 			CIDR:         "10.0.1.0/24",
-			Zone:         "sweden-a",
+			Zone:         "falkenberg",
 			GatewayIP:    "10.0.1.1",
 			Status:       "active",
 			AvailableIPs: 250,
@@ -478,7 +478,7 @@ func TestAPISubnetSerialization(t *testing.T) {
 		VPCID:        "vpc-1",
 		Description:  "Test subnet",
 		CIDR:         "10.0.1.0/24",
-		Zone:         "sweden-a",
+		Zone:         "falkenberg",
 		GatewayIP:    "10.0.1.1",
 		Status:       "active",
 		AvailableIPs: 250,
@@ -523,10 +523,10 @@ func TestAPISubnetSerialization(t *testing.T) {
 	}
 
 	var fromWire apiSubnet
-	if err := json.Unmarshal([]byte(`{"cidrBlock":"10.0.9.0/24","availableIpCount":250,"availabilityZone":"sweden-a"}`), &fromWire); err != nil {
+	if err := json.Unmarshal([]byte(`{"cidrBlock":"10.0.9.0/24","availableIpCount":250,"availabilityZone":"falkenberg"}`), &fromWire); err != nil {
 		t.Fatalf("Unmarshal backend payload failed: %v", err)
 	}
-	if fromWire.CIDR != "10.0.9.0/24" || fromWire.AvailableIPs != 250 || fromWire.Zone != "sweden-a" {
+	if fromWire.CIDR != "10.0.9.0/24" || fromWire.AvailableIPs != 250 || fromWire.Zone != "falkenberg" {
 		t.Errorf("backend payload did not populate fields: cidr=%q ips=%d zone=%q", fromWire.CIDR, fromWire.AvailableIPs, fromWire.Zone)
 	}
 }

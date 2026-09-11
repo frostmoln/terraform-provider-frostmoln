@@ -3,6 +3,8 @@ name: Docs
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main] # merge-time safety net: PR checks can be skipped, this cannot (parity-CI leg, gate d)
 
 jobs:
   docs-drift:

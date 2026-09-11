@@ -27,7 +27,7 @@ func TestSubnetModelFromAPI(t *testing.T) {
 		Description:  "A test subnet",
 		CIDR:         "10.0.1.0/24",
 		VPCID:        "vpc-456",
-		Zone:         "sweden-a",
+		Zone:         "falkenberg",
 		GatewayIP:    "10.0.1.1",
 		DNSServers:   []string{"8.8.8.8", "8.8.4.4"},
 		Status:       "active",
@@ -59,8 +59,8 @@ func TestSubnetModelFromAPI(t *testing.T) {
 	if model.VPCID.ValueString() != "vpc-456" {
 		t.Errorf("expected VPCID vpc-456, got %s", model.VPCID.ValueString())
 	}
-	if model.Zone.ValueString() != "sweden-a" {
-		t.Errorf("expected Zone sweden-a, got %s", model.Zone.ValueString())
+	if model.Zone.ValueString() != "falkenberg" {
+		t.Errorf("expected Zone falkenberg, got %s", model.Zone.ValueString())
 	}
 	if model.GatewayIP.ValueString() != "10.0.1.1" {
 		t.Errorf("expected GatewayIP 10.0.1.1, got %s", model.GatewayIP.ValueString())
@@ -125,7 +125,7 @@ func TestSubnetModelToCreateRequest(t *testing.T) {
 		Description: types.StringValue("My subnet"),
 		CIDR:        types.StringValue("10.0.1.0/24"),
 		VPCID:       types.StringValue("vpc-123"),
-		Zone:        types.StringValue("sweden-a"),
+		Zone:        types.StringValue("falkenberg"),
 		GatewayIP:   types.StringValue("10.0.1.1"),
 		DNSServers:  dns,
 		Tags:        tags,
@@ -147,8 +147,8 @@ func TestSubnetModelToCreateRequest(t *testing.T) {
 	if req.VPCID != "vpc-123" {
 		t.Errorf("expected VPCID vpc-123, got %s", req.VPCID)
 	}
-	if req.Zone != "sweden-a" {
-		t.Errorf("expected Zone sweden-a, got %s", req.Zone)
+	if req.Zone != "falkenberg" {
+		t.Errorf("expected Zone falkenberg, got %s", req.Zone)
 	}
 	if req.GatewayIP != "10.0.1.1" {
 		t.Errorf("expected GatewayIP 10.0.1.1, got %s", req.GatewayIP)
@@ -429,7 +429,7 @@ func TestSubnetResourceCreate(t *testing.T) {
 		Name:         "web-subnet",
 		CIDR:         "10.0.1.0/24",
 		VPCID:        "vpc-123",
-		Zone:         "sweden-a",
+		Zone:         "falkenberg",
 		GatewayIP:    "10.0.1.1",
 		Status:       "active",
 		AvailableIPs: 250,
@@ -490,8 +490,8 @@ func TestSubnetResourceCreate(t *testing.T) {
 	if state.CIDR.ValueString() != "10.0.1.0/24" {
 		t.Errorf("expected CIDR 10.0.1.0/24, got %s", state.CIDR.ValueString())
 	}
-	if state.Zone.ValueString() != "sweden-a" {
-		t.Errorf("expected Zone sweden-a, got %s", state.Zone.ValueString())
+	if state.Zone.ValueString() != "falkenberg" {
+		t.Errorf("expected Zone falkenberg, got %s", state.Zone.ValueString())
 	}
 	if state.AvailableIPs.ValueInt64() != 250 {
 		t.Errorf("expected AvailableIPs 250, got %d", state.AvailableIPs.ValueInt64())
@@ -981,7 +981,7 @@ func TestSubnetResourceCreateAdoptsAfterTimeout(t *testing.T) {
 				Name:         "adopted-subnet",
 				CIDR:         "10.0.1.0/24",
 				VPCID:        "vpc-123",
-				Zone:         "sweden-a",
+				Zone:         "falkenberg",
 				Status:       "active",
 				AvailableIPs: 250,
 				CreatedAt:    "2025-06-01T12:00:00Z",

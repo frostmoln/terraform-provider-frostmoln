@@ -140,7 +140,14 @@ func (r *securityGroupResource) Schema(_ context.Context, _ resource.SchemaReque
 				Required:    true,
 			},
 			"description": schema.StringAttribute{
-				Description: "A description of the security group.",
+				// 01a041f8-4738: network's neutron layer reserves its description
+				// field for the sgMetadata blob (ADR-0111), so the customer value is
+				// dropped at create and reads back empty — the fromAPI tri-state in
+				// model.go exists precisely to survive that echo. The description
+				// says so honestly; the wording is pinned by
+				// TestAttributeDescriptionContract (pinnedBehaviorSentences). Flip
+				// this wording when the platform-side metadata table ships.
+				Description: "A description of the security group. The platform does not persist it yet: its storage layer reserves the description field for internal metadata, so the value reads back empty and a configured description reappears as a pending change on every plan until the platform persists it. Do not rely on this attribute for anything an audit trail would need.",
 				Optional:    true,
 			},
 			"vpc_id": schema.StringAttribute{

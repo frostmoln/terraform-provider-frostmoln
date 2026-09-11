@@ -34,7 +34,7 @@ func TestVolumeModel_toCreateRequest(t *testing.T) {
 		Description: types.StringValue("test volume"),
 		SizeGB:      types.Int64Value(100),
 		VolumeType:  types.StringValue("ssd"),
-		Zone:        types.StringValue("sweden-a"),
+		Zone:        types.StringValue("falkenberg"),
 		SnapshotID:  types.StringNull(),
 		Encrypted:   types.BoolValue(true),
 		Tags:        tags,
@@ -57,8 +57,8 @@ func TestVolumeModel_toCreateRequest(t *testing.T) {
 	if req.VolumeType != "ssd" {
 		t.Errorf("expected volumeType ssd, got %s", req.VolumeType)
 	}
-	if req.Zone != "sweden-a" {
-		t.Errorf("expected zone sweden-a, got %s", req.Zone)
+	if req.Zone != "falkenberg" {
+		t.Errorf("expected zone falkenberg, got %s", req.Zone)
 	}
 	if req.SourceSnapshotID != "" {
 		t.Errorf("expected empty snapshotId, got %s", req.SourceSnapshotID)
@@ -115,7 +115,7 @@ func TestVolumeModel_fromAPI(t *testing.T) {
 		Description: "test description",
 		Size:        100,
 		VolumeType:  "ssd",
-		Zone:        "sweden-a",
+		Zone:        "falkenberg",
 		Encrypted:   true,
 		Status:      "available",
 		IOPS:        3000,
@@ -148,8 +148,8 @@ func TestVolumeModel_fromAPI(t *testing.T) {
 	if model.VolumeType.ValueString() != "ssd" {
 		t.Errorf("expected volumeType ssd, got %s", model.VolumeType.ValueString())
 	}
-	if model.Zone.ValueString() != "sweden-a" {
-		t.Errorf("expected zone sweden-a, got %s", model.Zone.ValueString())
+	if model.Zone.ValueString() != "falkenberg" {
+		t.Errorf("expected zone falkenberg, got %s", model.Zone.ValueString())
 	}
 	if !model.Encrypted.ValueBool() {
 		t.Error("expected encrypted true")

@@ -173,7 +173,13 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				// async apply to converge. State keeps the configured set (preserved
 				// from plan in fromAPI, since the instance read returns SG NAMES, not
 				// the UUIDs the user supplied — same identifier-space reason as before).
-				Description: "The security group IDs attached to the instance. Updated in place (replace semantics): changing the set replaces the instance's security groups across all its ports. Setting it to [] or removing the attribute clears ALL security groups (the instance falls back to default-drop — typically no inbound access). Out-of-band changes (made via the portal, CLI, or another client) are detected as drift on refresh when every port shares the same set; if ports hold differing sets, the configured value is preserved and a warning is emitted (edit per port instead).",
+				//
+				// 01a041f8-98ef: the create constraint is REAL and refused inside the
+				// saga — with subnet_id set the port is pinned and provisioning runs
+				// "security_group_ids is required". The description states both sides:
+				// the create-time requirement and the update-only clear path. Pinned
+				// by TestAttributeDescriptionContract (pinnedBehaviorSentences).
+				Description: "The security group IDs attached to the instance. On create, the platform requires at least one security group whenever `subnet_id` is set — a pinned port with no security groups is refused inside the create saga (`security_group_ids is required`), so with `subnet_id` set, set `security_groups` as well. On update, changing the set replaces the instance's security groups across all its ports in place, and setting it to [] or removing the attribute clears ALL security groups (the instance falls back to default-drop — typically no inbound access). Out-of-band changes (made via the portal, CLI, or another client) are detected as drift on refresh when you set `security_groups` in your configuration and every port shares the same set; if you leave the attribute unset, out-of-band changes are not tracked, and if ports hold differing sets the configured value is preserved with a warning (edit per port instead).",
 				Optional:    true,
 				ElementType: types.StringType,
 			},
@@ -191,7 +197,7 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					"state on refresh and a SHA256 hash is stored alongside it for change detection. " +
 					docs.UserDataStateNote + " Prefer `user_data_wo`, which carries the same document but " +
 					"is never written to state; the two are mutually exclusive.\n\n" +
-					"**Write the document as plain text — `file(\"cloud-init.yaml\")`, not " +
+					"    **Write the document as plain text — `file(\"cloud-init.yaml\")`, not " +
 					"`base64encode(file(...))`.** Base64 is accepted by the API, but it must NOT be " +
 					"used on an instance that also sets `ssh_key_names`, `console_password` or " +
 					"`instance_access`. In those cases the platform merges its own cloud-config into " +
@@ -202,11 +208,11 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					"and the only evidence is in the guest's cloud-init log. Plain text is correct in " +
 					"both directions: a `#cloud-config` document is merged in place, and a `#!` script " +
 					"is combined as intended. See the example below.\n\n" +
-					"The hash is taken over the value AS WRITTEN in the configuration, and any change " +
+					"    The hash is taken over the value AS WRITTEN in the configuration, and any change " +
 					"to `user_data` forces the instance to be REPLACED — so moving a live instance off " +
 					"`base64encode(file(...))` onto `file(...)` plans a replacement even though the " +
 					"document itself is unchanged. Worth doing, but do it deliberately.\n\n" +
-					"A cloud-init step that installs packages or calls an external endpoint also needs " +
+					"    A cloud-init step that installs packages or calls an external endpoint also needs " +
 					"the instance's VPC to have an outbound path: declare a `frostmoln_gateway` for the " +
 					"VPC, or the step fails on first boot with no internet and no name resolution.",
 				Optional:  true,

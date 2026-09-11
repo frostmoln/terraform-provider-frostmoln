@@ -1,4 +1,4 @@
 resource "frostmoln_ssh_key" "example" {
   name       = "my-ssh-key"
-  public_key = file("~/.ssh/id_ed25519.pub")
+  public_key = file(pathexpand("~/.ssh/id_ed25519.pub"))
 }
