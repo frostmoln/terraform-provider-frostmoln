@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // NginxInstanceModel is the Terraform state model for a managed Nginx webserver instance.
@@ -30,6 +32,10 @@ type NginxInstanceModel struct {
 	UpdatedAt       types.String `tfsdk:"updated_at"`
 	TenantID        types.String `tfsdk:"tenant_id"`
 	SecurityGroupID types.String `tfsdk:"security_group_id"`
+	// Timeouts is the customer-tunable `timeouts` block. fromAPI never touches
+	// it: the pointer the practitioner configured rides through every model
+	// copy unchanged, which keeps the block stable in state across refreshes.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiWebserverInstance is the API representation of a managed webserver instance.

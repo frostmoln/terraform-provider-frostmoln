@@ -122,6 +122,7 @@ output "waf_enforced_mode" {
 **Defaults to `0`** — publish nothing that breaks anything in the sample. That is the right setting for a change meant to be invisible, and it is the default because a safety control that is off unless you opt in is one most configurations will not have.
 
 Raise it deliberately when a rule is *supposed* to start blocking. There is no way to disable the check entirely: set a number large enough to cover what you intend, and the dry-run's figures are recorded either way.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
 
@@ -141,3 +142,12 @@ It is `null` when the mode in force cannot be determined. Use `try()` or `coales
 These are tenant-authored security decisions that live outside Terraform: `frostmoln_appgw_waf_rule` will not manage a platform rule, so an opt-out is made with the CLI or the portal. Both write the draft, so the next apply of this resource publishes it — and without this attribute the plan would say only "version will be known after apply" while disabling a protection that appears in nobody's configuration. Anything listed here is a protection you are choosing not to run.
 - `published_at` (String) When the version was published.
 - `version` (Number) The version number this publication produced.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

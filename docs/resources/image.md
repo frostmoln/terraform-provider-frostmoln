@@ -3,7 +3,7 @@
 page_title: "frostmoln_image Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a customer custom image (bring-your-own-image). The provider runs the full flow: it creates the image record, uploads the local disk image straight to Frostmoln object storage with the presigned form the platform returns, asks the platform to import it, and waits for the image to reach "active". Only name, description, default_user, min_disk_gb and min_ram_mb can be changed in place — every other attribute, including source_file, replaces the image. Create waits up to 60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import still holds the image; neither budget is configurable.
+  Manages a customer custom image (bring-your-own-image). The provider runs the full flow: it creates the image record, uploads the local disk image straight to Frostmoln object storage with the presigned form the platform returns, asks the platform to import it, and waits for the image to reach "active". Only name, description, default_user, min_disk_gb and min_ram_mb can be changed in place — every other attribute, including source_file, replaces the image. Create waits up to 60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import still holds the image; both budgets are tunable per resource with the timeouts block (create / delete).
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — architecture, container_format, disk_format, os_distro, os_version, source_file, source_file_hash: the image's content and format are fixed once imported — changing one imports a new image.
@@ -11,7 +11,7 @@ description: |-
 
 # frostmoln_image (Resource)
 
-Manages a customer custom image (bring-your-own-image). The provider runs the full flow: it creates the image record, uploads the local disk image straight to Frostmoln object storage with the presigned form the platform returns, asks the platform to import it, and waits for the image to reach "active". Only name, description, default_user, min_disk_gb and min_ram_mb can be changed in place — every other attribute, including source_file, replaces the image. Create waits up to 60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import still holds the image; neither budget is configurable.
+Manages a customer custom image (bring-your-own-image). The provider runs the full flow: it creates the image record, uploads the local disk image straight to Frostmoln object storage with the presigned form the platform returns, asks the platform to import it, and waits for the image to reach "active". Only name, description, default_user, min_disk_gb and min_ram_mb can be changed in place — every other attribute, including source_file, replaces the image. Create waits up to 60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import still holds the image; both budgets are tunable per resource with the `timeouts` block (create / delete).
 
 **Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
 
@@ -172,6 +172,7 @@ resource "frostmoln_instance" "app" {
 - `os_distro` (String) The OS distribution of the image (e.g. "ubuntu", "debian"). Recorded as an image property at creation and cannot be changed afterwards.
 - `os_version` (String) The OS version of the image (e.g. "24.04"). Recorded as an image property at creation and cannot be changed afterwards.
 - `source_file_hash` (String) Optional change trigger for the CONTENTS of source_file, typically filemd5("...") or filesha256("...") over the same path. The provider never computes it itself — hashing a multi-gigabyte disk image on every plan would make every plan read the whole file. Its value is never sent to the API; changing it replaces the image, which re-uploads and re-imports it.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
 
@@ -183,3 +184,12 @@ resource "frostmoln_instance" "app" {
 - `status` (String) The status of the image ("active" once the import has completed).
 - `virtual_size` (Number) The virtual disk size of the image in bytes once expanded.
 - `visibility` (String) The visibility of the image. Customer images are always "private" — the API rejects anything else.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

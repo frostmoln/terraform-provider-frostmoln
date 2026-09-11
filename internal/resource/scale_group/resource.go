@@ -17,7 +17,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
@@ -48,6 +50,21 @@ func (r *scaleGroupResource) getPollTimeout() time.Duration {
 		return r.pollTimeout
 	}
 	return 10 * time.Minute
+}
+
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded.
+// Routing the defaults through the accessor keeps the test-injection seam
+// intact: a test that shrinks pollTimeout shrinks every wait that does not
+// carry an explicit timeouts override, exactly as before.
+func (r *scaleGroupResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return timeouts.Uniform(r.getPollTimeout())
+	}
+	return budgets
 }
 
 func (r *scaleGroupResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -159,6 +176,13 @@ func (r *scaleGroupResource) Schema(_ context.Context, _ resource.SchemaRequest,
 				Computed:    true,
 			},
 		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (10m per verb). A timeouts change
+			// is an in-place no-op on real infrastructure — verified by the
+			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
+			"timeouts": timeouts.Schema(),
+		},
 	}
 }
 
@@ -175,6 +199,67 @@ func (r *scaleGroupResource) Configure(_ context.Context, req resource.Configure
 		return
 	}
 	r.client = c
+}
+
+// apiScaleGroupList is the scale-group family listing (GET /scale-groups) —
+// only the envelope the orphan sweep reads. NOTE the wire key is `data`, not
+// scaleGroups (verified against the scale service). Items are the package's
+// apiScaleGroup.
+type apiScaleGroupList struct {
+	Data []apiScaleGroup `json:"data"`
+}
+
+// adoptCreatedObject runs the create-timeout arm of the orphan contract for a
+// scale group whose provisioning operation outlived the wait (internal/orphan:
+// ADOPT-AS-TRACKED). Found = a fresh read of what the platform HAS, adopted
+// after the apply timed out — the shared warning is orphan's — written through
+// the package's own GET + fromAPI + Set flow. Verified absence = the
+// re-apply-safe error. Unreadable = the platform's last word plus the
+// `fm scale-group list` hint. It never invites `terraform state rm`.
+//
+// waitErr may be a real wait failure or the synthetic "completed but returned
+// no resource ID" note the completed-but-unnamed arm passes in — either way it
+// is what the wait ended with, and the diagnostics must carry it.
+func (r *scaleGroupResource) adoptCreatedObject(ctx context.Context, plan *ScaleGroupModel, floor time.Time, waitErr error, resp *resource.CreateResponse) {
+	adoptedID := orphan.AdoptCreateOnTimeout(ctx, &resp.Diagnostics, orphan.CreateParams{
+		ResourceName: "Scale Group",
+		FMList:       "`fm scale-group list`",
+		WaitErr:      waitErr,
+		Resolve: func(sweepCtx context.Context) (string, error) {
+			listResp, err := r.client.Get(sweepCtx, r.client.TenantPath("/scale-groups"), nil)
+			if err != nil {
+				return "", err
+			}
+			listing, err := client.ParseResponse[apiScaleGroupList](listResp)
+			if err != nil {
+				return "", fmt.Errorf("failed to parse scale group list response: %w", err)
+			}
+			candidates := make([]orphan.Candidate, 0, len(listing.Data))
+			for _, sg := range listing.Data {
+				candidates = append(candidates, orphan.Candidate{ID: sg.ID, Name: sg.Name, CreatedAt: sg.CreatedAt})
+			}
+			return orphan.PickCreated(candidates, plan.Name.ValueString(), floor)
+		},
+	})
+	if adoptedID == "" {
+		return
+	}
+
+	// The honest read: the platform's response, not the configuration's
+	// intent — the same GET + fromAPI + Set flow the ordinary create tail uses
+	// (which mirrors the post-operation read: status and current_size refresh).
+	getResp, err := r.client.Get(ctx, r.client.TenantPath("/scale-groups/"+adoptedID), nil)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to read scale group after creation", err.Error())
+		return
+	}
+	finalSG, err := client.ParseResponse[apiScaleGroup](getResp)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to parse scale group response", err.Error())
+		return
+	}
+	plan.fromAPI(ctx, finalSG, &resp.Diagnostics)
+	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
 
 func (r *scaleGroupResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -199,6 +284,19 @@ func (r *scaleGroupResource) Create(ctx context.Context, req resource.CreateRequ
 	// Operation envelope (operationId only, NOT the scale group). Poll the
 	// operation to completion, then read by its resolved resourceId. A 201 with
 	// the scale-group body is still accepted for a synchronous backend.
+	//
+	// When the wait gives up without the platform having said either yes or no,
+	// the orphan contract's create arm decides: a terminal refusal is reported
+	// as nothing-created, and everything unknown goes through the name/list
+	// sweep (ADOPT-AS-TRACKED) instead of an error that invites state surgery.
+	// applyStarted is the created-at floor for that sweep.
+	applyStarted := time.Now().UTC()
+	floor := applyStarted.Add(-time.Minute)
+
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
 	var scaleGroupID string
 	if apiResp.IsAccepted() {
 		op, opErr := client.ParseResponse[client.Operation](apiResp)
@@ -206,12 +304,24 @@ func (r *scaleGroupResource) Create(ctx context.Context, req resource.CreateRequ
 			resp.Diagnostics.AddError("Failed to parse operation response", opErr.Error())
 			return
 		}
-		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout())
+		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Create)
 		if waitErr != nil {
-			resp.Diagnostics.AddError("Scale group failed to reach active state", waitErr.Error())
+			if r.client.ClassifyOperationFailure(ctx, op.OperationID) == client.OperationRefused {
+				orphan.AddCreateRefused(&resp.Diagnostics, "Scale Group", fmt.Sprintf("the scale group %q", plan.Name.ValueString()), waitErr)
+				return
+			}
+			// Unknown — the sweep decides. Return either way; the helper
+			// wrote the state row or the diagnostic.
+			r.adoptCreatedObject(ctx, &plan, floor, waitErr, resp)
 			return
 		}
 		scaleGroupID = done.ResourceID
+		if scaleGroupID == "" {
+			// Completed but the envelope named no object: the sweep decides.
+			r.adoptCreatedObject(ctx, &plan, floor,
+				fmt.Errorf("the scale group create operation completed but returned no resource ID"), resp)
+			return
+		}
 	} else {
 		sg, parseErr := client.ParseResponse[apiScaleGroup](apiResp)
 		if parseErr != nil {
@@ -223,7 +333,7 @@ func (r *scaleGroupResource) Create(ctx context.Context, req resource.CreateRequ
 	if scaleGroupID == "" {
 		resp.Diagnostics.AddError(
 			"Scale Group Operation Returned No Resource ID",
-			"The scale group create operation completed but returned no resource ID. The scale group may exist in the backend without being tracked in Terraform state - check `fm compute scale-group list` and import it if necessary.",
+			"The scale group create operation completed but returned no resource ID. The scale group may exist in the backend without being tracked in Terraform state - check `fm scale-group list` and import it if necessary.",
 		)
 		return
 	}
@@ -328,10 +438,12 @@ func (r *scaleGroupResource) Delete(ctx context.Context, req resource.DeleteRequ
 		return
 	}
 
-	// Wait for the scale group to be fully deleted (404 on GET).
+	// Wait for the scale group to be fully deleted (404 on GET), on the
+	// timeouts block's delete budget.
+	budgets := r.resolveBudgets(state.Timeouts)
 	_, err = client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budgets.Delete,
 		TargetStates: []string{"deleted"},
 		ErrorStates:  []string{"error"},
 		ResourceName: "scale_group",

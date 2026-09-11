@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // LoadBalancerModel is the Terraform state model for a load balancer.
@@ -28,6 +30,10 @@ type LoadBalancerModel struct {
 	OperatingStatus    types.String `tfsdk:"operating_status"`
 	CreatedAt          types.String `tfsdk:"created_at"`
 	UpdatedAt          types.String `tfsdk:"updated_at"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiLoadBalancer is the API representation of a load balancer.
@@ -50,6 +56,13 @@ type apiLoadBalancer struct {
 	Tags               map[string]string `json:"tags,omitempty"`
 	CreatedAt          string            `json:"createdAt"`
 	UpdatedAt          string            `json:"updatedAt,omitempty"`
+}
+
+// apiLoadBalancerList is the family listing the create-timeout adoption sweep
+// reads (GET /load-balancers → {"loadBalancers":[…]}); it wraps the item shape
+// the package already has.
+type apiLoadBalancerList struct {
+	Items []apiLoadBalancer `json:"loadBalancers"`
 }
 
 // apiCreateLoadBalancerRequest is the API request to create a load balancer.

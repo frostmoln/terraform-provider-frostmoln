@@ -6,6 +6,8 @@ package kubernetes_node_pool
 
 import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // KubernetesNodePoolModel is the Terraform state model for a standalone node pool.
@@ -18,6 +20,10 @@ type KubernetesNodePoolModel struct {
 	Status    types.String `tfsdk:"status"`
 	CreatedAt types.String `tfsdk:"created_at"`
 	UpdatedAt types.String `tfsdk:"updated_at"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiNodePool is the API representation of a node pool (kubernetes service

@@ -62,6 +62,7 @@ output "mysql_endpoint" {
 - `backup_schedule` (String) Cron expression for the backup schedule. Defaults to "0 2 * * *" server-side.
 - `ha_enabled` (Boolean, Deprecated) Not supported for MySQL. High availability is available for PostgreSQL only; setting this to true is rejected.
 - `parameter_group_id` (String) The ID of the parameter group to apply to the instance.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
 
@@ -75,3 +76,12 @@ output "mysql_endpoint" {
 - `status` (String) The current status of the MySQL instance.
 - `tenant_id` (String) The tenant ID that owns this instance.
 - `updated_at` (String) The timestamp when the instance was last updated.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

@@ -16,7 +16,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
@@ -26,11 +28,49 @@ var (
 
 type subnetResource struct {
 	client *client.Client
+
+	// pollInterval and pollTimeout bound the waits for the provisioning
+	// operations a write starts. Fields rather than constants so a test can
+	// drive the timeout in milliseconds; the accessors keep the values this
+	// resource has always hardcoded (2s interval, 5m budget) when unset.
+	pollInterval time.Duration
+	pollTimeout  time.Duration
 }
 
 // NewResource returns a new subnet resource.
 func NewResource() resource.Resource {
 	return &subnetResource{}
+}
+
+func (r *subnetResource) getPollInterval() time.Duration {
+	if r.pollInterval > 0 {
+		return r.pollInterval
+	}
+	return 2 * time.Second
+}
+
+// getPollTimeout is the DEFAULT wait budget — Create and Delete have always
+// polled the provisioning operation against 5m.
+func (r *subnetResource) getPollTimeout() time.Duration {
+	if r.pollTimeout > 0 {
+		return r.pollTimeout
+	}
+	return 5 * time.Minute
+}
+
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded.
+// Routing the defaults through the accessor keeps the test-injection seam
+// intact: a test that shrinks pollTimeout shrinks every wait that does not
+// carry an explicit timeouts override, exactly as before.
+func (r *subnetResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return timeouts.Uniform(r.getPollTimeout())
+	}
+	return budgets
 }
 
 func (r *subnetResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -153,6 +193,13 @@ func (r *subnetResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				},
 			},
 		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (5m per verb). A timeouts change
+			// is an in-place no-op on real infrastructure — verified by the
+			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
+			"timeouts": timeouts.Schema(),
+		},
 	}
 }
 
@@ -194,6 +241,13 @@ func (r *subnetResource) Create(ctx context.Context, req resource.CreateRequest,
 	// Subnet create routes through provisioning → 202 + an Operation envelope
 	// (operationId only, NOT the subnet). Poll the operation, then read by its
 	// resolved resourceId. A non-202 body is parsed directly for a sync backend.
+	applyStarted := time.Now().UTC() // the created-at floor for the discovery sweep
+	floor := applyStarted.Add(-time.Minute)
+
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
 	var subnet apiSubnet
 	if apiResp.IsAccepted() {
 		op, opErr := client.ParseResponse[client.Operation](apiResp)
@@ -201,14 +255,21 @@ func (r *subnetResource) Create(ctx context.Context, req resource.CreateRequest,
 			resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
 			return
 		}
-		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute)
+		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Create)
 		if waitErr != nil {
-			resp.Diagnostics.AddError("Subnet Creation Failed", waitErr.Error())
+			if r.client.ClassifyOperationFailure(ctx, op.OperationID) == client.OperationRefused {
+				orphan.AddCreateRefused(&resp.Diagnostics, "Subnet", fmt.Sprintf("the subnet %q", plan.Name.ValueString()), waitErr)
+				return
+			}
+			// UNKNOWN: the saga may still land. The sweep decides honestly.
+			r.adoptCreatedObject(ctx, plan, floor, waitErr, resp)
 			return
 		}
 		if done.ResourceID == "" {
-			resp.Diagnostics.AddError("Subnet Operation Returned No Resource ID",
-				"The subnet create operation completed but returned no resource ID. Check `fm network subnet list` and import it if necessary.")
+			// The operation COMPLETED without its resourceId (degraded
+			// provisioning). The subnet exists; the sweep resolves it by name.
+			r.adoptCreatedObject(ctx, plan, floor,
+				fmt.Errorf("the subnet create operation completed but returned no resource ID"), resp)
 			return
 		}
 		readResp, readErr := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf("/subnets/%s", done.ResourceID)), nil)
@@ -230,6 +291,61 @@ func (r *subnetResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// adoptCreatedObject resolves an apply whose id the provider lost — a timed-out
+// operation or a completed one that came back without a resourceId — by the
+// family listing, and adopts the result honestly: found means a fresh read of
+// what the platform HAS (not what the configuration asked for); absent means
+// verified absence; unreadable names the platform's last word and the list
+// path. Never `terraform state rm` (internal/orphan holds the copy).
+func (r *subnetResource) adoptCreatedObject(ctx context.Context, plan SubnetModel, floor time.Time, waitErr error, resp *resource.CreateResponse) {
+	vpcID := plan.VPCID.ValueString()
+	id := orphan.AdoptCreateOnTimeout(ctx, &resp.Diagnostics, orphan.CreateParams{
+		ResourceName: "Subnet",
+		FMList:       "`fm network subnet list`",
+		WaitErr:      waitErr,
+		Resolve: func(ctx context.Context) (string, error) {
+			apiResp, err := r.client.Get(ctx, r.client.TenantPath("/subnets"), nil)
+			if err != nil {
+				return "", err
+			}
+			var list apiSubnetList
+			if err := json.Unmarshal(apiResp.Body, &list); err != nil {
+				return "", err
+			}
+			// The listing is tenant-wide, so narrow to the VPC this apply
+			// targets before the pick — the name alone can match a subnet
+			// of another VPC and adopt the wrong object.
+			candidates := make([]orphan.Candidate, 0, len(list.Items))
+			for _, it := range list.Items {
+				if vpcID != "" && it.VPCID != vpcID {
+					continue
+				}
+				candidates = append(candidates, orphan.Candidate{ID: it.ID, Name: it.Name, CreatedAt: it.CreatedAt})
+			}
+			return orphan.PickCreated(candidates, plan.Name.ValueString(), floor)
+		},
+	})
+	if id == "" {
+		return
+	}
+	// HONEST READ: the platform's response, not the configuration's intent.
+	readResp, readErr := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf("/subnets/%s", id)), nil)
+	if readErr != nil {
+		resp.Diagnostics.AddError("Failed to Read Subnet After Adoption", readErr.Error())
+		return
+	}
+	var adopted apiSubnet
+	if err := json.Unmarshal(readResp.Body, &adopted); err != nil {
+		resp.Diagnostics.AddError("Failed to Parse Subnet Response", err.Error())
+		return
+	}
+	plan.fromAPI(ctx, &adopted, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -334,8 +450,16 @@ func (r *subnetResource) Delete(ctx context.Context, req resource.DeleteRequest,
 			resp.Diagnostics.AddError("Failed to Parse Operation Response", err.Error())
 			return
 		}
-		if _, err := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute); err != nil {
-			resp.Diagnostics.AddError("Subnet Deletion Failed", err.Error())
+		subject := state.ID.ValueString()
+
+		// Delete waits on the timeouts block's delete budget, classified like
+		// the rest of the surface: the row stays in both arms, and the copy
+		// tells the practitioner which arm they are in.
+		budgets := r.resolveBudgets(state.Timeouts)
+		if _, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Delete); err != nil {
+			orphan.AddDeleteOutcome(&resp.Diagnostics,
+				r.client.ClassifyOperationFailure(ctx, op.OperationID),
+				"Subnet", subject, err)
 		}
 	}
 }

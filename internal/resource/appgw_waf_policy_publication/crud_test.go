@@ -70,11 +70,26 @@ func pubModel(t *testing.T, maxBlocked types.Int64) PublicationModel {
 	}
 }
 
-func shrinkWaits(t *testing.T) {
+// fastPublicationResource is a resource with the dry-run waits shrunk to
+// milliseconds; the per-resource fields replace the package variables the old
+// shrinkWaits swapped.
+func fastPublicationResource(t *testing.T, c *client.Client) *publicationResource {
 	t.Helper()
-	oi, ot := dryRunPollInterval, dryRunTimeout
-	dryRunPollInterval, dryRunTimeout = 5*time.Millisecond, 150*time.Millisecond
-	t.Cleanup(func() { dryRunPollInterval, dryRunTimeout = oi, ot })
+	return &publicationResource{
+		client:             c,
+		dryRunPollInterval: 5 * time.Millisecond,
+		dryRunTimeout:      150 * time.Millisecond,
+	}
+}
+
+// Without a timeouts block the budgets resolve to the values this resource has
+// always run: a 5m ceiling on the dry-run replay, per verb.
+func TestPublicationBudgetDefaults(t *testing.T) {
+	r := &publicationResource{}
+	budgets := r.resolveBudgets(nil)
+	if budgets.Create != 5*time.Minute || budgets.Update != 5*time.Minute {
+		t.Errorf("publication budget defaults = %v, want 5m for create and update", budgets)
+	}
 }
 
 func serve(t *testing.T, h http.HandlerFunc) *client.Client {
@@ -257,7 +272,6 @@ func TestUnchangedDraftPublishesNothingAndStillNamesWhatIsEnforced(t *testing.T)
 // appliance is not running the inspection engine, and "did not complete in
 // 5m0s" sends an operator to debug Terraform instead of the gateway.
 func TestAPendingDryRunNamesTheRealCause(t *testing.T) {
-	shrinkWaits(t)
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			w.WriteHeader(http.StatusAccepted)
@@ -268,7 +282,7 @@ func TestAPendingDryRunNamesTheRealCause(t *testing.T) {
 			DryRuns: []apiDryRun{{ID: "d-1", Status: "pending"}},
 		})
 	})
-	r := &publicationResource{client: c}
+	r := fastPublicationResource(t, c)
 	resp := resource.CreateResponse{State: emptyState(t)}
 	r.Create(context.Background(), resource.CreateRequest{
 		Plan: planOf(t, pubModel(t, types.Int64Value(0))),
@@ -288,7 +302,6 @@ func TestAPendingDryRunNamesTheRealCause(t *testing.T) {
 
 // TestAFailedDryRunSurfacesItsOwnError rather than a generic timeout.
 func TestAFailedDryRunSurfacesItsOwnError(t *testing.T) {
-	shrinkWaits(t)
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			w.WriteHeader(http.StatusAccepted)
@@ -299,7 +312,7 @@ func TestAFailedDryRunSurfacesItsOwnError(t *testing.T) {
 			{ID: "d-1", Status: "failed", Error: "the ruleset exceeded its evaluation budget"},
 		}})
 	})
-	r := &publicationResource{client: c}
+	r := fastPublicationResource(t, c)
 	resp := resource.CreateResponse{State: emptyState(t)}
 	r.Create(context.Background(), resource.CreateRequest{
 		Plan: planOf(t, pubModel(t, types.Int64Value(0))),

@@ -56,6 +56,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
@@ -64,23 +65,20 @@ var (
 	_ resource.ResourceWithModifyPlan = &applyResource{}
 )
 
-// Apply waits. VARIABLES, not constants, so a test can shrink them: with the
-// real values a test that exercises the never-converges path would run for
-// hours, which means in practice it would not be written — and that is the path
-// an operator actually hits when the appliance refuses a configuration.
-//
-// 🔴 THE CEILING MATCHES THE PLATFORM'S, and must keep matching it. provisioning
-// polls the appliance for 2h (appgwApplyPollDeadline, itself pinned to the agent
-// job's queue-side TTL) inside a 2h15m execution timeout, and appgw's reaper
-// only abandons an attempt after 3h. A shorter ceiling here does not merely give
-// up early: this resource writes no useful state on a wait failure, so the next
-// run re-POSTs, the still-live attempt answers 409 CONFIG_APPLY_IN_FLIGHT, and
-// the workspace is wedged until the reaper fires. apache_instance made the same
-// call for the same mechanism and says so at configApplyTimeout.
-var (
-	applyPollInterval = 5 * time.Second
-	applyTimeout      = 2 * time.Hour
-)
+type applyResource struct {
+	client *client.Client
+
+	// applyPollInterval and applyTimeout used to be PACKAGE VARIABLES so a
+	// test could shrink them: with the real values a test that exercises the
+	// never-converges path would run for hours, which means in practice it
+	// would not be written — and that is the path an operator actually hits
+	// when the appliance refuses a configuration. They are fields on the seam
+	// the rest of the provider uses: same injection mechanism, no shared
+	// mutable package state, and the timeouts block sits on top of these
+	// defaults (see resolveBudgets).
+	applyPollInterval time.Duration
+	applyTimeout      time.Duration
+}
 
 // isTransientApplyConflict reports whether a dispatch 409 is one the server
 // itself documents as self-clearing. Codes, never the bare status: appgw emits
@@ -117,6 +115,11 @@ type Model struct {
 	SHA256    types.String `tfsdk:"sha256"`
 	AppliedAt types.String `tfsdk:"applied_at"`
 	Status    types.String `tfsdk:"status"`
+
+	// Timeouts carries the customer-tunable wait budgets for the apply verbs;
+	// a nil pointer is an absent block, which resolves to the resource's
+	// hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 type apiApplyResult struct {
@@ -134,10 +137,51 @@ type apiGateway struct {
 	ConfigAppliedAt  *string `json:"configAppliedAt,omitempty"`
 }
 
-type applyResource struct{ client *client.Client }
-
 // NewResource returns the frostmoln_appgw_config_apply resource.
 func NewResource() resource.Resource { return &applyResource{} }
+
+func (r *applyResource) getApplyPollInterval() time.Duration {
+	if r.applyPollInterval > 0 {
+		return r.applyPollInterval
+	}
+	return 5 * time.Second
+}
+
+// getApplyTimeout is the whole apply's ceiling, and 🔴 IT MUST KEEP MATCHING THE
+// PLATFORM'S. provisioning polls the appliance for 2h (appgwApplyPollDeadline,
+// itself pinned to the agent job's queue-side TTL) inside a 2h15m execution
+// timeout, and appgw's reaper only abandons an attempt after 3h. A shorter
+// ceiling here does not merely give up early: this resource writes no useful
+// state on a wait failure, so the next run re-POSTs, the still-live attempt
+// answers 409 CONFIG_APPLY_IN_FLIGHT, and the workspace is wedged until the
+// reaper fires. apache_instance made the same call for the same mechanism and
+// says so at configApplyTimeout.
+func (r *applyResource) getApplyTimeout() time.Duration {
+	if r.applyTimeout > 0 {
+		return r.applyTimeout
+	}
+	return 2 * time.Hour
+}
+
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded.
+// Routing the defaults through the accessors keeps the test-injection seam
+// intact: a test that shrinks applyTimeout shrinks every wait that does not
+// carry an explicit timeouts override, exactly as before. Create and Update
+// are BOTH the apply verb (an apply is an act, not a mutable object), each
+// budgeting its own wait; Delete makes no API call — it warns and forgets — so
+// its budget is never consulted and carries the default only to keep the
+// per-verb literal complete.
+func (r *applyResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	defaults := timeouts.Budgets{Create: r.getApplyTimeout(), Update: r.getApplyTimeout(), Delete: r.getApplyTimeout()}
+	budgets, err := m.Resolve(defaults)
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return defaults
+	}
+	return budgets
+}
 
 func (r *applyResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_appgw_config_apply"
@@ -226,6 +270,15 @@ func (r *applyResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Description: "When the appliance acknowledged the configuration.",
 				Computed:    true,
 			},
+		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (both apply verbs 2h — create and
+			// update are the same act). A timeouts change is an in-place no-op
+			// on real infrastructure, as on every resource with this block.
+			// Delete makes NO API call — it warns that the gateway keeps
+			// serving and forgets — so its budget is never consulted.
+			"timeouts": timeouts.Schema(),
 		},
 	}
 }
@@ -316,7 +369,8 @@ func (r *applyResource) Create(ctx context.Context, req resource.CreateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	r.dispatch(ctx, &plan, &resp.Diagnostics)
+	budgets := r.resolveBudgets(plan.Timeouts)
+	r.dispatch(ctx, &plan, &resp.Diagnostics, budgets.Create)
 	// 🔴 STATE IS WRITTEN EVEN ON FAILURE. The apply WAS dispatched; losing that
 	// record means the next run re-POSTs into a live attempt and collects 409
 	// CONFIG_APPLY_IN_FLIGHT until the reaper fires hours later. Terraform keeps
@@ -333,7 +387,8 @@ func (r *applyResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	r.dispatch(ctx, &plan, &resp.Diagnostics)
+	budgets := r.resolveBudgets(plan.Timeouts)
+	r.dispatch(ctx, &plan, &resp.Diagnostics, budgets.Update)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -402,12 +457,14 @@ func (r *applyResource) readGateway(ctx context.Context, id string) (*apiGateway
 	return client.ParseResponse[apiGateway](apiResp)
 }
 
-// dispatch posts the apply and waits for the appliance to answer.
-func (r *applyResource) dispatch(ctx context.Context, m *Model, diags *diag.Diagnostics) {
+// dispatch posts the apply and waits for the appliance to answer. budget is
+// the verb's wait ceiling, resolved from the timeouts block (create and update
+// are the same act, but they are configured separately like on any resource).
+func (r *applyResource) dispatch(ctx context.Context, m *Model, diags *diag.Diagnostics, budget time.Duration) {
 	gwID := m.GatewayID.ValueString()
 
 	apiResp, err := r.client.PostWithConflictRetry(ctx, r.gatewayPath(gwID)+"/config/apply", nil,
-		isTransientApplyConflict, applyPollInterval, applyTimeout)
+		isTransientApplyConflict, r.getApplyPollInterval(), budget)
 	if err != nil {
 		diags.AddError("Failed to Dispatch The Gateway Configuration", err.Error())
 		return
@@ -429,7 +486,7 @@ func (r *applyResource) dispatch(ctx context.Context, m *Model, diags *diag.Diag
 	// swaps it atomically, reloads and probes itself before answering. Returning
 	// here would be the same lie this resource exists to fix, one step further
 	// along.
-	gw, superseded, err := r.waitForVerdict(ctx, gwID, res.Revision)
+	gw, superseded, err := r.waitForVerdict(ctx, gwID, res.Revision, budget)
 	if err != nil {
 		// State is written by the caller even on this path: the apply WAS
 		// dispatched, and losing that means the next run re-POSTs into a live
@@ -459,13 +516,14 @@ func (r *applyResource) dispatch(ctx context.Context, m *Model, diags *diag.Diag
 }
 
 // waitForVerdict polls the gateway until the appliance has answered for this
-// revision. The bool reports that a NEWER revision was acknowledged.
+// revision. The bool reports that a NEWER revision was acknowledged. budget is
+// the verb's wait ceiling; the poll interval stays provider-internal.
 //
 // Uses the shared poller rather than a loop of its own: WaitForState tolerates a
 // transient GET failure to the deadline and names the last poll error in its
 // timeout, which a hand-rolled loop turning one bad read into a fatal error does
 // not.
-func (r *applyResource) waitForVerdict(ctx context.Context, gwID string, revision int64) (*apiGateway, bool, error) {
+func (r *applyResource) waitForVerdict(ctx context.Context, gwID string, revision int64, budget time.Duration) (*apiGateway, bool, error) {
 	var (
 		last        apiGateway
 		superseded  bool
@@ -473,8 +531,8 @@ func (r *applyResource) waitForVerdict(ctx context.Context, gwID string, revisio
 	)
 
 	_, err := client.WaitForState(ctx, client.PollConfig{
-		Interval:     applyPollInterval,
-		Timeout:      applyTimeout,
+		Interval:     r.getApplyPollInterval(),
+		Timeout:      budget,
 		TargetStates: []string{"applied"},
 		ErrorStates:  []string{"failed", "unknown"},
 		ResourceName: "application gateway configuration apply",

@@ -4,6 +4,8 @@ package application_gateway
 
 import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // GatewayModel is the Terraform state model for an Application Gateway.
@@ -32,6 +34,10 @@ type GatewayModel struct {
 
 	CreatedAt types.String `tfsdk:"created_at"`
 	UpdatedAt types.String `tfsdk:"updated_at"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiGateway is the API representation of an Application Gateway.
@@ -85,15 +91,14 @@ type apiUpdateGatewayRequest struct {
 }
 
 // apiCreateGatewayResponse is the 202 body: the row as created, plus the
-// provisioning operation to poll.
+// provisioning operation to poll. It is the ONE envelope in the provider that
+// is not a bare client.Operation (the gateway row rides along), but the
+// operation half converges on the shared type: an embedded client.Operation
+// parses {operationId,status,...} in place, so there is no local operation
+// shape to keep in sync with the wire.
 type apiCreateGatewayResponse struct {
-	Gateway     *apiGateway `json:"gateway"`
-	OperationID string      `json:"operationId"`
-}
-
-// apiOperationResponse is a 202 with no resource body.
-type apiOperationResponse struct {
-	OperationID string `json:"operationId"`
+	Gateway *apiGateway `json:"gateway"`
+	client.Operation
 }
 
 // fromAPI copies the API representation into Terraform state.

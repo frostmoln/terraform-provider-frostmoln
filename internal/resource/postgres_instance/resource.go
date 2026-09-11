@@ -20,6 +20,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
@@ -39,6 +40,21 @@ type postgresInstanceResource struct {
 	pollTimeout  time.Duration
 }
 
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded
+// (getPollTimeout's 30m). Routing the defaults through the accessor keeps the
+// test-injection seam intact: a test that shrinks pollTimeout shrinks every
+// wait that does not carry an explicit timeouts override, exactly as before.
+func (r *postgresInstanceResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return timeouts.Uniform(r.getPollTimeout())
+	}
+	return budgets
+}
+
 func (r *postgresInstanceResource) getPollInterval() time.Duration {
 	if r.pollInterval > 0 {
 		return r.pollInterval
@@ -46,13 +62,15 @@ func (r *postgresInstanceResource) getPollInterval() time.Duration {
 	return 5 * time.Second
 }
 
-// getPollTimeout bounds the create/resize wait.
+// getPollTimeout is the DEFAULT wait budget — the timeouts block's fallback
+// per verb — and the transient-409 retry window on resize.
 //
 // Raised from 15 minutes on 2026-09-03, when the database-ha entitlement was removed
 // and ha_enabled = true became reachable for every tenant. An HA instance is a TWO-VM
 // provision with a replica seed between them, so it is not bounded by the same clock
 // as a single node. 30 minutes matches kubernetes_node_pool, the platform's other
-// multi-VM resource.
+// multi-VM resource. A practitioner with a legitimately slower provision raises it
+// per resource via the `timeouts` block instead of waiting on a provider release.
 //
 // The cliff this timeout used to sit on is GONE: Create now writes the instance id to
 // state BEFORE waiting (see the 202 branch), so a timeout leaves a tracked instance the
@@ -66,11 +84,12 @@ func (r *postgresInstanceResource) getPollTimeout() time.Duration {
 	return 30 * time.Minute
 }
 
-// pollRunning waits until the instance returns to "running" state.
-func (r *postgresInstanceResource) pollRunning(ctx context.Context, id string) (string, error) {
+// pollRunning waits until the instance returns to "running" state. The wait
+// budget is the timeouts block's update (or create, during Create) override.
+func (r *postgresInstanceResource) pollRunning(ctx context.Context, id string, budget time.Duration) (string, error) {
 	return client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budget,
 		TargetStates: []string{"running"},
 		ErrorStates:  []string{"error", "failed"},
 		ResourceName: "postgres_instance",
@@ -88,19 +107,55 @@ func (r *postgresInstanceResource) pollRunning(ctx context.Context, id string) (
 	})
 }
 
-// resizeStorage grows the instance's storage online via POST /resize, then waits
-// for it to return to "running". Grow-only: a shrink is refused in Update.
+// resizeStorage grows the instance's storage online via POST /resize, then
+// waits for the write's verdict. Grow-only: a shrink is refused in Update.
 //
 // The resize retries a TRANSIENT 409 (a mixed apply that also removes a replica
 // can 409 the resize while the replica is mid-delete); a permanent 409 (wrong
 // state) surfaces immediately via IsTransientResizeConflict's default-deny.
-func (r *postgresInstanceResource) resizeStorage(ctx context.Context, id string, storageGB int) error {
-	_, err := r.client.PostWithConflictRetry(ctx, r.client.TenantPath("/databases/"+id+"/resize"), apiResizePostgresInstanceRequest{StorageGB: storageGB}, client.IsTransientResizeConflict, r.getPollInterval(), r.getPollTimeout())
+// The post-resize wait runs on the timeouts block's update budget; the
+// transient-409 retry window itself stays provider-internal.
+func (r *postgresInstanceResource) resizeStorage(ctx context.Context, id string, storageGB int, budget time.Duration) error {
+	resp, err := r.client.PostWithConflictRetry(ctx, r.client.TenantPath("/databases/"+id+"/resize"), apiResizePostgresInstanceRequest{StorageGB: storageGB}, client.IsTransientResizeConflict, r.getPollInterval(), r.getPollTimeout())
 	if err != nil {
 		return err
 	}
-	_, err = r.pollRunning(ctx, id)
-	return err
+	return r.awaitResize(ctx, id, resp, budget)
+}
+
+// awaitResize watches a resize write to its verdict, absorbing the resize gap
+// (Ambix 01a03e62): a 202 answer carries an Operation — the saga is still
+// running — and USED to be discarded (`if _, err := Post`) while a bare
+// status-poll decided; that poll could satisfy itself on the still-current
+// `running` before the saga moved the instance to `resizing` and never saw a
+// resize that FAILED. The database and cache/webserver/messaging services
+// synchronously CAS `running`→`resizing` before answering 202 (verified
+// 2026-09-07), so the first poll now sees `resizing` — but the operation, not
+// the status, is what carries the resize's verdict, so the 202 is polled to
+// completion. The 200 {"status":"resizing"} answer is the legacy synchronous
+// ack — the only case for the status-poll fallback.
+func (r *postgresInstanceResource) awaitResize(ctx context.Context, id string, apiResp *client.Response, budget time.Duration) error {
+	if !apiResp.IsAccepted() {
+		_, fallbackErr := r.pollRunning(ctx, id, budget)
+		return fallbackErr
+	}
+	op, opErr := client.ParseResponse[client.OperationResponse](apiResp)
+	if opErr != nil || op.OperationID == "" {
+		// The saga was accepted and its operation cannot be watched from here.
+		// That is classified — NOT a success and NOT a failure: the resize may
+		// still complete, and retrying blind can hit 409 RESIZE-backed states.
+		unknown := opErr
+		if unknown == nil {
+			unknown = fmt.Errorf("the resize was accepted but returned no operation id")
+		}
+		return fmt.Errorf("resize was accepted but its outcome could not be tracked; the resize may "+
+			"still be running — check the instance status (portal, `fm db postgres instance list`) before retrying: %w", unknown)
+	}
+	if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budget); waitErr != nil {
+		return waitErr
+	}
+	_, runningErr := r.pollRunning(ctx, id, budget)
+	return runningErr
 }
 
 func (r *postgresInstanceResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -288,6 +343,13 @@ func (r *postgresInstanceResource) Schema(_ context.Context, _ resource.SchemaRe
 				},
 			},
 		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (30m per verb). A timeouts change
+			// is an in-place no-op on real infrastructure — verified by the
+			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
+			"timeouts": timeouts.Schema(),
+		},
 	}
 }
 
@@ -317,6 +379,10 @@ func (r *postgresInstanceResource) Create(ctx context.Context, req resource.Crea
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded.
+	budgets := r.resolveBudgets(plan.Timeouts)
 
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/databases"), apiReq)
 	if err != nil {
@@ -372,7 +438,7 @@ func (r *postgresInstanceResource) Create(ctx context.Context, req resource.Crea
 			}
 		}
 
-		done, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout())
+		done, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Create)
 		if err != nil {
 			resp.Diagnostics.AddError("PostgreSQL instance creation failed", err.Error())
 			return
@@ -432,7 +498,7 @@ func (r *postgresInstanceResource) Create(ctx context.Context, req resource.Crea
 	// Poll until instance reaches "running" status.
 	_, err = client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budgets.Create,
 		TargetStates: []string{"running"},
 		ErrorStates:  []string{"error", "failed"},
 		ResourceName: "postgres_instance",
@@ -528,6 +594,7 @@ func (r *postgresInstanceResource) Update(ctx context.Context, req resource.Upda
 	// WARNED about at plan time (storage_gb GrowOnly modifier — an error there would
 	// also block `terraform destroy`), so this is where it is actually refused: fail
 	// with a clear message rather than a silent no-op.
+	budgets := r.resolveBudgets(plan.Timeouts)
 	switch {
 	case plan.StorageGB.ValueInt64() < state.StorageGB.ValueInt64():
 		resp.Diagnostics.AddError(
@@ -537,7 +604,7 @@ func (r *postgresInstanceResource) Update(ctx context.Context, req resource.Upda
 		)
 		return
 	case plan.StorageGB.ValueInt64() > state.StorageGB.ValueInt64():
-		if err := r.resizeStorage(ctx, id, int(plan.StorageGB.ValueInt64())); err != nil {
+		if err := r.resizeStorage(ctx, id, int(plan.StorageGB.ValueInt64()), budgets.Update); err != nil {
 			resp.Diagnostics.AddError("Failed to resize PostgreSQL instance storage", err.Error())
 			return
 		}
@@ -552,7 +619,7 @@ func (r *postgresInstanceResource) Update(ctx context.Context, req resource.Upda
 		}
 
 		// Poll until instance is back to "running" after the update.
-		if _, err := r.pollRunning(ctx, id); err != nil {
+		if _, err := r.pollRunning(ctx, id, budgets.Update); err != nil {
 			resp.Diagnostics.AddError("PostgreSQL instance failed to reach running state after update", err.Error())
 			return
 		}
@@ -593,10 +660,12 @@ func (r *postgresInstanceResource) Delete(ctx context.Context, req resource.Dele
 		return
 	}
 
-	// Wait for the instance to be fully deleted (404 on GET).
+	// Wait for the instance to be fully deleted (404 on GET), on the
+	// timeouts block's delete budget.
+	budgets := r.resolveBudgets(state.Timeouts)
 	_, err = client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budgets.Delete,
 		TargetStates: []string{"deleted"},
 		ErrorStates:  []string{"error"},
 		ResourceName: "postgres_instance",

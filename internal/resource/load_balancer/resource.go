@@ -2,6 +2,7 @@ package load_balancer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -17,8 +18,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
@@ -54,6 +57,21 @@ func (r *loadBalancerResource) getPollTimeout() time.Duration {
 		return r.pollTimeout
 	}
 	return 15 * time.Minute
+}
+
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded.
+// Routing the defaults through the accessor keeps the test-injection seam
+// intact: a test that shrinks pollTimeout shrinks every wait that does not
+// carry an explicit timeouts override, exactly as before.
+func (r *loadBalancerResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return timeouts.Uniform(r.getPollTimeout())
+	}
+	return budgets
 }
 
 func (r *loadBalancerResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -212,6 +230,13 @@ func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 				Computed:    true,
 			},
 		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (15m per verb). A timeouts change
+			// is an in-place no-op on real infrastructure — verified by the
+			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
+			"timeouts": timeouts.Schema(),
+		},
 	}
 }
 
@@ -282,11 +307,20 @@ func (r *loadBalancerResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/load-balancers"), createReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Create Load Balancer", err.Error())
 		return
 	}
+
+	// the created-at floor for the discovery sweep
+	applyStarted := time.Now().UTC()
+	floor := applyStarted.Add(-time.Minute)
+	subject := fmt.Sprintf("the load balancer %q", plan.Name.ValueString())
 
 	var lbID string
 	if apiResp.IsAccepted() {
@@ -297,12 +331,25 @@ func (r *loadBalancerResource) Create(ctx context.Context, req resource.CreateRe
 			resp.Diagnostics.AddError("Failed to Parse Operation Response", err.Error())
 			return
 		}
-		done, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout())
-		if err != nil {
-			resp.Diagnostics.AddError("Load Balancer Creation Failed", err.Error())
+		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Create)
+		if waitErr != nil {
+			if r.client.ClassifyOperationFailure(ctx, op.OperationID) == client.OperationRefused {
+				orphan.AddCreateRefused(&resp.Diagnostics, "Load Balancer", subject, waitErr)
+				return
+			}
+			// UNKNOWN: the saga may still land. The sweep decides honestly.
+			r.adoptCreatedObject(ctx, plan, floor, waitErr, resp)
 			return
 		}
 		lbID = done.ResourceID
+		if lbID == "" {
+			// The operation COMPLETED without its resourceId (degraded
+			// provisioning). The load balancer exists; the sweep resolves it
+			// by name.
+			r.adoptCreatedObject(ctx, plan, floor,
+				fmt.Errorf("the create operation completed but returned no resource ID"), resp)
+			return
+		}
 	} else {
 		// Synchronous create (201) returns the load balancer directly.
 		lb, err := client.ParseResponse[apiLoadBalancer](apiResp)
@@ -333,6 +380,49 @@ func (r *loadBalancerResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// adoptCreatedObject resolves an apply whose id the provider lost — a timed-out
+// operation or a completed one that came back without a resourceId — by the
+// family listing, and adopts the result honestly: found means a fresh read of
+// what the platform HAS (not what the configuration asked for); absent means
+// verified absence; unreadable names the platform's last word and the list
+// path. Never `terraform state rm` (internal/orphan holds the copy).
+func (r *loadBalancerResource) adoptCreatedObject(ctx context.Context, plan LoadBalancerModel, floor time.Time, waitErr error, resp *resource.CreateResponse) {
+	id := orphan.AdoptCreateOnTimeout(ctx, &resp.Diagnostics, orphan.CreateParams{
+		ResourceName: "Load Balancer",
+		FMList:       "`fm lb list`",
+		WaitErr:      waitErr,
+		Resolve: func(ctx context.Context) (string, error) {
+			apiResp, err := r.client.Get(ctx, r.client.TenantPath("/load-balancers"), nil)
+			if err != nil {
+				return "", err
+			}
+			var list apiLoadBalancerList
+			if err := json.Unmarshal(apiResp.Body, &list); err != nil {
+				return "", err
+			}
+			candidates := make([]orphan.Candidate, 0, len(list.Items))
+			for _, it := range list.Items {
+				candidates = append(candidates, orphan.Candidate{ID: it.ID, Name: it.Name, CreatedAt: it.CreatedAt})
+			}
+			return orphan.PickCreated(candidates, plan.Name.ValueString(), floor)
+		},
+	})
+	if id == "" {
+		return
+	}
+	// HONEST READ: the platform's response, not the configuration's intent.
+	lb, readErr := r.getLoadBalancer(ctx, id)
+	if readErr != nil {
+		resp.Diagnostics.AddError("Failed to Read Load Balancer After Adoption", readErr.Error())
+		return
+	}
+	plan.fromAPI(ctx, lb, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -406,6 +496,9 @@ func (r *loadBalancerResource) Delete(ctx context.Context, req resource.DeleteRe
 
 	id := state.ID.ValueString()
 
+	// Wait for the delete to complete on the timeouts block's delete budget.
+	budgets := r.resolveBudgets(state.Timeouts)
+
 	apiResp, err := r.client.Delete(ctx, r.client.TenantPath(fmt.Sprintf("/load-balancers/%s", id)))
 	if err != nil {
 		if client.IsNotFound(err) {
@@ -424,8 +517,12 @@ func (r *loadBalancerResource) Delete(ctx context.Context, req resource.DeleteRe
 			resp.Diagnostics.AddError("Failed to Parse Operation Response", err.Error())
 			return
 		}
-		if _, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout()); err != nil {
-			resp.Diagnostics.AddError("Load Balancer Deletion Failed", err.Error())
+		subject := state.ID.ValueString()
+
+		if _, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Delete); err != nil {
+			orphan.AddDeleteOutcome(&resp.Diagnostics,
+				r.client.ClassifyOperationFailure(ctx, op.OperationID),
+				"Load Balancer", subject, err)
 			return
 		}
 	}

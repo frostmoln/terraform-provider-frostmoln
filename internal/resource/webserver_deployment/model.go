@@ -9,6 +9,8 @@ import (
 	"os"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // WebserverDeploymentModel is the Terraform state model for a content deploy.
@@ -25,6 +27,10 @@ type WebserverDeploymentModel struct {
 	SourceHash    types.String `tfsdk:"source_hash"`
 	DeployID      types.String `tfsdk:"deploy_id"`
 	Status        types.String `tfsdk:"status"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // Deploy status values (mirror webserver domain.DeployStatus).

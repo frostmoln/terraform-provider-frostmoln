@@ -43,6 +43,7 @@ func sgStateValWith(id string, deleteDefaultEgress bool) tftypes.Value {
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, deleteDefaultEgress),
 		"is_default":            tftypes.NewValue(tftypes.Bool, false),
 		"created_at":            tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"timeouts":              tftypes.NewValue(sgObjectType().AttributeTypes["timeouts"], nil),
 	})
 }
 
@@ -124,6 +125,7 @@ func TestCreateAPIError(t *testing.T) {
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
 		"created_at":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":              tftypes.NewValue(sgObjectType().AttributeTypes["timeouts"], nil),
 	})
 	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
 	r.Create(context.Background(), resource.CreateRequest{Plan: tfsdk.Plan{Schema: s, Raw: planVal}}, resp)
@@ -153,6 +155,7 @@ func TestCreateBadResponseBody(t *testing.T) {
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
 		"created_at":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":              tftypes.NewValue(sgObjectType().AttributeTypes["timeouts"], nil),
 	})
 	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
 	r.Create(context.Background(), resource.CreateRequest{Plan: tfsdk.Plan{Schema: s, Raw: planVal}}, resp)
@@ -219,6 +222,7 @@ func TestUpdateAPIError(t *testing.T) {
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, false),
 		"created_at":            tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"timeouts":              tftypes.NewValue(sgObjectType().AttributeTypes["timeouts"], nil),
 	})
 	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s}}
 	r.Update(context.Background(), resource.UpdateRequest{
@@ -250,6 +254,7 @@ func TestUpdateBadResponseBody(t *testing.T) {
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, false),
 		"created_at":            tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"timeouts":              tftypes.NewValue(sgObjectType().AttributeTypes["timeouts"], nil),
 	})
 	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s}}
 	r.Update(context.Background(), resource.UpdateRequest{
@@ -294,6 +299,7 @@ func sgCreatePlanVal(deleteDefaultEgress any) tftypes.Value {
 		"is_default":            tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, deleteDefaultEgress),
 		"created_at":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":              tftypes.NewValue(sgObjectType().AttributeTypes["timeouts"], nil),
 	})
 }
 

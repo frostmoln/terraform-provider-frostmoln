@@ -61,6 +61,7 @@ resource "frostmoln_lb_health_monitor" "backend" {
 - `max_retries` (Number) The number of successful checks before a member is marked healthy.
 - `tags` (Map of String) Key-value tags for the health monitor. These are the monitor's own tags, separate from its pool's and the load balancer's.
 - `timeout` (Number) The time in seconds to wait for a health check response.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `url_path` (String) The HTTP path to probe (http/https monitors).
 
 ### Read-Only
@@ -68,3 +69,12 @@ resource "frostmoln_lb_health_monitor" "backend" {
 - `created_at` (String) The creation timestamp.
 - `id` (String) The unique identifier of the health monitor.
 - `updated_at` (String) The last update timestamp.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

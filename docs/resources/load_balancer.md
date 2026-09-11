@@ -113,6 +113,7 @@ resource "frostmoln_load_balancer" "public_web" {
 Attaching it makes this load balancer depend on the VPC's gateway, which Terraform cannot see — see the ordering note on this resource above.
 - `scheme` (String) Reachability scheme: internal (default, private VIP only) or public (a bring-your-own public IP is attached to the VIP for external reachability). When public, public_ip_id is required. There is no in-place change between schemes; changing this forces a new resource.
 - `tags` (Map of String) Key-value tags for the load balancer.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `type` (String) The load-balancer type: l7 (default) terminates HTTP/HTTPS and TLS and can insert headers; l4 serves TCP/UDP/SCTP only and preserves the client source IP. There is no in-place migration between types; changing this forces a new resource.
 - `vip_address` (String) The virtual IP address of the load balancer. If omitted, an address is allocated automatically. An explicitly-set VIP is effectively immutable: the backend does not support changing a VIP in place, so a changed vip_address in config is ignored on update. To move to a different VIP, taint the resource (terraform taint / -replace) to force a destroy and recreate.
 
@@ -126,3 +127,12 @@ Attaching it makes this load balancer depend on the VPC's gateway, which Terrafo
 - `status` (String) The overall status of the load balancer.
 - `updated_at` (String) The last update timestamp.
 - `vip_port_id` (String) The port ID backing the load balancer VIP.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

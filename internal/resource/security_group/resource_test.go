@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -294,6 +296,13 @@ func sgObjectType() tftypes.Object {
 			"is_default":            tftypes.Bool,
 			"delete_default_egress": tftypes.Bool,
 			"created_at":            tftypes.String,
+			"timeouts": tftypes.Object{
+				AttributeTypes: map[string]tftypes.Type{
+					"create": tftypes.String,
+					"update": tftypes.String,
+					"delete": tftypes.String,
+				},
+			},
 		},
 	}
 }
@@ -399,6 +408,7 @@ func TestResourceCreate(t *testing.T) {
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
 		"created_at":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":              tftypes.NewValue(sgObjectType().AttributeTypes["timeouts"], nil),
 	})
 
 	plan := tfsdk.Plan{Schema: s, Raw: planVal}
@@ -455,6 +465,7 @@ func TestResourceRead(t *testing.T) {
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, false),
 		"created_at":            tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"timeouts":              tftypes.NewValue(sgObjectType().AttributeTypes["timeouts"], nil),
 	})
 
 	state := tfsdk.State{Schema: s, Raw: stateVal}
@@ -498,6 +509,7 @@ func TestResourceReadNotFoundRemovesState(t *testing.T) {
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, false),
 		"created_at":            tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"timeouts":              tftypes.NewValue(sgObjectType().AttributeTypes["timeouts"], nil),
 	})
 
 	state := tfsdk.State{Schema: s, Raw: stateVal}
@@ -556,6 +568,7 @@ func TestResourceUpdate(t *testing.T) {
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, false),
 		"created_at":            tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"timeouts":              tftypes.NewValue(sgObjectType().AttributeTypes["timeouts"], nil),
 	})
 
 	planVal := tftypes.NewValue(sgObjectType(), map[string]tftypes.Value{
@@ -567,6 +580,7 @@ func TestResourceUpdate(t *testing.T) {
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, false),
 		"created_at":            tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"timeouts":              tftypes.NewValue(sgObjectType().AttributeTypes["timeouts"], nil),
 	})
 
 	state := tfsdk.State{Schema: s, Raw: stateVal}
@@ -621,6 +635,7 @@ func TestResourceDelete(t *testing.T) {
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, false),
 		"created_at":            tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"timeouts":              tftypes.NewValue(sgObjectType().AttributeTypes["timeouts"], nil),
 	})
 
 	state := tfsdk.State{Schema: s, Raw: stateVal}
@@ -658,6 +673,7 @@ func TestResourceDeleteAlreadyGone(t *testing.T) {
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, false),
 		"created_at":            tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"timeouts":              tftypes.NewValue(sgObjectType().AttributeTypes["timeouts"], nil),
 	})
 
 	state := tfsdk.State{Schema: s, Raw: stateVal}
@@ -667,6 +683,295 @@ func TestResourceDeleteAlreadyGone(t *testing.T) {
 	// Should not error when already deleted
 	if resp.Diagnostics.HasError() {
 		t.Errorf("expected no errors when deleting already-gone resource, got %v", resp.Diagnostics)
+	}
+}
+
+// fastDeleteResource is the configured resource with the operation wait cut to
+// milliseconds, the seam the async-delete tests drive.
+func fastDeleteResource(t *testing.T, c *client.Client) *securityGroupResource {
+	t.Helper()
+	r := NewResource().(*securityGroupResource)
+	r.pollInterval = 5 * time.Millisecond
+	r.pollTimeout = 100 * time.Millisecond
+	r.Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+	return r
+}
+
+func sgDeleteState(id string) tftypes.Value {
+	return tftypes.NewValue(sgObjectType(), map[string]tftypes.Value{
+		"id":                    tftypes.NewValue(tftypes.String, id),
+		"name":                  tftypes.NewValue(tftypes.String, "delete-me"),
+		"description":           tftypes.NewValue(tftypes.String, nil),
+		"vpc_id":                tftypes.NewValue(tftypes.String, nil),
+		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
+		"is_default":            tftypes.NewValue(tftypes.Bool, false),
+		"created_at":            tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"timeouts":              tftypes.NewValue(sgObjectType().AttributeTypes["timeouts"], nil),
+	})
+}
+
+func runSGDelete(t *testing.T, r resource.Resource, id string) *resource.DeleteResponse {
+	t.Helper()
+	s := sgSchema(t)
+	resp := &resource.DeleteResponse{}
+	r.Delete(context.Background(), resource.DeleteRequest{
+		State: tfsdk.State{Schema: s, Raw: sgDeleteState(id)},
+	}, resp)
+	return resp
+}
+
+// TestDeleteWaitsForTheDeleteOperation: a security-group delete routes through
+// provisioning and answers 202 with an Operation envelope BEFORE the platform
+// has decided anything. The destroy is done when the operation says so, not
+// when the 202 lands — the group may still be alive behind that envelope.
+func TestDeleteWaitsForTheDeleteOperation(t *testing.T) {
+	polled := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-del-op":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-del", "status": "pending", "resourceType": "security-group",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-del":
+			polled++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-del", "status": "completed", "resourceType": "security-group",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+	r := fastDeleteResource(t, c)
+
+	resp := runSGDelete(t, r, "sg-del-op")
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	if polled == 0 {
+		t.Error("expected the delete operation endpoint to be polled; a 202 envelope alone is not a destroy")
+	}
+}
+
+// TestDeleteOperationFailureRefusesAndKeepsState: the workflow decided NO and
+// said why. Nothing was changed, the group still exists, and the diagnostic
+// must carry the platform's own reason so the practitioner knows what to deal
+// with before destroying again.
+func TestDeleteOperationFailureRefusesAndKeepsState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-del-fail":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-del-fail", "status": "pending", "resourceType": "security-group",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-del-fail":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-del-fail", "status": "failed", "resourceType": "security-group",
+				"error": "gateway holds routes in this group",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+	r := fastDeleteResource(t, c)
+
+	resp := runSGDelete(t, r, "sg-del-fail")
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a delete whose operation the platform refused must error, not report success")
+	}
+	if summary := resp.Diagnostics.Errors()[0].Summary(); !strings.Contains(summary, "Refused By The Platform") {
+		t.Errorf("expected the refused-deletion summary, got %q", summary)
+	}
+	if detail := resp.Diagnostics.Errors()[0].Detail(); !strings.Contains(detail, "gateway holds routes in this group") {
+		t.Errorf("the platform's own reason must survive into the diagnostic, got: %s", detail)
+	}
+}
+
+// TestDeleteAcceptedButUnwatchableIsClassified: the destroy was accepted but
+// its envelope parses to nothing, so the workflow cannot be watched from here.
+// That is neither a success nor a verified absence — it must read as an
+// unknown outcome, never a silent return.
+func TestDeleteAcceptedButUnwatchableIsClassified(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-del-bad":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte("not-json"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+	r := fastDeleteResource(t, c)
+
+	resp := runSGDelete(t, r, "sg-del-bad")
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("an accepted delete whose operation cannot be watched must error, not silently succeed")
+	}
+	if summary := resp.Diagnostics.Errors()[0].Summary(); !strings.Contains(summary, "Outcome Is Unknown") {
+		t.Errorf("expected the unknown-outcome classification, got %q", summary)
+	}
+}
+
+// sgCreatePlanValue builds a create-plan for the named group: computed
+// attributes unknown, all optional attributes unset.
+func sgCreatePlanValue(t *testing.T, name string) tftypes.Value {
+	t.Helper()
+	return tftypes.NewValue(sgObjectType(), map[string]tftypes.Value{
+		"id":                    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":                  tftypes.NewValue(tftypes.String, name),
+		"description":           tftypes.NewValue(tftypes.String, nil),
+		"vpc_id":                tftypes.NewValue(tftypes.String, nil),
+		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
+		"is_default":            tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
+		"created_at":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":              tftypes.NewValue(sgObjectType().AttributeTypes["timeouts"], nil),
+	})
+}
+
+// runSGCreate runs Create against the named plan value.
+func runSGCreate(t *testing.T, r resource.Resource, planVal tftypes.Value) *resource.CreateResponse {
+	t.Helper()
+	s := sgSchema(t)
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	r.Create(context.Background(), resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: s, Raw: planVal},
+	}, resp)
+	return resp
+}
+
+// TestSecurityGroupCreateAdoptsAfterTimeout pins the Gate 3 discovery-adopt
+// fallback: a 202 whose operation never completes resolves, once the sweep
+// finds exactly one name match created after the floor, into an adopted state
+// row and the shared adoption warning — never an error.
+func TestSecurityGroupCreateAdoptsAfterTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/security-groups":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-adopt-1", "status": "pending", "resourceType": "security-group",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-adopt-1":
+			// The saga never lands while the provider waits.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-adopt-1", "status": "pending", "resourceType": "security-group",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/security-groups":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"securityGroups": []apiSecurityGroup{{
+					ID:        "sg-adopted-1",
+					Name:      "adopted-sg",
+					CreatedAt: time.Now().UTC().Format(time.RFC3339), // after the floor
+				}},
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-adopted-1":
+			_ = json.NewEncoder(w).Encode(apiSecurityGroup{
+				ID:        "sg-adopted-1",
+				Name:      "adopted-sg",
+				IsDefault: false,
+				CreatedAt: "2025-06-01T12:00:00Z",
+			})
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+	r := fastDeleteResource(t, c)
+
+	resp := runSGCreate(t, r, sgCreatePlanValue(t, "adopted-sg"))
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	warnings := resp.Diagnostics.Warnings()
+	if len(warnings) != 1 || !strings.Contains(warnings[0].Summary(), "Was Adopted After The Apply Timed Out") {
+		t.Fatalf("expected exactly one adoption warning, got %d warning(s)", len(warnings))
+	}
+
+	var state SecurityGroupModel
+	resp.State.Get(context.Background(), &state)
+	if state.ID.ValueString() != "sg-adopted-1" {
+		t.Errorf("expected adopted id sg-adopted-1, got %s", state.ID.ValueString())
+	}
+}
+
+// TestSecurityGroupCreateRefusedByOperation pins the refused arm: the
+// operation's terminal failure is the platform deciding NO — an error naming
+// the refusal, no adoption sweep (no listing GET), state stays null.
+func TestSecurityGroupCreateRefusedByOperation(t *testing.T) {
+	listingGets := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/security-groups":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-refused-1", "status": "pending", "resourceType": "security-group",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-refused-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-refused-1", "status": "failed", "resourceType": "security-group",
+				"error": "name already in use",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/security-groups":
+			listingGets++
+			w.WriteHeader(http.StatusOK)
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+	r := fastDeleteResource(t, c)
+
+	resp := runSGCreate(t, r, sgCreatePlanValue(t, "refused-sg"))
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error when the platform refuses the create")
+	}
+	if !strings.Contains(resp.Diagnostics.Errors()[0].Summary(), "Refused") {
+		t.Errorf("expected a Refused summary, got %s", resp.Diagnostics.Errors()[0].Summary())
+	}
+	if listingGets != 0 {
+		t.Errorf("refused arm must not sweep the listing, got %d listing GET(s)", listingGets)
+	}
+	if !resp.State.Raw.IsNull() {
+		t.Error("expected null state after a refused create")
 	}
 }
 

@@ -3,6 +3,7 @@ package mysql_instance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // --- Model unit tests ---
@@ -959,5 +961,166 @@ func TestUpdateFlavorChangeRejected(t *testing.T) {
 
 	if resp := mysqlUpdate(t, server, mysqlUpdateGuardModel(), resized); !resp.Diagnostics.HasError() {
 		t.Error("expected error rejecting a flavor_id change")
+	}
+}
+
+// TestCreateTimeoutOverrideBoundsTheWaitAndStateStillRecords pins BOTH new
+// guarantees of the convergence-wall leg at once:
+//
+//  1. the customer's timeouts.create — not the hardcoded default — bounds the
+//     create wait (this test's default pollTimeout is a full 15 minutes and
+//     would hang if the block were ignored);
+//  2. the postgres-style 🔴 STATE BEFORE THE WAIT: when the operation still
+//     has not completed, the id carried by the create 202's resourceId is
+//     already in state, so a timed-out create leaves a tracked, destroyable,
+//     importable instance instead of an orphaned billable one.
+func TestCreateTimeoutOverrideBoundsTheWaitAndStateStillRecords(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/databases":
+			w.WriteHeader(http.StatusAccepted)
+			// The 202 carries the id (database service, the resourceId field).
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-slow", "status": "pending",
+				"resourceType": "database", "resourceId": "db-slow",
+			})
+		case strings.HasSuffix(r.URL.Path, "/operations/op-slow"):
+			// Never completes. This is the timeout case.
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-slow", "status": "running", "resourceType": "database",
+			})
+		case strings.HasSuffix(r.URL.Path, "/databases/db-slow"):
+			// The state-before-the-wait early read.
+			_ = json.NewEncoder(w).Encode(apiMysqlInstance{
+				ID: "db-slow", Name: "test-mysql", Engine: "mysql",
+				EngineVersion: "8.4", FlavorID: "db.small", StorageGB: 50,
+				VPCID: "vpc-1", SubnetID: "sn-1", Status: "provisioning",
+				CreatedAt: "2025-01-01T00:00:00Z",
+			})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	// The default budget is fifteen minutes on purpose: the ONLY thing that can
+	// end this wait quickly is the timeouts block under test.
+	r := &mysqlInstanceResource{client: c, pollInterval: 10 * time.Millisecond}
+
+	planModel := MysqlInstanceModel{
+		Name:      types.StringValue("test-mysql"),
+		Version:   types.StringValue("8.4"),
+		FlavorID:  types.StringValue("db.small"),
+		StorageGB: types.Int64Value(50),
+		VPCID:     types.StringValue("vpc-1"),
+		SubnetID:  types.StringValue("sn-1"),
+		Timeouts:  &timeouts.Model{Create: types.StringValue("120ms")},
+	}
+
+	start := time.Now()
+	createResp := resource.CreateResponse{State: emptyMysqlInstanceState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: buildMysqlInstancePlan(t, planModel)}, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("expected the create to fail: the operation never completed")
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("the timeouts.create override did not bound the wait: took %s", elapsed)
+	}
+
+	// 🔴 THE POINT. The id must be in state despite the failure, or the instance is orphaned.
+	var result MysqlInstanceModel
+	createResp.State.Get(context.Background(), &result)
+	if result.ID.ValueString() != "db-slow" {
+		t.Fatalf("a timed-out create must still record the instance id so it can be destroyed; got %q",
+			result.ID.ValueString())
+	}
+}
+
+// --- resize verdict tests (the 01a03e62 gap): the 202 operation IS the
+// resize's verdict; the 200 {"status":"resizing"} ack is only the fallback. ---
+
+// TestUpdateStorageResizeWaitsForTheOperation: the resize 202 used to be
+// discarded and a status-poll decided — a poll that can satisfy itself on the
+// still-current `running` before the saga moves the instance to `resizing`,
+// and that never sees a resize that FAILS. It is now polled to completion.
+func TestUpdateStorageResizeWaitsForTheOperation(t *testing.T) {
+	polled := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-1", "tenantId": "t-1"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/databases/my-1/resize":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"operationId":"op-resize","status":"resizing"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-resize":
+			polled++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-resize", "status": "completed", "resourceType": "database",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/databases/my-1":
+			_ = json.NewEncoder(w).Encode(apiMysqlInstance{ID: "my-1", Name: "my", Status: "running"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &mysqlInstanceResource{client: c, pollInterval: 5 * time.Millisecond}
+
+	if err := r.resizeStorage(context.Background(), "my-1", 40, 200*time.Millisecond); err != nil {
+		t.Fatalf("resize whose operation completed must succeed: %v", err)
+	}
+	if polled == 0 {
+		t.Fatal("a 202 resize verdict must be waited on, not discarded")
+	}
+}
+
+// TestUpdateStorageResizeOperationRefusedSurfaces: the operation reached
+// terminal failure — the resize did NOT happen and the error must say so with
+// the platform's own words.
+func TestUpdateStorageResizeOperationRefusedSurfaces(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-1", "tenantId": "t-1"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/databases/my-1/resize":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"operationId":"op-resize","status":"resizing"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-resize":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-resize", "status": "failed", "resourceType": "database",
+				"errorCode": "invalid", "error": "storage can only grow",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/databases/my-1":
+			_ = json.NewEncoder(w).Encode(apiMysqlInstance{ID: "my-1", Name: "my", Status: "running"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &mysqlInstanceResource{client: c, pollInterval: 5 * time.Millisecond}
+
+	err := r.resizeStorage(context.Background(), "my-1", 40, 200*time.Millisecond)
+	if err == nil {
+		t.Fatal("a refused resize operation must fail the update, not report success")
+	}
+	var opErr *client.OperationError
+	if !errors.As(err, &opErr) {
+		t.Fatalf("the wait must surface the typed OperationError, got: %T %v", err, err)
+	}
+	if opErr.Message != "storage can only grow" {
+		t.Errorf("expected the workflow's prose, got: %s", err.Error())
 	}
 }

@@ -2,7 +2,12 @@ package lb_pool
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -10,6 +15,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
 
 func TestPoolModelFromAPI(t *testing.T) {
@@ -155,6 +162,7 @@ func emptyPool(ctx context.Context, schemaResp resource.SchemaResponse) tftypes.
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"created_at":          tftypes.NewValue(tftypes.String, nil),
 		"updated_at":          tftypes.NewValue(tftypes.String, nil),
+		"timeouts":            tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 }
 
@@ -164,5 +172,160 @@ func TestPoolMetadata(t *testing.T) {
 	r.Metadata(context.Background(), resource.MetadataRequest{ProviderTypeName: "frostmoln"}, resp)
 	if resp.TypeName != "frostmoln_lb_pool" {
 		t.Errorf("expected frostmoln_lb_pool, got %s", resp.TypeName)
+	}
+}
+
+// poolCreatePlanValue builds a create-plan for a pool on lb-1: computed
+// attributes unknown, no session persistence, no tags.
+func poolCreatePlanValue(ctx context.Context, schemaResp resource.SchemaResponse) tftypes.Value {
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+	return tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"load_balancer_id":    tftypes.NewValue(tftypes.String, "lb-1"),
+		"listener_id":         tftypes.NewValue(tftypes.String, nil),
+		"name":                tftypes.NewValue(tftypes.String, "adopted-pool"),
+		"protocol":            tftypes.NewValue(tftypes.String, "tcp"),
+		"lb_algorithm":        tftypes.NewValue(tftypes.String, "round_robin"),
+		"proxy_protocol":      tftypes.NewValue(tftypes.String, "none"),
+		"session_persistence": tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["session_persistence"], nil),
+		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"created_at":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"updated_at":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":            tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+	})
+}
+
+func newFastPool(c *client.Client) *poolResource {
+	r := NewResource().(*poolResource)
+	r.pollInterval = 5 * time.Millisecond
+	r.pollTimeout = 100 * time.Millisecond
+	r.Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+	return r
+}
+
+// TestPoolCreateAdoptsAfterTimeout pins the Gate 3 discovery-adopt fallback: a
+// 202 whose operation never completes resolves, once the parent listing holds
+// exactly one name match created after the floor, into an adopted state row
+// and the shared adoption warning — never an error.
+func TestPoolCreateAdoptsAfterTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/load-balancers/lb-1/pools":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-adopt-1", "status": "pending", "resourceType": "pool",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-adopt-1":
+			// The saga never lands while the provider waits.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-adopt-1", "status": "pending", "resourceType": "pool",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/load-balancers/lb-1/pools":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"pools": []apiPool{{
+					ID:        "pool-adopted-1",
+					Name:      "adopted-pool",
+					CreatedAt: time.Now().UTC().Format(time.RFC3339), // after the floor
+				}},
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/load-balancers/lb-1/pools/pool-adopted-1":
+			_ = json.NewEncoder(w).Encode(apiPool{
+				ID:             "pool-adopted-1",
+				LoadBalancerID: "lb-1",
+				Name:           "adopted-pool",
+				Protocol:       "tcp",
+				LBAlgorithm:    "round_robin",
+				CreatedAt:      "2025-06-01T12:00:00Z",
+			})
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+	r := newFastPool(c)
+	schemaResp := importSchema(t, r)
+	ctx := context.Background()
+
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	r.Create(ctx, resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: poolCreatePlanValue(ctx, schemaResp)},
+	}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	warnings := resp.Diagnostics.Warnings()
+	if len(warnings) != 1 || !strings.Contains(warnings[0].Summary(), "Was Adopted After The Apply Timed Out") {
+		t.Fatalf("expected exactly one adoption warning, got %d warning(s)", len(warnings))
+	}
+
+	var state PoolModel
+	resp.State.Get(ctx, &state)
+	if state.ID.ValueString() != "pool-adopted-1" {
+		t.Errorf("expected adopted id pool-adopted-1, got %s", state.ID.ValueString())
+	}
+}
+
+// TestPoolCreateRefusedByOperation pins the refused arm: the operation's
+// terminal failure is the platform deciding NO — an error naming the refusal,
+// no adoption sweep (no listing GET), state stays null.
+func TestPoolCreateRefusedByOperation(t *testing.T) {
+	listingGets := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/load-balancers/lb-1/pools":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-refused-1", "status": "pending", "resourceType": "pool",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-refused-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-refused-1", "status": "failed", "resourceType": "pool",
+				"error": "listener not found",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/load-balancers/lb-1/pools":
+			listingGets++
+			w.WriteHeader(http.StatusOK)
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+	r := newFastPool(c)
+	schemaResp := importSchema(t, r)
+	ctx := context.Background()
+
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	r.Create(ctx, resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: poolCreatePlanValue(ctx, schemaResp)},
+	}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error when the platform refuses the create")
+	}
+	if !strings.Contains(resp.Diagnostics.Errors()[0].Summary(), "Refused") {
+		t.Errorf("expected a Refused summary, got %s", resp.Diagnostics.Errors()[0].Summary())
+	}
+	if listingGets != 0 {
+		t.Errorf("refused arm must not sweep the listing, got %d listing GET(s)", listingGets)
+	}
+	if !resp.State.Raw.IsNull() {
+		t.Error("expected null state after a refused create")
 	}
 }

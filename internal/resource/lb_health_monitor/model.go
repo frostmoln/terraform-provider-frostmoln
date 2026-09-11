@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // HealthMonitorModel is the Terraform state model for a pool health monitor.
@@ -25,6 +27,10 @@ type HealthMonitorModel struct {
 	Tags           types.Map    `tfsdk:"tags"`
 	CreatedAt      types.String `tfsdk:"created_at"`
 	UpdatedAt      types.String `tfsdk:"updated_at"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiHealthMonitor is the API representation of a health monitor.

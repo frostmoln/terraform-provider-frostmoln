@@ -3,6 +3,7 @@ package apache_instance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1224,7 +1225,9 @@ func TestUpdateStorageResize(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/webservers/apache-123/resize":
 			resizeCalled = true
 			_ = json.NewDecoder(r.Body).Decode(&resizeBody)
-			w.WriteHeader(http.StatusAccepted)
+			// The legacy synchronous ack (200) — the only case where the
+			// status-poll fallback, not the 202 operation, decides the wait.
+			w.WriteHeader(http.StatusOK)
 			_, _ = fmt.Fprint(w, `{"status":"resizing"}`)
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-1/webservers/apache-123":
 			putCalled = true
@@ -1584,5 +1587,89 @@ func TestUpdateFlavorChangeRejected(t *testing.T) {
 	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
 	if !updateResp.Diagnostics.HasError() {
 		t.Error("expected error rejecting a flavor_id change")
+	}
+}
+
+// --- resize verdict tests (the 01a03e62 gap): the 202 operation IS the
+// resize's verdict; the 200 {"status":"resizing"} ack is only the fallback. ---
+
+// TestUpdateStorageResizeWaitsForTheOperation: the resize 202 used to be
+// discarded and a status-poll decided — a poll that can satisfy itself on the
+// still-current `running` before the saga moves the instance to `resizing`,
+// and that never sees a resize that FAILS. It is now polled to completion.
+func TestUpdateStorageResizeWaitsForTheOperation(t *testing.T) {
+	polled := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-1", "tenantId": "t-1"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/webservers/apache-1/resize":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"operationId":"op-resize","status":"resizing"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-resize":
+			polled++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-resize", "status": "completed", "resourceType": "webserver",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/apache-1":
+			_ = json.NewEncoder(w).Encode(apiWebserverInstance{ID: "apache-1", Name: "apache", Engine: "apache", Status: "running", StorageGB: 40})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &apacheInstanceResource{client: c, pollInterval: 5 * time.Millisecond}
+
+	if err := r.resizeStorage(context.Background(), "apache-1", 40, 200*time.Millisecond); err != nil {
+		t.Fatalf("resize whose operation completed must succeed: %v", err)
+	}
+	if polled == 0 {
+		t.Fatal("a 202 resize verdict must be waited on, not discarded")
+	}
+}
+
+// TestUpdateStorageResizeOperationRefusedSurfaces: the operation reached
+// terminal failure — the resize did NOT happen and the error must say so with
+// the platform's own words.
+func TestUpdateStorageResizeOperationRefusedSurfaces(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-1", "tenantId": "t-1"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/webservers/apache-1/resize":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"operationId":"op-resize","status":"resizing"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-resize":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-resize", "status": "failed", "resourceType": "webserver",
+				"errorCode": "invalid", "error": "storage can only grow",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/apache-1":
+			_ = json.NewEncoder(w).Encode(apiWebserverInstance{ID: "apache-1", Name: "apache", Engine: "apache", Status: "running", StorageGB: 20})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &apacheInstanceResource{client: c, pollInterval: 5 * time.Millisecond}
+
+	err := r.resizeStorage(context.Background(), "apache-1", 40, 200*time.Millisecond)
+	if err == nil {
+		t.Fatal("a refused resize operation must fail the update, not report success")
+	}
+	var opErr *client.OperationError
+	if !errors.As(err, &opErr) {
+		t.Fatalf("the wait must surface the typed OperationError, got: %T %v", err, err)
+	}
+	if opErr.Message != "storage can only grow" {
+		t.Errorf("expected the workflow's prose, got: %s", err.Error())
 	}
 }

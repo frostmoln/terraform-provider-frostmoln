@@ -50,6 +50,7 @@ resource "frostmoln_lb_member" "backend_1" {
 - `cross_vpc` (Boolean) Whether the member is in a different VPC than the load balancer. Write-only acknowledgement flag; preserved in state but never returned by the API. Changing this between two known values forces a new resource. On import this flag cannot be recovered from the API, so it is left null and reconciled (not destroyed) on the first apply that supplies it.
 - `name` (String) The name of the member.
 - `subnet_id` (String) The subnet ID the member resides in. Changing this forces a new resource.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `weight` (Number) The weight of the member for weighted load balancing.
 
 ### Read-Only
@@ -57,3 +58,12 @@ resource "frostmoln_lb_member" "backend_1" {
 - `created_at` (String) The creation timestamp.
 - `id` (String) The unique identifier of the member.
 - `updated_at` (String) The last update timestamp.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

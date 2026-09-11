@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // ScaleGroupModel is the Terraform state model for a scale group.
@@ -28,6 +30,10 @@ type ScaleGroupModel struct {
 	Tags                   types.Map    `tfsdk:"tags"`
 	CreatedAt              types.String `tfsdk:"created_at"`
 	UpdatedAt              types.String `tfsdk:"updated_at"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiScaleGroup is the API representation of a scale group.

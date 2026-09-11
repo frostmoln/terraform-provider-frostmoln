@@ -16,6 +16,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
@@ -46,6 +47,21 @@ func (r *messagingInstanceResource) getPollTimeout() time.Duration {
 		return r.pollTimeout
 	}
 	return 15 * time.Minute
+}
+
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded.
+// Routing the defaults through the accessor keeps the test-injection seam
+// intact: a test that shrinks pollTimeout shrinks every wait that does not
+// carry an explicit timeouts override, exactly as before.
+func (r *messagingInstanceResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return timeouts.Uniform(r.getPollTimeout())
+	}
+	return budgets
 }
 
 func (r *messagingInstanceResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -153,6 +169,13 @@ func (r *messagingInstanceResource) Schema(_ context.Context, _ resource.SchemaR
 				Computed:    true,
 			},
 		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (15m per verb). A timeouts change
+			// is an in-place no-op on real infrastructure — verified by the
+			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
+			"timeouts": timeouts.Schema(),
+		},
 	}
 }
 
@@ -183,6 +206,10 @@ func (r *messagingInstanceResource) Create(ctx context.Context, req resource.Cre
 		return
 	}
 
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/messaging"), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create messaging instance", err.Error())
@@ -202,9 +229,9 @@ func (r *messagingInstanceResource) Create(ctx context.Context, req resource.Cre
 			resp.Diagnostics.AddError("Failed to parse operation response", opErr.Error())
 			return
 		}
-		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout())
+		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Create)
 		if waitErr != nil {
-			resp.Diagnostics.AddError("Messaging instance failed to reach running state", waitErr.Error())
+			resp.Diagnostics.AddError("Messaging instance creation failed", waitErr.Error())
 			return
 		}
 		instanceID = done.ResourceID
@@ -221,7 +248,7 @@ func (r *messagingInstanceResource) Create(ctx context.Context, req resource.Cre
 		if instanceID != "" {
 			if _, waitErr := client.WaitForState(ctx, client.PollConfig{
 				Interval:     r.getPollInterval(),
-				Timeout:      r.getPollTimeout(),
+				Timeout:      budgets.Create,
 				TargetStates: []string{"running"},
 				ErrorStates:  []string{"error", "failed"},
 				ResourceName: "messaging_instance",
@@ -330,10 +357,11 @@ func (r *messagingInstanceResource) Update(ctx context.Context, req resource.Upd
 			return
 		}
 
-		// Poll until instance is back to "running" after the update.
+		// Poll until instance is back to "running" after the update, on the
+		// timeouts block's update budget.
 		_, err := client.WaitForState(ctx, client.PollConfig{
 			Interval:     r.getPollInterval(),
-			Timeout:      r.getPollTimeout(),
+			Timeout:      r.resolveBudgets(plan.Timeouts).Update,
 			TargetStates: []string{"running"},
 			ErrorStates:  []string{"error", "failed"},
 			ResourceName: "messaging_instance",
@@ -390,10 +418,11 @@ func (r *messagingInstanceResource) Delete(ctx context.Context, req resource.Del
 		return
 	}
 
-	// Wait for the instance to be fully deleted (404 on GET).
+	// Wait for the instance to be fully deleted (404 on GET), on the
+	// timeouts block's delete budget.
 	_, err = client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      r.resolveBudgets(state.Timeouts).Delete,
 		TargetStates: []string{"deleted"},
 		ErrorStates:  []string{"error"},
 		ResourceName: "messaging_instance",

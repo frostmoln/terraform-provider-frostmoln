@@ -62,10 +62,14 @@ func TestScopeDeclarations(t *testing.T) {
 		seen[typeName] = true
 
 		t.Run(typeName, func(t *testing.T) {
-			if len(schemaResp.Schema.Blocks) > 0 {
-				t.Fatalf("resource declares schema Blocks, which this test does not walk — extend walkScopeAttributes")
-			}
-
+			// Blocks carry their own attributes and ARE walked below. The
+			// provider's blocks today are only the shared `timeouts` control
+			// block: provider-local lifecycle machinery, not part of the data
+			// surface the scope contract speaks about — walked fail-closed, but
+			// recorded as control attributes (see walkScopeBlocks) so they do
+			// not count toward the EnactsNone verdicts, and so a future block
+			// carrying required/computed or replacing attributes cannot slip
+			// past unexamined.
 			decl, declared := scopedecl.Declarations[typeName]
 			if !declared {
 				t.Fatalf("no scopedecl.Declarations entry — declare this resource's authoritative scope there")
@@ -77,6 +81,14 @@ func TestScopeDeclarations(t *testing.T) {
 					configurable: a.IsRequired() || a.IsOptional(),
 					computedOnly: a.IsComputed() && !a.IsRequired() && !a.IsOptional(),
 					replaces:     scopeReplacesOnChange(t, attrPath, a),
+				}
+			})
+			walkScopeBlocks(t, "", schemaResp.Schema.Blocks, func(attrPath string, a schema.Attribute) {
+				attrs[attrPath] = scopeAttrInfo{
+					configurable: a.IsRequired() || a.IsOptional(),
+					computedOnly: a.IsComputed() && !a.IsRequired() && !a.IsOptional(),
+					replaces:     scopeReplacesOnChange(t, attrPath, a),
+					control:      true,
 				}
 			})
 
@@ -150,6 +162,12 @@ func TestScopeDeclarations(t *testing.T) {
 
 			enactsInPlace := false
 			for attrPath, info := range attrs {
+				// Control-block attributes (timeouts) are provider-local
+				// lifecycle machinery: they say nothing about what the platform
+				// enacts, so they never count toward EnactsNone either way.
+				if info.control {
+					continue
+				}
 				if info.configurable && !info.replaces && !immutable[attrPath] {
 					enactsInPlace = true
 				}
@@ -194,6 +212,41 @@ type scopeAttrInfo struct {
 	configurable bool
 	computedOnly bool
 	replaces     bool
+	// control marks an attribute inside a provider-local control block
+	// (timeouts): walked fail-closed against every per-attribute verdict, but
+	// excluded from the resource-wide EnactsNone/enacts-in-place policy
+	// judgement, which is about the data surface the platform enacts.
+	control bool
+}
+
+// walkScopeBlocks descends into every block's attributes, feeding the same
+// scopeAttrInfo pipeline as walkScopeAttributes. SingleNestedBlock children are
+// walked; a multi-object block (or any shape the walk cannot descend into)
+// fails loudly, because both halves of the contract need to see everything.
+func walkScopeBlocks(t *testing.T, prefix string, blocks map[string]schema.Block, fn func(string, schema.Attribute)) {
+	t.Helper()
+
+	names := make([]string, 0, len(blocks))
+	for name := range blocks {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		b := blocks[name]
+		attrPath := name
+		if prefix != "" {
+			attrPath = prefix + "." + name
+		}
+
+		switch nested := b.(type) {
+		case schema.SingleNestedBlock:
+			walkScopeAttributes(t, attrPath, nested.Attributes, fn)
+			walkScopeBlocks(t, attrPath, nested.Blocks, fn)
+		default:
+			t.Fatalf("%s: unsupported block type %T — extend walkScopeBlocks", attrPath, b)
+		}
+	}
 }
 
 // walkScopeAttributes calls fn for every attribute reachable from attrs,

@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // The backup policy the database service applies itself when backups are enabled without an
@@ -45,6 +47,11 @@ type PostgresInstanceModel struct {
 	CreatedAt           types.String `tfsdk:"created_at"`
 	UpdatedAt           types.String `tfsdk:"updated_at"`
 	TenantID            types.String `tfsdk:"tenant_id"`
+	// Timeouts is the customer-tunable `timeouts` block. fromAPI never touches
+	// it: the pointer the practitioner configured rides through every
+	// model copy (plan -> early -> state) unchanged, which is what keeps the
+	// block stable in state across reads and refreshes.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiPostgresInstance is the API representation of a managed PostgreSQL instance.

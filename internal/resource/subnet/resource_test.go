@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -359,6 +360,7 @@ func subnetObjectType() tftypes.Object {
 			"status":        tftypes.String,
 			"available_ips": tftypes.Number,
 			"created_at":    tftypes.String,
+			"timeouts":      tftypes.Object{AttributeTypes: map[string]tftypes.Type{"create": tftypes.String, "update": tftypes.String, "delete": tftypes.String}},
 		},
 	}
 }
@@ -453,6 +455,7 @@ func TestSubnetResourceCreate(t *testing.T) {
 
 	s := subnetSchemaHelper(t)
 	planVal := tftypes.NewValue(subnetObjectType(), map[string]tftypes.Value{
+		"timeouts":      tftypes.NewValue(subnetObjectType().AttributeTypes["timeouts"], nil),
 		"id":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"name":          tftypes.NewValue(tftypes.String, "web-subnet"),
 		"description":   tftypes.NewValue(tftypes.String, nil),
@@ -525,6 +528,7 @@ func TestSubnetResourceRead(t *testing.T) {
 
 	s := subnetSchemaHelper(t)
 	stateVal := tftypes.NewValue(subnetObjectType(), map[string]tftypes.Value{
+		"timeouts":      tftypes.NewValue(subnetObjectType().AttributeTypes["timeouts"], nil),
 		"id":            tftypes.NewValue(tftypes.String, "subnet-read-1"),
 		"name":          tftypes.NewValue(tftypes.String, "read-subnet"),
 		"description":   tftypes.NewValue(tftypes.String, nil),
@@ -572,6 +576,7 @@ func TestSubnetResourceReadNotFoundRemovesState(t *testing.T) {
 
 	s := subnetSchemaHelper(t)
 	stateVal := tftypes.NewValue(subnetObjectType(), map[string]tftypes.Value{
+		"timeouts":      tftypes.NewValue(subnetObjectType().AttributeTypes["timeouts"], nil),
 		"id":            tftypes.NewValue(tftypes.String, "subnet-gone"),
 		"name":          tftypes.NewValue(tftypes.String, "gone"),
 		"description":   tftypes.NewValue(tftypes.String, nil),
@@ -633,6 +638,7 @@ func TestSubnetUpdateSendsTheName(t *testing.T) {
 	s := subnetSchemaHelper(t)
 	mk := func(name string) tftypes.Value {
 		return tftypes.NewValue(subnetObjectType(), map[string]tftypes.Value{
+			"timeouts":      tftypes.NewValue(subnetObjectType().AttributeTypes["timeouts"], nil),
 			"id":            tftypes.NewValue(tftypes.String, "subnet-upd-1"),
 			"name":          tftypes.NewValue(tftypes.String, name),
 			"description":   tftypes.NewValue(tftypes.String, nil),
@@ -709,6 +715,7 @@ func TestSubnetResourceUpdate(t *testing.T) {
 	s := subnetSchemaHelper(t)
 
 	stateVal := tftypes.NewValue(subnetObjectType(), map[string]tftypes.Value{
+		"timeouts":      tftypes.NewValue(subnetObjectType().AttributeTypes["timeouts"], nil),
 		"id":            tftypes.NewValue(tftypes.String, "subnet-upd-1"),
 		"name":          tftypes.NewValue(tftypes.String, "upd-subnet"),
 		"description":   tftypes.NewValue(tftypes.String, nil),
@@ -724,6 +731,7 @@ func TestSubnetResourceUpdate(t *testing.T) {
 	})
 
 	planVal := tftypes.NewValue(subnetObjectType(), map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(subnetObjectType().AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "subnet-upd-1"),
 		"name":        tftypes.NewValue(tftypes.String, "upd-subnet"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -781,6 +789,7 @@ func TestSubnetResourceDelete(t *testing.T) {
 
 	s := subnetSchemaHelper(t)
 	stateVal := tftypes.NewValue(subnetObjectType(), map[string]tftypes.Value{
+		"timeouts":      tftypes.NewValue(subnetObjectType().AttributeTypes["timeouts"], nil),
 		"id":            tftypes.NewValue(tftypes.String, "subnet-del-1"),
 		"name":          tftypes.NewValue(tftypes.String, "delete-me"),
 		"description":   tftypes.NewValue(tftypes.String, nil),
@@ -822,6 +831,7 @@ func TestSubnetResourceDeleteAlreadyGone(t *testing.T) {
 
 	s := subnetSchemaHelper(t)
 	stateVal := tftypes.NewValue(subnetObjectType(), map[string]tftypes.Value{
+		"timeouts":      tftypes.NewValue(subnetObjectType().AttributeTypes["timeouts"], nil),
 		"id":            tftypes.NewValue(tftypes.String, "subnet-gone"),
 		"name":          tftypes.NewValue(tftypes.String, "gone"),
 		"description":   tftypes.NewValue(tftypes.String, nil),
@@ -921,6 +931,7 @@ func subnetDeleteState(t *testing.T) tfsdk.State {
 	t.Helper()
 	s := subnetSchemaHelper(t)
 	stateVal := tftypes.NewValue(subnetObjectType(), map[string]tftypes.Value{
+		"timeouts":      tftypes.NewValue(subnetObjectType().AttributeTypes["timeouts"], nil),
 		"id":            tftypes.NewValue(tftypes.String, "subnet-del-1"),
 		"name":          tftypes.NewValue(tftypes.String, "delete-me"),
 		"description":   tftypes.NewValue(tftypes.String, nil),
@@ -935,6 +946,172 @@ func subnetDeleteState(t *testing.T) tfsdk.State {
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 	})
 	return tfsdk.State{Schema: s, Raw: stateVal}
+}
+
+// TestSubnetResourceCreateAdoptsAfterTimeout pins the Gate 3 discovery-adopt
+// fallback: a 202 whose operation never completes resolves, once the sweep
+// finds exactly one name match inside the plan's VPC created after the floor,
+// into an adopted state row and the shared adoption warning — never an error.
+func TestSubnetResourceCreateAdoptsAfterTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/subnets":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-adopt-1", Status: "pending", ResourceType: "subnet"})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-adopt-1":
+			// The saga never lands while the provider waits.
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-adopt-1", Status: "pending", ResourceType: "subnet"})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/subnets":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"subnets": []apiSubnet{{
+					ID:        "subnet-adopted-1",
+					Name:      "adopted-subnet",
+					CIDR:      "10.0.1.0/24",
+					VPCID:     "vpc-123",
+					Status:    "active",
+					CreatedAt: time.Now().UTC().Format(time.RFC3339), // after the floor
+				}},
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/subnets/subnet-adopted-1":
+			_ = json.NewEncoder(w).Encode(apiSubnet{
+				ID:           "subnet-adopted-1",
+				Name:         "adopted-subnet",
+				CIDR:         "10.0.1.0/24",
+				VPCID:        "vpc-123",
+				Zone:         "sweden-a",
+				Status:       "active",
+				AvailableIPs: 250,
+				CreatedAt:    "2025-06-01T12:00:00Z",
+			})
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(*subnetResource).pollInterval = 5 * time.Millisecond
+	r.(*subnetResource).pollTimeout = 100 * time.Millisecond
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := subnetSchemaHelper(t)
+	ctx := context.Background()
+	tfType := s.Type().TerraformType(ctx)
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":      tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":          tftypes.NewValue(tftypes.String, "adopted-subnet"),
+		"description":   tftypes.NewValue(tftypes.String, nil),
+		"cidr":          tftypes.NewValue(tftypes.String, "10.0.1.0/24"),
+		"vpc_id":        tftypes.NewValue(tftypes.String, "vpc-123"),
+		"zone":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"gateway_ip":    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"available_ips": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"created_at":    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	r.Create(context.Background(), resource.CreateRequest{Plan: tfsdk.Plan{Schema: s, Raw: planVal}}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	warnings := resp.Diagnostics.Warnings()
+	if len(warnings) != 1 || !strings.Contains(warnings[0].Summary(), "Was Adopted After The Apply Timed Out") {
+		t.Fatalf("expected exactly one adoption warning, got %d warning(s)", len(warnings))
+	}
+
+	var state SubnetModel
+	resp.State.Get(context.Background(), &state)
+	if state.ID.ValueString() != "subnet-adopted-1" {
+		t.Errorf("expected adopted id subnet-adopted-1, got %s", state.ID.ValueString())
+	}
+	if state.VPCID.ValueString() != "vpc-123" {
+		t.Errorf("expected VPCID vpc-123, got %s", state.VPCID.ValueString())
+	}
+}
+
+// TestSubnetResourceCreateRefusedByOperation pins the refused arm: the
+// operation's terminal failure is the platform deciding NO — an error naming
+// the refusal, no adoption sweep (no listing GET), state stays null.
+func TestSubnetResourceCreateRefusedByOperation(t *testing.T) {
+	listingGets := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/subnets":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-refused-1", Status: "pending", ResourceType: "subnet"})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-refused-1":
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-refused-1", Status: "failed", ResourceType: "subnet", Error: "cidr overlaps an existing subnet"})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/subnets":
+			listingGets++
+			w.WriteHeader(http.StatusOK)
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(*subnetResource).pollInterval = 5 * time.Millisecond
+	r.(*subnetResource).pollTimeout = 100 * time.Millisecond
+	r.(resource.ResourceWithConfigure).Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+
+	s := subnetSchemaHelper(t)
+	ctx := context.Background()
+	tfType := s.Type().TerraformType(ctx)
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":      tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":          tftypes.NewValue(tftypes.String, "refused-subnet"),
+		"description":   tftypes.NewValue(tftypes.String, nil),
+		"cidr":          tftypes.NewValue(tftypes.String, "10.0.1.0/24"),
+		"vpc_id":        tftypes.NewValue(tftypes.String, "vpc-123"),
+		"zone":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"gateway_ip":    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"available_ips": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"created_at":    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	r.Create(context.Background(), resource.CreateRequest{Plan: tfsdk.Plan{Schema: s, Raw: planVal}}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error when the platform refuses the create")
+	}
+	if !strings.Contains(resp.Diagnostics.Errors()[0].Summary(), "Refused") {
+		t.Errorf("expected a Refused summary, got %s", resp.Diagnostics.Errors()[0].Summary())
+	}
+	if listingGets != 0 {
+		t.Errorf("refused arm must not sweep the listing, got %d listing GET(s)", listingGets)
+	}
+	if !resp.State.Raw.IsNull() {
+		t.Error("expected null state after a refused create")
+	}
 }
 
 // Ensure fmt is used.

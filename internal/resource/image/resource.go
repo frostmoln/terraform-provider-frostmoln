@@ -28,6 +28,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
@@ -66,13 +67,30 @@ func (r *imageResource) getPollTimeout() time.Duration {
 	return defaultPollTimeout
 }
 
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded.
+// Routing the defaults through the accessor keeps the test-injection seam
+// intact: a test that shrinks pollTimeout shrinks every wait that does not
+// carry an explicit timeouts override, exactly as before.
+func (r *imageResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return timeouts.Uniform(r.getPollTimeout())
+	}
+	return budgets
+}
+
 // defaultPollTimeout is how long this resource waits on the platform: Glance has
 // to fetch the staged object and convert it to raw before the image goes active,
-// and on a multi-gigabyte qcow2 that is minutes, not seconds. It is also the
-// budget deleteImage waits an import lock out within, so it is a named constant
-// rather than a literal in getPollTimeout. Practitioner copy deliberately does
-// NOT quote it: the bound deleteImage actually applies is what is LEFT of the
-// budget when the refusal arrives, which after a first wait is less.
+// and on a multi-gigabyte qcow2 that is minutes, not seconds. It is the DEFAULT
+// wait budget — the timeouts block's fallback per verb — and it is also the
+// default budget deleteImage waits an import lock out within, so it is a named
+// constant rather than a literal in getPollTimeout. Practitioner copy
+// deliberately does NOT quote it: the bound deleteImage actually applies is what
+// is LEFT of the budget when the refusal arrives, which after a first wait is
+// less.
 const defaultPollTimeout = 60 * time.Minute
 
 func (r *imageResource) getUploadClient() *http.Client {
@@ -109,7 +127,8 @@ func (r *imageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"can be changed " +
 			"in place — every other attribute, including source_file, replaces the image. Create waits up to " +
 			"60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import " +
-			"still holds the image; neither budget is configurable." +
+			"still holds the image; both budgets are tunable per resource with the `timeouts` block " +
+			"(create / delete)." +
 			"\n\n" + scopedecl.Summary("frostmoln_image"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -298,6 +317,21 @@ func (r *imageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				},
 			},
 		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (60m per verb —
+			// getPollTimeout's defaultPollTimeout). Create covers the
+			// import: both the Glance import poll and the wait-out loop for
+			// the per-tenant concurrent-import cap. Delete covers waiting
+			// out an import lock on the destroy retries. Update carries no
+			// wait — image data is immutable and the in-place metadata PUT
+			// is answered synchronously. The delete retry INTERVAL is
+			// provider-internal pacing (getDeleteRetryInterval), not a
+			// budget. A timeouts change is an in-place no-op on real
+			// infrastructure — verified by the Gate 2 smoke test
+			// (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
+			"timeouts": timeouts.Schema(),
+		},
 	}
 }
 
@@ -335,6 +369,11 @@ func (r *imageResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 
 	sourcePath := plan.SourceFile.ValueString()
+
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded. Create covers BOTH image waits:
+	// the import poll and the wait-out of the concurrent-import cap.
+	budgets := r.resolveBudgets(plan.Timeouts)
 
 	// Captured BEFORE any read-back overwrites them — see ImageModel.keepPlanned
 	// for why the server's version of these two must not win a create.
@@ -445,13 +484,13 @@ func (r *imageResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	if err := r.startImport(ctx, created.ID); err != nil {
+	if err := r.startImport(ctx, created.ID, budgets.Create); err != nil {
 		resp.Diagnostics.AddError("Failed to start the image import",
 			imageErrorDetail(err)+"\n\n"+orphanHint(created.ID))
 		return
 	}
 
-	final, err := r.waitForImport(ctx, created.ID)
+	final, err := r.waitForImport(ctx, created.ID, budgets.Create)
 	if err != nil {
 		resp.Diagnostics.AddError("Image import failed", err.Error())
 		return
@@ -603,7 +642,7 @@ func (r *imageResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		return
 	}
 
-	if err := r.deleteImage(ctx, imageID); err != nil {
+	if err := r.deleteImage(ctx, imageID, r.resolveBudgets(state.Timeouts).Delete); err != nil {
 		// Already gone — including the case a failed create left a queued image
 		// the practitioner deleted by hand. The end state is what was asked for.
 		if client.IsNotFound(err) {
@@ -638,12 +677,13 @@ func (r *imageResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 // which covers the one passing cause among them (it could not read the import
 // task at that moment).
 //
-// The bound is the resource's poll timeout, the same patience the import wait
-// itself gets. The cadence is deliberately slower than that wait's: DELETE is a
+// The bound is the timeouts block's delete budget — the same patience the
+// import wait itself gets, which is what today's poll timeout used to supply.
+// The cadence is deliberately slower than that wait's: DELETE is a
 // write, and each attempt costs compute an admin read against Glance, so this
 // loop spends about a hundred requests over an hour rather than the several
 // hundred a ten-second interval would.
-func (r *imageResource) deleteImage(ctx context.Context, imageID string) error {
+func (r *imageResource) deleteImage(ctx context.Context, imageID string, budget time.Duration) error {
 	// Built ONCE, outside the loop, and refused rather than escaped — see
 	// imagePath. This is the call the guard exists for: a dot-segment id turns
 	// this DELETE into the destruction of a sibling resource in the same tenant.
@@ -652,7 +692,7 @@ func (r *imageResource) deleteImage(ctx context.Context, imageID string) error {
 		return pathErr
 	}
 
-	deadline := time.Now().Add(r.getPollTimeout())
+	deadline := time.Now().Add(budget)
 	for {
 		_, err := r.client.Delete(ctx, deletePath)
 		if err == nil {
@@ -813,20 +853,22 @@ func (r *imageResource) resolveUploadForm(ctx context.Context, created *apiCreat
 // concurrently, so a config with two images would reliably burn all five
 // retries and fail an apply that only needed to wait its turn.
 //
-// The bound is the same poll timeout the import wait itself uses: waiting for a
-// slot and waiting for the conversion are the same wait from the practitioner's
-// side, and neither should outlive the resource's configured patience.
+// The bound is the timeouts block's create budget — the same patience the
+// import wait itself uses, which is what today's poll timeout used to supply:
+// waiting for a slot and waiting for the conversion are the same wait from the
+// practitioner's side, and neither should outlive the resource's configured
+// patience.
 //
 // Only `concurrent_imports` is waited out. Every other 429 — including a
 // gateway rate limit, which client.Do has already retried properly — is
 // returned, because a wait is not its remedy.
-func (r *imageResource) startImport(ctx context.Context, imageID string) error {
+func (r *imageResource) startImport(ctx context.Context, imageID string, budget time.Duration) error {
 	importPath, pathErr := r.imagePath(imageID, "/import")
 	if pathErr != nil {
 		return pathErr
 	}
 
-	deadline := time.Now().Add(r.getPollTimeout())
+	deadline := time.Now().Add(budget)
 	for {
 		_, err := r.client.Post(ctx, importPath, nil)
 		if err == nil || !isConcurrentImportRefusal(err) || !time.Now().Before(deadline) {
@@ -969,14 +1011,15 @@ func isMD5ETag(etag string) bool {
 }
 
 // waitForImport polls the image until Glance has finished importing it,
-// returning the final image.
+// returning the final image. The wait budget is the timeouts block's create
+// budget.
 //
 // The termination conditions are `active`, `killed`, importFailed, or the
 // timeout — importFailed being the one that is easy to miss. A failed
 // interoperable import does not move the image to a failed status; it reverts it
 // to `queued`, so a loop keyed on `active` (and even one that also watches
 // `killed`) polls a permanently-failed image until it times out.
-func (r *imageResource) waitForImport(ctx context.Context, imageID string) (*apiImage, error) {
+func (r *imageResource) waitForImport(ctx context.Context, imageID string, budget time.Duration) (*apiImage, error) {
 	// Refused BEFORE the poll starts, not inside PollFunc: WaitForState retries
 	// every PollFunc error until the deadline, so a refusal returned from in
 	// there would hold the apply open for the whole timeout and then surface as
@@ -990,7 +1033,7 @@ func (r *imageResource) waitForImport(ctx context.Context, imageID string) (*api
 	gone := false
 	_, err := client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budget,
 		TargetStates: []string{imageStatusActive},
 		ErrorStates: []string{
 			imageStatusKilled, imageStatusDeleted, imageStatusPendingDelete, imageStatusDeactivated,

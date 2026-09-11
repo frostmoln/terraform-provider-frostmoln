@@ -95,6 +95,7 @@ output "apache_site_public_ip" {
 - `public` (Boolean) Whether the instance is publicly exposed: when true a Public IP is associated to the instance's engine port so the deployed site is reachable on the public internet, and public_ip is populated. Set at create to expose immediately; toggling it afterwards runs the platform's expose (true) or unexpose (false) action.
 
 Setting it true makes this instance depend on the VPC having a gateway, which Terraform cannot see — see the ordering note on this resource above.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `tls_enabled` (Boolean) Whether TLS is enabled for the webserver.
 
 ### Read-Only
@@ -108,3 +109,12 @@ Setting it true makes this instance depend on the VPC having a gateway, which Te
 - `status` (String) The current status of the Apache instance.
 - `tenant_id` (String) The tenant ID that owns this instance.
 - `updated_at` (String) The timestamp when the instance was last updated.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

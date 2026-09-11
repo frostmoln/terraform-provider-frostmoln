@@ -64,6 +64,12 @@ func (r *loadBalancerResource) priorSchemaV0(ctx context.Context) *schema.Schema
 
 	prior := current.Schema
 	prior.Attributes = attrs
+	// v0 state PREDATES the customer-tunable timeouts block: none was ever
+	// written to disk, so the prior schema must not declare one — carrying it
+	// would make the framework hand the upgrader a value whose object type has
+	// a `timeouts` field the v0 model struct (and every real v0 state row)
+	// lacks, failing the decode with a struct/object mismatch.
+	prior.Blocks = nil
 	prior.Version = 0
 	return &prior
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/public_ip"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // PublicIPAssociationModel is the Terraform state model for a public IP
@@ -18,6 +19,10 @@ type PublicIPAssociationModel struct {
 	PublicIPID types.String `tfsdk:"public_ip_id"`
 	InstanceID types.String `tfsdk:"instance_id"`
 	PortID     types.String `tfsdk:"port_id"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiPublicIP is the SUBSET of the public IP read response this resource needs:

@@ -254,6 +254,7 @@ func lbStateValue(t *testing.T, schemaResp resource.SchemaResponse, ctx context.
 		"operating_status":    tftypes.NewValue(tftypes.String, "ONLINE"),
 		"created_at":          tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 		"updated_at":          tftypes.NewValue(tftypes.String, nil),
+		"timeouts":            tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 }
 
@@ -378,6 +379,7 @@ func TestLoadBalancerUpdate(t *testing.T) {
 		"operating_status":    tftypes.NewValue(tftypes.String, "ONLINE"),
 		"created_at":          tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 		"updated_at":          tftypes.NewValue(tftypes.String, nil),
+		"timeouts":            tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	updateReq := resource.UpdateRequest{

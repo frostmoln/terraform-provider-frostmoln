@@ -51,6 +51,9 @@ func upgradeFrom(t *testing.T, priorProviderType any) (string, bool) {
 		"created_at":          str("2026-01-01T00:00:00Z"),
 		"updated_at":          str(nil),
 	})
+	// NOTE: no `timeouts` key — v0 state PREDATES the block, and priorSchemaV0
+	// carries no Blocks for exactly that reason (see state_upgrade.go); a v0
+	// fixture naming it would not be a v0 state at all.
 
 	var currentSchema resource.SchemaResponse
 	r.Schema(ctx, resource.SchemaRequest{}, &currentSchema)

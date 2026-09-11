@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -430,5 +432,131 @@ func TestPoolDeleteAlreadyGone(t *testing.T) {
 	r.Delete(context.Background(), resource.DeleteRequest{State: state}, &resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("delete of already-gone pool should not error, got %v", resp.Diagnostics.Errors())
+	}
+}
+
+// --- delete-shim tests: the destroy of an async backend must wait for the
+// operation's verdict, not succeed on the 202 (convergence wall Leg A). ---
+
+func fastPoolDeleteResource(t *testing.T, c *client.Client) *poolResource {
+	t.Helper()
+	r := &poolResource{client: c}
+	r.pollInterval = 5 * time.Millisecond
+	r.pollTimeout = 100 * time.Millisecond
+	return r
+}
+
+// TestDeleteWaitsForTheDeleteOperation: a pool delete routes through
+// provisioning and answers 202 with an Operation envelope BEFORE the platform
+// has decided anything. The destroy is done when the operation says so, not
+// when the 202 lands — the pool may still be serving behind that envelope.
+func TestDeleteWaitsForTheDeleteOperation(t *testing.T) {
+	polled := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-1/load-balancers/lb-1/pools/pool-1":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-del", "status": "pending", "resourceType": "pool",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-del":
+			polled++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-del", "status": "completed", "resourceType": "pool",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := fastPoolDeleteResource(t, c)
+
+	state := buildPoolState(t, samplePoolModel())
+	resp := resource.DeleteResponse{State: state}
+	r.Delete(context.Background(), resource.DeleteRequest{State: state}, &resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("delete of an operation that completed must not error: %v", resp.Diagnostics.Errors())
+	}
+	if polled == 0 {
+		t.Fatal("a 202 is not a deletion: the delete must WAIT (poll the operation) before returning")
+	}
+}
+
+// TestDeleteOperationFailureRefusesAndKeepsState: the workflow DECIDED no —
+// the pool still exists and the state row must stay, with the refusal
+// classified as refused rather than unknown.
+func TestDeleteOperationFailureRefusesAndKeepsState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-1/load-balancers/lb-1/pools/pool-1":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-del", "status": "pending", "resourceType": "pool",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-del":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-del", "status": "failed", "resourceType": "pool",
+				"error": "pool still has active members",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := fastPoolDeleteResource(t, c)
+
+	state := buildPoolState(t, samplePoolModel())
+	resp := resource.DeleteResponse{State: state}
+	r.Delete(context.Background(), resource.DeleteRequest{State: state}, &resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a refused delete must fail the apply, not drop the row")
+	}
+	err := resp.Diagnostics.Errors()[0]
+	if !strings.Contains(err.Summary(), "Refused By The Platform") {
+		t.Errorf("refused delete must be classified as refused, got summary %q", err.Summary())
+	}
+	if !strings.Contains(err.Detail(), "pool still has active members") {
+		t.Errorf("refusal must carry the platform's prose, got: %s", err.Detail())
+	}
+}
+
+// TestDeleteAcceptedButUnwatchableIsClassified: a 202 whose envelope cannot be
+// parsed is neither a success nor a verified absence — it is an unknown.
+func TestDeleteAcceptedButUnwatchableIsClassified(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-1/load-balancers/lb-1/pools/pool-1":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte("not-json"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := fastPoolDeleteResource(t, c)
+
+	state := buildPoolState(t, samplePoolModel())
+	resp := resource.DeleteResponse{State: state}
+	r.Delete(context.Background(), resource.DeleteRequest{State: state}, &resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("an accepted-but-unwatchable delete is classified unknown, never a silent success")
+	}
+	if !strings.Contains(resp.Diagnostics.Errors()[0].Summary(), "Outcome Is Unknown") {
+		t.Errorf("unwatchable delete must be classified unknown, got summary %q", resp.Diagnostics.Errors()[0].Summary())
 	}
 }

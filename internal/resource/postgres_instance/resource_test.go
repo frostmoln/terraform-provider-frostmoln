@@ -3,6 +3,7 @@ package postgres_instance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // --- Model unit tests ---
@@ -1259,5 +1261,151 @@ func TestUpdateFlavorChangeRejected(t *testing.T) {
 	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
 	if !updateResp.Diagnostics.HasError() {
 		t.Error("expected error rejecting a flavor_id change")
+	}
+}
+
+// TestTimeoutsBlockOverridesTheDefaultBudget pins the two promises of the
+// customer-tunable timeouts block in one behavior test: the configured
+// timeouts.create — NOT the hardcoded default — bounds the create wait (the
+// default here is the full 30 minutes and would hang if the block were
+// ignored), and a wait that still times out leaves a tracked instance
+// (postgres' 🔴 state-before-the-wait precedent) that refresh, destroy and
+// import can reach.
+func TestTimeoutsBlockOverridesTheDefaultBudget(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/databases":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-wall", "status": "pending",
+				"resourceType": "database", "resourceId": "pg-wall",
+			})
+		case strings.HasSuffix(r.URL.Path, "/operations/op-wall"):
+			// Never completes. This is the timeout case.
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-wall", "status": "running", "resourceType": "database",
+			})
+		case strings.HasSuffix(r.URL.Path, "/databases/pg-wall"):
+			// The state-before-the-wait early read.
+			_ = json.NewEncoder(w).Encode(apiPostgresInstance{
+				ID: "pg-wall", Name: "test-pg", PostgresVersion: "16", FlavorID: "db.gp1.small",
+				StorageGB: 50, VPCID: "vpc-1", SubnetID: "sn-1", Status: "provisioning",
+				CreatedAt: "2025-01-01T00:00:00Z",
+			})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	// No pollTimeout injection: only the timeouts block under test can end this
+	// wait inside the test's lifetime.
+	r := &postgresInstanceResource{client: newClient(t, server), pollInterval: 10 * time.Millisecond}
+
+	planModel := fullPlanModel()
+	planModel.Timeouts = &timeouts.Model{Create: types.StringValue("120ms")}
+
+	start := time.Now()
+	createResp := resource.CreateResponse{State: emptyState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: buildPlan(t, planModel)}, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("expected the create to fail: the operation never completed")
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("the timeouts.create override did not bound the wait: took %s", elapsed)
+	}
+
+	var result PostgresInstanceModel
+	createResp.State.Get(context.Background(), &result)
+	if result.ID.ValueString() != "pg-wall" {
+		t.Fatalf("a timed-out create must still record the instance id so it can be destroyed; got %q",
+			result.ID.ValueString())
+	}
+}
+
+// --- resize verdict tests (the 01a03e62 gap): the 202 operation IS the
+// resize's verdict; the 200 {"status":"resizing"} ack is only the fallback. ---
+
+// TestUpdateStorageResizeWaitsForTheOperation: the resize 202 used to be
+// discarded and a status-poll decided — a poll that can satisfy itself on the
+// still-current `running` before the saga moves the instance to `resizing`,
+// and that never sees a resize that FAILS. It is now polled to completion.
+func TestUpdateStorageResizeWaitsForTheOperation(t *testing.T) {
+	polled := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-1", "tenantId": "t-1"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/databases/pg-1/resize":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"operationId":"op-resize","status":"resizing"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-resize":
+			polled++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-resize", "status": "completed", "resourceType": "database",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/databases/pg-1":
+			_ = json.NewEncoder(w).Encode(apiPostgresInstance{ID: "pg-1", Name: "pg", Status: "running", StorageGB: 40})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &postgresInstanceResource{client: c, pollInterval: 5 * time.Millisecond}
+
+	if err := r.resizeStorage(context.Background(), "pg-1", 40, 200*time.Millisecond); err != nil {
+		t.Fatalf("resize whose operation completed must succeed: %v", err)
+	}
+	if polled == 0 {
+		t.Fatal("a 202 resize verdict must be waited on, not discarded")
+	}
+}
+
+// TestUpdateStorageResizeOperationRefusedSurfaces: the operation reached
+// terminal failure — the resize did NOT happen and the error must say so with
+// the platform's own words.
+func TestUpdateStorageResizeOperationRefusedSurfaces(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-1", "tenantId": "t-1"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/databases/pg-1/resize":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"operationId":"op-resize","status":"resizing"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-resize":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-resize", "status": "failed", "resourceType": "database",
+				"errorCode": "invalid", "error": "storage can only grow",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/databases/pg-1":
+			_ = json.NewEncoder(w).Encode(apiPostgresInstance{ID: "pg-1", Name: "pg", Status: "running", StorageGB: 20})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &postgresInstanceResource{client: c, pollInterval: 5 * time.Millisecond}
+
+	err := r.resizeStorage(context.Background(), "pg-1", 40, 200*time.Millisecond)
+	if err == nil {
+		t.Fatal("a refused resize operation must fail the update, not report success")
+	}
+	var opErr *client.OperationError
+	if !errors.As(err, &opErr) {
+		t.Fatalf("the wait must surface the typed OperationError, got: %T %v", err, err)
+	}
+	if opErr.Message != "storage can only grow" {
+		t.Errorf("expected the workflow's prose, got: %s", err.Error())
 	}
 }

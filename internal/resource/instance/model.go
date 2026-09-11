@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // InstanceModel is the Terraform state model for a compute instance.
@@ -38,6 +39,10 @@ type InstanceModel struct {
 	PrivateIP          types.String `tfsdk:"private_ip"`
 	PublicIP           types.String `tfsdk:"public_ip"`
 	CreatedAt          types.String `tfsdk:"created_at"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiNestedRef is a nested object that only carries a name (flavor{}/image{}).

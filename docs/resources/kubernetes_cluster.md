@@ -96,6 +96,7 @@ An existing cluster created with a BYO public IP is unaffected and keeps its add
 
 🔴 REMOVING IT CAN PLAN A REPLACEMENT. This attribute forces replacement and is never read back from the API, so deleting the line is itself the change that makes Terraform want to destroy and recreate the cluster. Add `lifecycle { ignore_changes = [public_ip_id] }` **as well as** removing it — the two are not alternatives, and only the pair is non-destructive.
 - `region` (String) The region to create the cluster in. Defaults server-side.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `version` (String) The Kubernetes version (e.g. "1.35"). Defaults to the platform default version. Changing it currently REPLACES the cluster — in-place upgrade is not available yet.
 
 ### Read-Only
@@ -130,6 +131,16 @@ Read-Only:
 
 - `id` (String) The unique identifier of the initial node pool.
 - `status` (String) The current status of the initial node pool.
+
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").
 
 ## Import
 

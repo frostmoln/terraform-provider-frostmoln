@@ -89,6 +89,7 @@ resource "frostmoln_security_group_rule" "web_egress_https" {
 This is create-time behaviour only. The value is carried in state so plans stay clean, changing it on an existing group does nothing, and Read never lists or manages rules. Defaults to `false` today; at provider v2 the default flips to `true`, announced by a deprecation notice in the v1 line ahead of the flip.
 - `description` (String) A description of the security group.
 - `tags` (Map of String) Tags for the security group.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `vpc_id` (String) The ID of the VPC this security group belongs to.
 
 ### Read-Only
@@ -96,3 +97,12 @@ This is create-time behaviour only. The value is carried in state so plans stay 
 - `created_at` (String) The creation timestamp.
 - `id` (String) The unique identifier of the security group.
 - `is_default` (Boolean) Whether this is the default security group.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

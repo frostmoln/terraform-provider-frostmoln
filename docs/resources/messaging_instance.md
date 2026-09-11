@@ -54,6 +54,7 @@ resource "frostmoln_messaging_instance" "broker" {
 
 - `engine` (String) The messaging engine type. Only "lavinmq" is currently supported. Defaults to "lavinmq".
 - `persistence_mode` (String) The persistence mode for the messaging instance ("none" or "persistent"). Defaults to "persistent".
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `version` (String) The engine version (e.g. "2.3"). Defaults to the recommended version when omitted.
 
 ### Read-Only
@@ -66,3 +67,12 @@ resource "frostmoln_messaging_instance" "broker" {
 - `private_ip` (String) The private IP address of the messaging instance.
 - `status` (String) The current status of the messaging instance.
 - `updated_at` (String) The timestamp when the instance was last updated.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

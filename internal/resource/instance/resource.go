@@ -23,7 +23,9 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/writeonly"
 )
 
@@ -74,6 +76,36 @@ func (r *instanceResource) getResizeTimeout() time.Duration {
 		return r.pollTimeout
 	}
 	return 45 * time.Minute
+}
+
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded.
+// Routing the defaults through the accessor keeps the test-injection seam
+// intact: a test that shrinks pollTimeout shrinks every wait that does not
+// carry an explicit timeouts override, exactly as before.
+//
+// Update's two waits do NOT share one default, so the fallback is not Uniform:
+// the security-group PUT has always waited on the generic 10-minute poll
+// timeout, while a flavor resize has always had its own longer 45-minute
+// budget (getResizeTimeout). budgets.Update carries the 10m default; the
+// resize keeps its 45m one unless the block explicitly overrides update —
+// see the resizeBudget splice in Update.
+func (r *instanceResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	budgets, err := m.Resolve(timeouts.Budgets{
+		Create: r.getPollTimeout(),
+		Update: r.getPollTimeout(),
+		Delete: r.getPollTimeout(),
+	})
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return timeouts.Budgets{
+			Create: r.getPollTimeout(),
+			Update: r.getPollTimeout(),
+			Delete: r.getPollTimeout(),
+		}
+	}
+	return budgets
 }
 
 func (r *instanceResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -367,6 +399,15 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				},
 			},
 		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (10m per verb, the resize's 45m
+			// aside — it keeps that longer default unless the block overrides
+			// update; see resolveBudgets). A timeouts change is an in-place
+			// no-op on real infrastructure — verified by the Gate 2 smoke test
+			// (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
+			"timeouts": timeouts.Schema(),
+		},
 	}
 }
 
@@ -428,6 +469,11 @@ func (r *instanceResource) Create(ctx context.Context, req resource.CreateReques
 		apiReq.ConsolePassword = consolePassword.ValueString()
 	}
 
+	// applyStarted is the created-at floor for the orphan sweep: an instance
+	// that existed before this apply is never adopted by mistake.
+	applyStarted := time.Now().UTC()
+	floor := applyStarted.Add(-time.Minute)
+
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/instances"), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create instance", err.Error())
@@ -439,7 +485,18 @@ func (r *instanceResource) Create(ctx context.Context, req resource.CreateReques
 	// completion (the workflow waits for the instance to reach running before
 	// completing), then read by its resolved resourceId. A 201 with the instance
 	// body is still accepted for a synchronous backend. Mirrors the volume +
-	// snapshot + load_balancer resources.
+	// snapshot resources.
+	//
+	// When the wait gives up without the platform having said either yes or no,
+	// the orphan contract's create arm decides: a terminal refusal is reported
+	// as nothing-created, and everything unknown goes through the name/list
+	// sweep (ADOPT-AS-TRACKED) — the instance items ARE the public projection,
+	// so the created name is on them.
+
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
 	var instanceID string
 	if apiResp.IsAccepted() {
 		op, opErr := client.ParseResponse[client.Operation](apiResp)
@@ -447,12 +504,24 @@ func (r *instanceResource) Create(ctx context.Context, req resource.CreateReques
 			resp.Diagnostics.AddError("Failed to parse operation response", opErr.Error())
 			return
 		}
-		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout())
+		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Create)
 		if waitErr != nil {
-			resp.Diagnostics.AddError("Instance failed to reach running state", waitErr.Error())
+			if r.client.ClassifyOperationFailure(ctx, op.OperationID) == client.OperationRefused {
+				orphan.AddCreateRefused(&resp.Diagnostics, "Instance", fmt.Sprintf("the instance %q", plan.Name.ValueString()), waitErr)
+				return
+			}
+			// Unknown — the sweep decides. Return either way; the helper
+			// wrote the state row or the diagnostic.
+			r.adoptCreatedObject(ctx, &plan, floor, waitErr, resp)
 			return
 		}
 		instanceID = done.ResourceID
+		if instanceID == "" {
+			// Completed but the envelope named no object: the sweep decides.
+			r.adoptCreatedObject(ctx, &plan, floor,
+				fmt.Errorf("the instance create operation completed but returned no resource ID"), resp)
+			return
+		}
 	} else {
 		inst, parseErr := client.ParseResponse[apiInstance](apiResp)
 		if parseErr != nil {
@@ -461,20 +530,20 @@ func (r *instanceResource) Create(ctx context.Context, req resource.CreateReques
 		}
 		instanceID = inst.ID
 	}
-	if instanceID == "" {
-		resp.Diagnostics.AddError(
-			"Instance Operation Returned No Resource ID",
-			"The instance create operation completed but returned no resource ID. The instance may exist in the backend without being tracked in Terraform state - check `fm compute instance list` and import it if necessary.",
-		)
-		return
-	}
 
-	// Store user_data hash before fromAPI (which doesn't touch user_data fields).
-	// It stays null on the write-only path: the hash exists to detect a change to
-	// the configured document, and there is no configured document in state to
-	// hash — user_data_wo_version does that job instead. Hashing the write-only
-	// value would also put a digest of it in state, which is what the attribute
-	// exists to avoid.
+	// Both create arms converge here: hash + honest read + the state row.
+	r.readCreatedInstance(ctx, instanceID, &plan, resp)
+}
+
+// readCreatedInstance finishes an instance create — the ordinary arm from the
+// resolved resourceId and the adoption arm from the sweep share it. The
+// user_data hash is stored before fromAPI (which doesn't touch the user_data
+// fields); it stays null on the write-only path: the hash exists to detect a
+// change to the configured document, and there is no configured document in
+// state to hash — user_data_wo_version does that job instead. Hashing the
+// write-only value would also put a digest of it in state, which is what the
+// attribute exists to avoid.
+func (r *instanceResource) readCreatedInstance(ctx context.Context, instanceID string, plan *InstanceModel, resp *resource.CreateResponse) {
 	if !plan.UserData.IsNull() && !plan.UserData.IsUnknown() {
 		plan.UserDataHash = types.StringValue(computeUserDataHash(plan.UserData.ValueString()))
 	} else {
@@ -494,7 +563,54 @@ func (r *instanceResource) Create(ctx context.Context, req resource.CreateReques
 	}
 
 	plan.fromAPI(ctx, finalInst, &resp.Diagnostics)
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
+}
+
+// apiInstanceList is the instance family listing (GET /instances) — only the
+// envelope the orphan sweep reads; the items are the package's apiInstance and
+// carry the created name (they are the public projection).
+type apiInstanceList struct {
+	Instances []apiInstance `json:"instances"`
+}
+
+// adoptCreatedObject runs the create-timeout arm of the orphan contract for an
+// instance whose provisioning operation outlived the wait (internal/orphan:
+// ADOPT-AS-TRACKED). Found = a fresh read of what the platform HAS, adopted
+// after the apply timed out — the shared warning is orphan's — written through
+// the package's own GET + fromAPI + Set flow. Verified absence = the
+// re-apply-safe error. Unreadable = the platform's last word plus the
+// `fm compute instance list` hint. It never invites `terraform state rm`.
+//
+// waitErr may be a real wait failure or the synthetic "completed but returned
+// no resource ID" note the completed-but-unnamed arm passes in — either way it
+// is what the wait ended with, and the diagnostics must carry it.
+func (r *instanceResource) adoptCreatedObject(ctx context.Context, plan *InstanceModel, floor time.Time, waitErr error, resp *resource.CreateResponse) {
+	adoptedID := orphan.AdoptCreateOnTimeout(ctx, &resp.Diagnostics, orphan.CreateParams{
+		ResourceName: "Instance",
+		FMList:       "`fm compute instance list`",
+		WaitErr:      waitErr,
+		Resolve: func(sweepCtx context.Context) (string, error) {
+			listResp, err := r.client.Get(sweepCtx, r.client.TenantPath("/instances"), nil)
+			if err != nil {
+				return "", err
+			}
+			listing, err := client.ParseResponse[apiInstanceList](listResp)
+			if err != nil {
+				return "", fmt.Errorf("failed to parse instance list response: %w", err)
+			}
+			candidates := make([]orphan.Candidate, 0, len(listing.Instances))
+			for _, inst := range listing.Instances {
+				candidates = append(candidates, orphan.Candidate{ID: inst.ID, Name: inst.Name, CreatedAt: inst.CreatedAt})
+			}
+			return orphan.PickCreated(candidates, plan.Name.ValueString(), floor)
+		},
+	})
+	if adoptedID == "" {
+		return
+	}
+
+	// The honest read: the platform's response, not the configuration's intent.
+	r.readCreatedInstance(ctx, adoptedID, plan, resp)
 }
 
 func (r *instanceResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -610,6 +726,22 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 
 	id := state.ID.ValueString()
 
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
+	// The update verb carries two waits with DIFFERENT hardcoded defaults: the
+	// security-group PUT has always waited on the generic 10-minute poll
+	// timeout, while a flavor resize has always had its own longer 45-minute
+	// budget (getResizeTimeout). An explicit update override bounds BOTH; when
+	// update is unset, budgets.Update keeps the 10m default for the PUT and
+	// the resize keeps its 45m one — byte-identical to the pre-timeouts
+	// behavior. Unknown is not an override: there is no configured value yet.
+	resizeBudget := budgets.Update
+	if plan.Timeouts == nil || plan.Timeouts.Update.IsNull() || plan.Timeouts.Update.IsUnknown() {
+		resizeBudget = r.getResizeTimeout()
+	}
+
 	// Preserve write-only fields. instance_access is deliberately NOT
 	// overwritten from state: its plan modifier allows an in-place null<->false
 	// respelling (both mean "no agent"), and the final state must match the plan
@@ -620,7 +752,7 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 
 	// Check if flavor_id changed (resize workflow).
 	if !plan.FlavorID.Equal(state.FlavorID) {
-		if err := r.resizeInstance(ctx, id, plan.FlavorID.ValueString()); err != nil {
+		if err := r.resizeInstance(ctx, id, plan.FlavorID.ValueString(), resizeBudget); err != nil {
 			resp.Diagnostics.AddError("Failed to resize instance", err.Error())
 			return
 		}
@@ -637,7 +769,7 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 				return
 			}
 		}
-		if err := r.setSecurityGroups(ctx, id, sgIDs); err != nil {
+		if err := r.setSecurityGroups(ctx, id, sgIDs, budgets.Update); err != nil {
 			resp.Diagnostics.AddError("Failed to update security groups", err.Error())
 			return
 		}
@@ -694,7 +826,11 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 // SHUTOFF/ACTIVE, so the very first wait ran out its budget on a VM that had
 // already stopped. The reported symptom was exactly that: the VM stops and
 // nothing further happens.
-func (r *instanceResource) resizeInstance(ctx context.Context, id, newFlavorID string) error {
+//
+// budget is the wait budget the resize runs on: the timeouts block's update
+// override, or getResizeTimeout's 45m when update is unset (the splice in
+// Update keeps the two hardcoded defaults distinct).
+func (r *instanceResource) resizeInstance(ctx context.Context, id, newFlavorID string, budget time.Duration) error {
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/instances/"+id+"/resize"), apiResizeInstanceRequest{FlavorID: newFlavorID})
 	if err != nil {
 		// A 409 RESIZE_IN_PROGRESS is not necessarily someone else's resize — it is
@@ -716,7 +852,7 @@ func (r *instanceResource) resizeInstance(ctx context.Context, id, newFlavorID s
 				"instance_id":  id,
 				"operation_id": apiErr.OperationID,
 			})
-			return r.awaitResizeOperation(ctx, apiErr.OperationID)
+			return r.awaitResizeOperation(ctx, apiErr.OperationID, budget)
 		}
 		return err
 	}
@@ -730,21 +866,24 @@ func (r *instanceResource) resizeInstance(ctx context.Context, id, newFlavorID s
 	if opErr != nil {
 		return fmt.Errorf("parse resize operation response: %w", opErr)
 	}
-	return r.awaitResizeOperation(ctx, op.OperationID)
+	return r.awaitResizeOperation(ctx, op.OperationID, budget)
 }
 
 // resizeInProgressCode is provisioning's refusal when a resize of this instance is
 // already running (instance_handler.go ResizeInstance).
 const resizeInProgressCode = "RESIZE_IN_PROGRESS"
 
-// awaitResizeOperation waits for a resize operation to reach a terminal state.
-func (r *instanceResource) awaitResizeOperation(ctx context.Context, operationID string) error {
+// awaitResizeOperation waits for a resize operation to reach a terminal state,
+// on the budget Update resolved (the timeouts block's update override, or the
+// hardcoded 45m resize default when update is unset — resolved at the
+// resizeBudget splice in Update).
+func (r *instanceResource) awaitResizeOperation(ctx context.Context, operationID string, budget time.Duration) error {
 	// An empty id would poll .../operations/ — a 404 the poller retries to the
 	// deadline, reporting a bare timeout for a resize that may well have started.
 	if operationID == "" {
 		return fmt.Errorf("instance resize was accepted but returned no operation id; the resize may be running — check `fm compute instance show` before retrying")
 	}
-	if _, err := r.client.WaitForOperation(ctx, operationID, r.getPollInterval(), r.getResizeTimeout()); err != nil {
+	if _, err := r.client.WaitForOperation(ctx, operationID, r.getPollInterval(), budget); err != nil {
 		return fmt.Errorf("resize did not complete: %w", err)
 	}
 	return nil
@@ -756,8 +895,8 @@ func (r *instanceResource) awaitResizeOperation(ctx context.Context, operationID
 // as a probable dropped field). The PUT routes through provisioning and returns
 // 202 + an Operation; we wait for it to complete so the applied set is visible to
 // a subsequent read / dependent resource (the change lands asynchronously — do
-// not race the read).
-func (r *instanceResource) setSecurityGroups(ctx context.Context, id string, sgIDs []string) error {
+// not race the read), on the timeouts block's update budget.
+func (r *instanceResource) setSecurityGroups(ctx context.Context, id string, sgIDs []string, budget time.Duration) error {
 	body := apiSetInstanceSecurityGroupsRequest{
 		SecurityGroupIDs:    sgIDs,
 		ClearSecurityGroups: len(sgIDs) == 0,
@@ -771,7 +910,7 @@ func (r *instanceResource) setSecurityGroups(ctx context.Context, id string, sgI
 		if opErr != nil {
 			return fmt.Errorf("parse security-group operation response: %w", opErr)
 		}
-		if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout()); waitErr != nil {
+		if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budget); waitErr != nil {
 			return fmt.Errorf("security-group update did not complete: %w", waitErr)
 		}
 	}
@@ -796,10 +935,12 @@ func (r *instanceResource) Delete(ctx context.Context, req resource.DeleteReques
 		return
 	}
 
-	// Wait for the instance to be fully deleted (404 on GET).
+	// Wait for the instance to be fully deleted (404 on GET), on the
+	// timeouts block's delete budget.
+	budgets := r.resolveBudgets(state.Timeouts)
 	_, err = client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budgets.Delete,
 		TargetStates: []string{"deleted"},
 		// No ErrorStates. This read "error", which could never match compute's
 		// uppercase ERROR — the same vocabulary bug the resize path had. Correcting

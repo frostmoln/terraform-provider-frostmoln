@@ -15,6 +15,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
@@ -45,6 +46,78 @@ func (r *valkeyInstanceResource) getPollTimeout() time.Duration {
 		return r.pollTimeout
 	}
 	return 15 * time.Minute
+}
+
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded
+// (getPollTimeout's 15m). Routing the defaults through the accessor keeps the
+// test-injection seam intact: a test that shrinks pollTimeout shrinks every
+// wait that does not carry an explicit timeouts override, exactly as before.
+func (r *valkeyInstanceResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return timeouts.Uniform(r.getPollTimeout())
+	}
+	return budgets
+}
+
+// waitRunning waits until the instance returns to "running" state. The budget
+// is the timeouts block's update (or create, during Create) override.
+func (r *valkeyInstanceResource) waitRunning(ctx context.Context, id string, budget time.Duration) error {
+	_, err := client.WaitForState(ctx, client.PollConfig{
+		Interval:     r.getPollInterval(),
+		Timeout:      budget,
+		TargetStates: []string{"running"},
+		ErrorStates:  []string{"error", "failed"},
+		ResourceName: "valkey_instance",
+		PollFunc: func(pollCtx context.Context) (string, error) {
+			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/caches/"+id), nil)
+			if pollErr != nil {
+				return "", pollErr
+			}
+			current, parseErr := client.ParseResponse[apiValkeyInstance](pollResp)
+			if parseErr != nil {
+				return "", parseErr
+			}
+			return current.Status, nil
+		},
+	})
+	return err
+}
+
+// awaitResize watches a resize write to its verdict, absorbing the resize gap
+// (Ambix 01a03e62): a 202 answer carries an Operation — the saga is still
+// running — and USED to be discarded (`if _, err := Post`) while a bare
+// status-poll decided; that poll could satisfy itself on the still-current
+// `running` before the saga moved the instance to `resizing` and never saw a
+// resize that FAILED. The database and cache/webserver/messaging services
+// synchronously CAS `running`→`resizing` before answering 202 (verified
+// 2026-09-07), so the first poll now sees `resizing` — but the operation, not
+// the status, is what carries the resize's verdict, so the 202 is polled to
+// completion. The 200 {"status":"resizing"} answer is the legacy synchronous
+// ack — the only case for the status-poll fallback.
+func (r *valkeyInstanceResource) awaitResize(ctx context.Context, id string, apiResp *client.Response, budget time.Duration) error {
+	if !apiResp.IsAccepted() {
+		return r.waitRunning(ctx, id, budget)
+	}
+	op, opErr := client.ParseResponse[client.OperationResponse](apiResp)
+	if opErr != nil || op.OperationID == "" {
+		// The saga was accepted and its operation cannot be watched from here.
+		// That is classified — NOT a success and NOT a failure: the resize may
+		// still complete, and retrying blind can hit 409 RESIZE-backed states.
+		unknown := opErr
+		if unknown == nil {
+			unknown = fmt.Errorf("the resize was accepted but returned no operation id")
+		}
+		return fmt.Errorf("resize was accepted but its outcome could not be tracked; the resize may "+
+			"still be running — check the instance status (portal, `fm cache valkey instance list`) before retrying: %w", unknown)
+	}
+	if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budget); waitErr != nil {
+		return waitErr
+	}
+	return r.waitRunning(ctx, id, budget)
 }
 
 func (r *valkeyInstanceResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -145,6 +218,13 @@ func (r *valkeyInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 				Computed:    true,
 			},
 		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (15m per verb). A timeouts change
+			// is an in-place no-op on real infrastructure — verified by the
+			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
+			"timeouts": timeouts.Schema(),
+		},
 	}
 }
 
@@ -175,6 +255,10 @@ func (r *valkeyInstanceResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/caches"), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create Valkey instance", err.Error())
@@ -192,7 +276,7 @@ func (r *valkeyInstanceResource) Create(ctx context.Context, req resource.Create
 			resp.Diagnostics.AddError("Failed to parse Valkey instance operation response", err.Error())
 			return
 		}
-		done, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout())
+		done, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Create)
 		if err != nil {
 			resp.Diagnostics.AddError("Valkey instance creation failed", err.Error())
 			return
@@ -252,7 +336,7 @@ func (r *valkeyInstanceResource) Create(ctx context.Context, req resource.Create
 	// Poll until instance reaches "running" status.
 	_, err = client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budgets.Create,
 		TargetStates: []string{"running"},
 		ErrorStates:  []string{"error", "failed"},
 		ResourceName: "valkey_instance",
@@ -327,27 +411,7 @@ func (r *valkeyInstanceResource) Update(ctx context.Context, req resource.Update
 
 	id := state.ID.ValueString()
 
-	waitRunning := func() error {
-		_, err := client.WaitForState(ctx, client.PollConfig{
-			Interval:     r.getPollInterval(),
-			Timeout:      r.getPollTimeout(),
-			TargetStates: []string{"running"},
-			ErrorStates:  []string{"error", "failed"},
-			ResourceName: "valkey_instance",
-			PollFunc: func(pollCtx context.Context) (string, error) {
-				pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/caches/"+id), nil)
-				if pollErr != nil {
-					return "", pollErr
-				}
-				current, parseErr := client.ParseResponse[apiValkeyInstance](pollResp)
-				if parseErr != nil {
-					return "", parseErr
-				}
-				return current.Status, nil
-			},
-		})
-		return err
-	}
+	budgets := r.resolveBudgets(plan.Timeouts)
 
 	// Storage grows via POST /caches/{id}/resize — the PUT below cannot change storage. Grow-only:
 	// Cinder volumes cannot shrink, so reject a decrease with a clear error rather than a silent
@@ -360,11 +424,12 @@ func (r *valkeyInstanceResource) Update(ctx context.Context, req resource.Update
 				fmt.Sprintf("storage_gb can only be increased (current %d GB, requested %d GB); volumes cannot shrink.", cur, newSize))
 			return
 		}
-		if _, err := r.client.Post(ctx, r.client.TenantPath("/caches/"+id+"/resize"), apiResizeValkeyInstanceRequest{StorageGB: int(newSize)}); err != nil {
-			resp.Diagnostics.AddError("Failed to resize Valkey storage", err.Error())
+		apiResp, postErr := r.client.Post(ctx, r.client.TenantPath("/caches/"+id+"/resize"), apiResizeValkeyInstanceRequest{StorageGB: int(newSize)})
+		if postErr != nil {
+			resp.Diagnostics.AddError("Failed to resize Valkey storage", postErr.Error())
 			return
 		}
-		if err := waitRunning(); err != nil {
+		if err := r.awaitResize(ctx, id, apiResp, budgets.Update); err != nil {
 			resp.Diagnostics.AddError("Valkey instance failed to reach running state after storage resize", err.Error())
 			return
 		}
@@ -374,11 +439,12 @@ func (r *valkeyInstanceResource) Update(ctx context.Context, req resource.Update
 	// Mutually exclusive with a storage resize at the backend, so it is a SEPARATE request; if a
 	// single apply changed both, the storage resize above already returned the instance to running.
 	if !plan.FlavorID.IsNull() && !plan.FlavorID.IsUnknown() && plan.FlavorID.ValueString() != state.FlavorID.ValueString() {
-		if _, err := r.client.Post(ctx, r.client.TenantPath("/caches/"+id+"/resize"), apiResizeValkeyInstanceRequest{FlavorID: plan.FlavorID.ValueString()}); err != nil {
-			resp.Diagnostics.AddError("Failed to resize Valkey flavor", err.Error())
+		apiResp, postErr := r.client.Post(ctx, r.client.TenantPath("/caches/"+id+"/resize"), apiResizeValkeyInstanceRequest{FlavorID: plan.FlavorID.ValueString()})
+		if postErr != nil {
+			resp.Diagnostics.AddError("Failed to resize Valkey flavor", postErr.Error())
 			return
 		}
-		if err := waitRunning(); err != nil {
+		if err := r.awaitResize(ctx, id, apiResp, budgets.Update); err != nil {
 			resp.Diagnostics.AddError("Valkey instance failed to reach running state after flavor resize", err.Error())
 			return
 		}
@@ -392,7 +458,7 @@ func (r *valkeyInstanceResource) Update(ctx context.Context, req resource.Update
 			resp.Diagnostics.AddError("Failed to update Valkey instance", err.Error())
 			return
 		}
-		if err := waitRunning(); err != nil {
+		if err := r.waitRunning(ctx, id, budgets.Update); err != nil {
 			resp.Diagnostics.AddError("Valkey instance failed to reach running state after update", err.Error())
 			return
 		}
@@ -433,10 +499,12 @@ func (r *valkeyInstanceResource) Delete(ctx context.Context, req resource.Delete
 		return
 	}
 
-	// Wait for the instance to be fully deleted (404 on GET).
+	// Wait for the instance to be fully deleted (404 on GET), on the
+	// timeouts block's delete budget.
+	budgets := r.resolveBudgets(state.Timeouts)
 	_, err = client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budgets.Delete,
 		TargetStates: []string{"deleted"},
 		ErrorStates:  []string{"error"},
 		ResourceName: "valkey_instance",

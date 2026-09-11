@@ -3,6 +3,8 @@ package volume_attachment
 
 import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // VolumeAttachmentModel is the Terraform state model for a volume attachment.
@@ -11,6 +13,10 @@ type VolumeAttachmentModel struct {
 	VolumeID   types.String `tfsdk:"volume_id"`
 	InstanceID types.String `tfsdk:"instance_id"`
 	DevicePath types.String `tfsdk:"device_path"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiVolumeAttachment is one element of the volume's attachments[] array

@@ -20,6 +20,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/public_ip"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
@@ -52,6 +53,39 @@ func NewResource() resource.Resource {
 		pollInterval: defaultPollInterval,
 		pollTimeout:  defaultPollTimeout,
 	}
+}
+
+func (r *publicIPAssociationResource) getPollInterval() time.Duration {
+	if r.pollInterval > 0 {
+		return r.pollInterval
+	}
+	return defaultPollInterval
+}
+
+// getPollTimeout is the DEFAULT wait budget — the timeouts block's fallback
+// per verb. Both writes on this surface (associate, disassociate) route through
+// provisioning, so create and delete have always polled the operation against
+// the same 5m.
+func (r *publicIPAssociationResource) getPollTimeout() time.Duration {
+	if r.pollTimeout > 0 {
+		return r.pollTimeout
+	}
+	return defaultPollTimeout
+}
+
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded.
+// Routing the defaults through the accessor keeps the test-injection seam
+// intact: a test that shrinks pollTimeout shrinks every wait that does not
+// carry an explicit timeouts override, exactly as before.
+func (r *publicIPAssociationResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return timeouts.Uniform(r.getPollTimeout())
+	}
+	return budgets
 }
 
 func (r *publicIPAssociationResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -134,6 +168,13 @@ func (r *publicIPAssociationResource) Schema(_ context.Context, _ resource.Schem
 				},
 			},
 		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (5m per verb). A timeouts change
+			// is an in-place no-op on real infrastructure — verified by the
+			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
+			"timeouts": timeouts.Schema(),
+		},
 	}
 }
 
@@ -192,8 +233,9 @@ const (
 // waitForOperation blocks on the provisioning operation a 202 started. Every
 // write on this surface routes through provisioning, which answers 202 with an
 // operation id BEFORE the platform has decided anything, so returning on the
-// 202 would record an attachment that may still be refused.
-func (r *publicIPAssociationResource) waitForOperation(ctx context.Context, apiResp *client.Response) (waitOutcome, error) {
+// 202 would record an attachment that may still be refused. The wait runs on
+// the timeouts block's budget for the verb that started the write.
+func (r *publicIPAssociationResource) waitForOperation(ctx context.Context, apiResp *client.Response, budget time.Duration) (waitOutcome, error) {
 	if !apiResp.IsAccepted() {
 		return outcomeCompleted, nil
 	}
@@ -203,7 +245,7 @@ func (r *publicIPAssociationResource) waitForOperation(ctx context.Context, apiR
 		// say what became of it.
 		return outcomeUnknown, fmt.Errorf("failed to parse operation response: %w", err)
 	}
-	if _, err := r.client.WaitForOperation(ctx, op.OperationID, r.pollInterval, r.pollTimeout); err != nil {
+	if _, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budget); err != nil {
 		return r.classifyWaitFailure(ctx, op.OperationID), err
 	}
 	return outcomeCompleted, nil
@@ -217,15 +259,16 @@ func (r *publicIPAssociationResource) waitForOperation(ctx context.Context, apiR
 //
 // Anything it cannot establish is "unknown": a cancelled workflow may have got
 // part-way, and an operation that cannot be read has said nothing at all.
+//
+// This resource's create-side machine is the pattern the whole surface now
+// shares (client.ClassifyOperationFailure); the call routes through it.
 func (r *publicIPAssociationResource) classifyWaitFailure(ctx context.Context, operationID string) waitOutcome {
-	op, err := r.client.GetOperation(ctx, operationID)
-	if err != nil {
+	switch r.client.ClassifyOperationFailure(ctx, operationID) {
+	case client.OperationRefused:
+		return outcomeRefused
+	default:
 		return outcomeUnknown
 	}
-	if op.Status == client.OperationStatusFailed {
-		return outcomeRefused
-	}
-	return outcomeUnknown
 }
 
 func (r *publicIPAssociationResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -305,6 +348,10 @@ func (r *publicIPAssociationResource) Create(ctx context.Context, req resource.C
 		return
 	}
 
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
 	assocResp, err := r.client.Post(ctx,
 		r.client.TenantPath(fmt.Sprintf("/public-ips/%s/associate", publicIPID)),
 		apiAssociateRequest{PortID: portID})
@@ -315,7 +362,7 @@ func (r *publicIPAssociationResource) Create(ctx context.Context, req resource.C
 		public_ip.AddAPIError(&resp.Diagnostics, "Failed to Associate Public IP", err)
 		return
 	}
-	outcome, err := r.waitForOperation(ctx, assocResp)
+	outcome, err := r.waitForOperation(ctx, assocResp, budgets.Create)
 	if err != nil {
 		if outcome == outcomeRefused {
 			// The platform decided: no. Nothing is attached, so there is nothing
@@ -636,8 +683,9 @@ func (r *publicIPAssociationResource) Delete(ctx context.Context, req resource.D
 	// the workflow is still running, and a refusal would then land on an
 	// operation nobody reads — leaving the address attached with nothing in
 	// Terraform that knows about it. Fail the apply instead; the row stays,
-	// which is the correct record.
-	if _, err := r.waitForOperation(ctx, disResp); err != nil {
+	// which is the correct record. The wait runs on the timeouts block's
+	// delete budget.
+	if _, err := r.waitForOperation(ctx, disResp, r.resolveBudgets(state.Timeouts).Delete); err != nil {
 		public_ip.AddOperationError(&resp.Diagnostics, "Public IP Disassociation Failed", err)
 		return
 	}

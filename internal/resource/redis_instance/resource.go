@@ -18,6 +18,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
@@ -48,6 +49,78 @@ func (r *redisInstanceResource) getPollTimeout() time.Duration {
 		return r.pollTimeout
 	}
 	return 15 * time.Minute
+}
+
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded
+// (getPollTimeout's 15m). Routing the defaults through the accessor keeps the
+// test-injection seam intact: a test that shrinks pollTimeout shrinks every
+// wait that does not carry an explicit timeouts override, exactly as before.
+func (r *redisInstanceResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return timeouts.Uniform(r.getPollTimeout())
+	}
+	return budgets
+}
+
+// waitRunning waits until the instance returns to "running" state. The budget
+// is the timeouts block's update (or create, during Create) override.
+func (r *redisInstanceResource) waitRunning(ctx context.Context, id string, budget time.Duration) error {
+	_, err := client.WaitForState(ctx, client.PollConfig{
+		Interval:     r.getPollInterval(),
+		Timeout:      budget,
+		TargetStates: []string{"running"},
+		ErrorStates:  []string{"error", "failed"},
+		ResourceName: "redis_instance",
+		PollFunc: func(pollCtx context.Context) (string, error) {
+			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/caches/"+id), nil)
+			if pollErr != nil {
+				return "", pollErr
+			}
+			current, parseErr := client.ParseResponse[apiRedisInstance](pollResp)
+			if parseErr != nil {
+				return "", parseErr
+			}
+			return current.Status, nil
+		},
+	})
+	return err
+}
+
+// awaitResize watches a resize write to its verdict, absorbing the resize gap
+// (Ambix 01a03e62): a 202 answer carries an Operation — the saga is still
+// running — and USED to be discarded (`if _, err := Post`) while a bare
+// status-poll decided; that poll could satisfy itself on the still-current
+// `running` before the saga moved the instance to `resizing` and never saw a
+// resize that FAILED. The database and cache/webserver/messaging services
+// synchronously CAS `running`→`resizing` before answering 202 (verified
+// 2026-09-07), so the first poll now sees `resizing` — but the operation, not
+// the status, is what carries the resize's verdict, so the 202 is polled to
+// completion. The 200 {"status":"resizing"} answer is the legacy synchronous
+// ack — the only case for the status-poll fallback.
+func (r *redisInstanceResource) awaitResize(ctx context.Context, id string, apiResp *client.Response, budget time.Duration) error {
+	if !apiResp.IsAccepted() {
+		return r.waitRunning(ctx, id, budget)
+	}
+	op, opErr := client.ParseResponse[client.OperationResponse](apiResp)
+	if opErr != nil || op.OperationID == "" {
+		// The saga was accepted and its operation cannot be watched from here.
+		// That is classified — NOT a success and NOT a failure: the resize may
+		// still complete, and retrying blind can hit 409 RESIZE-backed states.
+		unknown := opErr
+		if unknown == nil {
+			unknown = fmt.Errorf("the resize was accepted but returned no operation id")
+		}
+		return fmt.Errorf("resize was accepted but its outcome could not be tracked; the resize may "+
+			"still be running — check the instance status (portal, `fm cache redis instance list`) before retrying: %w", unknown)
+	}
+	if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budget); waitErr != nil {
+		return waitErr
+	}
+	return r.waitRunning(ctx, id, budget)
 }
 
 func (r *redisInstanceResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -182,6 +255,13 @@ func (r *redisInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				Computed:    true,
 			},
 		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (15m per verb). A timeouts change
+			// is an in-place no-op on real infrastructure — verified by the
+			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
+			"timeouts": timeouts.Schema(),
+		},
 	}
 }
 
@@ -212,6 +292,10 @@ func (r *redisInstanceResource) Create(ctx context.Context, req resource.CreateR
 		return
 	}
 
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/caches"), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create Redis instance", err.Error())
@@ -229,7 +313,7 @@ func (r *redisInstanceResource) Create(ctx context.Context, req resource.CreateR
 			resp.Diagnostics.AddError("Failed to parse Redis instance operation response", err.Error())
 			return
 		}
-		done, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout())
+		done, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Create)
 		if err != nil {
 			resp.Diagnostics.AddError("Redis instance creation failed", err.Error())
 			return
@@ -289,7 +373,7 @@ func (r *redisInstanceResource) Create(ctx context.Context, req resource.CreateR
 	// Poll until instance reaches "running" status.
 	_, err = client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budgets.Create,
 		TargetStates: []string{"running"},
 		ErrorStates:  []string{"error", "failed"},
 		ResourceName: "redis_instance",
@@ -364,27 +448,7 @@ func (r *redisInstanceResource) Update(ctx context.Context, req resource.UpdateR
 
 	id := state.ID.ValueString()
 
-	waitRunning := func() error {
-		_, err := client.WaitForState(ctx, client.PollConfig{
-			Interval:     r.getPollInterval(),
-			Timeout:      r.getPollTimeout(),
-			TargetStates: []string{"running"},
-			ErrorStates:  []string{"error", "failed"},
-			ResourceName: "redis_instance",
-			PollFunc: func(pollCtx context.Context) (string, error) {
-				pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/caches/"+id), nil)
-				if pollErr != nil {
-					return "", pollErr
-				}
-				current, parseErr := client.ParseResponse[apiRedisInstance](pollResp)
-				if parseErr != nil {
-					return "", parseErr
-				}
-				return current.Status, nil
-			},
-		})
-		return err
-	}
+	budgets := r.resolveBudgets(plan.Timeouts)
 
 	// Storage grows via POST /caches/{id}/resize — the PUT below cannot change storage. Grow-only:
 	// Cinder volumes cannot shrink, so reject a decrease with a clear error rather than a silent
@@ -397,11 +461,12 @@ func (r *redisInstanceResource) Update(ctx context.Context, req resource.UpdateR
 				fmt.Sprintf("storage_gb can only be increased (current %d GB, requested %d GB); volumes cannot shrink.", cur, newSize))
 			return
 		}
-		if _, err := r.client.Post(ctx, r.client.TenantPath("/caches/"+id+"/resize"), apiResizeRedisInstanceRequest{StorageGB: int(newSize)}); err != nil {
-			resp.Diagnostics.AddError("Failed to resize Redis storage", err.Error())
+		apiResp, postErr := r.client.Post(ctx, r.client.TenantPath("/caches/"+id+"/resize"), apiResizeRedisInstanceRequest{StorageGB: int(newSize)})
+		if postErr != nil {
+			resp.Diagnostics.AddError("Failed to resize Redis storage", postErr.Error())
 			return
 		}
-		if err := waitRunning(); err != nil {
+		if err := r.awaitResize(ctx, id, apiResp, budgets.Update); err != nil {
 			resp.Diagnostics.AddError("Redis instance failed to reach running state after storage resize", err.Error())
 			return
 		}
@@ -411,11 +476,12 @@ func (r *redisInstanceResource) Update(ctx context.Context, req resource.UpdateR
 	// Mutually exclusive with a storage resize at the backend, so it is a SEPARATE request; if a
 	// single apply changed both, the storage resize above already returned the instance to running.
 	if !plan.FlavorID.IsNull() && !plan.FlavorID.IsUnknown() && plan.FlavorID.ValueString() != state.FlavorID.ValueString() {
-		if _, err := r.client.Post(ctx, r.client.TenantPath("/caches/"+id+"/resize"), apiResizeRedisInstanceRequest{FlavorID: plan.FlavorID.ValueString()}); err != nil {
-			resp.Diagnostics.AddError("Failed to resize Redis flavor", err.Error())
+		apiResp, postErr := r.client.Post(ctx, r.client.TenantPath("/caches/"+id+"/resize"), apiResizeRedisInstanceRequest{FlavorID: plan.FlavorID.ValueString()})
+		if postErr != nil {
+			resp.Diagnostics.AddError("Failed to resize Redis flavor", postErr.Error())
 			return
 		}
-		if err := waitRunning(); err != nil {
+		if err := r.awaitResize(ctx, id, apiResp, budgets.Update); err != nil {
 			resp.Diagnostics.AddError("Redis instance failed to reach running state after flavor resize", err.Error())
 			return
 		}
@@ -429,7 +495,7 @@ func (r *redisInstanceResource) Update(ctx context.Context, req resource.UpdateR
 			resp.Diagnostics.AddError("Failed to update Redis instance", err.Error())
 			return
 		}
-		if err := waitRunning(); err != nil {
+		if err := r.waitRunning(ctx, id, budgets.Update); err != nil {
 			resp.Diagnostics.AddError("Redis instance failed to reach running state after update", err.Error())
 			return
 		}
@@ -470,10 +536,12 @@ func (r *redisInstanceResource) Delete(ctx context.Context, req resource.DeleteR
 		return
 	}
 
-	// Wait for the instance to be fully deleted (404 on GET).
+	// Wait for the instance to be fully deleted (404 on GET), on the
+	// timeouts block's delete budget.
+	budgets := r.resolveBudgets(state.Timeouts)
 	_, err = client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budgets.Delete,
 		TargetStates: []string{"deleted"},
 		ErrorStates:  []string{"error"},
 		ResourceName: "redis_instance",

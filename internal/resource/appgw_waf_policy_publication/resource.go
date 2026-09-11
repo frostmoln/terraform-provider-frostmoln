@@ -36,6 +36,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
@@ -44,14 +45,58 @@ var (
 	_ resource.ResourceWithModifyPlan = &publicationResource{}
 )
 
-// Dry-run waits. VARIABLES, not constants, so a test can shrink them: with the
-// real values a test that exercises the never-completes path runs for five
-// minutes, which means in practice it is never written -- and that path is the
-// one an operator actually hits today.
-var (
-	dryRunPollInterval = 3 * time.Second
-	dryRunTimeout      = 5 * time.Minute
-)
+type publicationResource struct {
+	client *client.Client
+
+	// dryRunPollInterval and dryRunTimeout used to be PACKAGE VARIABLES so a
+	// test could shrink them: with the real values a test that exercises the
+	// never-completes path runs for five minutes, which means in practice it
+	// is never written — and that path is the one an operator actually hits
+	// today. They are fields on the seam the rest of the provider uses: same
+	// injection mechanism, no shared mutable package state, and the timeouts
+	// block sits on top of these defaults (see resolveBudgets).
+	dryRunPollInterval time.Duration
+	dryRunTimeout      time.Duration
+}
+
+// getDryRunPollInterval returns how often the pending dry-run is re-read, and
+// bounds nothing a practitioner could meaningfully trade.
+func (r *publicationResource) getDryRunPollInterval() time.Duration {
+	if r.dryRunPollInterval > 0 {
+		return r.dryRunPollInterval
+	}
+	return 3 * time.Second
+}
+
+// getDryRunTimeout is the ceiling on the REPLAY, not on the publish: a dry-run
+// that cannot complete within it fails the apply with the real cause named —
+// an appliance not running the inspection engine — and nothing is published.
+func (r *publicationResource) getDryRunTimeout() time.Duration {
+	if r.dryRunTimeout > 0 {
+		return r.dryRunTimeout
+	}
+	return 5 * time.Minute
+}
+
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded.
+// Routing the defaults through the accessors keeps the test-injection seam
+// intact: a test that shrinks dryRunTimeout shrinks every wait that does not
+// carry an explicit timeouts override, exactly as before. Create and Update
+// both run the same publish flow whose dry-run + publish act is bounded by
+// this budget; Delete makes no API call — it warns that the published version
+// stays enforced and removes the record — so its budget is never consulted
+// and carries the default only to keep the per-verb literal complete.
+func (r *publicationResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	defaults := timeouts.Budgets{Create: r.getDryRunTimeout(), Update: r.getDryRunTimeout(), Delete: r.getDryRunTimeout()}
+	budgets, err := m.Resolve(defaults)
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return defaults
+	}
+	return budgets
+}
 
 // PublicationModel is the Terraform state model for a WAF publication.
 type PublicationModel struct {
@@ -81,6 +126,12 @@ type PublicationModel struct {
 	DryRunRequestsSampled types.Int64  `tfsdk:"dry_run_requests_sampled"`
 
 	PublishedAt types.String `tfsdk:"published_at"`
+
+	// Timeouts carries the customer-tunable budget bounding the publish flow's
+	// dry-run; a nil pointer is an absent block, which resolves to the
+	// resource's hardcoded defaults. The poll interval is not tunable — only
+	// the budget is the practitioner's to trade.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 type apiDryRunSample struct {
@@ -164,10 +215,6 @@ type apiVersion struct {
 	// endpoint alone, so it arrives on the read-back rather than on the write.
 	EffectiveMode string `json:"effectiveMode,omitempty"`
 	PublishedAt   string `json:"publishedAt,omitempty"`
-}
-
-type publicationResource struct {
-	client *client.Client
 }
 
 // NewResource returns a new WAF publication resource factory.
@@ -315,6 +362,16 @@ func (r *publicationResource) Schema(_ context.Context, _ resource.SchemaRequest
 				Computed:    true,
 			},
 		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (5m on the dry-run replay). Create
+			// and update both publish a version, and that dry-run + publish
+			// flow is bounded by this budget. A timeouts change is an in-place
+			// no-op on real infrastructure, as on every resource with this
+			// block. Delete makes NO API call — it warns that the published
+			// version stays enforced — so its budget is never consulted.
+			"timeouts": timeouts.Schema(),
+		},
 	}
 }
 
@@ -452,7 +509,8 @@ func (r *publicationResource) Create(ctx context.Context, req resource.CreateReq
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	r.publish(ctx, &plan, &resp.Diagnostics)
+	budgets := r.resolveBudgets(plan.Timeouts)
+	r.publish(ctx, &plan, &resp.Diagnostics, budgets.Create)
 	// 🔴 STATE IS WRITTEN WHENEVER A VERSION WAS PUBLISHED, EVEN ON AN ERROR.
 	// Some refusals happen AFTER the publish landed — the replayed-hash check
 	// is one — and returning without writing would leave a frozen, enforced
@@ -470,7 +528,8 @@ func (r *publicationResource) Update(ctx context.Context, req resource.UpdateReq
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	r.publish(ctx, &plan, &resp.Diagnostics)
+	budgets := r.resolveBudgets(plan.Timeouts)
+	r.publish(ctx, &plan, &resp.Diagnostics, budgets.Update)
 	if publishedSomething(&plan) || !resp.Diagnostics.HasError() {
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 	}
@@ -482,11 +541,13 @@ func publishedSomething(m *PublicationModel) bool {
 	return !m.Version.IsNull() && !m.Version.IsUnknown()
 }
 
-// publish runs the whole gate: dry-run, budget check, publish.
-func (r *publicationResource) publish(ctx context.Context, m *PublicationModel, diags diagnosticsSink) {
+// publish runs the whole gate: dry-run, budget check, publish. budget is the
+// verb's ceiling on the dry-run (create and update run the same flow, but the
+// ceilings are configured separately like on any resource).
+func (r *publicationResource) publish(ctx context.Context, m *PublicationModel, diags diagnosticsSink, budget time.Duration) {
 	base := r.policyPath(m.GatewayID.ValueString(), m.PolicyID.ValueString())
 
-	dr, err := r.runDryRun(ctx, base)
+	dr, err := r.runDryRun(ctx, base, budget)
 	if err != nil {
 		diags.AddError("WAF Dry Run Failed", err.Error())
 		return
@@ -663,8 +724,9 @@ func (m *PublicationModel) applyVersion(v *apiVersion) {
 	}
 }
 
-// runDryRun starts a replay and waits for a verdict.
-func (r *publicationResource) runDryRun(ctx context.Context, base string) (*apiDryRun, error) {
+// runDryRun starts a replay and waits for a verdict. budget is the verb's
+// ceiling on the wait; the poll interval stays provider-internal.
+func (r *publicationResource) runDryRun(ctx context.Context, base string, budget time.Duration) (*apiDryRun, error) {
 	apiResp, err := r.client.Post(ctx, base+"/dry-runs", nil)
 	if err != nil {
 		return nil, err
@@ -677,12 +739,12 @@ func (r *publicationResource) runDryRun(ctx context.Context, base string) (*apiD
 		return started, nil
 	}
 
-	deadline := time.Now().Add(dryRunTimeout)
+	deadline := time.Now().Add(budget)
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(dryRunPollInterval):
+		case <-time.After(r.getDryRunPollInterval()):
 		}
 		latest, err := r.findDryRun(ctx, base, started.ID)
 		if err != nil {
@@ -713,7 +775,7 @@ func (r *publicationResource) runDryRun(ctx context.Context, base string) (*apiD
 			"A dry-run is replayed by the gateway's own appliance against recent request "+
 			"signatures. It stays pending when the appliance is not running the inspection "+
 			"engine, or when the gateway has not yet applied a configuration. Check the "+
-			"gateway's config_status, and that it is running, before retrying", dryRunTimeout,
+			"gateway's config_status, and that it is running, before retrying", budget,
 	)
 }
 

@@ -894,3 +894,157 @@ func TestDeleteAlreadyGone(t *testing.T) {
 		t.Fatalf("delete of gone resource should not error, got %v", deleteResp.Diagnostics.Errors())
 	}
 }
+
+// --- the orphan create-timeout arm (ADOPT-AS-TRACKED) ---
+
+// orphanSGDiagText flattens a response's diagnostics (errors AND warnings) so
+// a test can assert on the copy the orphan contract produces.
+func orphanSGDiagText(diags diag.Diagnostics) string {
+	var b strings.Builder
+	for _, d := range diags.Errors() {
+		b.WriteString(d.Summary())
+		b.WriteString("\n")
+		b.WriteString(d.Detail())
+		b.WriteString("\n")
+	}
+	for _, d := range diags.Warnings() {
+		b.WriteString(d.Summary())
+		b.WriteString("\n")
+		b.WriteString(d.Detail())
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// TestCreateAdoptsAfterTheApplyTimedOut: a 202 whose operation never completes
+// must not error with a dead-end message — the family listing (GET
+// /scale-groups, wire key `data`) finds exactly the scale group this apply
+// created and adopts it into state with the shared warning.
+func TestCreateAdoptsAfterTheApplyTimedOut(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/scale-groups":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-sg-adopt", "status": "running", "resourceType": "scale_group",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-sg-adopt":
+			// The operation never completes: the apply outlives its wait.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-sg-adopt", "status": "running", "resourceType": "scale_group",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/scale-groups":
+			// The sweep lists the family; exactly one group matches this apply.
+			_ = json.NewEncoder(w).Encode(apiScaleGroupList{
+				Data: []apiScaleGroup{{
+					ID:        "asg-adopt-1",
+					Name:      "asg",
+					SubnetIDs: []string{"sn-1"},
+					CreatedAt: time.Now().UTC().Add(-10 * time.Second).Format(time.RFC3339),
+				}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/scale-groups/asg-adopt-1":
+			// The honest read the adoption is written from.
+			adopted := sgJSON("creating")
+			adopted.ID = "asg-adopt-1"
+			adopted.CurrentSize = 0
+			_ = json.NewEncoder(w).Encode(adopted)
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// A 404 stands in for a gateway without the SSE route — the
+			// supported degradation to timer polling (internal/client/events.go).
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+
+	r := &scaleGroupResource{client: c, pollInterval: 5 * time.Millisecond, pollTimeout: 100 * time.Millisecond}
+
+	planModel := fullSGModel(t)
+	planModel.ID = types.StringNull()
+	planModel.Status = types.StringNull()
+	plan := buildSGPlan(t, planModel)
+
+	createResp := resource.CreateResponse{State: emptySGState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("adoption must not fail the apply: %v", createResp.Diagnostics.Errors())
+	}
+	if len(createResp.Diagnostics.Warnings()) != 1 {
+		t.Fatalf("expected exactly one adoption warning, got %d", len(createResp.Diagnostics.Warnings()))
+	}
+	if !strings.Contains(createResp.Diagnostics.Warnings()[0].Summary(), "Was Adopted After The Apply Timed Out") {
+		t.Errorf("warning summary must name the adoption, got %q", createResp.Diagnostics.Warnings()[0].Summary())
+	}
+
+	var result ScaleGroupModel
+	createResp.State.Get(context.Background(), &result)
+	if result.ID.ValueString() != "asg-adopt-1" {
+		t.Errorf("expected adopted ID asg-adopt-1, got %s", result.ID.ValueString())
+	}
+	if result.Name.ValueString() != "asg" {
+		t.Errorf("expected honest read to carry the platform's name, got %s", result.Name.ValueString())
+	}
+}
+
+// TestCreateRefusedRecordsNothingCreated: a terminal operation failure is the
+// platform's own NO — nothing was created, so the refused wording says
+// re-applying is safe, and the listing is never hit.
+func TestCreateRefusedRecordsNothingCreated(t *testing.T) {
+	var listingHits int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/scale-groups":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-sg-refused", "status": "pending", "resourceType": "scale_group",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-sg-refused":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-sg-refused", "status": "failed", "resourceType": "scale_group",
+				"error": "launch template lt-1 not found",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/scale-groups":
+			atomic.AddInt32(&listingHits, 1)
+			_ = json.NewEncoder(w).Encode(apiScaleGroupList{})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+
+	r := &scaleGroupResource{client: c, pollInterval: 5 * time.Millisecond, pollTimeout: 100 * time.Millisecond}
+
+	planModel := fullSGModel(t)
+	planModel.ID = types.StringNull()
+	planModel.Status = types.StringNull()
+	plan := buildSGPlan(t, planModel)
+
+	createResp := resource.CreateResponse{State: emptySGState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("expected the refused create to error")
+	}
+	if atomic.LoadInt32(&listingHits) != 0 {
+		t.Errorf("a terminal refusal must not trigger the discovery sweep; listing was hit %d times", listingHits)
+	}
+	text := orphanSGDiagText(createResp.Diagnostics)
+	if !strings.Contains(text, "Refused") {
+		t.Errorf("error must be worded as the platform's refusal:\n%s", text)
+	}
+	if strings.Contains(text, "Was Adopted After The Apply Timed Out") {
+		t.Errorf("a refusal created nothing to adopt:\n%s", text)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +16,27 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
+
+// TestTimeoutsDefaultsMatchTheOldConstants pins the defaults contract of the
+// customer-tunable timeouts block: an absent block resolves to exactly the
+// values this resource has always hardcoded (15m per verb), and the
+// pollTimeout test-injection seam still shrinks every budget that does not
+// carry an explicit override.
+func TestTimeoutsDefaultsMatchTheOldConstants(t *testing.T) {
+	r := &loadBalancerResource{}
+	want := timeouts.Uniform(15 * time.Minute)
+	if got := r.resolveBudgets(nil); got != want {
+		t.Fatalf("an absent timeouts block must keep the old 15m default; got %+v, want %+v", got, want)
+	}
+
+	r.pollTimeout = 250 * time.Millisecond
+	wantInj := timeouts.Uniform(250 * time.Millisecond)
+	if got := r.resolveBudgets(nil); got != wantInj {
+		t.Fatalf("a shrunken pollTimeout must shrink the default budget; got %+v, want %+v", got, wantInj)
+	}
+}
 
 func TestLoadBalancerModelFromAPI(t *testing.T) {
 	lb := &apiLoadBalancer{
@@ -137,6 +158,7 @@ func planValue(t *testing.T, schemaResp resource.SchemaResponse, ctx context.Con
 		"operating_status":    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"updated_at":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":            tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 }
 
@@ -165,6 +187,7 @@ func schemeConfigValue(t *testing.T, schemaResp resource.SchemaResponse, ctx con
 		"operating_status":    tftypes.NewValue(tftypes.String, nil),
 		"created_at":          tftypes.NewValue(tftypes.String, nil),
 		"updated_at":          tftypes.NewValue(tftypes.String, nil),
+		"timeouts":            tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 }
 
@@ -416,6 +439,7 @@ func TestLoadBalancerDeleteAsyncOperationPoll(t *testing.T) {
 		"operating_status":    tftypes.NewValue(tftypes.String, "ONLINE"),
 		"created_at":          tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 		"updated_at":          tftypes.NewValue(tftypes.String, nil),
+		"timeouts":            tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	deleteReq := resource.DeleteRequest{State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal}}
@@ -437,5 +461,133 @@ func TestLoadBalancerMetadata(t *testing.T) {
 	r.Metadata(context.Background(), resource.MetadataRequest{ProviderTypeName: "frostmoln"}, resp)
 	if resp.TypeName != "frostmoln_load_balancer" {
 		t.Errorf("expected frostmoln_load_balancer, got %s", resp.TypeName)
+	}
+}
+
+// TestLoadBalancerCreateAdoptsAfterTimeout pins the Gate 3 discovery-adopt
+// fallback: a 202 whose operation never completes resolves, once the sweep
+// finds exactly one name match created after the floor, into an adopted state
+// row and the shared adoption warning — never an error.
+func TestLoadBalancerCreateAdoptsAfterTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "u-1", "tenantId": "t-123"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/load-balancers":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-adopt", Status: "pending"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-adopt":
+			// The saga never lands while the provider waits.
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-adopt", Status: "pending"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/load-balancers":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"loadBalancers": []apiLoadBalancer{{
+					ID:        "lb-adopted-1",
+					Name:      "test-lb",
+					CreatedAt: time.Now().UTC().Format(time.RFC3339), // after the floor
+				}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/load-balancers/lb-adopted-1":
+			_ = json.NewEncoder(w).Encode(apiLoadBalancer{
+				ID:                 "lb-adopted-1",
+				Name:               "test-lb",
+				VPCID:              "vpc-1",
+				SubnetID:           "subnet-1",
+				Type:               "l7",
+				Status:             "active",
+				ProvisioningStatus: "ACTIVE",
+				OperatingStatus:    "ONLINE",
+				CreatedAt:          "2025-01-01T00:00:00Z",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "nf"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("configure failed: %v", err)
+	}
+	r := newTestResource(c)
+	r.pollTimeout = 100 * time.Millisecond
+	schemaResp := getSchema(t)
+	ctx := context.Background()
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: planValue(t, schemaResp, ctx)},
+	}
+	var createResp resource.CreateResponse
+	createResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Create(ctx, createReq, &createResp)
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("Create failed: %v", createResp.Diagnostics.Errors())
+	}
+
+	warnings := createResp.Diagnostics.Warnings()
+	if len(warnings) != 1 || !strings.Contains(warnings[0].Summary(), "Was Adopted After The Apply Timed Out") {
+		t.Fatalf("expected exactly one adoption warning, got %d warning(s)", len(warnings))
+	}
+
+	var model LoadBalancerModel
+	createResp.State.Get(ctx, &model)
+	if model.ID.ValueString() != "lb-adopted-1" {
+		t.Errorf("expected adopted id lb-adopted-1, got %s", model.ID.ValueString())
+	}
+}
+
+// TestLoadBalancerCreateRefusedByOperation pins the refused arm: the
+// operation's terminal failure is the platform deciding NO — an error naming
+// the refusal, no adoption sweep (no listing GET), state stays null.
+func TestLoadBalancerCreateRefusedByOperation(t *testing.T) {
+	listingGets := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "u-1", "tenantId": "t-123"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/load-balancers":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-ref", Status: "pending"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-ref":
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-ref", Status: "failed", Error: "quota exceeded"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/load-balancers":
+			listingGets++
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "nf"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("configure failed: %v", err)
+	}
+	r := newTestResource(c)
+	r.pollTimeout = 100 * time.Millisecond
+	schemaResp := getSchema(t)
+	ctx := context.Background()
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: planValue(t, schemaResp, ctx)},
+	}
+	var createResp resource.CreateResponse
+	createResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Create(ctx, createReq, &createResp)
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("expected an error when the platform refuses the create")
+	}
+	if !strings.Contains(createResp.Diagnostics.Errors()[0].Summary(), "Refused") {
+		t.Errorf("expected a Refused summary, got %s", createResp.Diagnostics.Errors()[0].Summary())
+	}
+	if listingGets != 0 {
+		t.Errorf("refused arm must not sweep the listing, got %d listing GET(s)", listingGets)
+	}
+	if !createResp.State.Raw.IsNull() {
+		t.Error("expected null state after a refused create")
 	}
 }

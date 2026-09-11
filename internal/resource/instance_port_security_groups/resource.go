@@ -19,6 +19,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 const (
@@ -56,6 +57,21 @@ func (r *instancePortSecurityGroupsResource) getPollTimeout() time.Duration {
 		return r.pollTimeout
 	}
 	return defaultPollTimeout
+}
+
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded.
+// Routing the defaults through the accessor keeps the test-injection seam
+// intact: a test that shrinks pollTimeout shrinks every wait that does not
+// carry an explicit timeouts override, exactly as before.
+func (r *instancePortSecurityGroupsResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return timeouts.Uniform(r.getPollTimeout())
+	}
+	return budgets
 }
 
 func (r *instancePortSecurityGroupsResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -100,6 +116,13 @@ func (r *instancePortSecurityGroupsResource) Schema(_ context.Context, _ resourc
 				ElementType: types.StringType,
 			},
 		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (10m per verb). A timeouts change
+			// is an in-place no-op on real infrastructure — verified by the
+			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
+			"timeouts": timeouts.Schema(),
+		},
 	}
 }
 
@@ -130,7 +153,11 @@ func (r *instancePortSecurityGroupsResource) Create(ctx context.Context, req res
 		return
 	}
 
-	if err := r.setPortSecurityGroups(ctx, plan.InstanceID.ValueString(), plan.PortID.ValueString(), sgIDs); err != nil {
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
+	if err := r.setPortSecurityGroups(ctx, plan.InstanceID.ValueString(), plan.PortID.ValueString(), sgIDs, budgets.Update); err != nil {
 		resp.Diagnostics.AddError("Failed to set port security groups", err.Error())
 		return
 	}
@@ -179,7 +206,11 @@ func (r *instancePortSecurityGroupsResource) Update(ctx context.Context, req res
 		return
 	}
 
-	if err := r.setPortSecurityGroups(ctx, plan.InstanceID.ValueString(), plan.PortID.ValueString(), sgIDs); err != nil {
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
+	if err := r.setPortSecurityGroups(ctx, plan.InstanceID.ValueString(), plan.PortID.ValueString(), sgIDs, budgets.Update); err != nil {
 		resp.Diagnostics.AddError("Failed to set port security groups", err.Error())
 		return
 	}
@@ -273,8 +304,9 @@ func (r *instancePortSecurityGroupsResource) getSecurityGroups(ctx context.Conte
 // empty sgIDs clears all SGs on the port (clear flag set so the backend does not
 // reject it as a probable dropped field). The PUT routes through provisioning
 // and returns 202 + an Operation; we wait for it so the applied set is visible
-// to the subsequent read-back (the change lands asynchronously).
-func (r *instancePortSecurityGroupsResource) setPortSecurityGroups(ctx context.Context, instanceID, portID string, sgIDs []string) error {
+// to the subsequent read-back (the change lands asynchronously), on the
+// timeouts block's update budget.
+func (r *instancePortSecurityGroupsResource) setPortSecurityGroups(ctx context.Context, instanceID, portID string, sgIDs []string, budget time.Duration) error {
 	body := apiSetInstancePortSecurityGroupsRequest{
 		SecurityGroupIDs:    sgIDs,
 		ClearSecurityGroups: len(sgIDs) == 0,
@@ -288,7 +320,7 @@ func (r *instancePortSecurityGroupsResource) setPortSecurityGroups(ctx context.C
 		if opErr != nil {
 			return fmt.Errorf("parse port security-group operation response: %w", opErr)
 		}
-		if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout()); waitErr != nil {
+		if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budget); waitErr != nil {
 			return fmt.Errorf("port security-group update did not complete: %w", waitErr)
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // SnapshotModel is the Terraform state model for a snapshot.
@@ -20,6 +21,10 @@ type SnapshotModel struct {
 	Status      types.String `tfsdk:"status"`
 	SizeGB      types.Int64  `tfsdk:"size_gb"`
 	CreatedAt   types.String `tfsdk:"created_at"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiSnapshot is the API representation of a snapshot. Field names match the

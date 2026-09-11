@@ -25,7 +25,7 @@ func waitForImportError(t *testing.T, img apiImage) string {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := r.waitForImport(context.Background(), img.ID)
+		_, err := r.waitForImport(context.Background(), img.ID, r.getPollTimeout())
 		done <- err
 	}()
 	select {

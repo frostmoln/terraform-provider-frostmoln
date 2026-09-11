@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // MessagingInstanceModel is the Terraform state model for a managed messaging instance.
@@ -25,6 +27,10 @@ type MessagingInstanceModel struct {
 	ManagementPort  types.Int64  `tfsdk:"management_port"`
 	CreatedAt       types.String `tfsdk:"created_at"`
 	UpdatedAt       types.String `tfsdk:"updated_at"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiMessagingInstance is the API representation of a managed messaging instance.

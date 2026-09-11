@@ -6,8 +6,10 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -541,6 +543,7 @@ func TestVolumeResource_TFSDKCreate(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"name":        tftypes.NewValue(tftypes.String, "new-volume"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -631,6 +634,7 @@ func TestVolumeResource_TFSDKRead(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "vol-read-1"),
 		"name":        tftypes.NewValue(tftypes.String, "read-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -700,6 +704,7 @@ func TestVolumeResource_TFSDKReadNotFound(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "vol-gone"),
 		"name":        tftypes.NewValue(tftypes.String, "gone-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -793,6 +798,7 @@ func TestVolumeResource_TFSDKUpdate_PatchAndResize(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "vol-upd-1"),
 		"name":        tftypes.NewValue(tftypes.String, "old-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -811,6 +817,7 @@ func TestVolumeResource_TFSDKUpdate_PatchAndResize(t *testing.T) {
 	})
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "vol-upd-1"),
 		"name":        tftypes.NewValue(tftypes.String, "updated-vol"),
 		"description": tftypes.NewValue(tftypes.String, "new desc"),
@@ -901,6 +908,7 @@ func TestVolumeResource_TFSDKDelete(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "vol-del-1"),
 		"name":        tftypes.NewValue(tftypes.String, "del-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -995,6 +1003,7 @@ func TestVolumeResource_TFSDKCreateAPIError(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"name":        tftypes.NewValue(tftypes.String, "fail-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -1052,6 +1061,7 @@ func TestVolumeResource_TFSDKCreateBadResponseBody(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"name":        tftypes.NewValue(tftypes.String, "bad-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -1119,6 +1129,7 @@ func TestVolumeResource_TFSDKCreatePollingErrorState(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"name":        tftypes.NewValue(tftypes.String, "error-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -1189,6 +1200,7 @@ func TestVolumeResource_TFSDKCreateFinalReadError(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"name":        tftypes.NewValue(tftypes.String, "fre-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -1246,6 +1258,7 @@ func TestVolumeResource_TFSDKReadAPIError(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "vol-err-r"),
 		"name":        tftypes.NewValue(tftypes.String, "err-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -1304,6 +1317,7 @@ func TestVolumeResource_TFSDKReadBadJSON(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "vol-bj-r"),
 		"name":        tftypes.NewValue(tftypes.String, "bj-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -1363,6 +1377,7 @@ func TestVolumeResource_TFSDKUpdatePatchError(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "vol-pe-1"),
 		"name":        tftypes.NewValue(tftypes.String, "old-name"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -1381,6 +1396,7 @@ func TestVolumeResource_TFSDKUpdatePatchError(t *testing.T) {
 	})
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "vol-pe-1"),
 		"name":        tftypes.NewValue(tftypes.String, "new-name"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -1441,6 +1457,7 @@ func TestVolumeResource_TFSDKUpdateResizeError(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "vol-re-1"),
 		"name":        tftypes.NewValue(tftypes.String, "same-name"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -1459,6 +1476,7 @@ func TestVolumeResource_TFSDKUpdateResizeError(t *testing.T) {
 	})
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "vol-re-1"),
 		"name":        tftypes.NewValue(tftypes.String, "same-name"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -1520,6 +1538,7 @@ func TestVolumeResource_TFSDKUpdateReadError(t *testing.T) {
 
 	// No changes - just the final read will fail
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "vol-ure-1"),
 		"name":        tftypes.NewValue(tftypes.String, "same"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -1576,6 +1595,7 @@ func TestVolumeResource_TFSDKDeleteNotFound(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "vol-gone"),
 		"name":        tftypes.NewValue(tftypes.String, "gone-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -1632,6 +1652,7 @@ func TestVolumeResource_TFSDKDeleteAPIError(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "vol-del-err"),
 		"name":        tftypes.NewValue(tftypes.String, "err-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -1669,6 +1690,7 @@ func TestVolumeResource_TFSDKImportState(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	emptyState := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, nil),
 		"name":        tftypes.NewValue(tftypes.String, nil),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -1813,5 +1835,264 @@ func TestVolumeModelFromAPIPreservesNullDescription(t *testing.T) {
 	}
 	if !model.Description.IsNull() {
 		t.Errorf("expected description to stay null despite backend provisioning default, got %q", model.Description.ValueString())
+	}
+}
+
+// --- the orphan create-timeout arm (ADOPT-AS-TRACKED) ---
+
+// volumeOrphanPlan builds the plan row the orphan create tests apply with.
+func volumeOrphanPlan(t *testing.T, schemaResp resource.SchemaResponse) tftypes.Value {
+	t.Helper()
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+	return tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":        tftypes.NewValue(tftypes.String, "adopt-vol"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
+		"zone":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"iops":        tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"throughput":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"attached_to": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"device_path": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+}
+
+// volumeDiagText flattens a response's diagnostics (errors AND warnings) so a
+// test can assert on the copy the orphan contract produces.
+func volumeDiagText(diags diag.Diagnostics) string {
+	var b strings.Builder
+	for _, d := range diags.Errors() {
+		b.WriteString(d.Summary())
+		b.WriteString("\n")
+		b.WriteString(d.Detail())
+		b.WriteString("\n")
+	}
+	for _, d := range diags.Warnings() {
+		b.WriteString(d.Summary())
+		b.WriteString("\n")
+		b.WriteString(d.Detail())
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// TestVolumeResource_TFSDKCreateAdoptsAfterTheApplyTimedOut: a 202 whose
+// operation never completes must not error with a dead-end message — the
+// name/list sweep finds exactly the volume this apply created and adopts it
+// into state with the shared warning.
+func TestVolumeResource_TFSDKCreateAdoptsAfterTheApplyTimedOut(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-adopt-1", "status": "running", "resourceType": "volume",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-adopt-1":
+			// The operation never completes: the apply outlives its wait.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-adopt-1", "status": "running", "resourceType": "volume",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes":
+			// The sweep lists the family; exactly one volume matches this apply.
+			_ = json.NewEncoder(w).Encode(apiVolumeList{
+				Volumes: []apiVolume{{
+					ID:        "vol-adopt-1",
+					Name:      "adopt-vol",
+					Status:    "available",
+					CreatedAt: time.Now().UTC().Add(-10 * time.Second).Format(time.RFC3339),
+				}},
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-adopt-1":
+			// The honest read the adoption is written from.
+			_ = json.NewEncoder(w).Encode(apiVolume{
+				ID:         "vol-adopt-1",
+				Name:       "adopt-vol",
+				Size:       100,
+				VolumeType: "ssd",
+				Encrypted:  false,
+				Status:     "available",
+				CreatedAt:  time.Now().UTC().Add(-9 * time.Second).Format(time.RFC3339),
+			})
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := &volumeResource{client: c, pollInterval: 5 * time.Millisecond, pollTimeout: 100 * time.Millisecond}
+	schemaResp := getVolumeSchema(t)
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: volumeOrphanPlan(t, schemaResp)},
+	}
+	var createResp resource.CreateResponse
+	createResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Create(context.Background(), createReq, &createResp)
+
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("adoption must not fail the apply: %v", createResp.Diagnostics.Errors())
+	}
+	if len(createResp.Diagnostics.Warnings()) != 1 {
+		t.Fatalf("expected exactly one adoption warning, got %d", len(createResp.Diagnostics.Warnings()))
+	}
+	if !strings.Contains(createResp.Diagnostics.Warnings()[0].Summary(), "Was Adopted After The Apply Timed Out") {
+		t.Errorf("warning summary must name the adoption, got %q", createResp.Diagnostics.Warnings()[0].Summary())
+	}
+
+	var model VolumeModel
+	createResp.State.Get(context.Background(), &model)
+	if model.ID.ValueString() != "vol-adopt-1" {
+		t.Errorf("expected adopted ID vol-adopt-1, got %s", model.ID.ValueString())
+	}
+	if model.Name.ValueString() != "adopt-vol" {
+		t.Errorf("expected honest read to carry the platform's name, got %s", model.Name.ValueString())
+	}
+}
+
+// TestVolumeResource_TFSDKCreateRefusedRecordsNothingCreated: a terminal
+// operation failure is the platform's own NO — nothing was created, so the
+// refused wording says re-applying is safe, and the listing is never hit (the
+// platform already decided; a sweep would be theatre).
+func TestVolumeResource_TFSDKCreateRefusedRecordsNothingCreated(t *testing.T) {
+	var listingHits int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-refused-1", "status": "pending", "resourceType": "volume",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-refused-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-refused-1", "status": "failed", "resourceType": "volume",
+				"error": "volume type not offered in this zone",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes":
+			atomic.AddInt32(&listingHits, 1)
+			_ = json.NewEncoder(w).Encode(apiVolumeList{})
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := &volumeResource{client: c, pollInterval: 5 * time.Millisecond, pollTimeout: 100 * time.Millisecond}
+	schemaResp := getVolumeSchema(t)
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: volumeOrphanPlan(t, schemaResp)},
+	}
+	var createResp resource.CreateResponse
+	createResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Create(context.Background(), createReq, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("expected the refused create to error")
+	}
+	if atomic.LoadInt32(&listingHits) != 0 {
+		t.Errorf("a terminal refusal must not trigger the discovery sweep; listing was hit %d times", listingHits)
+	}
+	text := volumeDiagText(createResp.Diagnostics)
+	if !strings.Contains(text, "Refused") {
+		t.Errorf("error must be worded as the platform's refusal:\n%s", text)
+	}
+	if strings.Contains(text, "Was Adopted After The Apply Timed Out") {
+		t.Errorf("a refusal created nothing to adopt:\n%s", text)
+	}
+}
+
+// TestVolumeResource_TFSDKCreateVerifiedAbsentIsSafeToReApply: the wait gave up
+// while the operation still ran, and the sweep's listing found NOTHING matching
+// this apply — verified absence, so the error must say re-applying is safe
+// rather than invite state surgery.
+func TestVolumeResource_TFSDKCreateVerifiedAbsentIsSafeToReApply(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-absent-1", "status": "running", "resourceType": "volume",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-absent-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-absent-1", "status": "running", "resourceType": "volume",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes":
+			// The listing succeeded and nothing matched: verified absence.
+			_ = json.NewEncoder(w).Encode(apiVolumeList{})
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := &volumeResource{client: c, pollInterval: 5 * time.Millisecond, pollTimeout: 100 * time.Millisecond}
+	schemaResp := getVolumeSchema(t)
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: volumeOrphanPlan(t, schemaResp)},
+	}
+	var createResp resource.CreateResponse
+	createResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Create(context.Background(), createReq, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("verified absence must still fail the apply (nothing was recorded in state)")
+	}
+	text := volumeDiagText(createResp.Diagnostics)
+	if !strings.Contains(text, "Verified Absent") {
+		t.Errorf("error must word the verified-absence arm:\n%s", text)
+	}
+	if !strings.Contains(text, "safe to re-apply") {
+		t.Errorf("verified absence must say re-applying is safe:\n%s", text)
 	}
 }

@@ -50,9 +50,22 @@ resource "frostmoln_webserver_deployment" "site" {
 - `instance_id` (String) The ID of the Apache or Nginx webserver instance to deploy content to.
 - `source_archive` (String) Local filesystem path to the .tar.gz archive to deploy (the archive's top level becomes the site document root). The provider reads this file at plan and apply time; it is never uploaded to or returned by the API as-is — only its SHA-256 (source_hash) is tracked in state. Changing the file's contents changes source_hash and triggers a new deploy.
 
+### Optional
+
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
+
 ### Read-Only
 
 - `deploy_id` (String) The ID of the most recent content deploy for this instance.
 - `id` (String) Synthetic resource identifier (equal to instance_id — one deployment per instance).
 - `source_hash` (String) SHA-256 hex digest of source_archive, computed by the provider at plan time. It is the change driver: when the archive's bytes change, this hash changes and a new deploy runs. It is also sent to the deploy's start call so the in-guest agent can verify the upload.
 - `status` (String) Terminal status of the most recent deploy (succeeded once applied).
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

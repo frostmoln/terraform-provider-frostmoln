@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -448,6 +449,7 @@ func TestVPCResource_TFSDKCreate(t *testing.T) {
 		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"created_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"updated_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	createReq := resource.CreateRequest{
@@ -529,6 +531,7 @@ func TestVPCResource_TFSDKRead(t *testing.T) {
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
 		"created_at":   tftypes.NewValue(tftypes.String, "2025-02-01T00:00:00Z"),
 		"updated_at":   tftypes.NewValue(tftypes.String, nil),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -560,6 +563,182 @@ func TestVPCResource_TFSDKRead(t *testing.T) {
 	}
 	if model.UpdatedAt.ValueString() != "2025-02-02T00:00:00Z" {
 		t.Errorf("expected UpdatedAt 2025-02-02T00:00:00Z, got %s", model.UpdatedAt.ValueString())
+	}
+}
+
+// TestVPCResource_TFSDKCreateAdoptsAfterTimeout pins the Gate 3
+// discovery-adopt fallback: a 202 whose operation never completes resolves,
+// once the sweep finds exactly one name match created after the floor, into
+// an adopted state row and the shared adoption warning — never an error.
+func TestVPCResource_TFSDKCreateAdoptsAfterTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/vpcs":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-adopt-1", "status": "pending", "resourceType": "vpc",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-adopt-1":
+			// The saga never lands while the provider waits.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-adopt-1", "status": "pending", "resourceType": "vpc",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/vpcs":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"vpcs": []apiVPC{{
+					ID:        "vpc-adopted-1",
+					Name:      "adopted-vpc",
+					CIDR:      "10.0.0.0/16",
+					Status:    "active",
+					CreatedAt: time.Now().UTC().Format(time.RFC3339), // after the floor
+				}},
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/vpcs/vpc-adopted-1":
+			_ = json.NewEncoder(w).Encode(apiVPC{
+				ID:          "vpc-adopted-1",
+				Name:        "adopted-vpc",
+				CIDR:        "10.0.0.0/16",
+				Status:      "active",
+				IsDefault:   false,
+				SubnetCount: 0,
+				CreatedAt:   "2025-01-01T00:00:00Z",
+			})
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(*vpcResource).pollInterval = 5 * time.Millisecond
+	r.(*vpcResource).pollTimeout = 100 * time.Millisecond
+	configureVPCResource(t, r, c)
+	schemaResp := getVPCSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":         tftypes.NewValue(tftypes.String, "adopted-vpc"),
+		"description":  tftypes.NewValue(tftypes.String, nil),
+		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"is_default":   tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
+		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"created_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"updated_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+	})
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+	}
+	var createResp resource.CreateResponse
+	createResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Create(ctx, createReq, &createResp)
+
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("Create failed: %v", createResp.Diagnostics.Errors())
+	}
+
+	warnings := createResp.Diagnostics.Warnings()
+	if len(warnings) != 1 || !strings.Contains(warnings[0].Summary(), "Was Adopted After The Apply Timed Out") {
+		t.Fatalf("expected exactly one adoption warning, got %d warning(s)", len(warnings))
+	}
+
+	var model VPCModel
+	createResp.State.Get(ctx, &model)
+	if model.ID.ValueString() != "vpc-adopted-1" {
+		t.Errorf("expected adopted id vpc-adopted-1, got %s", model.ID.ValueString())
+	}
+}
+
+// TestVPCResource_TFSDKCreateRefusedByOperation pins the refused arm: the
+// operation's terminal failure is the platform deciding NO — an error naming
+// the refusal, no adoption sweep (no listing GET), state stays null.
+func TestVPCResource_TFSDKCreateRefusedByOperation(t *testing.T) {
+	listingGets := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/vpcs":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-refused-1", "status": "pending", "resourceType": "vpc",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-refused-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-refused-1", "status": "failed", "resourceType": "vpc",
+				"error": "quota exceeded",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/vpcs":
+			listingGets++
+			w.WriteHeader(http.StatusOK)
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+
+	r := NewResource()
+	r.(*vpcResource).pollInterval = 5 * time.Millisecond
+	r.(*vpcResource).pollTimeout = 100 * time.Millisecond
+	configureVPCResource(t, r, c)
+	schemaResp := getVPCSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":         tftypes.NewValue(tftypes.String, "refused-vpc"),
+		"description":  tftypes.NewValue(tftypes.String, nil),
+		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"is_default":   tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
+		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"created_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"updated_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+	})
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+	}
+	var createResp resource.CreateResponse
+	createResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Create(ctx, createReq, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("expected an error when the platform refuses the create")
+	}
+	if !strings.Contains(createResp.Diagnostics.Errors()[0].Summary(), "Refused") {
+		t.Errorf("expected a Refused summary, got %s", createResp.Diagnostics.Errors()[0].Summary())
+	}
+	if listingGets != 0 {
+		t.Errorf("refused arm must not sweep the listing, got %d listing GET(s)", listingGets)
+	}
+	if !createResp.State.Raw.IsNull() {
+		t.Error("expected null state after a refused create")
 	}
 }
 
@@ -599,6 +778,7 @@ func TestVPCResource_TFSDKReadNotFound(t *testing.T) {
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
 		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 		"updated_at":   tftypes.NewValue(tftypes.String, nil),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -683,6 +863,7 @@ func TestVPCResource_TFSDKUpdate(t *testing.T) {
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(1)),
 		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 		"updated_at":   tftypes.NewValue(tftypes.String, nil),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
@@ -698,6 +879,7 @@ func TestVPCResource_TFSDKUpdate(t *testing.T) {
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(1)),
 		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 		"updated_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	updateReq := resource.UpdateRequest{
@@ -775,6 +957,7 @@ func TestVPCResource_TFSDKDelete(t *testing.T) {
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
 		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 		"updated_at":   tftypes.NewValue(tftypes.String, nil),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -833,6 +1016,7 @@ func TestVPCResource_TFSDKDeleteAlreadyGone(t *testing.T) {
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
 		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 		"updated_at":   tftypes.NewValue(tftypes.String, nil),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -927,6 +1111,7 @@ func TestVPCResource_TFSDKCreateSync201(t *testing.T) {
 		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"created_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"updated_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	createReq := resource.CreateRequest{
@@ -991,6 +1176,7 @@ func TestVPCResource_TFSDKCreateAPIError(t *testing.T) {
 		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"created_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"updated_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	createReq := resource.CreateRequest{
@@ -1043,6 +1229,7 @@ func TestVPCResource_TFSDKCreateBadResponseBody(t *testing.T) {
 		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"created_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"updated_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	createReq := resource.CreateRequest{
@@ -1104,6 +1291,7 @@ func TestVPCResource_TFSDKCreatePollingErrorState(t *testing.T) {
 		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"created_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"updated_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	createReq := resource.CreateRequest{
@@ -1156,6 +1344,7 @@ func TestVPCResource_TFSDKReadAPIError(t *testing.T) {
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
 		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 		"updated_at":   tftypes.NewValue(tftypes.String, nil),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -1209,6 +1398,7 @@ func TestVPCResource_TFSDKReadBadJSON(t *testing.T) {
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
 		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 		"updated_at":   tftypes.NewValue(tftypes.String, nil),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -1263,6 +1453,7 @@ func TestVPCResource_TFSDKUpdateAPIError(t *testing.T) {
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
 		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 		"updated_at":   tftypes.NewValue(tftypes.String, nil),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
@@ -1276,6 +1467,7 @@ func TestVPCResource_TFSDKUpdateAPIError(t *testing.T) {
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
 		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 		"updated_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	updateReq := resource.UpdateRequest{
@@ -1329,6 +1521,7 @@ func TestVPCResource_TFSDKUpdateBadJSON(t *testing.T) {
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
 		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 		"updated_at":   tftypes.NewValue(tftypes.String, nil),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
@@ -1342,6 +1535,7 @@ func TestVPCResource_TFSDKUpdateBadJSON(t *testing.T) {
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
 		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 		"updated_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	updateReq := resource.UpdateRequest{
@@ -1395,6 +1589,7 @@ func TestVPCResource_TFSDKDeleteAPIError(t *testing.T) {
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
 		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
 		"updated_at":   tftypes.NewValue(tftypes.String, nil),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -1428,6 +1623,7 @@ func TestVPCResource_TFSDKImportState(t *testing.T) {
 		"subnet_count": tftypes.NewValue(tftypes.Number, nil),
 		"created_at":   tftypes.NewValue(tftypes.String, nil),
 		"updated_at":   tftypes.NewValue(tftypes.String, nil),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	importReq := resource.ImportStateRequest{ID: "vpc-import-1"}
@@ -1446,5 +1642,156 @@ func TestVPCResource_TFSDKImportState(t *testing.T) {
 
 	if model.ID.ValueString() != "vpc-import-1" {
 		t.Errorf("expected ID vpc-import-1, got %s", model.ID.ValueString())
+	}
+}
+
+// --- delete-shim tests: the destroy of an async backend must wait for the
+// operation's verdict, not succeed on the 202 (convergence wall Leg A). ---
+
+func fastVPCDeleteResource(t *testing.T, c *client.Client) *vpcResource {
+	t.Helper()
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+	r := NewResource().(*vpcResource)
+	configureVPCResource(t, r, c)
+	r.pollInterval = 5 * time.Millisecond
+	r.pollTimeout = 100 * time.Millisecond
+	return r
+}
+
+func deleteStateForVPC(t *testing.T, r *vpcResource, id string) (context.Context, resource.DeleteRequest, resource.DeleteResponse) {
+	t.Helper()
+	ctx := context.Background()
+	schemaResp := getVPCSchema(t)
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":           tftypes.NewValue(tftypes.String, id),
+		"name":         tftypes.NewValue(tftypes.String, "del-vpc"),
+		"description":  tftypes.NewValue(tftypes.String, nil),
+		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":       tftypes.NewValue(tftypes.String, "active"),
+		"is_default":   tftypes.NewValue(tftypes.Bool, false),
+		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
+		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"updated_at":   tftypes.NewValue(tftypes.String, nil),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+	})
+	req := resource.DeleteRequest{State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal}}
+	resp := resource.DeleteResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	return ctx, req, resp
+}
+
+// TestVPCResource_TFSDKDeleteWaitsForTheOperation: a VPC delete routes through
+// provisioning and answers 202 with an Operation envelope BEFORE the platform
+// has decided anything. The destroy is done when the operation says so, not
+// when the 202 lands.
+func TestVPCResource_TFSDKDeleteWaitsForTheOperation(t *testing.T) {
+	polled := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-456/vpcs/vpc-del-2":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-del", "status": "pending", "resourceType": "vpc",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-del":
+			polled++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-del", "status": "completed", "resourceType": "vpc",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	r := fastVPCDeleteResource(t, client.NewClient(server.URL, "test-key")) // pragma: allowlist secret
+	ctx, req, resp := deleteStateForVPC(t, r, "vpc-del-2")
+	r.Delete(ctx, req, &resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("delete of an operation that completed must not error: %v", resp.Diagnostics.Errors())
+	}
+	if polled == 0 {
+		t.Fatal("a 202 is not a deletion: the delete must WAIT (poll the operation) before returning")
+	}
+}
+
+// TestVPCResource_TFSDKDeleteOperationFailureIsClassifiedRefused: the workflow
+// DECIDED no — the VPC still exists and the state row must stay, with the
+// refusal classified as refused rather than unknown.
+func TestVPCResource_TFSDKDeleteOperationFailureIsClassifiedRefused(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-456/vpcs/vpc-del-1":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-del", "status": "pending", "resourceType": "vpc",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-del":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-del", "status": "failed", "resourceType": "vpc",
+				"error": "subnets still exist in this VPC",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	r := fastVPCDeleteResource(t, client.NewClient(server.URL, "test-key")) // pragma: allowlist secret
+	ctx, req, resp := deleteStateForVPC(t, r, "vpc-del-1")
+	r.Delete(ctx, req, &resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a refused delete must fail the apply, not drop the row")
+	}
+	err := resp.Diagnostics.Errors()[0]
+	if !strings.Contains(err.Summary(), "Refused By The Platform") {
+		t.Errorf("refused delete must be classified as refused, got summary %q", err.Summary())
+	}
+	if !strings.Contains(err.Detail(), "subnets still exist in this VPC") {
+		t.Errorf("refusal must carry the platform's prose, got: %s", err.Detail())
+	}
+}
+
+// TestVPCResource_TFSDKDeleteUnwatchableIsClassified: a 202 whose envelope
+// cannot be parsed is neither a success nor a verified absence — unknown.
+func TestVPCResource_TFSDKDeleteUnwatchableIsClassified(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/tenant-456/vpcs/vpc-del-1":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte("not-json"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	r := fastVPCDeleteResource(t, client.NewClient(server.URL, "test-key")) // pragma: allowlist secret
+	ctx, req, resp := deleteStateForVPC(t, r, "vpc-del-1")
+	r.Delete(ctx, req, &resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("an accepted-but-unwatchable delete is classified unknown, never a silent success")
+	}
+	if !strings.Contains(resp.Diagnostics.Errors()[0].Summary(), "Outcome Is Unknown") {
+		t.Errorf("unwatchable delete must be classified unknown, got summary %q", resp.Diagnostics.Errors()[0].Summary())
 	}
 }

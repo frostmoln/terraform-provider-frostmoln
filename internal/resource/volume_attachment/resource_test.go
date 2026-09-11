@@ -119,6 +119,10 @@ func TestVolumeAttachmentResource_Attach(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"operationId": "op-attach-1", "status": "accepted", "resourceType": "volume",
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/operations/op-attach-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-attach-1", "status": "completed", "resourceType": "volume",
+			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-123":
 			w.WriteHeader(http.StatusOK)
@@ -188,6 +192,10 @@ func TestVolumeAttachmentResource_Detach(t *testing.T) {
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"operationId": "op-detach-1", "status": "accepted", "resourceType": "volume",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/operations/op-detach-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-detach-1", "status": "completed", "resourceType": "volume",
 			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-123":
@@ -374,6 +382,10 @@ func TestVolumeAttachment_TFSDKCreate(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"operationId": "op-attach-1", "status": "accepted", "resourceType": "volume",
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-attach-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-attach-1", "status": "completed", "resourceType": "volume",
+			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-att-1":
 			_ = json.NewEncoder(w).Encode(volume)
@@ -402,6 +414,7 @@ func TestVolumeAttachment_TFSDKCreate(t *testing.T) {
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-att-1"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-att-1"),
 		"device_path": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	createReq := resource.CreateRequest{
@@ -470,6 +483,7 @@ func TestVolumeAttachment_TFSDKRead(t *testing.T) {
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-r-1"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-r-1"),
 		"device_path": tftypes.NewValue(tftypes.String, "/dev/vdc"),
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -533,6 +547,7 @@ func TestVolumeAttachment_TFSDKReadDetached(t *testing.T) {
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-det-1"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-expected"),
 		"device_path": tftypes.NewValue(tftypes.String, "/dev/vdb"),
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -571,6 +586,10 @@ func TestVolumeAttachment_TFSDKDelete(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"operationId": "op-detach-1", "status": "accepted", "resourceType": "volume",
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-detach-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-detach-1", "status": "completed", "resourceType": "volume",
+			})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-d-1":
 			_ = json.NewEncoder(w).Encode(volume)
@@ -599,6 +618,7 @@ func TestVolumeAttachment_TFSDKDelete(t *testing.T) {
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-d-1"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-d-1"),
 		"device_path": tftypes.NewValue(tftypes.String, "/dev/vdb"),
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -664,6 +684,7 @@ func TestVolumeAttachment_TFSDKImportState(t *testing.T) {
 				"volume_id":   tftypes.NewValue(tftypes.String, nil),
 				"instance_id": tftypes.NewValue(tftypes.String, nil),
 				"device_path": tftypes.NewValue(tftypes.String, nil),
+				"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 			})
 			importResp.State = tfsdk.State{Schema: schemaResp.Schema, Raw: emptyState}
 
@@ -769,6 +790,7 @@ func TestVolumeAttachment_TFSDKCreateAttachError(t *testing.T) {
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-ae-1"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-ae-1"),
 		"device_path": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	createReq := resource.CreateRequest{
@@ -793,6 +815,10 @@ func TestVolumeAttachment_TFSDKCreatePollErrorState(t *testing.T) {
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"operationId": "op-attach-pe-1", "status": "accepted", "resourceType": "volume",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-attach-pe-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-attach-pe-1", "status": "completed", "resourceType": "volume",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-pe-1":
 			_ = json.NewEncoder(w).Encode(apiVolume{ID: "vol-pe-1", Status: "error"})
@@ -820,6 +846,7 @@ func TestVolumeAttachment_TFSDKCreatePollErrorState(t *testing.T) {
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-pe-1"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-pe-1"),
 		"device_path": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	createReq := resource.CreateRequest{
@@ -836,8 +863,6 @@ func TestVolumeAttachment_TFSDKCreatePollErrorState(t *testing.T) {
 }
 
 func TestVolumeAttachment_TFSDKCreateFinalReadError(t *testing.T) {
-	var getCount atomic.Int32
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
@@ -847,22 +872,16 @@ func TestVolumeAttachment_TFSDKCreateFinalReadError(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"operationId": "op-attach-fre-1", "status": "accepted", "resourceType": "volume",
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-attach-fre-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-attach-fre-1", "status": "completed", "resourceType": "volume",
+			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-fre-1":
-			n := getCount.Add(1)
-			if n == 1 {
-				// Poll: return in-use to pass WaitForState
-				_ = json.NewEncoder(w).Encode(apiVolume{
-					ID:          "vol-fre-1",
-					Status:      "in-use",
-					Attachments: []apiVolumeAttachment{{InstanceID: "inst-fre-1", Device: "/dev/vdb"}},
-				})
-			} else {
-				// Final read: return error
-				w.WriteHeader(http.StatusInternalServerError)
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"error": map[string]string{"code": "INTERNAL_ERROR", "message": "read failed"},
-				})
-			}
+			// The single verify read after the completed attach operation fails.
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"code": "INTERNAL_ERROR", "message": "read failed"},
+			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
@@ -887,6 +906,7 @@ func TestVolumeAttachment_TFSDKCreateFinalReadError(t *testing.T) {
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-fre-1"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-fre-1"),
 		"device_path": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	createReq := resource.CreateRequest{
@@ -911,6 +931,10 @@ func TestVolumeAttachment_TFSDKCreateInstanceMismatch(t *testing.T) {
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"operationId": "op-attach-mm-1", "status": "accepted", "resourceType": "volume",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-attach-mm-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-attach-mm-1", "status": "completed", "resourceType": "volume",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-mm-1":
 			// Return in-use but attached to a DIFFERENT instance
@@ -943,6 +967,7 @@ func TestVolumeAttachment_TFSDKCreateInstanceMismatch(t *testing.T) {
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-mm-1"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-expected"),
 		"device_path": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	createReq := resource.CreateRequest{
@@ -987,6 +1012,7 @@ func TestVolumeAttachment_TFSDKReadNotFound(t *testing.T) {
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-nf-1"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-nf-1"),
 		"device_path": tftypes.NewValue(tftypes.String, "/dev/vdb"),
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -1034,6 +1060,7 @@ func TestVolumeAttachment_TFSDKReadAPIError(t *testing.T) {
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-err-1"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-err-1"),
 		"device_path": tftypes.NewValue(tftypes.String, "/dev/vdb"),
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -1081,6 +1108,7 @@ func TestVolumeAttachment_TFSDKReadBadJSON(t *testing.T) {
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-bj-1"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-bj-1"),
 		"device_path": tftypes.NewValue(tftypes.String, "/dev/vdb"),
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -1130,6 +1158,7 @@ func TestVolumeAttachment_TFSDKDeleteDetachError(t *testing.T) {
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-de-1"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-de-1"),
 		"device_path": tftypes.NewValue(tftypes.String, "/dev/vdb"),
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -1174,6 +1203,7 @@ func TestVolumeAttachment_TFSDKDeleteNotFound(t *testing.T) {
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-gone"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-gone"),
 		"device_path": tftypes.NewValue(tftypes.String, "/dev/vdb"),
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -1199,6 +1229,10 @@ func TestVolumeAttachment_TFSDKDeletePollErrorState(t *testing.T) {
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"operationId": "op-detach-dpe-1", "status": "accepted", "resourceType": "volume",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-detach-dpe-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-detach-dpe-1", "status": "completed", "resourceType": "volume",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-dpe-1":
 			_ = json.NewEncoder(w).Encode(apiVolume{ID: "vol-dpe-1", Status: "error"})
@@ -1226,6 +1260,64 @@ func TestVolumeAttachment_TFSDKDeletePollErrorState(t *testing.T) {
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-dpe-1"),
 		"instance_id": tftypes.NewValue(tftypes.String, "inst-dpe-1"),
 		"device_path": tftypes.NewValue(tftypes.String, "/dev/vdb"),
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+	})
+
+	deleteReq := resource.DeleteRequest{
+		State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal},
+	}
+	var deleteResp resource.DeleteResponse
+	deleteResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Delete(ctx, deleteReq, &deleteResp)
+
+	// The detach decision is now the OPERATION's verdict: with the workflow
+	// reporting completed, the volume's own (unrelated) error status does NOT
+	// veto the destroy — the old flow conflated volume status with detach
+	// convergence and dropped the verdict envelope entirely.
+	if deleteResp.Diagnostics.HasError() {
+		t.Fatalf("a completed detach operation is the verdict: %v", deleteResp.Diagnostics.Errors())
+	}
+}
+
+// TestVolumeAttachment_TFSDKDeleteSyncFallbackPollErrorState: on a NON-202
+// backend (synchronous detach) the volume status poll remains the wait, and an
+// error state fails the destroy.
+func TestVolumeAttachment_TFSDKDeleteSyncFallbackPollErrorState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-dsf-1/detach":
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(apiVolume{ID: "vol-dsf-1", Status: "detaching"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-dsf-1":
+			_ = json.NewEncoder(w).Encode(apiVolume{ID: "vol-dsf-1", Status: "error"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := NewResource()
+	configureVAResource(t, r, c)
+	schemaResp := getVASchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "vol-dsf-1/inst-dsf-1"),
+		"volume_id":   tftypes.NewValue(tftypes.String, "vol-dsf-1"),
+		"instance_id": tftypes.NewValue(tftypes.String, "inst-dsf-1"),
+		"device_path": tftypes.NewValue(tftypes.String, "/dev/vdb"),
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -1237,6 +1329,192 @@ func TestVolumeAttachment_TFSDKDeletePollErrorState(t *testing.T) {
 	r.Delete(ctx, deleteReq, &deleteResp)
 
 	if !deleteResp.Diagnostics.HasError() {
-		t.Error("expected error when volume enters error state during detach polling")
+		t.Error("expected error when volume enters error state during sync fallback detach polling")
+	}
+}
+
+// --- op-verdict tests: the provisioning answer outranks the volume status
+// poll, and a failure must be classified (refused vs unknown), never silent. ---
+
+func volumeAttachmentCreateTest(t *testing.T, serverURL string) (context.Context, resource.CreateRequest, resource.CreateResponse, resource.Resource) {
+	t.Helper()
+	c := client.NewClient(serverURL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+	r := NewResource()
+	configureVAResource(t, r, c)
+	schemaResp := getVASchema(t)
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"volume_id":   tftypes.NewValue(tftypes.String, "vol-cv-1"),
+		"instance_id": tftypes.NewValue(tftypes.String, "inst-cv-1"),
+		"device_path": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+	})
+	req := resource.CreateRequest{Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal}}
+	var resp resource.CreateResponse
+	resp.State = tfsdk.State{Schema: schemaResp.Schema}
+	return ctx, req, resp, r
+}
+
+func volumeAttachmentDeleteTest(t *testing.T, serverURL string, volumeID string) (context.Context, resource.DeleteRequest, resource.DeleteResponse, resource.Resource) {
+	t.Helper()
+	c := client.NewClient(serverURL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+	r := NewResource()
+	configureVAResource(t, r, c)
+	schemaResp := getVASchema(t)
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, volumeID+"/inst-cd-1"),
+		"volume_id":   tftypes.NewValue(tftypes.String, volumeID),
+		"instance_id": tftypes.NewValue(tftypes.String, "inst-cd-1"),
+		"device_path": tftypes.NewValue(tftypes.String, "/dev/vdb"),
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+	})
+	req := resource.DeleteRequest{State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal}}
+	var resp resource.DeleteResponse
+	resp.State = tfsdk.State{Schema: schemaResp.Schema}
+	return ctx, req, resp, r
+}
+
+// TestCreateAttachOperationRefusedIsClassified: the platform DECIDED no.
+// Nothing was attached, nothing is recorded, and the refusal says so.
+func TestCreateAttachOperationRefusedIsClassified(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-cv-1/attach":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-cv-1", "status": "accepted", "resourceType": "volume",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-cv-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-cv-1", "status": "failed", "resourceType": "volume",
+				"errorCode": "conflict", "error": "instance inst-cv-1 has no free device slots",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	ctx, req, resp, r := volumeAttachmentCreateTest(t, server.URL)
+	r.Create(ctx, req, &resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a refused attach must fail the apply")
+	}
+	err := resp.Diagnostics.Errors()[0]
+	if !strings.Contains(err.Summary(), "Refused By The Platform") {
+		t.Errorf("refused attach must be classified as refused, got summary %q", err.Summary())
+	}
+	if !strings.Contains(err.Detail(), "instance inst-cv-1 has no free device slots") {
+		t.Errorf("refusal must carry the platform's prose (and prefer the typed code), got: %s", err.Detail())
+	}
+	if !strings.Contains(err.Detail(), "conflict") {
+		t.Errorf("the machine-readable errorCode must be cited when present, got: %s", err.Detail())
+	}
+}
+
+// TestAttachUnparseable202IsClassifiedUnknown: an accepted attach whose
+// envelope cannot be read is neither a success nor a refusal.
+func TestAttachUnparseable202IsClassifiedUnknown(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-cv-1/attach":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte("not-json"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	ctx, req, resp, r := volumeAttachmentCreateTest(t, server.URL)
+	r.Create(ctx, req, &resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("an accepted-but-untrackable attach must fail the apply, not report success")
+	}
+	if !strings.Contains(resp.Diagnostics.Errors()[0].Summary(), "Could Not Be Tracked") {
+		t.Errorf("untrackable attach must be classified, got summary %q", resp.Diagnostics.Errors()[0].Summary())
+	}
+}
+
+// TestDeleteOperationFailureRefusesAndKeepsRow: a refused DETACH leaves the
+// attachment exactly where it was, and the row must stay to describe it.
+func TestDeleteOperationFailureRefusesAndKeepsRow(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-cd-1/detach":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-cd-1", "status": "accepted", "resourceType": "volume",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-cd-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-cd-1", "status": "failed", "resourceType": "volume",
+				"error": "volume is busy: a snapshot batch is running",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	ctx, req, resp, r := volumeAttachmentDeleteTest(t, server.URL, "vol-cd-1")
+	r.Delete(ctx, req, &resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a refused detach must fail the apply, not drop the row")
+	}
+	if !strings.Contains(resp.Diagnostics.Errors()[0].Summary(), "Refused By The Platform") {
+		t.Errorf("refused detach must be classified as refused, got summary %q", resp.Diagnostics.Errors()[0].Summary())
+	}
+}
+
+// TestDeleteUnwatchable202IsClassifiedUnknown: a 202 envelope that cannot be
+// read is an unknown, never a silent success.
+func TestDeleteUnwatchable202IsClassifiedUnknown(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-cd-1/detach":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte("not-json"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	ctx, req, resp, r := volumeAttachmentDeleteTest(t, server.URL, "vol-cd-1")
+	r.Delete(ctx, req, &resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("an accepted-but-unwatchable detach is classified unknown, never a silent success")
+	}
+	if !strings.Contains(resp.Diagnostics.Errors()[0].Summary(), "Outcome Is Unknown") {
+		t.Errorf("unwatchable detach must be classified unknown, got summary %q", resp.Diagnostics.Errors()[0].Summary())
 	}
 }

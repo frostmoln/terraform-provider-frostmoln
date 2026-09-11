@@ -23,6 +23,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
@@ -71,11 +72,29 @@ func (r *apacheInstanceResource) getConfigApplyTimeout() time.Duration {
 	return configApplyTimeout
 }
 
-// pollRunning waits until the instance returns to "running" state.
-func (r *apacheInstanceResource) pollRunning(ctx context.Context, id string) (string, error) {
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded
+// (getPollTimeout's 15m). Routing the defaults through the accessor keeps the
+// test-injection seam intact: a test that shrinks pollTimeout shrinks every
+// wait that does not carry an explicit timeouts override, exactly as before.
+// The engine-config apply's 2h ceiling stays on its own accessor: it is pinned
+// to provisioning's applyConfigPollDeadline, not to a per-verb wait budget.
+func (r *apacheInstanceResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return timeouts.Uniform(r.getPollTimeout())
+	}
+	return budgets
+}
+
+// pollRunning waits until the instance returns to "running" state. The budget
+// is the timeouts block's update (or create, during Create) override.
+func (r *apacheInstanceResource) pollRunning(ctx context.Context, id string, budget time.Duration) (string, error) {
 	return client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budget,
 		TargetStates: []string{"running"},
 		ErrorStates:  []string{"error", "failed"},
 		ResourceName: "apache_instance",
@@ -93,15 +112,49 @@ func (r *apacheInstanceResource) pollRunning(ctx context.Context, id string) (st
 	})
 }
 
-// resizeStorage grows the instance's storage online via POST /resize, then waits
-// for it to return to "running". Grow-only: a shrink is refused in Update.
-func (r *apacheInstanceResource) resizeStorage(ctx context.Context, id string, storageGB int) error {
-	_, err := r.client.Post(ctx, r.client.TenantPath("/webservers/"+id+"/resize"), apiResizeWebserverInstanceRequest{StorageGB: storageGB})
+// resizeStorage grows the instance's storage online via POST /resize, then
+// waits for the write's verdict. Grow-only: a shrink is refused in Update.
+func (r *apacheInstanceResource) resizeStorage(ctx context.Context, id string, storageGB int, budget time.Duration) error {
+	resp, err := r.client.Post(ctx, r.client.TenantPath("/webservers/"+id+"/resize"), apiResizeWebserverInstanceRequest{StorageGB: storageGB})
 	if err != nil {
 		return err
 	}
-	_, err = r.pollRunning(ctx, id)
-	return err
+	return r.awaitResize(ctx, id, resp, budget)
+}
+
+// awaitResize watches a resize write to its verdict, absorbing the resize gap
+// (Ambix 01a03e62): a 202 answer carries an Operation — the saga is still
+// running — and USED to be discarded (`if _, err := Post`) while a bare
+// status-poll decided; that poll could satisfy itself on the still-current
+// `running` before the saga moved the instance to `resizing` and never saw a
+// resize that FAILED. The database and cache/webserver/messaging services
+// synchronously CAS `running`→`resizing` before answering 202 (verified
+// 2026-09-07), so the first poll now sees `resizing` — but the operation, not
+// the status, is what carries the resize's verdict, so the 202 is polled to
+// completion. The 200 {"status":"resizing"} answer is the legacy synchronous
+// ack — the only case for the status-poll fallback.
+func (r *apacheInstanceResource) awaitResize(ctx context.Context, id string, apiResp *client.Response, budget time.Duration) error {
+	if !apiResp.IsAccepted() {
+		_, fallbackErr := r.pollRunning(ctx, id, budget)
+		return fallbackErr
+	}
+	op, opErr := client.ParseResponse[client.OperationResponse](apiResp)
+	if opErr != nil || op.OperationID == "" {
+		// The saga was accepted and its operation cannot be watched from here.
+		// That is classified — NOT a success and NOT a failure: the resize may
+		// still complete, and retrying blind can hit 409 RESIZE-backed states.
+		unknown := opErr
+		if unknown == nil {
+			unknown = fmt.Errorf("the resize was accepted but returned no operation id")
+		}
+		return fmt.Errorf("resize was accepted but its outcome could not be tracked; the resize may "+
+			"still be running — check the instance status (portal, `fm webserver apache instance list`) before retrying: %w", unknown)
+	}
+	if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budget); waitErr != nil {
+		return waitErr
+	}
+	_, runningErr := r.pollRunning(ctx, id, budget)
+	return runningErr
 }
 
 // applyEngineConfig routes an engine-config change to PUT /webservers/{id}/config — the
@@ -246,7 +299,7 @@ func (r *apacheInstanceResource) refreshStateAfterPartialUpdate(ctx context.Cont
 // a 409 is treated as success rather than an error. The instance status stays
 // "running" throughout (ADR-0097), so completion is tracked via the operation,
 // not an instance state transition.
-func (r *apacheInstanceResource) setExposure(ctx context.Context, id string, desired bool) error {
+func (r *apacheInstanceResource) setExposure(ctx context.Context, id string, desired bool, budget time.Duration) error {
 	action := "unexpose"
 	if desired {
 		action = "expose"
@@ -270,7 +323,7 @@ func (r *apacheInstanceResource) setExposure(ctx context.Context, id string, des
 		// Synchronous acknowledgement with no operation to poll.
 		return nil
 	}
-	_, err = r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout())
+	_, err = r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budget)
 	return err
 }
 
@@ -280,10 +333,10 @@ func (r *apacheInstanceResource) setExposure(ctx context.Context, id string, des
 // before its final read, otherwise the read could see public=false while the plan
 // had public=true. It keeps polling while the instance is still "running" (not yet
 // exposed) and errors out if the instance drops into an error state.
-func (r *apacheInstanceResource) pollPublicExposed(ctx context.Context, id string) error {
+func (r *apacheInstanceResource) pollPublicExposed(ctx context.Context, id string, budget time.Duration) error {
 	_, err := client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budget,
 		TargetStates: []string{"exposed"},
 		ErrorStates:  []string{"error", "failed"},
 		ResourceName: "apache_instance exposure",
@@ -499,6 +552,15 @@ func (r *apacheInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 				},
 			},
 		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (15m per verb). A timeouts change
+			// is an in-place no-op on real infrastructure — verified by the
+			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
+			// The engine-config apply's two-hour ceiling is NOT tunable here:
+			// it is pinned to the platform's own apply deadline.
+			"timeouts": timeouts.Schema(),
+		},
 	}
 }
 
@@ -533,6 +595,10 @@ func (r *apacheInstanceResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/webservers"), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create Apache instance", err.Error())
@@ -550,7 +616,7 @@ func (r *apacheInstanceResource) Create(ctx context.Context, req resource.Create
 			resp.Diagnostics.AddError("Failed to parse Apache instance operation response", err.Error())
 			return
 		}
-		done, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout())
+		done, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Create)
 		if err != nil {
 			resp.Diagnostics.AddError("Apache instance creation failed", err.Error())
 			return
@@ -610,7 +676,7 @@ func (r *apacheInstanceResource) Create(ctx context.Context, req resource.Create
 	// Poll until instance reaches "running" status.
 	_, err = client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budgets.Create,
 		TargetStates: []string{"running"},
 		ErrorStates:  []string{"error", "failed"},
 		ResourceName: "apache_instance",
@@ -638,7 +704,7 @@ func (r *apacheInstanceResource) Create(ctx context.Context, req resource.Create
 	// public to become true first. Gated on requestedPublic so the common
 	// public-unset / public=false path is not delayed.
 	if requestedPublic {
-		if err := r.pollPublicExposed(ctx, instID); err != nil {
+		if err := r.pollPublicExposed(ctx, instID, budgets.Create); err != nil {
 			resp.Diagnostics.AddError("Apache instance failed to become publicly exposed", err.Error())
 			return
 		}
@@ -719,6 +785,7 @@ func (r *apacheInstanceResource) Update(ctx context.Context, req resource.Update
 	// WARNED about at plan time (storage_gb GrowOnly modifier — an error there would
 	// also block `terraform destroy`), so this is where it is actually refused: fail
 	// with a clear message rather than a silent no-op.
+	budgets := r.resolveBudgets(plan.Timeouts)
 	switch {
 	case plan.StorageGB.ValueInt64() < state.StorageGB.ValueInt64():
 		resp.Diagnostics.AddError(
@@ -728,7 +795,7 @@ func (r *apacheInstanceResource) Update(ctx context.Context, req resource.Update
 		)
 		return
 	case plan.StorageGB.ValueInt64() > state.StorageGB.ValueInt64():
-		if err := r.resizeStorage(ctx, id, int(plan.StorageGB.ValueInt64())); err != nil {
+		if err := r.resizeStorage(ctx, id, int(plan.StorageGB.ValueInt64()), budgets.Update); err != nil {
 			resp.Diagnostics.AddError("Failed to resize Apache instance storage", err.Error())
 			return
 		}
@@ -745,7 +812,7 @@ func (r *apacheInstanceResource) Update(ctx context.Context, req resource.Update
 		}
 
 		// Poll until instance is back to "running" after the update.
-		if _, err := r.pollRunning(ctx, id); err != nil {
+		if _, err := r.pollRunning(ctx, id, budgets.Update); err != nil {
 			resp.Diagnostics.AddError("Apache instance failed to reach running state after update", err.Error())
 			return
 		}
@@ -775,7 +842,7 @@ func (r *apacheInstanceResource) Update(ctx context.Context, req resource.Update
 	// Public exposure is action-based, not a PUT field: when the desired `public`
 	// value changes, expose (true) or unexpose (false) and wait for the operation.
 	if !plan.Public.Equal(state.Public) {
-		if err := r.setExposure(ctx, id, plan.Public.ValueBool()); err != nil {
+		if err := r.setExposure(ctx, id, plan.Public.ValueBool(), budgets.Update); err != nil {
 			resp.Diagnostics.AddError("Failed to change Apache instance public exposure", err.Error())
 			return
 		}
@@ -816,10 +883,12 @@ func (r *apacheInstanceResource) Delete(ctx context.Context, req resource.Delete
 		return
 	}
 
-	// Wait for the instance to be fully deleted (404 on GET).
+	// Wait for the instance to be fully deleted (404 on GET), on the
+	// timeouts block's delete budget.
+	budgets := r.resolveBudgets(state.Timeouts)
 	_, err = client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budgets.Delete,
 		TargetStates: []string{"deleted"},
 		ErrorStates:  []string{"error"},
 		ResourceName: "apache_instance",

@@ -91,6 +91,7 @@ resource "frostmoln_gateway" "example" {
 
 - `description` (String) A description of the VPC.
 - `tags` (Map of String) Tags for the VPC.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
 
@@ -100,3 +101,12 @@ resource "frostmoln_gateway" "example" {
 - `status` (String) The status of the VPC.
 - `subnet_count` (Number) The number of subnets in the VPC.
 - `updated_at` (String) The last update timestamp.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

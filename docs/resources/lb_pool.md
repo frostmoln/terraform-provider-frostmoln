@@ -67,6 +67,7 @@ resource "frostmoln_lb_pool" "backend" {
 - `proxy_protocol` (String) The PROXY protocol version sent to backend members: none (default), v1, or v2.
 - `session_persistence` (Attributes) Session persistence configuration for the pool. Omit for no persistence. (see [below for nested schema](#nestedatt--session_persistence))
 - `tags` (Map of String) Key-value tags for the pool. These are the pool's own tags, separate from the load balancer's.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
 
@@ -86,3 +87,13 @@ Optional:
 - `cookie_name` (String) The cookie name to use for persistence (required for APP_COOKIE).
 - `persistence_granularity` (String) The persistence granularity (netmask) for SOURCE_IP persistence.
 - `persistence_timeout` (Number) The persistence timeout in seconds.
+
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

@@ -103,6 +103,7 @@ func TestTFSDKCreate(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":        tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":              tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"instance_id":     tftypes.NewValue(tftypes.String, "inst-1"),
 		"port_id":         tftypes.NewValue(tftypes.String, "port-1"),
@@ -167,6 +168,7 @@ func TestTFSDKRead_PortGone_RemovesResource(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":        tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":              tftypes.NewValue(tftypes.String, "inst-1/port-1"),
 		"instance_id":     tftypes.NewValue(tftypes.String, "inst-1"),
 		"port_id":         tftypes.NewValue(tftypes.String, "port-1"),
@@ -216,6 +218,7 @@ func TestTFSDKRead_DriftUpdatesSet(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":        tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":              tftypes.NewValue(tftypes.String, "inst-1/port-1"),
 		"instance_id":     tftypes.NewValue(tftypes.String, "inst-1"),
 		"port_id":         tftypes.NewValue(tftypes.String, "port-1"),

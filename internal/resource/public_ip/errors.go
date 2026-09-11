@@ -64,12 +64,10 @@ func AddAPIError(diags *diag.Diagnostics, fallback string, err error) {
 // ASYNCHRONOUS failure — one reported by a provisioning operation rather than
 // by the HTTP response that started it.
 //
-// It matches on the error TEXT, not on a typed code, because on that path there
-// is no typed code to match: the write endpoints answer 202 with an operation
-// id, the real outcome lands on the operation, and WaitForOperation surfaces
-// the operation's error message as a plain string. A substring match is weaker
-// than a code comparison, so the fallback carries the operation's message
-// verbatim — a missed match costs presentation, never information.
+// The match is now CODE-BASED: WaitForOperation surfaces the operation's
+// failure as a typed *client.OperationError carrying the machine-readable
+// errorCode, which is the stable predicate the prose is not (prose is
+// customer-facing copy the backend service is free to reword or redact).
 func AddOperationError(diags *diag.Diagnostics, fallback string, err error) {
 	AddOperationErrorContext(diags, fallback, "", err)
 }
@@ -78,10 +76,18 @@ func AddOperationError(diags *diag.Diagnostics, fallback string, err error) {
 // in FRONT of the operation's verbatim message: what was being attempted, and
 // what is true now that it failed.
 //
-// The gateway translation still wins when it matches — that text already says
-// both, and says them better than a caller-supplied line could.
+// The gateway translation wins when it matches — that text already says both,
+// and says them better than a caller-supplied line could.
+//
+// The literal match below is the LEGACY arm, kept only because provisioning
+// populates an operation's errorCode sparingly (failed-only and allow-listed;
+// a Temporal TIMED_OUT failure deliberately carries prose with no code), so an
+// operation that failed before its code made the allow-list still answers with
+// the code-prefixed prose. A missed match costs presentation, never
+// information; when provisioning's vocabulary covers the code the typed arm
+// decides and the literal is dead.
 func AddOperationErrorContext(diags *diag.Diagnostics, fallback, context string, err error) {
-	if strings.Contains(err.Error(), errCodeInUseByGateway) {
+	if operationErrorCode(err) == errCodeInUseByGateway || strings.Contains(err.Error(), errCodeInUseByGateway) {
 		diags.AddError(inUseByGatewaySummary, inUseByGatewayDetail+"The platform said: "+err.Error())
 		return
 	}
@@ -90,6 +96,15 @@ func AddOperationErrorContext(diags *diag.Diagnostics, fallback, context string,
 		return
 	}
 	diags.AddError(fallback, context+"\n\nThe platform said: "+err.Error())
+}
+
+// operationErrorCode extracts the machine-readable half of an async refusal.
+func operationErrorCode(err error) string {
+	var opErr *client.OperationError
+	if errors.As(err, &opErr) {
+		return opErr.ErrorCode
+	}
+	return ""
 }
 
 // AddPortResolutionError renders a failed instance-port lookup as a diagnostic

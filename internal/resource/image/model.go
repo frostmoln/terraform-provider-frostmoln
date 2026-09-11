@@ -10,6 +10,8 @@ package image
 
 import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // ImageModel is the Terraform state model for a customer custom image.
@@ -43,6 +45,10 @@ type ImageModel struct {
 	Visibility      types.String `tfsdk:"visibility"`
 	Owner           types.String `tfsdk:"owner"`
 	CreatedAt       types.String `tfsdk:"created_at"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // Image status values (mirror compute domain.ImageStatus). These are the

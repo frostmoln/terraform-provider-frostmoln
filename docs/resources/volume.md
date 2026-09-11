@@ -55,6 +55,7 @@ resource "frostmoln_volume" "data" {
 - `encrypted` (Boolean) Whether the volume is encrypted. Volume encryption is not available yet — setting this to true is rejected at apply time.
 - `snapshot_id` (String) The snapshot ID to create the volume from.
 - `tags` (Map of String) Key-value tags for the volume.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `volume_type` (String) The volume tier key (e.g. "ssd"). The set of selectable tiers is server-defined and may change without a provider release — read it from the frostmoln_volume_tiers data source (only tiers with status "offered" are accepted; a non-offered tier is rejected by the API). Defaults to the platform default tier when omitted.
 - `zone` (String) The availability zone for the volume.
 
@@ -67,3 +68,12 @@ resource "frostmoln_volume" "data" {
 - `iops` (Number) The provisioned IOPS of the volume.
 - `status` (String) The current status of the volume.
 - `throughput` (Number) The throughput of the volume in MB/s.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

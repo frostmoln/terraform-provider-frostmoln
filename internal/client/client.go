@@ -481,6 +481,27 @@ const (
 	OperationStatusCancelled = "cancelled"
 )
 
+// OperationError is the typed, terminal failure of an async operation. The
+// prose (Operation.Error) is customer-facing copy the backend service is free
+// to reword or redact; the ErrorCode is the machine-readable half in
+// servicekit's wire vocabulary (see Operation.ErrorCode) and is OPTIONAL —
+// provisioning populates it only on failed and only for allow-listed error
+// types (a Temporal TIMED_OUT failure deliberately carries prose with no
+// code), so diagnostics must cite the code when present and the prose always.
+type OperationError struct {
+	OperationID string
+	Status      string
+	ErrorCode   string
+	Message     string
+}
+
+func (e *OperationError) Error() string {
+	if e.ErrorCode != "" {
+		return fmt.Sprintf("operation %s %s [%s]: %s", e.OperationID, e.Status, e.ErrorCode, e.Message)
+	}
+	return fmt.Sprintf("operation %s %s: %s", e.OperationID, e.Status, e.Message)
+}
+
 // Operation represents an async provisioning operation. It is returned both as
 // the 202 Accepted body from load-balancer create/delete (status "pending") and
 // from GET /v1/tenants/{tid}/operations/{id} when polling. The field set matches the
@@ -636,7 +657,12 @@ func (c *Client) WaitForOperation(ctx context.Context, operationID string, inter
 	})
 	if err != nil {
 		if lastOp != nil && lastOp.Error != "" {
-			return nil, fmt.Errorf("operation %s %s: %s", operationID, lastOp.Status, lastOp.Error)
+			return nil, &OperationError{
+				OperationID: operationID,
+				Status:      lastOp.Status,
+				ErrorCode:   lastOp.ErrorCode,
+				Message:     lastOp.Error,
+			}
 		}
 		return nil, err
 	}

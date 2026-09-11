@@ -18,7 +18,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
@@ -29,11 +31,52 @@ var (
 
 type securityGroupResource struct {
 	client *client.Client
+
+	// pollInterval and pollTimeout bound the waits for the provisioning
+	// operations a write starts. Fields rather than constants so a test can
+	// drive the timeout in milliseconds; the timeouts block sits on top of
+	// these defaults (see resolveBudgets).
+	pollInterval time.Duration
+	pollTimeout  time.Duration
 }
 
 // NewResource returns a new security group resource.
 func NewResource() resource.Resource {
 	return &securityGroupResource{}
+}
+
+func (r *securityGroupResource) getPollInterval() time.Duration {
+	if r.pollInterval > 0 {
+		return r.pollInterval
+	}
+	return 2 * time.Second
+}
+
+// getPollTimeout is the DEFAULT wait budget — the timeouts block's fallback
+// per verb. Create has always polled the provisioning operation against 5m;
+// the delete wait (an async destroy that used to be reported as done the
+// moment its 202 landed) defaults to the same value so the family keeps one
+// number.
+func (r *securityGroupResource) getPollTimeout() time.Duration {
+	if r.pollTimeout > 0 {
+		return r.pollTimeout
+	}
+	return 5 * time.Minute
+}
+
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded.
+// Routing the defaults through the accessor keeps the test-injection seam
+// intact: a test that shrinks pollTimeout shrinks every wait that does not
+// carry an explicit timeouts override, exactly as before.
+func (r *securityGroupResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return timeouts.Uniform(r.getPollTimeout())
+	}
+	return budgets
 }
 
 func (r *securityGroupResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -147,6 +190,13 @@ func (r *securityGroupResource) Schema(_ context.Context, _ resource.SchemaReque
 				},
 			},
 		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (5m per verb). A timeouts change
+			// is an in-place no-op on real infrastructure — verified by the
+			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
+			"timeouts": timeouts.Schema(),
+		},
 	}
 }
 
@@ -194,20 +244,30 @@ func (r *securityGroupResource) Create(ctx context.Context, req resource.CreateR
 	// "not fetched" — the helper lists them itself (the sync path's POST body
 	// may not embed rules).
 	var rules []apiSecurityGroupRule
+	applyStarted := time.Now().UTC() // the created-at floor for the discovery sweep
+	floor := applyStarted.Add(-time.Minute)
+	budgets := r.resolveBudgets(plan.Timeouts)
 	if apiResp.IsAccepted() {
 		op, opErr := client.ParseResponse[client.Operation](apiResp)
 		if opErr != nil {
 			resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
 			return
 		}
-		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute)
+		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Create)
 		if waitErr != nil {
-			resp.Diagnostics.AddError("Security Group Creation Failed", waitErr.Error())
+			if r.client.ClassifyOperationFailure(ctx, op.OperationID) == client.OperationRefused {
+				orphan.AddCreateRefused(&resp.Diagnostics, "Security Group", fmt.Sprintf("the security group %q", plan.Name.ValueString()), waitErr)
+				return
+			}
+			// UNKNOWN: the saga may still land. The sweep decides honestly.
+			r.adoptCreatedObject(ctx, plan, floor, waitErr, resp)
 			return
 		}
 		if done.ResourceID == "" {
-			resp.Diagnostics.AddError("Security Group Operation Returned No Resource ID",
-				"The security group create operation completed but returned no resource ID. Check `fm network security-group list` and import it if necessary.")
+			// The operation COMPLETED without its resourceId (degraded
+			// provisioning). The group exists; the sweep resolves it by name.
+			r.adoptCreatedObject(ctx, plan, floor,
+				fmt.Errorf("the security group create operation completed but returned no resource ID"), resp)
 			return
 		}
 		readResp, readErr := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf("/security-groups/%s", done.ResourceID)), nil)
@@ -240,6 +300,67 @@ func (r *securityGroupResource) Create(ctx context.Context, req resource.CreateR
 		return
 	}
 
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// adoptCreatedObject resolves an apply whose id the provider lost — a timed-out
+// operation or a completed one that came back without a resourceId — by the
+// family listing, and adopts the result honestly: found means a fresh read of
+// what the platform HAS (not what the configuration asked for); absent means
+// verified absence; unreadable names the platform's last word and the list
+// path. Never `terraform state rm` (internal/orphan holds the copy). The list
+// hides offer-internal groups server-side — those are never this resource's.
+func (r *securityGroupResource) adoptCreatedObject(ctx context.Context, plan SecurityGroupModel, floor time.Time, waitErr error, resp *resource.CreateResponse) {
+	id := orphan.AdoptCreateOnTimeout(ctx, &resp.Diagnostics, orphan.CreateParams{
+		ResourceName: "Security Group",
+		FMList:       "`fm network security-group list`",
+		WaitErr:      waitErr,
+		Resolve: func(ctx context.Context) (string, error) {
+			apiResp, err := r.client.Get(ctx, r.client.TenantPath("/security-groups"), nil)
+			if err != nil {
+				return "", err
+			}
+			var list apiSecurityGroupList
+			if err := json.Unmarshal(apiResp.Body, &list); err != nil {
+				return "", err
+			}
+			candidates := make([]orphan.Candidate, 0, len(list.Items))
+			for _, it := range list.Items {
+				candidates = append(candidates, orphan.Candidate{ID: it.ID, Name: it.Name, CreatedAt: it.CreatedAt})
+			}
+			return orphan.PickCreated(candidates, plan.Name.ValueString(), floor)
+		},
+	})
+	if id == "" {
+		return
+	}
+	// HONEST READ: the platform's response, not the configuration's intent.
+	readResp, readErr := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf("/security-groups/%s", id)), nil)
+	if readErr != nil {
+		resp.Diagnostics.AddError("Failed to Read Security Group After Adoption", readErr.Error())
+		return
+	}
+	var adopted apiSecurityGroup
+	if err := json.Unmarshal(readResp.Body, &adopted); err != nil {
+		resp.Diagnostics.AddError("Failed to Parse Security Group Response", err.Error())
+		return
+	}
+	// The same read-back embeds the rules (see the sync arm above) — the
+	// delete_default_egress opt-in runs on an adopted group too.
+	var withRules apiSecurityGroupWithRules
+	if err := json.Unmarshal(readResp.Body, &withRules); err == nil {
+		if rules := withRules.Rules; len(rules) > 0 {
+			if plan.DeleteDefaultEgress.ValueBool() {
+				r.deleteDefaultEgressRules(ctx, adopted.ID, rules, &resp.Diagnostics)
+			}
+		}
+	} else if plan.DeleteDefaultEgress.ValueBool() {
+		r.deleteDefaultEgressRules(ctx, adopted.ID, nil, &resp.Diagnostics)
+	}
+	plan.fromAPI(ctx, &adopted, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -421,13 +542,43 @@ func (r *securityGroupResource) Delete(ctx context.Context, req resource.DeleteR
 		return
 	}
 
-	_, err := r.client.Delete(ctx, r.client.TenantPath(fmt.Sprintf("/security-groups/%s", state.ID.ValueString())))
+	subject := state.ID.ValueString()
+	budgets := r.resolveBudgets(state.Timeouts)
+
+	delResp, err := r.client.Delete(ctx, r.client.TenantPath(fmt.Sprintf("/security-groups/%s", subject)))
 	if err != nil {
 		if client.IsNotFound(err) {
 			return
 		}
 		resp.Diagnostics.AddError("Failed to Delete Security Group", err.Error())
 		return
+	}
+
+	// A security-group delete routes through provisioning, which answers 202
+	// with an Operation envelope BEFORE the platform has decided anything — and
+	// the destroy of an async backend used to be reported as done the moment
+	// that 202 landed, so a delete whose workflow later FAILED still dropped
+	// the state row while the group (and everything in it) stayed alive. Parse
+	// the envelope and wait for the workflow's verdict; a non-202 is a
+	// synchronous backend and needs no watch.
+	if !delResp.IsAccepted() {
+		return
+	}
+	op, opErr := client.ParseResponse[client.Operation](delResp)
+	if opErr != nil || op.OperationID == "" {
+		// The destroy was accepted and its workflow cannot be watched from
+		// here. That is classified — NOT a success and NOT a verified absence.
+		unwatched := opErr
+		if unwatched == nil {
+			unwatched = fmt.Errorf("the delete was accepted but returned no operation id")
+		}
+		orphan.AddDeleteOutcome(&resp.Diagnostics, client.OperationUnknown, "Security Group", subject, unwatched)
+		return
+	}
+	if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Delete); waitErr != nil {
+		orphan.AddDeleteOutcome(&resp.Diagnostics,
+			r.client.ClassifyOperationFailure(ctx, op.OperationID),
+			"Security Group", subject, waitErr)
 	}
 }
 

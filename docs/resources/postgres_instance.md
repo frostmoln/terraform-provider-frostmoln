@@ -36,6 +36,15 @@ resource "frostmoln_postgres_instance" "main" {
   backup_enabled        = true
   backup_schedule       = "0 2 * * *"
   backup_retention_days = 35
+
+  # Customer-tunable wait budgets. Defaults: create/update/delete = 30m.
+  # Raise for slow provisions (e.g. multi-VM HA pairs) without waiting on a
+  # provider release; a timeouts change is an in-place no-op on live data.
+  timeouts {
+    create = "30m"
+    update = "30m"
+    delete = "30m"
+  }
 }
 
 output "postgres_endpoint" {
@@ -62,6 +71,7 @@ output "postgres_endpoint" {
 - `backup_schedule` (String) Cron expression for the backup schedule. Defaults to "0 2 * * *" server-side.
 - `ha_enabled` (Boolean) Whether high availability is enabled with a standby replica.
 - `parameter_group_id` (String) The ID of the parameter group to apply to the instance.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
 
@@ -75,3 +85,12 @@ output "postgres_endpoint" {
 - `status` (String) The current status of the PostgreSQL instance.
 - `tenant_id` (String) The tenant ID that owns this instance.
 - `updated_at` (String) The timestamp when the instance was last updated.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

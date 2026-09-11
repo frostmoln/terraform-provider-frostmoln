@@ -71,7 +71,7 @@ func TestWaitForOperationIsDrivenByPush(t *testing.T) {
 		return "running"
 	}, func(w http.ResponseWriter, r *http.Request, flush func()) {
 		time.Sleep(100 * time.Millisecond)
-		fmt.Fprint(w, "event: resource\ndata: {\"type\":\"database.created\",\"resourceType\":\"database\",\"resourceId\":\"db-1\",\"status\":\"running\"}\n\n")
+		_, _ = fmt.Fprint(w, "event: resource\ndata: {\"type\":\"database.created\",\"resourceType\":\"database\",\"resourceId\":\"db-1\",\"status\":\"running\"}\n\n")
 		flush()
 		// Hold the connection open until the waiter tears its watcher down, rather
 		// than sleeping: a fixed sleep makes httptest.Server.Close block on this
@@ -132,7 +132,7 @@ func TestKeepaliveDoesNotWakeTheWaiter(t *testing.T) {
 	srv := sseOperationServer(t, &gets, func(int32) string { return "running" },
 		func(w http.ResponseWriter, r *http.Request, flush func()) {
 			for i := 0; i < 20; i++ {
-				fmt.Fprint(w, ": keepalive\n\n")
+				_, _ = fmt.Fprint(w, ": keepalive\n\n")
 				flush()
 				time.Sleep(20 * time.Millisecond)
 			}

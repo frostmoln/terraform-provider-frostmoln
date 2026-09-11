@@ -17,7 +17,71 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
+
+// TestTimeoutsBlockOverridesTheDefaultBudget pins the two promises of the
+// customer-tunable timeouts block in one behavior test: the configured
+// timeouts.create — NOT the hardcoded default — bounds the create wait (the
+// default here is the full 15 minutes and would hang if the block were
+// ignored), and a wait that still times out leaves a tracked replica —
+// a replica seed is the platform's longest provision and the 🔴
+// state-before-the-wait branch is what keeps a timed-out apply's replica
+// refreshable and destroyable instead of orphaned.
+func TestTimeoutsBlockOverridesTheDefaultBudget(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/databases/pg-1/replicas":
+			w.WriteHeader(http.StatusAccepted)
+			// The 202 carries the id (database service, the resourceId field).
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-rr-wall", "status": "pending",
+				"resourceType": "read_replica", "resourceId": "rr-wall",
+			})
+		case strings.HasSuffix(r.URL.Path, "/operations/op-rr-wall"):
+			// Never completes. This is the timeout case.
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-rr-wall", "status": "running", "resourceType": "read_replica",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/databases/pg-1/replicas/rr-wall":
+			// The state-before-the-wait early read.
+			_ = json.NewEncoder(w).Encode(apiPostgresReadReplica{
+				ID: "rr-wall", InstanceID: "pg-1", Name: "replica-1", Status: "seeding",
+			})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	// No pollTimeout injection: only the timeouts block under test can end this
+	// wait inside the test's lifetime.
+	r := &postgresReadReplicaResource{client: newClient(t, server), pollInterval: 10 * time.Millisecond}
+
+	planModel := planModel()
+	planModel.Timeouts = &timeouts.Model{Create: types.StringValue("120ms")}
+
+	start := time.Now()
+	createResp := resource.CreateResponse{State: emptyState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: buildPlan(t, planModel)}, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("expected the create to fail: the operation never completed")
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("the timeouts.create override did not bound the wait: took %s", elapsed)
+	}
+
+	var result PostgresReadReplicaModel
+	createResp.State.Get(context.Background(), &result)
+	if result.ID.ValueString() != "rr-wall" {
+		t.Fatalf("a timed-out create must still record the replica id so it can be destroyed; got %q",
+			result.ID.ValueString())
+	}
+}
 
 // --- Model unit tests ---
 

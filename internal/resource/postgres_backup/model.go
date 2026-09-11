@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // PostgresBackupModel is the Terraform state model for a PostgreSQL backup.
@@ -18,6 +20,10 @@ type PostgresBackupModel struct {
 	SizeBytes   types.Int64  `tfsdk:"size_bytes"`
 	StartedAt   types.String `tfsdk:"started_at"`
 	CompletedAt types.String `tfsdk:"completed_at"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiPostgresBackup is the API representation of a PostgreSQL backup.

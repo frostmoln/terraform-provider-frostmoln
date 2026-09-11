@@ -85,6 +85,10 @@ Use each child's `updated_at`. Listeners, routes, backend pools, backends and ce
 
 ~> `frostmoln_appgw_health_check` exposes NO such attribute, because the API does not return one for it. A health-check change therefore moves nothing here. It is still dispatched, one run late: the write bumps the gateway's generation, and this resource re-plans on its own whenever the gateway has authored changes it is not serving.
 
+### Optional
+
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
+
 ### Read-Only
 
 - `applied_at` (String) When the appliance acknowledged the configuration.
@@ -92,3 +96,12 @@ Use each child's `updated_at`. Listeners, routes, backend pools, backends and ce
 - `revision` (Number) The configuration generation that was dispatched and acknowledged.
 - `sha256` (String) Identifies the rendered bytes, so two applies that produced the same configuration are visibly the same configuration.
 - `status` (String) The appliance's verdict on this apply. `applied` when it converged.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

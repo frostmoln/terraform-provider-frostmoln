@@ -20,6 +20,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
@@ -49,11 +50,30 @@ func (r *webserverDeploymentResource) getPollInterval() time.Duration {
 	return 5 * time.Second
 }
 
+// getPollTimeout is the DEFAULT wait budget — the timeouts block's fallback
+// per verb. Create and update have always polled the in-guest deploy to a
+// terminal status against 15m; delete has no wait at all (see Delete).
 func (r *webserverDeploymentResource) getPollTimeout() time.Duration {
 	if r.pollTimeout > 0 {
 		return r.pollTimeout
 	}
 	return 15 * time.Minute
+}
+
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded.
+// Routing the defaults through the accessor keeps the test-injection seam
+// intact: a test that shrinks pollTimeout shrinks every wait that does not
+// carry an explicit timeouts override, exactly as before. (The upload's
+// HTTP client timeout is a separate wire timeout, not one of these budgets.)
+func (r *webserverDeploymentResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return timeouts.Uniform(r.getPollTimeout())
+	}
+	return budgets
 }
 
 func (r *webserverDeploymentResource) getUploadClient() *http.Client {
@@ -113,6 +133,19 @@ func (r *webserverDeploymentResource) Schema(_ context.Context, _ resource.Schem
 				Description: "Terminal status of the most recent deploy (succeeded once applied).",
 				Computed:    true,
 			},
+		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (15m per verb). Create and update
+			// both run the deploy flow, whose poll to a terminal deploy
+			// status is bounded by the matching budget; delete is a
+			// deliberate no-op — there is no "undeploy" API, so destroying
+			// the resource only drops it from state and budgets.Delete
+			// bounds nothing. The presigned upload's HTTP client timeout is
+			// a separate wire timeout, not a wait budget. A timeouts change
+			// is an in-place no-op on real infrastructure — verified by the
+			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
+			"timeouts": timeouts.Schema(),
 		},
 	}
 }
@@ -202,13 +235,17 @@ func (r *webserverDeploymentResource) Create(ctx context.Context, req resource.C
 	instanceID := plan.InstanceID.ValueString()
 	archivePath := plan.SourceArchive.ValueString()
 
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
 	hash, err := hashArchiveFile(archivePath)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to read source_archive", err.Error())
 		return
 	}
 
-	deployID, status, err := r.runDeploy(ctx, instanceID, archivePath, hash)
+	deployID, status, err := r.runDeploy(ctx, instanceID, archivePath, hash, budgets.Create)
 	if err != nil {
 		resp.Diagnostics.AddError("Content deploy failed", err.Error())
 		return
@@ -287,7 +324,11 @@ func (r *webserverDeploymentResource) Update(ctx context.Context, req resource.U
 		return
 	}
 
-	deployID, status, err := r.runDeploy(ctx, instanceID, archivePath, hash)
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
+	deployID, status, err := r.runDeploy(ctx, instanceID, archivePath, hash, budgets.Update)
 	if err != nil {
 		resp.Diagnostics.AddError("Content deploy failed", err.Error())
 		return
@@ -316,8 +357,11 @@ func (r *webserverDeploymentResource) ImportState(ctx context.Context, req resou
 // runDeploy executes the ADR-0091 content-deploy flow against a webserver
 // instance: create the deploy (presigned POST policy) -> upload the archive ->
 // start with the checksum -> poll to terminal. It returns the deploy id and its
-// terminal status. On a failed deploy it returns the agent's error message.
-func (r *webserverDeploymentResource) runDeploy(ctx context.Context, instanceID, archivePath, sha256 string) (string, string, error) {
+// terminal status. On a failed deploy it returns the agent's error message. The
+// deploy-status poll runs on the timeouts block's budget for the running
+// operation (create or update); the upload's HTTP client timeout is a separate
+// wire timeout, not a wait budget.
+func (r *webserverDeploymentResource) runDeploy(ctx context.Context, instanceID, archivePath, sha256 string, budget time.Duration) (string, string, error) {
 	// 1. Create the deploy — the response carries the presigned POST policy.
 	createResp, err := r.client.Post(ctx, r.client.TenantPath("/webservers/"+instanceID+"/deploys"), nil)
 	if err != nil {
@@ -342,7 +386,7 @@ func (r *webserverDeploymentResource) runDeploy(ctx context.Context, instanceID,
 	}
 
 	// 4. Poll until the deploy reaches a terminal state.
-	final, err := r.waitForDeploy(ctx, instanceID, created.DeployID)
+	final, err := r.waitForDeploy(ctx, instanceID, created.DeployID, budget)
 	if err != nil {
 		return created.DeployID, "", err
 	}
@@ -397,12 +441,13 @@ func (r *webserverDeploymentResource) uploadArchive(ctx context.Context, uploadU
 }
 
 // waitForDeploy polls the deploy until it reaches a terminal state, returning the
-// final deploy (with the agent's error message on failure).
-func (r *webserverDeploymentResource) waitForDeploy(ctx context.Context, instanceID, deployID string) (*apiDeploy, error) {
+// final deploy (with the agent's error message on failure). The wait budget is
+// the timeouts block's budget for the running operation (create or update).
+func (r *webserverDeploymentResource) waitForDeploy(ctx context.Context, instanceID, deployID string, budget time.Duration) (*apiDeploy, error) {
 	var last *apiDeploy
 	_, err := client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budget,
 		TargetStates: []string{deployStatusSucceeded},
 		ErrorStates:  []string{deployStatusFailed},
 		ResourceName: "webserver_deployment",

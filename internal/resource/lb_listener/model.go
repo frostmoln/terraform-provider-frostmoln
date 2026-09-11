@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // ListenerModel is the Terraform state model for a load balancer listener.
@@ -23,6 +25,10 @@ type ListenerModel struct {
 	AdminStateUp     types.Bool   `tfsdk:"admin_state_up"`
 	CreatedAt        types.String `tfsdk:"created_at"`
 	UpdatedAt        types.String `tfsdk:"updated_at"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiListener is the API representation of a listener.
@@ -40,6 +46,13 @@ type apiListener struct {
 	AdminStateUp     bool              `json:"adminStateUp"`
 	CreatedAt        string            `json:"createdAt"`
 	UpdatedAt        string            `json:"updatedAt,omitempty"`
+}
+
+// apiListenerList is the listener listing of the parent load balancer that the
+// create-timeout adoption sweep reads (GET /load-balancers/{lb}/listeners →
+// {"listeners":[…]}); it wraps the item shape the package already has.
+type apiListenerList struct {
+	Items []apiListener `json:"listeners"`
 }
 
 // apiCreateListenerRequest is the API request to create a listener.

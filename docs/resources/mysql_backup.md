@@ -42,6 +42,7 @@ resource "frostmoln_mysql_backup" "binlog" {
 
 ### Optional
 
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `type` (String) The type of backup: "full", "incremental", or "binlog". Defaults to "full".
 
 ### Read-Only
@@ -51,3 +52,12 @@ resource "frostmoln_mysql_backup" "binlog" {
 - `size_bytes` (Number) The size of the backup in bytes.
 - `started_at` (String) The timestamp when the backup started.
 - `status` (String) The current status of the backup.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

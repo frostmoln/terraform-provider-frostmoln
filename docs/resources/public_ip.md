@@ -167,6 +167,7 @@ Do not write it the other way about — on the gateway, listing what attaches. `
 
 It changes ORDER only: nothing is created and nothing is released. It does not arm the gateway's own destroy either — without `acknowledge_connectivity_loss` the teardown stops at that refusal instead, and never reaches the ordering at all. And if a gateway was already adopted, nothing needs importing or rebuilding: it is in state already — add the ordering so it cannot recur, then give the gateway the address you meant with `public_ip_id`, which is applied in place.
 - `tags` (Map of String) Tags for the public IP.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
 
@@ -178,6 +179,16 @@ Read this, not `instance_id`, to tell whether the address is free. An address se
 - `id` (String) The unique identifier of the public IP.
 - `private_ip` (String) The private IP of the associated instance.
 - `status` (String) The status of the public IP.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").
+
 
 <a id="nestedatt--attachment"></a>
 ### Nested Schema for `attachment`

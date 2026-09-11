@@ -49,11 +49,16 @@ func model(t *testing.T) Model {
 	return Model{GatewayID: types.StringValue("agw-1"), Triggers: revs}
 }
 
-func shrinkWaits(t *testing.T) {
+// fastApplyResource is a resource with the apply waits shrunk to milliseconds;
+// the per-resource fields replace the package variables the old shrinkWaits
+// swapped.
+func fastApplyResource(t *testing.T, c *client.Client) *applyResource {
 	t.Helper()
-	oi, ot := applyPollInterval, applyTimeout
-	applyPollInterval, applyTimeout = 5*time.Millisecond, 200*time.Millisecond
-	t.Cleanup(func() { applyPollInterval, applyTimeout = oi, ot })
+	return &applyResource{
+		client:            c,
+		applyPollInterval: 5 * time.Millisecond,
+		applyTimeout:      200 * time.Millisecond,
+	}
 }
 
 func serve(t *testing.T, h http.HandlerFunc) *client.Client {
@@ -67,7 +72,7 @@ func serve(t *testing.T, h http.HandlerFunc) *client.Client {
 
 func create(t *testing.T, c *client.Client) resource.CreateResponse {
 	t.Helper()
-	r := &applyResource{client: c}
+	r := fastApplyResource(t, c)
 	var sr resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &sr)
 	resp := resource.CreateResponse{State: tfsdk.State{Schema: sr.Schema}}
@@ -75,12 +80,23 @@ func create(t *testing.T, c *client.Client) resource.CreateResponse {
 	return resp
 }
 
+// Without a timeouts block the budgets resolve to the values this resource has
+// always run: the 2h apply ceiling on both apply verbs. The default must keep
+// matching the platform's provisioning deadline — see getApplyTimeout — or the
+// workspace wedges against the reaper.
+func TestApplyBudgetDefaults(t *testing.T) {
+	r := &applyResource{}
+	budgets := r.resolveBudgets(nil)
+	if budgets.Create != 2*time.Hour || budgets.Update != 2*time.Hour {
+		t.Errorf("apply budget defaults = %v, want 2h for create and update", budgets)
+	}
+}
+
 // 🔴 THE WHOLE POINT: a 202 is not convergence. The appliance validates, swaps,
 // reloads and probes itself before it answers, so returning on the 202 would
 // report success while the gateway was still serving the old configuration —
 // the exact defect this resource exists to fix, moved one step along.
 func TestApplyWaitsForTheApplianceToAcknowledge(t *testing.T) {
-	shrinkWaits(t)
 	reads := 0
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -125,7 +141,6 @@ func TestApplyWaitsForTheApplianceToAcknowledge(t *testing.T) {
 // must fail with the proxy's own sentence. A `terraform apply` that succeeds
 // while the gateway serves something else is worse than one that fails.
 func TestApplyFailsWhenTheApplianceRefuses(t *testing.T) {
-	shrinkWaits(t)
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == applyPath {
 			w.WriteHeader(http.StatusAccepted)
@@ -152,7 +167,6 @@ func TestApplyFailsWhenTheApplianceRefuses(t *testing.T) {
 // An appliance that never answers must not hang a terraform apply for ever, and
 // the timeout must say what was dispatched and what was acknowledged.
 func TestApplyTimesOutWithoutAVerdict(t *testing.T) {
-	shrinkWaits(t)
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == applyPath {
 			w.WriteHeader(http.StatusAccepted)
@@ -175,7 +189,6 @@ func TestApplyTimesOutWithoutAVerdict(t *testing.T) {
 // authoring write can be dispatched by a later apply while this one is in
 // flight, and demanding equality would fail an apply that in fact converged.
 func TestApplyAcceptsANewerAcknowledgedRevision(t *testing.T) {
-	shrinkWaits(t)
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == applyPath {
 			w.WriteHeader(http.StatusAccepted)
@@ -306,7 +319,6 @@ func TestModifyPlanIsQuietWhenConverged(t *testing.T) {
 // it when no verdict arrived, and nothing will ever move it. Waiting for the
 // ceiling would burn the full timeout to print the wrong message.
 func TestApplyTreatsUnknownAsTerminal(t *testing.T) {
-	shrinkWaits(t)
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == applyPath {
 			w.WriteHeader(http.StatusAccepted)
@@ -333,7 +345,6 @@ func TestApplyTreatsUnknownAsTerminal(t *testing.T) {
 // A transient 409 is self-clearing by the server's own account; failing on it
 // wedges the workspace.
 func TestApplyRetriesATransientConflict(t *testing.T) {
-	shrinkWaits(t)
 	posts := 0
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == applyPath {
@@ -361,7 +372,6 @@ func TestApplyRetriesATransientConflict(t *testing.T) {
 // A dispatched apply must survive a wait failure in state: losing it re-POSTs
 // into a live attempt and collects 409s until the reaper fires hours later.
 func TestApplyKeepsStateWhenTheVerdictFails(t *testing.T) {
-	shrinkWaits(t)
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == applyPath {
 			w.WriteHeader(http.StatusAccepted)

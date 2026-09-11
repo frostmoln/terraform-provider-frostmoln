@@ -17,9 +17,11 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
@@ -30,6 +32,42 @@ var (
 
 type publicIPResource struct {
 	client *client.Client
+
+	// pollInterval and pollTimeout bound the waits for the provisioning
+	// operations a write starts. Fields rather than constants so a test can
+	// drive the timeout in milliseconds; the defaults are the values this
+	// resource has always hardcoded (same idiom as frostmoln_vpc).
+	pollInterval time.Duration
+	pollTimeout  time.Duration
+}
+
+func (r *publicIPResource) getPollInterval() time.Duration {
+	if r.pollInterval > 0 {
+		return r.pollInterval
+	}
+	return 2 * time.Second
+}
+
+func (r *publicIPResource) getPollTimeout() time.Duration {
+	if r.pollTimeout > 0 {
+		return r.pollTimeout
+	}
+	return 5 * time.Minute
+}
+
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded.
+// Routing the defaults through the accessor keeps the test-injection seam
+// intact: a test that shrinks pollTimeout shrinks every wait that does not
+// carry an explicit timeouts override, exactly as before.
+func (r *publicIPResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return timeouts.Uniform(r.getPollTimeout())
+	}
+	return budgets
 }
 
 // NewResource returns a new public IP resource.
@@ -187,6 +225,13 @@ func (r *publicIPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (5m per verb). A timeouts change
+			// is an in-place no-op on real infrastructure — verified by the
+			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
+			"timeouts": timeouts.Schema(),
 		},
 	}
 }
@@ -383,6 +428,75 @@ func InstancePortIDs(ctx context.Context, c *client.Client, instanceID string) (
 	return ports, nil
 }
 
+// apiPublicIPList is the public IP family listing (GET /public-ips) — only
+// the envelope the orphan sweep reads. The address items need nothing but id
+// and createdAt: a public IP has no name, so the sweep matches on the floor
+// alone and reuses the package's apiPublicIP for the wire shape.
+type apiPublicIPList struct {
+	PublicIPs []apiPublicIP `json:"publicIps"`
+}
+
+// adoptCreatedObject runs the create-timeout arm of the orphan contract for an
+// allocation whose provisioning operation outlived the wait (internal/orphan:
+// ADOPT-AS-TRACKED). Found = a fresh read of what the platform HAS, adopted
+// after the apply timed out — the shared warning is orphan's — written through
+// the package's own fetch + fromAPI + Set flow. Verified absence = the
+// re-apply-safe error. Unreadable = the platform's last word plus the
+// `fm network public-ip list` hint. It never invites `terraform state rm`.
+//
+// The sweep passes "" as the name — the ADDRESS is server-assigned, so the
+// created-at floor is the only discriminator and several candidates in the
+// window must stay a refusal-to-guess (ErrAmbiguous), never an adoption of the
+// wrong address.
+//
+// Association (plan.InstanceID) is deliberately NOT resumed here: the
+// allocation the wait covered never produced an id during the apply, so the
+// association phase never started. fromAPI reads the address as the platform
+// holds it — unattached — and the adoption warning carries the wait that gave
+// up.
+//
+// waitErr may be a real wait failure or the synthetic "completed but returned
+// no resource ID" note the completed-but-unnamed arm passes in — either way it
+// is what the wait ended with, and the diagnostics must carry it.
+func (r *publicIPResource) adoptCreatedObject(ctx context.Context, plan *PublicIPModel, floor time.Time, waitErr error, resp *resource.CreateResponse) {
+	adoptedID := orphan.AdoptCreateOnTimeout(ctx, &resp.Diagnostics, orphan.CreateParams{
+		ResourceName: "Public IP",
+		FMList:       "`fm network public-ip list`",
+		WaitErr:      waitErr,
+		Resolve: func(sweepCtx context.Context) (string, error) {
+			listResp, err := r.client.Get(sweepCtx, r.client.TenantPath("/public-ips"), nil)
+			if err != nil {
+				return "", err
+			}
+			listing, err := client.ParseResponse[apiPublicIPList](listResp)
+			if err != nil {
+				return "", fmt.Errorf("failed to parse public IP list response: %w", err)
+			}
+			candidates := make([]orphan.Candidate, 0, len(listing.PublicIPs))
+			for _, fip := range listing.PublicIPs {
+				candidates = append(candidates, orphan.Candidate{ID: fip.ID, CreatedAt: fip.CreatedAt})
+			}
+			return orphan.PickCreated(candidates, "", floor)
+		},
+	})
+	if adoptedID == "" {
+		return
+	}
+
+	// The honest read: the platform's response, not the configuration's
+	// intent — the same fetch + fromAPI + Set flow the ordinary create tail uses.
+	fip, err := r.fetch(ctx, adoptedID)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Public IP After Creation", err.Error())
+		return
+	}
+	plan.fromAPI(ctx, fip, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
+}
+
 func (r *publicIPResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan PublicIPModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -395,6 +509,11 @@ func (r *publicIPResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded. The create-time associate (when
+	// instance_id is set) is part of Create, so it runs on the create budget.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/public-ips"), allocateReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Allocate Public IP", err.Error())
@@ -404,6 +523,16 @@ func (r *publicIPResource) Create(ctx context.Context, req resource.CreateReques
 	// Allocate routes through provisioning → 202 + an Operation envelope
 	// (operationId only, NOT the public IP). Resolve the FIP id from the
 	// operation; a non-202 body is parsed directly for a sync backend.
+	//
+	// A public IP HAS NO NAME — the address is server-assigned — so when the
+	// wait gives up without the platform having said yes or no, the orphan
+	// sweep discriminates on the created-at floor ALONE: several addresses
+	// allocated inside the window resolve to ErrAmbiguous, and refusing to
+	// guess is correct. A terminal refusal is the platform's own NO; the
+	// refused wording says re-applying is safe.
+	applyStarted := time.Now().UTC()
+	floor := applyStarted.Add(-time.Minute)
+
 	var fip apiPublicIP
 	var fipID string
 	if apiResp.IsAccepted() {
@@ -412,15 +541,22 @@ func (r *publicIPResource) Create(ctx context.Context, req resource.CreateReques
 			resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
 			return
 		}
-		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute)
+		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Create)
 		if waitErr != nil {
-			resp.Diagnostics.AddError("Public IP Allocation Failed", waitErr.Error())
+			if r.client.ClassifyOperationFailure(ctx, op.OperationID) == client.OperationRefused {
+				orphan.AddCreateRefused(&resp.Diagnostics, "Public IP", "the public IP", waitErr)
+				return
+			}
+			// Unknown — the sweep decides. Return either way; the helper
+			// wrote the state row or the diagnostic.
+			r.adoptCreatedObject(ctx, &plan, floor, waitErr, resp)
 			return
 		}
 		fipID = done.ResourceID
 		if fipID == "" {
-			resp.Diagnostics.AddError("Public IP Operation Returned No Resource ID",
-				"The public IP allocate operation completed but returned no resource ID. Check `fm network public-ip list` and import it if necessary.")
+			// Completed but the envelope named no object: the sweep decides.
+			r.adoptCreatedObject(ctx, &plan, floor,
+				fmt.Errorf("the public IP allocate operation completed but returned no resource ID"), resp)
 			return
 		}
 	} else {
@@ -450,7 +586,7 @@ func (r *publicIPResource) Create(ctx context.Context, req resource.CreateReques
 				resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
 				return
 			}
-			if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute); waitErr != nil {
+			if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Create); waitErr != nil {
 				resp.Diagnostics.AddError("Public IP Association Failed", waitErr.Error())
 				return
 			}
@@ -534,7 +670,9 @@ func (r *publicIPResource) fetch(ctx context.Context, fipID string) (*apiPublicI
 // would rip the address off the port the association bound it to; the running
 // instance loses its inbound address with no plan line saying so, and the
 // association's next Read quietly drops itself from state.
-func (r *publicIPResource) detachFromRecordedInstance(ctx context.Context, fipID, oldInstanceID, newInstanceID string, diags *diag.Diagnostics) bool {
+//
+// The wait for the disassociate runs on the timeouts block's update budget.
+func (r *publicIPResource) detachFromRecordedInstance(ctx context.Context, fipID, oldInstanceID, newInstanceID string, budget time.Duration, diags *diag.Diagnostics) bool {
 	fip, err := r.fetch(ctx, fipID)
 	if err != nil {
 		diags.AddError("Failed to Read Public IP", err.Error())
@@ -560,7 +698,7 @@ func (r *publicIPResource) detachFromRecordedInstance(ctx context.Context, fipID
 	}
 
 	if slices.Contains(ports, fip.PortID) {
-		return r.disassociate(ctx, fipID, diags)
+		return r.disassociate(ctx, fipID, budget, diags)
 	}
 
 	const summary = "Public IP Is Attached To Something Else"
@@ -584,8 +722,9 @@ func (r *publicIPResource) detachFromRecordedInstance(ctx context.Context, fipID
 	return false
 }
 
-// disassociate removes the address's current binding and waits for the outcome.
-func (r *publicIPResource) disassociate(ctx context.Context, fipID string, diags *diag.Diagnostics) bool {
+// disassociate removes the address's current binding and waits for the outcome
+// on the timeouts block's update budget.
+func (r *publicIPResource) disassociate(ctx context.Context, fipID string, budget time.Duration, diags *diag.Diagnostics) bool {
 	disResp, err := r.client.Post(ctx, r.client.TenantPath(fmt.Sprintf("/public-ips/%s/disassociate", fipID)), nil)
 	if err != nil {
 		diags.AddError("Failed to Disassociate Public IP", err.Error())
@@ -597,7 +736,7 @@ func (r *publicIPResource) disassociate(ctx context.Context, fipID string, diags
 			diags.AddError("Failed to Parse Operation Response", opErr.Error())
 			return false
 		}
-		if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute); waitErr != nil {
+		if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budget); waitErr != nil {
 			diags.AddError("Public IP Disassociation Failed", waitErr.Error())
 			return false
 		}
@@ -620,6 +759,11 @@ func (r *publicIPResource) Update(ctx context.Context, req resource.UpdateReques
 
 	fipID := state.ID.ValueString()
 
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded. Both halves of an address move —
+	// the disassociate and the re-associate — run on the update budget.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
 	// Handle instance association/disassociation changes
 	oldInstanceID := state.InstanceID.ValueString()
 	newInstanceID := ""
@@ -630,7 +774,7 @@ func (r *publicIPResource) Update(ctx context.Context, req resource.UpdateReques
 	if oldInstanceID != newInstanceID {
 		// Disassociate if previously associated
 		if oldInstanceID != "" {
-			if !r.detachFromRecordedInstance(ctx, fipID, oldInstanceID, newInstanceID, &resp.Diagnostics) {
+			if !r.detachFromRecordedInstance(ctx, fipID, oldInstanceID, newInstanceID, budgets.Update, &resp.Diagnostics) {
 				return
 			}
 		}
@@ -653,7 +797,7 @@ func (r *publicIPResource) Update(ctx context.Context, req resource.UpdateReques
 					resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
 					return
 				}
-				if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute); waitErr != nil {
+				if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Update); waitErr != nil {
 					resp.Diagnostics.AddError("Public IP Association Failed", waitErr.Error())
 					return
 				}
@@ -760,14 +904,14 @@ func (r *publicIPResource) Delete(ctx context.Context, req resource.DeleteReques
 	//
 	// So wait for the outcome, and fail the apply on a refusal. Failing keeps
 	// the row in state, which is the correct record: the address is still
-	// there.
+	// there. The wait runs on the timeouts block's delete budget.
 	if delResp.IsAccepted() {
 		op, opErr := client.ParseResponse[client.Operation](delResp)
 		if opErr != nil {
 			resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
 			return
 		}
-		if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, 2*time.Second, 5*time.Minute); waitErr != nil {
+		if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.resolveBudgets(state.Timeouts).Delete); waitErr != nil {
 			AddOperationError(&resp.Diagnostics, "Public IP Release Failed", waitErr)
 			return
 		}

@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // ValkeyInstanceModel is the Terraform state model for a managed Valkey instance.
@@ -25,6 +27,10 @@ type ValkeyInstanceModel struct {
 	AdminUsername   types.String `tfsdk:"admin_username"`
 	CreatedAt       types.String `tfsdk:"created_at"`
 	UpdatedAt       types.String `tfsdk:"updated_at"`
+	// Timeouts is the customer-tunable `timeouts` block. fromAPI never touches
+	// it: the pointer the practitioner configured rides through every model
+	// copy unchanged, which keeps the block stable in state across refreshes.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiValkeyInstance is the API representation of a managed Valkey instance.

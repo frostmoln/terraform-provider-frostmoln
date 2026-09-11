@@ -71,10 +71,20 @@ resource "frostmoln_security_group_rule" "ssh_ingress" {
 - `port_range_min` (Number) The minimum port number.
 - `remote_cidr` (String) The remote CIDR block.
 - `remote_group_id` (String) The remote security group ID.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
 
 - `id` (String) The unique identifier of the rule.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").
 
 ## Import
 

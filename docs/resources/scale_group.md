@@ -62,6 +62,7 @@ resource "frostmoln_scale_group" "web" {
 - `load_balancer_pool_ids` (Set of String) The load balancer pool IDs to attach to the scale group.
 - `tags` (Map of String) Key-value tags for the scale group.
 - `termination_policy` (String) The policy for selecting instances to terminate during scale-in (e.g. "oldest_first", "newest_first").
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `warmup_seconds` (Number) The number of seconds to wait for a new instance to warm up before it receives traffic.
 
 ### Read-Only
@@ -71,3 +72,12 @@ resource "frostmoln_scale_group" "web" {
 - `id` (String) The unique identifier of the scale group.
 - `status` (String) The current status of the scale group.
 - `updated_at` (String) The timestamp when the scale group was last updated.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

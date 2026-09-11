@@ -3,6 +3,8 @@ package lb_member
 
 import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // MemberModel is the Terraform state model for a load balancer pool member.
@@ -18,6 +20,10 @@ type MemberModel struct {
 	CrossVPC       types.Bool   `tfsdk:"cross_vpc"`
 	CreatedAt      types.String `tfsdk:"created_at"`
 	UpdatedAt      types.String `tfsdk:"updated_at"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiMember is the API representation of a pool member.
@@ -31,6 +37,13 @@ type apiMember struct {
 	Weight       int    `json:"weight"`
 	CreatedAt    string `json:"createdAt"`
 	UpdatedAt    string `json:"updatedAt,omitempty"`
+}
+
+// apiMemberList is the pool's member listing that the create-timeout adoption
+// sweep reads (GET /load-balancers/{lb}/pools/{pool}/members → {"members":[…]});
+// it wraps the item shape the package already has.
+type apiMemberList struct {
+	Items []apiMember `json:"members"`
 }
 
 // apiCreateMemberRequest is the API request to create a pool member.

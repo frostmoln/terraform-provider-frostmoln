@@ -43,6 +43,7 @@ output "mysql_reader_endpoint" {
 ### Optional
 
 - `flavor_id` (String) Flavor ID sizing the replica (e.g. db.gp1.small). Optional; when omitted the replica inherits the primary's flavor, which is returned as the computed value. Immutable — changing it replaces the replica.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
 
@@ -51,3 +52,12 @@ output "mysql_reader_endpoint" {
 - `private_ip` (String) The private IP address of the read replica.
 - `replication_lag_bytes` (Number) The replication lag in bytes between primary and replica.
 - `status` (String) The current status of the read replica.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

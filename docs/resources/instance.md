@@ -153,6 +153,7 @@ resource "frostmoln_instance" "bootstrap" {
 - `ssh_key_names` (Set of String) The SSH key names to inject into the instance.
 - `subnet_id` (String) The subnet ID for the instance.
 - `tags` (Map of String) Key-value tags for the instance.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `user_data` (String, Sensitive) User data to provide to the instance at launch — typically a cloud-init document. The API does not return it, so the value you configure is preserved from state on refresh and a SHA256 hash is stored alongside it for change detection. The document is written to Terraform state in plaintext, so anything embedded in it — credentials, tokens, private keys — is readable by anyone who can read the state; `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide. Prefer `user_data_wo`, which carries the same document but is never written to state; the two are mutually exclusive.
 
 **Write the document as plain text — `file("cloud-init.yaml")`, not `base64encode(file(...))`.** Base64 is accepted by the API, but it must NOT be used on an instance that also sets `ssh_key_names`, `console_password` or `instance_access`. In those cases the platform merges its own cloud-config into the document, and the merge dispatches on the literal `#cloud-config` prefix: a base64 blob does not carry it, so the blob is treated as a shell script and combined alongside the platform's cloud-config instead of into it. The apply succeeds and the plan stays clean, but the document never runs as cloud-config and the only evidence is in the guest's cloud-init log. Plain text is correct in both directions: a `#cloud-config` document is merged in place, and a `#!` script is combined as intended. See the example below.
@@ -175,3 +176,12 @@ A cloud-init step that installs packages or calls an external endpoint also need
 - `public_ip` (String) The public IP address of the instance, if assigned.
 - `status` (String) The current status of the instance.
 - `user_data_hash` (String) SHA256 hash of the user data, used for change detection. Computed from the configured `user_data`, so it is null when the document is supplied through `user_data_wo` — there is no config value in state to hash, and `user_data_wo_version` is what carries change detection on that path.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

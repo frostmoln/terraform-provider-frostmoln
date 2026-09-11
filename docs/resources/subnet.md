@@ -57,6 +57,7 @@ resource "frostmoln_subnet" "example" {
 - `dns_servers` (List of String) The DNS server addresses for the subnet. Defaults to the platform DNS servers.
 - `gateway_ip` (String) The gateway IP address for the subnet.
 - `tags` (Map of String) Tags for the subnet.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `zone` (String) The availability zone for the subnet.
 
 ### Read-Only
@@ -65,3 +66,12 @@ resource "frostmoln_subnet" "example" {
 - `created_at` (String) The creation timestamp.
 - `id` (String) The unique identifier of the subnet.
 - `status` (String) The status of the subnet.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

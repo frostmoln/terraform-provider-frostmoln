@@ -15,8 +15,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
@@ -26,22 +28,60 @@ var (
 	_ resource.ResourceWithValidateConfig = &gatewayResource{}
 )
 
-// Provisioning waits. VARIABLES, not constants, so a test can shrink them:
-// with the real values a test that drives a failing wait takes twenty minutes,
-// which means in practice it is never written.
-var (
-	createTimeout = 20 * time.Minute
-	deleteTimeout = 15 * time.Minute
-	pollInterval  = 5 * time.Second
-)
-
 type gatewayResource struct {
 	client *client.Client
+
+	// createTimeout, deleteTimeout and pollInterval used to be PACKAGE
+	// VARIABLES so a test could shrink them. They are fields on the seam the
+	// rest of the provider uses: same injection mechanism, no shared mutable
+	// package state, and the timeouts block sits on top of these defaults (see
+	// resolveBudgets).
+	createTimeout time.Duration
+	deleteTimeout time.Duration
+	pollInterval  time.Duration
 }
 
 // NewResource returns a new Application Gateway resource factory.
 func NewResource() resource.Resource {
 	return &gatewayResource{}
+}
+
+func (r *gatewayResource) getPollInterval() time.Duration {
+	if r.pollInterval > 0 {
+		return r.pollInterval
+	}
+	return 5 * time.Second
+}
+
+func (r *gatewayResource) getCreateTimeout() time.Duration {
+	if r.createTimeout > 0 {
+		return r.createTimeout
+	}
+	return 20 * time.Minute
+}
+
+func (r *gatewayResource) getDeleteTimeout() time.Duration {
+	if r.deleteTimeout > 0 {
+		return r.deleteTimeout
+	}
+	return 15 * time.Minute
+}
+
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded.
+// Routing the defaults through the accessors keeps the test-injection seam
+// intact: a test that shrinks createTimeout shrinks every wait that does not
+// carry an explicit timeouts override, exactly as before. Update has no wait
+// (a name PATCH is synchronous), so its budget is never consulted.
+func (r *gatewayResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	defaults := timeouts.Budgets{Create: r.getCreateTimeout(), Update: r.getCreateTimeout(), Delete: r.getDeleteTimeout()}
+	budgets, err := m.Resolve(defaults)
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return defaults
+	}
+	return budgets
 }
 
 func (r *gatewayResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -193,6 +233,16 @@ func (r *gatewayResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				Computed:    true,
 			},
 		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (create 20m, delete 15m). A
+			// timeouts change is an in-place no-op on real infrastructure —
+			// verified by the Gate 2 smoke test (project-docs/product/
+			// TF-CONVERGENCE-WALL-PLAN.md). The 2h config-apply ceiling is NOT
+			// here: that poll is appgw_config_apply's own deliberate verdict
+			// machine, matched to provisioning's apply budget.
+			"timeouts": timeouts.Schema(),
+		},
 	}
 }
 
@@ -284,19 +334,21 @@ func (r *gatewayResource) Create(ctx context.Context, req resource.CreateRequest
 			"The server accepted the create but returned no gateway to track.")
 		return
 	}
+	operationID := created.OperationID
 
 	// 🔴 WRITE STATE BEFORE WAITING. The gateway row EXISTS from this point on,
 	// and the wait can fail or the run be interrupted. Without this the
 	// practitioner is left with a real gateway -- billed, holding a Public IP --
 	// that Terraform has never heard of and will never destroy.
+	budgets := r.resolveBudgets(plan.Timeouts)
 	plan.fromAPI(created.Gateway)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if created.OperationID != "" {
-		if _, waitErr := r.client.WaitForOperation(ctx, created.OperationID, pollInterval, createTimeout); waitErr != nil {
+	if operationID != "" {
+		if _, waitErr := r.client.WaitForOperation(ctx, operationID, r.getPollInterval(), budgets.Create); waitErr != nil {
 			resp.Diagnostics.AddError("Application Gateway Provisioning Failed",
 				fmt.Sprintf("The gateway %s was created but provisioning did not complete: %s\n\n"+
 					"It is recorded in state; inspect it with `terraform state show` and destroy or "+
@@ -412,8 +464,11 @@ func (r *gatewayResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 
+	subject := state.ID.ValueString()
+	budgets := r.resolveBudgets(state.Timeouts)
+
 	apiResp, err := r.client.Delete(ctx,
-		r.client.TenantPath(fmt.Sprintf("/application-gateways/%s", state.ID.ValueString())))
+		r.client.TenantPath(fmt.Sprintf("/application-gateways/%s", subject)))
 	if err != nil {
 		if client.IsNotFound(err) {
 			return
@@ -427,25 +482,26 @@ func (r *gatewayResource) Delete(ctx context.Context, req resource.DeleteRequest
 	if !apiResp.IsAccepted() {
 		return
 	}
-	op, err := client.ParseResponse[apiOperationResponse](apiResp)
+	op, err := client.ParseResponse[client.Operation](apiResp)
 	if err != nil || op.OperationID == "" {
-		// The delete saga IS running; this client simply cannot watch it.
-		// Returning silently would let Terraform drop the resource and report
-		// success — and if the saga then fails, the appliance, its volume, both
-		// security groups and (in allocated mode) the Public IP stay in the
-		// tenant's project, billing, with nothing in state that will ever
-		// destroy them. That is the failure the create path's
+		// The delete saga IS running; this client simply cannot watch it. That
+		// is classified — NOT a success, NOT a verified absence — and the row
+		// STAYS: dropping it here is exactly what this resource's create-side
 		// write-state-before-waiting exists to prevent, arriving from the other
-		// end.
-		resp.Diagnostics.AddWarning("The Delete Was Accepted But Could Not Be Tracked",
-			"The server accepted the delete and returned no operation this provider could read, "+
-				"so it has not been watched to completion. The gateway has been removed from "+
-				"state. Confirm it is actually gone — and that its Public IP was released or "+
-				"kept as you intended — before assuming the destroy finished.")
+		// end. If the saga then fails, the appliance, its volume, both security
+		// groups and (in allocated mode) the Public IP stay in the tenant's
+		// project, billing, with nothing in state that will ever destroy them.
+		unwatched := err
+		if unwatched == nil {
+			unwatched = fmt.Errorf("the delete was accepted but returned no operation id")
+		}
+		orphan.AddDeleteOutcome(&resp.Diagnostics, client.OperationUnknown, "Application Gateway", subject, unwatched)
 		return
 	}
-	if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, pollInterval, deleteTimeout); waitErr != nil {
-		resp.Diagnostics.AddError("Application Gateway Deletion Failed", waitErr.Error())
+	if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Delete); waitErr != nil {
+		orphan.AddDeleteOutcome(&resp.Diagnostics,
+			r.client.ClassifyOperationFailure(ctx, op.OperationID),
+			"Application Gateway", subject, waitErr)
 	}
 }
 

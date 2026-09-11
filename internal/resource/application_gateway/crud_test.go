@@ -118,13 +118,12 @@ func gwModel() GatewayModel {
 // practitioner is left with a real, billed gateway holding a Public IP that
 // Terraform has never heard of and will never destroy.
 func TestGatewayCreateWritesStateEvenWhenProvisioningFails(t *testing.T) {
-	shrinkWaits(t)
 	c, _ := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == gwBase:
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(apiCreateGatewayResponse{
-				Gateway: ptr(gwFixture("creating")), OperationID: "op-1",
+				Gateway: ptr(gwFixture("creating")), Operation: client.Operation{OperationID: "op-1"},
 			})
 		default:
 			// The operation lookup fails, standing in for provisioning falling
@@ -133,7 +132,7 @@ func TestGatewayCreateWritesStateEvenWhenProvisioningFails(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]string{"code": "BOOM", "message": "no"})
 		}
 	})
-	gr := &gatewayResource{client: c}
+	gr := fastGatewayResource(t, c)
 
 	resp := resource.CreateResponse{State: emptyState(t)}
 	gr.Create(context.Background(), resource.CreateRequest{Plan: planOf(t, gwModel())}, &resp)
@@ -172,7 +171,7 @@ func TestGatewayReadUpdateDelete(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 		}
 	})
-	gr := &gatewayResource{client: c}
+	gr := fastGatewayResource(t, c)
 	m := gwModel()
 	m.ID = types.StringValue("agw-1")
 
@@ -206,7 +205,7 @@ func TestGatewayReadDropsASoftDeletedGateway(t *testing.T) {
 	c, _ := serve(t, func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(gwFixture("deleted"))
 	})
-	gr := &gatewayResource{client: c}
+	gr := fastGatewayResource(t, c)
 	m := gwModel()
 	m.ID = types.StringValue("agw-1")
 	resp := resource.ReadResponse{State: stateOf(t, m)}
@@ -256,11 +255,137 @@ func TestGatewayValidateConfigRefusesInconsistentPublicIPFlags(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v }
 
-// shrinkWaits makes a provisioning wait finish in milliseconds. Without it a
-// test that exercises a FAILING wait runs for the real twenty-minute timeout.
-func shrinkWaits(t *testing.T) {
+// fastGatewayResource is a resource with every wait shrunk to milliseconds;
+// the per-resource fields replace the package variables the old shrinkWaits
+// swapped.
+func fastGatewayResource(t *testing.T, c *client.Client) *gatewayResource {
 	t.Helper()
-	oc, od, op := createTimeout, deleteTimeout, pollInterval
-	createTimeout, deleteTimeout, pollInterval = 200*time.Millisecond, 200*time.Millisecond, 10*time.Millisecond
-	t.Cleanup(func() { createTimeout, deleteTimeout, pollInterval = oc, od, op })
+	return &gatewayResource{
+		client:        c,
+		createTimeout: 200 * time.Millisecond,
+		deleteTimeout: 200 * time.Millisecond,
+		pollInterval:  10 * time.Millisecond,
+	}
+}
+
+// --- classified-delete tests: an accepted delete whose outcome cannot be
+// established NEVER drops the row silently (convergence wall Leg A). ---
+
+func gwDeleteState(t *testing.T) tfsdk.State {
+	t.Helper()
+	m := gwModel()
+	m.ID = types.StringValue("agw-1")
+	return stateOf(t, m)
+}
+
+// TestGatewayDeleteAcceptedButUnwatchableFailsAndKeepsRow: the old behaviour
+// warned and dropped the row — the contract now classifies the outcome as
+// unknown and keeps the row, because a saga that then FAILS leaves a billed
+// gateway, its volume, both security groups and possibly the Public IP with
+// nothing in state that would ever destroy them.
+func TestGatewayDeleteAcceptedButUnwatchableFailsAndKeepsRow(t *testing.T) {
+	c, _ := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == gwBase+"/agw-1":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte("not-json"))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	gr := fastGatewayResource(t, c)
+
+	resp := resource.DeleteResponse{State: gwDeleteState(t)}
+	gr.Delete(context.Background(), resource.DeleteRequest{State: gwDeleteState(t)}, &resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("an accepted-but-unwatchable delete must fail the apply, not drop the row")
+	}
+	if !strings.Contains(resp.Diagnostics.Errors()[0].Summary(), "Outcome Is Unknown") {
+		t.Errorf("unwatchable delete must be classified unknown, got summary %q", resp.Diagnostics.Errors()[0].Summary())
+	}
+	if resp.State.Raw.IsNull() {
+		t.Fatal("the UNKNOWN delete must not have removed the gateway from state")
+	}
+}
+
+// TestGatewayDeleteOperationRefusedIsClassified: the workflow decided no —
+// the gateway still exists and the diagnostic says destroying again is safe
+// once the reason is dealt with.
+func TestGatewayDeleteOperationRefusedIsClassified(t *testing.T) {
+	var opReads int
+	c, _ := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == gwBase+"/agw-1":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-del"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-del":
+			opReads++
+			_ = json.NewEncoder(w).Encode(client.Operation{
+				OperationID: "op-del", Status: "failed",
+				Error: "subnet sub-1 still has interfaces attached to the gateway",
+			})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	gr := fastGatewayResource(t, c)
+
+	resp := resource.DeleteResponse{State: gwDeleteState(t)}
+	gr.Delete(context.Background(), resource.DeleteRequest{State: gwDeleteState(t)}, &resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a refused delete must fail the apply, not drop the row")
+	}
+	err := resp.Diagnostics.Errors()[0]
+	if !strings.Contains(err.Summary(), "Refused By The Platform") {
+		t.Errorf("refused delete must be classified as refused, got summary %q", err.Summary())
+	}
+	if !strings.Contains(err.Detail(), "subnet sub-1 still has interfaces attached to the gateway") {
+		t.Errorf("refusal must carry the platform's prose, got: %s", err.Detail())
+	}
+	if resp.State.Raw.IsNull() {
+		t.Fatal("the refused delete must not have removed the gateway from state")
+	}
+	if opReads == 0 {
+		t.Fatal("the refused delete must have waited on (and re-read) the operation")
+	}
+}
+
+// TestGatewayDeleteWaitsForTheDeleteOperation: a completed delete operation
+// IS the destroy; the row may go.
+func TestGatewayDeleteWaitsForTheDeleteOperation(t *testing.T) {
+	var opReads int
+	c, _ := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == gwBase+"/agw-1":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-del"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-del":
+			opReads++
+			_ = json.NewEncoder(w).Encode(client.Operation{
+				OperationID: "op-del", Status: "completed", ResourceID: "agw-1",
+			})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	gr := fastGatewayResource(t, c)
+
+	resp := resource.DeleteResponse{State: gwDeleteState(t)}
+	gr.Delete(context.Background(), resource.DeleteRequest{State: gwDeleteState(t)}, &resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("a completed delete operation is the destroy: %v", resp.Diagnostics.Errors())
+	}
+	if opReads == 0 {
+		t.Fatal("a 202 is not a deletion: the delete must WAIT for the operation's verdict")
+	}
 }

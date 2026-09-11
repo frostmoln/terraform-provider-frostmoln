@@ -21,6 +21,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
@@ -54,11 +55,27 @@ func (r *mysqlInstanceResource) getPollTimeout() time.Duration {
 	return 15 * time.Minute
 }
 
-// pollRunning waits until the instance returns to "running" state.
-func (r *mysqlInstanceResource) pollRunning(ctx context.Context, id string) (string, error) {
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded
+// (getPollTimeout's 15m). Routing the defaults through the accessor keeps the
+// test-injection seam intact: a test that shrinks pollTimeout shrinks every
+// wait that does not carry an explicit timeouts override, exactly as before.
+func (r *mysqlInstanceResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return timeouts.Uniform(r.getPollTimeout())
+	}
+	return budgets
+}
+
+// pollRunning waits until the instance returns to "running" state. The wait
+// budget is the timeouts block's update (or create, during Create) override.
+func (r *mysqlInstanceResource) pollRunning(ctx context.Context, id string, budget time.Duration) (string, error) {
 	return client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budget,
 		TargetStates: []string{"running"},
 		ErrorStates:  []string{"error", "failed"},
 		ResourceName: "mysql_instance",
@@ -76,19 +93,55 @@ func (r *mysqlInstanceResource) pollRunning(ctx context.Context, id string) (str
 	})
 }
 
-// resizeStorage grows the instance's storage online via POST /resize, then waits
-// for it to return to "running". Grow-only: a shrink is refused in Update.
+// resizeStorage grows the instance's storage online via POST /resize, then
+// waits for the write's verdict. Grow-only: a shrink is refused in Update.
 //
 // The resize retries a TRANSIENT 409 (a mixed apply that also removes a replica
 // can 409 the resize while the replica is mid-delete); a permanent 409 (wrong
 // state) surfaces immediately via IsTransientResizeConflict's default-deny.
-func (r *mysqlInstanceResource) resizeStorage(ctx context.Context, id string, storageGB int) error {
-	_, err := r.client.PostWithConflictRetry(ctx, r.client.TenantPath("/databases/"+id+"/resize"), apiResizeMysqlInstanceRequest{StorageGB: storageGB}, client.IsTransientResizeConflict, r.getPollInterval(), r.getPollTimeout())
+// The post-resize wait runs on the timeouts block's update budget; the
+// transient-409 retry window itself stays provider-internal.
+func (r *mysqlInstanceResource) resizeStorage(ctx context.Context, id string, storageGB int, budget time.Duration) error {
+	resp, err := r.client.PostWithConflictRetry(ctx, r.client.TenantPath("/databases/"+id+"/resize"), apiResizeMysqlInstanceRequest{StorageGB: storageGB}, client.IsTransientResizeConflict, r.getPollInterval(), r.getPollTimeout())
 	if err != nil {
 		return err
 	}
-	_, err = r.pollRunning(ctx, id)
-	return err
+	return r.awaitResize(ctx, id, resp, budget)
+}
+
+// awaitResize watches a resize write to its verdict, absorbing the resize gap
+// (Ambix 01a03e62): a 202 answer carries an Operation — the saga is still
+// running — and USED to be discarded (`if _, err := Post`) while a bare
+// status-poll decided; that poll could satisfy itself on the still-current
+// `running` before the saga moved the instance to `resizing` and never saw a
+// resize that FAILED. The database and cache/webserver/messaging services
+// synchronously CAS `running`→`resizing` before answering 202 (verified
+// 2026-09-07), so the first poll now sees `resizing` — but the operation, not
+// the status, is what carries the resize's verdict, so the 202 is polled to
+// completion. The 200 {"status":"resizing"} answer is the legacy synchronous
+// ack — the only case for the status-poll fallback.
+func (r *mysqlInstanceResource) awaitResize(ctx context.Context, id string, apiResp *client.Response, budget time.Duration) error {
+	if !apiResp.IsAccepted() {
+		_, fallbackErr := r.pollRunning(ctx, id, budget)
+		return fallbackErr
+	}
+	op, opErr := client.ParseResponse[client.OperationResponse](apiResp)
+	if opErr != nil || op.OperationID == "" {
+		// The saga was accepted and its operation cannot be watched from here.
+		// That is classified — NOT a success and NOT a failure: the resize may
+		// still complete, and retrying blind can hit 409 RESIZE-backed states.
+		unknown := opErr
+		if unknown == nil {
+			unknown = fmt.Errorf("the resize was accepted but returned no operation id")
+		}
+		return fmt.Errorf("resize was accepted but its outcome could not be tracked; the resize may "+
+			"still be running — check the instance status (portal, `fm db mysql instance list`) before retrying: %w", unknown)
+	}
+	if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budget); waitErr != nil {
+		return waitErr
+	}
+	_, runningErr := r.pollRunning(ctx, id, budget)
+	return runningErr
 }
 
 func (r *mysqlInstanceResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -294,6 +347,13 @@ func (r *mysqlInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				},
 			},
 		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (15m per verb). A timeouts change
+			// is an in-place no-op on real infrastructure — verified by the
+			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
+			"timeouts": timeouts.Schema(),
+		},
 	}
 }
 
@@ -324,6 +384,10 @@ func (r *mysqlInstanceResource) Create(ctx context.Context, req resource.CreateR
 		return
 	}
 
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/databases"), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create MySQL instance", err.Error())
@@ -341,7 +405,39 @@ func (r *mysqlInstanceResource) Create(ctx context.Context, req resource.CreateR
 			resp.Diagnostics.AddError("Failed to parse MySQL instance operation response", err.Error())
 			return
 		}
-		done, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout())
+		// 🔴 STATE BEFORE THE WAIT — the postgres_instance precedent
+		// (postgres_instance/resource.go) applied to mysql. MySQL's create 202
+		// carries resourceId exactly like PostgreSQL's, but until now mysql set
+		// state only AFTER the operation wait, so a wait that timed out orphaned
+		// a running, billing instance with no id in state: unrefreshable,
+		// undestroyable, unimportable, and the next apply either re-created it
+		// or 409'd on the duplicate name.
+		//
+		// The operation poll cannot supply the id earlier: provisioning fills an
+		// operation's ResourceID from the workflow RESULT, so a PENDING operation
+		// has none. DEGRADES CLEANLY against a database service that sends no
+		// resourceId: the branch is skipped and the behaviour is what it was.
+		//
+		// A failure to pre-record is NOT fatal and adds no diagnostic: the wait
+		// below is the real work, and turning a best-effort bookkeeping read
+		// into a create failure would trade a rare orphan for a common one.
+		if op.ResourceID != "" {
+			if earlyResp, earlyErr := r.client.Get(ctx,
+				r.client.TenantPath("/databases/"+op.ResourceID), nil); earlyErr == nil {
+				if earlyInst, parseErr := client.ParseResponse[apiMysqlInstance](earlyResp); parseErr == nil {
+					early := plan
+					early.fromAPI(ctx, earlyInst, &resp.Diagnostics)
+					if !resp.Diagnostics.HasError() {
+						resp.Diagnostics.Append(resp.State.Set(ctx, &early)...)
+					}
+				}
+			}
+			if resp.Diagnostics.HasError() {
+				return
+			}
+		}
+
+		done, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Create)
 		if err != nil {
 			resp.Diagnostics.AddError("MySQL instance creation failed", err.Error())
 			return
@@ -357,9 +453,10 @@ func (r *mysqlInstanceResource) Create(ctx context.Context, req resource.CreateR
 		}
 
 		// Persist state immediately so the ID is tracked, even if the
-		// poll-to-running or final read below fails. The 202 path has no
-		// create body, so fill the computed attributes from a GET of the
-		// freshly-created instance.
+		// poll-to-running or final read below fails. (The operation wait itself
+		// is already covered above by the state-before-the-wait read; this
+		// second wait runs against a tracked id, so a failure here leaves a
+		// refreshable state row.)
 		readResp, err := r.client.Get(ctx, r.client.TenantPath("/databases/"+instID), nil)
 		if err != nil {
 			resp.Diagnostics.AddError("Failed to read MySQL instance after creation", err.Error())
@@ -401,7 +498,7 @@ func (r *mysqlInstanceResource) Create(ctx context.Context, req resource.CreateR
 	// Poll until instance reaches "running" status.
 	_, err = client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budgets.Create,
 		TargetStates: []string{"running"},
 		ErrorStates:  []string{"error", "failed"},
 		ResourceName: "mysql_instance",
@@ -497,6 +594,10 @@ func (r *mysqlInstanceResource) Update(ctx context.Context, req resource.UpdateR
 	// WARNED about at plan time (storage_gb GrowOnly modifier — an error there would
 	// also block `terraform destroy`), so this is where it is actually refused: fail
 	// with a clear message rather than a silent no-op.
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
 	switch {
 	case plan.StorageGB.ValueInt64() < state.StorageGB.ValueInt64():
 		resp.Diagnostics.AddError(
@@ -506,7 +607,7 @@ func (r *mysqlInstanceResource) Update(ctx context.Context, req resource.UpdateR
 		)
 		return
 	case plan.StorageGB.ValueInt64() > state.StorageGB.ValueInt64():
-		if err := r.resizeStorage(ctx, id, int(plan.StorageGB.ValueInt64())); err != nil {
+		if err := r.resizeStorage(ctx, id, int(plan.StorageGB.ValueInt64()), budgets.Update); err != nil {
 			resp.Diagnostics.AddError("Failed to resize MySQL instance storage", err.Error())
 			return
 		}
@@ -521,7 +622,7 @@ func (r *mysqlInstanceResource) Update(ctx context.Context, req resource.UpdateR
 		}
 
 		// Poll until instance is back to "running" after the update.
-		if _, err := r.pollRunning(ctx, id); err != nil {
+		if _, err := r.pollRunning(ctx, id, budgets.Update); err != nil {
 			resp.Diagnostics.AddError("MySQL instance failed to reach running state after update", err.Error())
 			return
 		}
@@ -562,10 +663,12 @@ func (r *mysqlInstanceResource) Delete(ctx context.Context, req resource.DeleteR
 		return
 	}
 
-	// Wait for the instance to be fully deleted (404 on GET).
+	// Wait for the instance to be fully deleted (404 on GET), on the
+	// timeouts block's delete budget.
+	budgets := r.resolveBudgets(state.Timeouts)
 	_, err = client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budgets.Delete,
 		TargetStates: []string{"deleted"},
 		ErrorStates:  []string{"error"},
 		ResourceName: "mysql_instance",

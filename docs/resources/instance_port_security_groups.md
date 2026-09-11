@@ -47,9 +47,22 @@ resource "frostmoln_instance_port_security_groups" "frontend_nic" {
 - `port_id` (String) The port ID to set security groups on. Port IDs are shown in the instance's per-port security-group breakdown (GET .../security-groups).
 - `security_groups` (Set of String) The security-group IDs to set on the port (replace semantics — any security group not listed is removed from the port). An empty set clears all security groups on the port, leaving it on the VPC default-drop (typically no inbound access).
 
+### Optional
+
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
+
 ### Read-Only
 
 - `id` (String) Composite identifier ({instance_id}/{port_id}).
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").
 
 ## Import
 

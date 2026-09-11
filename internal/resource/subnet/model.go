@@ -9,6 +9,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // SubnetModel is the Terraform state model for a subnet.
@@ -25,6 +26,10 @@ type SubnetModel struct {
 	Status       types.String `tfsdk:"status"`
 	AvailableIPs types.Int64  `tfsdk:"available_ips"`
 	CreatedAt    types.String `tfsdk:"created_at"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiSubnet is the API representation of a subnet.
@@ -41,6 +46,13 @@ type apiSubnet struct {
 	AvailableIPs int               `json:"availableIpCount"`
 	Tags         map[string]string `json:"tags,omitempty"`
 	CreatedAt    string            `json:"createdAt"`
+}
+
+// apiSubnetList is the family listing the create-timeout adoption sweep reads
+// (GET /subnets → {"subnets":[…]}); items carry vpcId, which the sweep narrows
+// by before picking.
+type apiSubnetList struct {
+	Items []apiSubnet `json:"subnets"`
 }
 
 // apiCreateSubnetRequest is the API request to create a subnet. The create

@@ -42,6 +42,7 @@ resource "frostmoln_snapshot" "backup" {
 
 - `description` (String) A human-readable description of the snapshot.
 - `tags` (Map of String) Key-value tags for the snapshot.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
 
@@ -49,3 +50,12 @@ resource "frostmoln_snapshot" "backup" {
 - `id` (String) The unique identifier of the snapshot.
 - `size_gb` (Number) The size of the snapshot in gigabytes.
 - `status` (String) The current status of the snapshot.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

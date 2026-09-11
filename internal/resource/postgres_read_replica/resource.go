@@ -14,6 +14,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
@@ -44,6 +45,22 @@ func (r *postgresReadReplicaResource) getPollTimeout() time.Duration {
 		return r.pollTimeout
 	}
 	return 15 * time.Minute
+}
+
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded.
+// Routing the defaults through the accessor keeps the test-injection seam
+// intact: a test that shrinks pollTimeout shrinks every wait that does not
+// carry an explicit timeouts override, exactly as before. The 409
+// conflict-retry window on delete stays provider-internal (getPoll*).
+func (r *postgresReadReplicaResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return timeouts.Uniform(r.getPollTimeout())
+	}
+	return budgets
 }
 
 func (r *postgresReadReplicaResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -104,6 +121,13 @@ func (r *postgresReadReplicaResource) Schema(_ context.Context, _ resource.Schem
 				Computed:    true,
 			},
 		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (15m per verb). A timeouts change
+			// is an in-place no-op on real infrastructure — verified by the
+			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
+			"timeouts": timeouts.Schema(),
+		},
 	}
 }
 
@@ -141,6 +165,10 @@ func (r *postgresReadReplicaResource) Create(ctx context.Context, req resource.C
 		return
 	}
 
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
 	instanceID := plan.InstanceID.ValueString()
 
 	apiResp, err := r.client.Post(ctx, r.replicaPath(instanceID, ""), apiReq)
@@ -158,7 +186,30 @@ func (r *postgresReadReplicaResource) Create(ctx context.Context, req resource.C
 			resp.Diagnostics.AddError("Failed to parse operation response", err.Error())
 			return
 		}
-		done, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), r.getPollTimeout())
+		// 🔴 STATE BEFORE THE WAIT (the postgres_instance/mysql_instance
+		// precedent applied to replicas). A replica seed is the platform's
+		// longest provision — bounded by replicaSeedReadyTimeout at 3h30m
+		// (project-docs/product/MANAGED-DB-HA-PLAN.md) — and until this branch
+		// a read through the bounded 15m wait that gave up left a LIVE replica
+		// (seeding, billing) with no id in state: unrefreshable, undestroyable,
+		// unimportable. The id is available only when the create 202 carries it
+		// (the database service's envelope — the only resourceId-at-envelope
+		// verb, verified in the Gate 4 sweep). DEGRADES CLEANLY against a
+		// database service that sends no resourceId: the branch is skipped and
+		// the behaviour is exactly what it was. A failure to pre-record is
+		// best-effort and NOT fatal — the wait below is the real work.
+		if op.ResourceID != "" {
+			if earlyResp, earlyErr := r.client.Get(ctx, r.replicaPath(instanceID, op.ResourceID), nil); earlyErr == nil {
+				if earlyReplica, parseErr := client.ParseResponse[apiPostgresReadReplica](earlyResp); parseErr == nil {
+					early := plan
+					early.fromAPI(ctx, earlyReplica, &resp.Diagnostics)
+					if !resp.Diagnostics.HasError() {
+						resp.Diagnostics.Append(resp.State.Set(ctx, &early)...)
+					}
+				}
+			}
+		}
+		done, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Create)
 		if err != nil {
 			resp.Diagnostics.AddError("PostgreSQL read replica creation failed", err.Error())
 			return
@@ -211,10 +262,12 @@ func (r *postgresReadReplicaResource) Create(ctx context.Context, req resource.C
 		replicaID = replica.ID
 	}
 
-	// Poll until the replica reaches "running" status.
+	// Poll until the replica reaches "running" status, on the timeouts block's
+	// create budget. (The best-effort state-before-the-wait branch above needs
+	// no budget: it is a single read, never a poll.)
 	_, err = client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budgets.Create,
 		TargetStates: []string{"running"},
 		ErrorStates:  []string{"error", "failed"},
 		ResourceName: "postgres_read_replica",
@@ -308,10 +361,12 @@ func (r *postgresReadReplicaResource) Delete(ctx context.Context, req resource.D
 		return
 	}
 
-	// Wait for the replica to be fully deleted (404 on GET).
+	// Wait for the replica to be fully deleted (404 on GET), on the
+	// timeouts block's delete budget. The 409 conflict-retry window above
+	// stays provider-internal.
 	_, err = client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      r.resolveBudgets(state.Timeouts).Delete,
 		TargetStates: []string{"deleted"},
 		ErrorStates:  []string{"error"},
 		ResourceName: "postgres_read_replica",

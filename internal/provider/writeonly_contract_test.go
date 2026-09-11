@@ -134,12 +134,13 @@ func TestWriteOnlyAttributeContract(t *testing.T) {
 func writeOnlyAttributeNames(t *testing.T, typeName string, s schema.Schema) []string {
 	t.Helper()
 
-	// Blocks carry their own attributes and are not walked. The provider uses
-	// none — planmodifier_order_test.go enforces that too — but this test must
-	// not depend on that one running.
-	if len(s.Blocks) > 0 {
-		t.Fatalf("%s: declares schema Blocks, which this contract does not walk — extend it", typeName)
-	}
+	// Blocks carry their own attributes and are walked for nested write-only
+	// shapes. The provider's blocks today are only the shared `timeouts`
+	// control block (whose children could never be WriteOnly anyway), but this
+	// test must not depend on that being true: block children go through the
+	// same nested-write-only check, and a block shape the walk cannot descend
+	// into still fails loudly.
+	assertBlocksNoWriteOnly(t, mdTypeNameForMessage(typeName), s.Blocks)
 
 	var names []string
 	for name, a := range s.Attributes {
@@ -150,6 +151,32 @@ func writeOnlyAttributeNames(t *testing.T, typeName string, s schema.Schema) []s
 	}
 	sort.Strings(names)
 	return names
+}
+
+func mdTypeNameForMessage(typeName string) string {
+	return typeName
+}
+
+// assertBlocksNoWriteOnly descends into every block's attributes (and nested
+// blocks) checking the no-nested-WriteOnly invariant below the root.
+func assertBlocksNoWriteOnly(t *testing.T, typeName string, blocks map[string]schema.Block) {
+	t.Helper()
+
+	for name, b := range blocks {
+		switch nested := b.(type) {
+		case schema.SingleNestedBlock:
+			for childName, child := range nested.Attributes {
+				attrPath := name + "." + childName
+				if child.IsWriteOnly() {
+					t.Fatalf("%s: %s is a nested WriteOnly attribute inside a block — not covered by this contract; extend it", typeName, attrPath)
+				}
+				assertNoNestedWriteOnly(t, attrPath, child)
+			}
+			assertBlocksNoWriteOnly(t, typeName, nested.Blocks)
+		default:
+			t.Fatalf("%s: unsupported block type %T — extend this walk", typeName, b)
+		}
+	}
 }
 
 // assertNoNestedWriteOnly recurses through nested attributes to any depth. A

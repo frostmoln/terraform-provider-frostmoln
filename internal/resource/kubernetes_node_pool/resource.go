@@ -21,6 +21,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // Node-pool statuses (kubernetes service vocabulary). Deletes are SOFT: a
@@ -70,11 +71,30 @@ func (r *kubernetesNodePoolResource) getPollInterval() time.Duration {
 	return 10 * time.Second
 }
 
+// getPollTimeout is the DEFAULT wait budget — the timeouts block's fallback
+// per verb. Create has always polled the pool to active against 30m; the
+// update's scale poll and the delete's status poll default to the same value
+// so the resource keeps one number.
 func (r *kubernetesNodePoolResource) getPollTimeout() time.Duration {
 	if r.pollTimeout > 0 {
 		return r.pollTimeout
 	}
 	return 30 * time.Minute
+}
+
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded.
+// Routing the defaults through the accessor keeps the test-injection seam
+// intact: a test that shrinks pollTimeout shrinks every wait that does not
+// carry an explicit timeouts override, exactly as before.
+func (r *kubernetesNodePoolResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return timeouts.Uniform(r.getPollTimeout())
+	}
+	return budgets
 }
 
 func (r *kubernetesNodePoolResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -156,6 +176,18 @@ func (r *kubernetesNodePoolResource) Schema(_ context.Context, _ resource.Schema
 				Computed:    true,
 			},
 		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (30m per verb). Every status
+			// poll is bounded by the matching budget — create the
+			// poll-to-active, update the post-scale poll, delete the
+			// delete-status poll — while the create's transient-409 retry
+			// loop keeps its own five-attempt bound (provider-internal). A
+			// timeouts change is an in-place no-op on real infrastructure —
+			// verified by the Gate 2 smoke test
+			// (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
+			"timeouts": timeouts.Schema(),
+		},
 	}
 }
 
@@ -199,11 +231,12 @@ func (r *kubernetesNodePoolResource) getPool(ctx context.Context, clusterID, poo
 
 // pollPool waits for the node pool to reach the target status. A soft-deleted
 // pool keeps answering 200 with status "deleted", which the poller sees as a
-// regular state; 404 maps to "deleted" as a fallback.
-func (r *kubernetesNodePoolResource) pollPool(ctx context.Context, clusterID, poolID string, targets, errorStates []string) error {
+// regular state; 404 maps to "deleted" as a fallback. The wait budget is the
+// timeouts block's budget for the operation polling (create, update, delete).
+func (r *kubernetesNodePoolResource) pollPool(ctx context.Context, clusterID, poolID string, targets, errorStates []string, budget time.Duration) error {
 	_, err := client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budget,
 		TargetStates: targets,
 		ErrorStates:  errorStates,
 		ResourceName: "kubernetes_node_pool",
@@ -242,6 +275,11 @@ func (r *kubernetesNodePoolResource) Create(ctx context.Context, req resource.Cr
 	createPath := r.poolsPath(clusterID)
 	createReq := plan.toCreateRequest()
 
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded. It bounds only the status poll
+	// below; the transient-409 retry loop keeps its own attempt bound.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
 	// Node-pool create requires the cluster to be exactly "running"; a create
 	// racing a transient cluster state (scaling/updating) gets a 409
 	// invalid_state — retry briefly instead of failing the apply.
@@ -279,7 +317,7 @@ func (r *kubernetesNodePoolResource) Create(ctx context.Context, req resource.Cr
 		return
 	}
 
-	if err := r.pollPool(ctx, clusterID, created.ID, []string{statusActive}, []string{statusError, statusDeleted}); err != nil {
+	if err := r.pollPool(ctx, clusterID, created.ID, []string{statusActive}, []string{statusError, statusDeleted}, budgets.Create); err != nil {
 		resp.Diagnostics.AddError("Kubernetes node pool failed to reach active state", err.Error())
 		return
 	}
@@ -370,7 +408,9 @@ func (r *kubernetesNodePoolResource) Update(ctx context.Context, req resource.Up
 	// node_count is the only in-place-updatable attribute (everything else
 	// RequiresReplace). The backend gates /scale on both the cluster and the
 	// pool being serviceable: a soft-deleted pool is 404, any other
-	// non-scalable state is 409 — both surface as-is.
+	// non-scalable state is 409 — both surface as-is. The status poll after
+	// the scale runs on the timeouts block's update budget.
+	budgets := r.resolveBudgets(plan.Timeouts)
 	if !plan.NodeCount.Equal(state.NodeCount) {
 		scaleReq := apiScaleNodePoolRequest{NodeCount: int(plan.NodeCount.ValueInt64())}
 		if _, err := r.client.Post(ctx, r.poolPath(clusterID, poolID)+"/scale", scaleReq); err != nil {
@@ -385,7 +425,7 @@ func (r *kubernetesNodePoolResource) Update(ctx context.Context, req resource.Up
 			resp.Diagnostics.AddError("Failed to scale Kubernetes node pool", err.Error())
 			return
 		}
-		if err := r.pollPool(ctx, clusterID, poolID, []string{statusActive}, []string{statusError, statusDeleted}); err != nil {
+		if err := r.pollPool(ctx, clusterID, poolID, []string{statusActive}, []string{statusError, statusDeleted}, budgets.Update); err != nil {
 			resp.Diagnostics.AddError("Kubernetes node pool failed to reach active state after scaling", err.Error())
 			return
 		}
@@ -449,8 +489,10 @@ func (r *kubernetesNodePoolResource) Delete(ctx context.Context, req resource.De
 	}
 
 	// Deletes are soft: poll until the row reports status "deleted" (404 is
-	// only a fallback — the row is retained).
-	if err := r.pollPool(ctx, clusterID, poolID, []string{statusDeleted}, []string{statusError}); err != nil {
+	// only a fallback — the row is retained). The wait runs on the timeouts
+	// block's delete budget.
+	budgets := r.resolveBudgets(state.Timeouts)
+	if err := r.pollPool(ctx, clusterID, poolID, []string{statusDeleted}, []string{statusError}, budgets.Delete); err != nil {
 		resp.Diagnostics.AddError("Kubernetes node pool failed to delete", err.Error())
 	}
 }

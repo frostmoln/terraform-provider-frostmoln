@@ -229,10 +229,20 @@ resource "frostmoln_public_ip_association" "ordered" {
 Leave it unset for a single-homed instance and it resolves to the instance's first network port. Set it for a multi-NIC instance to choose which interface answers on the address — the same choice `fm network public-ip associate --port-id` offers. It must be one of `instance_id`'s own ports; anything else is refused before a request is sent, because an address bound to a port outside the instance is an attachment this resource would drop from state on its next refresh.
 
 Changing it forces replacement (disassociate, then associate).
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
 
 - `id` (String) The composite identifier of the association ({public_ip_id}/{instance_id}).
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").
 
 ## Import
 

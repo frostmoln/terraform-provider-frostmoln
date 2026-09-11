@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // SecurityGroupModel is the Terraform state model for a security group.
@@ -20,6 +21,10 @@ type SecurityGroupModel struct {
 	IsDefault           types.Bool   `tfsdk:"is_default"`
 	DeleteDefaultEgress types.Bool   `tfsdk:"delete_default_egress"`
 	CreatedAt           types.String `tfsdk:"created_at"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiSecurityGroup is the API representation of a security group.
@@ -31,6 +36,13 @@ type apiSecurityGroup struct {
 	IsDefault   bool              `json:"isDefault"`
 	Tags        map[string]string `json:"tags,omitempty"`
 	CreatedAt   string            `json:"createdAt"`
+}
+
+// apiSecurityGroupList is the family listing the create-timeout adoption sweep
+// reads (GET /security-groups → {"securityGroups":[…]}); the list hides
+// offer-internal groups server-side, which are never this resource's.
+type apiSecurityGroupList struct {
+	Items []apiSecurityGroup `json:"securityGroups"`
 }
 
 // apiSecurityGroupRule is the read model of a rule carried by a group. It

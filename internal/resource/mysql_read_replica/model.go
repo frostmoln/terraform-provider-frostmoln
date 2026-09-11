@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // MysqlReadReplicaModel is the Terraform state model for a MySQL read replica.
@@ -18,6 +20,10 @@ type MysqlReadReplicaModel struct {
 	PrivateIP           types.String `tfsdk:"private_ip"`
 	Port                types.Int64  `tfsdk:"port"`
 	ReplicationLagBytes types.Int64  `tfsdk:"replication_lag_bytes"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiMysqlReadReplica is the API representation of a MySQL read replica.

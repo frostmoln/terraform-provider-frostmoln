@@ -18,7 +18,27 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/public_ip"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
+
+// TestTimeoutsDefaultsMatchTheOldConstants pins the defaults contract of the
+// customer-tunable timeouts block: an absent block resolves to exactly the
+// values this resource has always hardcoded (5m per verb), and the
+// pollTimeout test-injection seam — which newFastResource shrinks directly —
+// still shrinks every budget that does not carry an explicit override.
+func TestTimeoutsDefaultsMatchTheOldConstants(t *testing.T) {
+	r := &publicIPAssociationResource{}
+	want := timeouts.Uniform(5 * time.Minute)
+	if got := r.resolveBudgets(nil); got != want {
+		t.Fatalf("an absent timeouts block must keep the old 5m default; got %+v, want %+v", got, want)
+	}
+
+	r.pollTimeout = 75 * time.Millisecond
+	wantInj := timeouts.Uniform(75 * time.Millisecond)
+	if got := r.resolveBudgets(nil); got != wantInj {
+		t.Fatalf("a shrunken pollTimeout must shrink the default budget; got %+v, want %+v", got, wantInj)
+	}
+}
 
 // --- helpers ---
 
@@ -96,6 +116,7 @@ func stateValue(t *testing.T, s schema.Schema, id, publicIPID, instanceID, portI
 		"public_ip_id": tftypes.NewValue(tftypes.String, publicIPID),
 		"instance_id":  tftypes.NewValue(tftypes.String, instanceID),
 		"port_id":      tftypes.NewValue(tftypes.String, portID),
+		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 }
 

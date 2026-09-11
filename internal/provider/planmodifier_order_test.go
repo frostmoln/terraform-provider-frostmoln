@@ -127,17 +127,29 @@ func TestOptionalComputedAttributesReplaceOnlyOnRealChange(t *testing.T) {
 		seen[typeName] = map[string]bool{}
 
 		t.Run(typeName, func(t *testing.T) {
-			// Blocks carry their own attributes and are not walked below. The
-			// provider uses none; fail loudly rather than skip them silently the
-			// day one is added.
-			if len(schemaResp.Schema.Blocks) > 0 {
-				t.Fatalf("resource declares schema Blocks, which this test does not walk — extend walkOptionalComputed")
-			}
-
+			// Blocks carry their own attributes and ARE walked below — the
+			// provider's blocks today are only the shared `timeouts` control
+			// block (all-Optional, no plan modifiers), but the walk cannot
+			// afford name-based exemptions: every block's attributes go through
+			// the same Optional+Computed check, and any block shape the walk
+			// cannot descend into still fails loudly.
 			listed := map[string]bool{}
 			for _, attrPath := range mustReplaceOnRealChange[typeName] {
 				listed[attrPath] = true
 			}
+
+			walkOptionalComputedBlocks(t, "", schemaResp.Schema.Blocks, func(attrPath string, a schema.Attribute) {
+				replacesOnChange, replacesOnUnknown := replayModifiers(t, attrPath, a)
+				seen[typeName][attrPath] = replacesOnChange
+				if replacesOnUnknown && !hasDefault(a) {
+					t.Errorf("%s: an unknown plan value against an unchanged state must NOT require replacement — "+
+						"RequiresReplace() has to be ordered after UseStateForUnknown()", attrPath)
+				}
+				if replacesOnChange && !listed[attrPath] {
+					t.Errorf("%s: forces a replacement on a real value change but is not listed in "+
+						"mustReplaceOnRealChange — add it there so the RequiresReplace cannot be dropped unnoticed", attrPath)
+				}
+			})
 
 			walkOptionalComputed(t, "", schemaResp.Schema.Attributes, func(attrPath string, a schema.Attribute) {
 				replacesOnChange, replacesOnUnknown := replayModifiers(t, attrPath, a)
@@ -213,6 +225,39 @@ func walkOptionalComputed(t *testing.T, prefix string, attrs map[string]schema.A
 		}
 		if a.IsOptional() && a.IsComputed() {
 			fn(attrPath, a)
+		}
+	}
+}
+
+// walkOptionalComputedBlocks descends into every block's attributes — the block
+// twin of walkOptionalComputed. A SingleNestedBlock's scalars are walked with
+// the same Optional+Compiled criterion (so a future Optional+Computed inside a
+// block cannot escape the ordering check); a multi-object block shape the walk
+// cannot descend into fails loudly, as before, because it would carry a
+// collection the surface contract also needs to see. Timeouts' scalar children
+// are Optional-only today, so this walk observes them without ever calling fn.
+func walkOptionalComputedBlocks(t *testing.T, prefix string, blocks map[string]schema.Block, fn func(string, schema.Attribute)) {
+	t.Helper()
+
+	names := make([]string, 0, len(blocks))
+	for name := range blocks {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		b := blocks[name]
+		attrPath := name
+		if prefix != "" {
+			attrPath = prefix + "." + name
+		}
+
+		switch nested := b.(type) {
+		case schema.SingleNestedBlock:
+			walkOptionalComputed(t, attrPath, nested.Attributes, fn)
+			walkOptionalComputedBlocks(t, attrPath, nested.Blocks, fn)
+		default:
+			t.Fatalf("%s: unsupported block type %T — extend walkOptionalComputedBlocks", attrPath, b)
 		}
 	}
 }

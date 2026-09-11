@@ -14,6 +14,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
@@ -44,6 +45,23 @@ func (r *mysqlBackupResource) getPollTimeout() time.Duration {
 		return r.pollTimeout
 	}
 	return 30 * time.Minute
+}
+
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded.
+// Routing the defaults through the accessor keeps the test-injection seam
+// intact: a test that shrinks pollTimeout shrinks every wait that does not
+// carry an explicit timeouts override, exactly as before. Only the create
+// wait uses a budget — update is refused (backups are immutable) and delete
+// is a plain DELETE with no wait.
+func (r *mysqlBackupResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return timeouts.Uniform(r.getPollTimeout())
+	}
+	return budgets
 }
 
 func (r *mysqlBackupResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -110,6 +128,17 @@ func (r *mysqlBackupResource) Schema(_ context.Context, _ resource.SchemaRequest
 				},
 			},
 		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (30m per verb). Create is the
+			// only verb with a wait to bound — the poll to "completed" —
+			// while update is refused (backups are immutable after creation)
+			// and delete is a plain DELETE answered synchronously, so
+			// budgets.Update / budgets.Delete go unused. A timeouts change
+			// is an in-place no-op on real infrastructure — verified by the
+			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
+			"timeouts": timeouts.Schema(),
+		},
 	}
 }
 
@@ -149,6 +178,11 @@ func (r *mysqlBackupResource) Create(ctx context.Context, req resource.CreateReq
 
 	instanceID := plan.InstanceID.ValueString()
 
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded. Create is the only verb with a
+	// wait to bound.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
 	apiResp, err := r.client.Post(ctx, r.backupPath(instanceID, ""), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create MySQL backup", err.Error())
@@ -172,10 +206,11 @@ func (r *mysqlBackupResource) Create(ctx context.Context, req resource.CreateReq
 		return
 	}
 
-	// Poll until the backup reaches "completed" status.
+	// Poll until the backup reaches "completed" status, on the timeouts
+	// block's create budget.
 	_, err = client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budgets.Create,
 		TargetStates: []string{"completed", "available"},
 		ErrorStates:  []string{"error", "failed"},
 		ResourceName: "mysql_backup",

@@ -22,6 +22,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // Cluster and node-pool statuses (kubernetes service vocabulary). Deletes are
@@ -62,11 +63,30 @@ func (r *kubernetesClusterResource) getPollInterval() time.Duration {
 	return 10 * time.Second
 }
 
+// getPollTimeout is the DEFAULT wait budget — the timeouts block's fallback
+// per verb. Create has always polled the cluster provision and the initial
+// pool against 30m; the update's scale poll and the delete's status poll
+// default to the same value so the resource keeps one number.
 func (r *kubernetesClusterResource) getPollTimeout() time.Duration {
 	if r.pollTimeout > 0 {
 		return r.pollTimeout
 	}
 	return 30 * time.Minute
+}
+
+// resolveBudgets turns the configured timeouts block into effective budgets,
+// falling back per verb to the same value this resource has always hardcoded.
+// Routing the defaults through the accessor keeps the test-injection seam
+// intact: a test that shrinks pollTimeout shrinks every wait that does not
+// carry an explicit timeouts override, exactly as before.
+func (r *kubernetesClusterResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
+	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
+	if err != nil {
+		// Unreachable via HCL (the block validator rejects bad durations at
+		// plan time); degrade to the defaults rather than fail a wait.
+		return timeouts.Uniform(r.getPollTimeout())
+	}
+	return budgets
 }
 
 // ModifyPlan refuses `public_ip_id` on the plan that would CREATE a cluster with
@@ -387,6 +407,23 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 				},
 			},
 		},
+		Blocks: map[string]schema.Block{
+			// Customer-tunable wait budgets: defaults keep the values this
+			// resource has always hardcoded (30m per verb). Every status
+			// poll is bounded by the matching budget — create covers the
+			// cluster-create poll and the initial node pool's discovery +
+			// active poll, update covers the scale polls, delete the
+			// delete-status poll. There is no 202 envelope on these routes
+			// (creates answer 201/204 and the waits are status polls), so
+			// the budgets bound only the waits. The addons PUT stays
+			// deliberately unpolluted (converged by a background
+			// reconciliation — see the no-poll note in Update) and the
+			// kubeconfig fetch's retries stay paced by the provider-internal
+			// poll interval. A timeouts change is an in-place no-op on real
+			// infrastructure — verified by the Gate 2 smoke test
+			// (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
+			"timeouts": timeouts.Schema(),
+		},
 	}
 }
 
@@ -449,11 +486,12 @@ func (r *kubernetesClusterResource) findInitialNodePool(ctx context.Context, clu
 
 // pollCluster waits for the cluster to reach the target status. A soft-deleted
 // cluster keeps answering 200 with status "deleted", which the poller sees as
-// a regular state; 404 maps to "deleted" as a fallback.
-func (r *kubernetesClusterResource) pollCluster(ctx context.Context, id string, targets, errorStates []string) error {
+// a regular state; 404 maps to "deleted" as a fallback. The wait budget is the
+// timeouts block's budget for the operation polling (create, update, delete).
+func (r *kubernetesClusterResource) pollCluster(ctx context.Context, id string, targets, errorStates []string, budget time.Duration) error {
 	_, err := client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budget,
 		TargetStates: targets,
 		ErrorStates:  errorStates,
 		ResourceName: "kubernetes_cluster",
@@ -472,11 +510,13 @@ func (r *kubernetesClusterResource) pollCluster(ctx context.Context, id string, 
 }
 
 // pollNodePool waits for the initial node pool to reach the target status.
-func (r *kubernetesClusterResource) pollNodePool(ctx context.Context, clusterID, poolID string, targets, errorStates []string) error {
+// The wait budget is the timeouts block's budget for the operation polling
+// (create, update, delete).
+func (r *kubernetesClusterResource) pollNodePool(ctx context.Context, clusterID, poolID string, targets, errorStates []string, budget time.Duration) error {
 	poolPath := r.poolPath(clusterID, poolID)
 	_, err := client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
-		Timeout:      r.getPollTimeout(),
+		Timeout:      budget,
 		TargetStates: targets,
 		ErrorStates:  errorStates,
 		ResourceName: "kubernetes_cluster initial node pool",
@@ -544,6 +584,10 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 		return
 	}
 
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/kubernetes-clusters"), plan.toCreateRequest())
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create Kubernetes cluster", err.Error())
@@ -573,7 +617,7 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 
 	clusterID := created.ID
 
-	if err := r.pollCluster(ctx, clusterID, []string{statusRunning}, []string{statusError, statusDeleted}); err != nil {
+	if err := r.pollCluster(ctx, clusterID, []string{statusRunning}, []string{statusError, statusDeleted}, budgets.Create); err != nil {
 		resp.Diagnostics.AddError("Kubernetes cluster failed to reach running state", err.Error())
 		return
 	}
@@ -593,7 +637,7 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 		)
 		return
 	}
-	if err := r.pollNodePool(ctx, clusterID, pool.ID, []string{statusActive}, []string{statusError, statusDeleted}); err != nil {
+	if err := r.pollNodePool(ctx, clusterID, pool.ID, []string{statusActive}, []string{statusError, statusDeleted}, budgets.Create); err != nil {
 		resp.Diagnostics.AddError("Initial node pool failed to reach active state", err.Error())
 		return
 	}
@@ -717,6 +761,11 @@ func (r *kubernetesClusterResource) Update(ctx context.Context, req resource.Upd
 		return
 	}
 
+	// The customer's timeouts block, with defaults identical to the values
+	// this resource has always hardcoded. The update's polls run on the
+	// update budget; the addons PUT below stays deliberately unpolluted.
+	budgets := r.resolveBudgets(plan.Timeouts)
+
 	if !plan.Name.Equal(state.Name) {
 		name := plan.Name.ValueString()
 		if _, err := r.client.Put(ctx, r.clusterPath(id), apiUpdateClusterRequest{Name: &name}); err != nil {
@@ -770,11 +819,11 @@ func (r *kubernetesClusterResource) Update(ctx context.Context, req resource.Upd
 			resp.Diagnostics.AddError("Failed to scale the initial node pool", err.Error())
 			return
 		}
-		if err := r.pollNodePool(ctx, id, livePool.ID, []string{statusActive}, []string{statusError, statusDeleted}); err != nil {
+		if err := r.pollNodePool(ctx, id, livePool.ID, []string{statusActive}, []string{statusError, statusDeleted}, budgets.Update); err != nil {
 			resp.Diagnostics.AddError("Initial node pool failed to reach active state after scaling", err.Error())
 			return
 		}
-		if err := r.pollCluster(ctx, id, []string{statusRunning}, []string{statusError, statusDeleted}); err != nil {
+		if err := r.pollCluster(ctx, id, []string{statusRunning}, []string{statusError, statusDeleted}, budgets.Update); err != nil {
 			resp.Diagnostics.AddError("Kubernetes cluster failed to return to running state after scaling", err.Error())
 			return
 		}
@@ -833,8 +882,10 @@ func (r *kubernetesClusterResource) Delete(ctx context.Context, req resource.Del
 	}
 
 	// Deletes are soft: poll until the row reports status "deleted" (404 is
-	// only a fallback — the row is retained).
-	if err := r.pollCluster(ctx, id, []string{statusDeleted}, []string{statusError}); err != nil {
+	// only a fallback — the row is retained). The wait runs on the timeouts
+	// block's delete budget.
+	budgets := r.resolveBudgets(state.Timeouts)
+	if err := r.pollCluster(ctx, id, []string{statusDeleted}, []string{statusError}, budgets.Delete); err != nil {
 		resp.Diagnostics.AddError("Kubernetes cluster failed to delete", err.Error())
 	}
 }

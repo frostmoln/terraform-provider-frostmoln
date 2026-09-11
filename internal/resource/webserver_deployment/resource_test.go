@@ -11,9 +11,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // --- hash helpers ---
@@ -104,6 +107,61 @@ func TestFromAPIPreservesWriteOnlyAttrs(t *testing.T) {
 	}
 }
 
+// TestGetPollDefaults pins the accessor defaults the timeouts block falls
+// back to: a 5s internal poll interval and a 15m per-verb wait budget.
+func TestGetPollDefaults(t *testing.T) {
+	r := &webserverDeploymentResource{}
+	if r.getPollInterval() != 5*time.Second {
+		t.Errorf("expected default poll interval 5s, got %v", r.getPollInterval())
+	}
+	if r.getPollTimeout() != 15*time.Minute {
+		t.Errorf("expected default poll timeout 15m, got %v", r.getPollTimeout())
+	}
+}
+
+// TestResolveBudgetsDefaultsPinTodaysConstants pins the timeouts block's
+// fallback: with no block configured, every verb budgets at the value this
+// resource has always hardcoded, and a test's pollTimeout injection still
+// shrinks the default (the resolveBudgets seam keeps the harness working).
+func TestResolveBudgetsDefaultsPinTodaysConstants(t *testing.T) {
+	bare := (&webserverDeploymentResource{}).resolveBudgets(nil)
+	if want := timeouts.Uniform(15 * time.Minute); bare != want {
+		t.Errorf("resolveBudgets(nil) = %+v, want %+v", bare, want)
+	}
+
+	r := &webserverDeploymentResource{pollTimeout: time.Second}
+	if got := r.resolveBudgets(nil); got != timeouts.Uniform(time.Second) {
+		t.Errorf("an injected pollTimeout must stay the default budget, got %+v", got)
+	}
+}
+
+// TestTimeoutsBlockInSchema checks the schema carries the customer-tunable
+// timeouts block with its three optional verbs.
+func TestTimeoutsBlockInSchema(t *testing.T) {
+	r := NewResource()
+	var schemaResp resource.SchemaResponse
+	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
+
+	b, ok := schemaResp.Schema.Blocks["timeouts"]
+	if !ok {
+		t.Fatal("expected the timeouts block in the schema")
+	}
+	nested, ok := b.(schema.SingleNestedBlock)
+	if !ok {
+		t.Fatalf("timeouts must be a single nested block, got %T", b)
+	}
+	for _, verb := range []string{"create", "update", "delete"} {
+		attr, ok := nested.Attributes[verb]
+		if !ok {
+			t.Errorf("expected the %s attribute in the timeouts block", verb)
+			continue
+		}
+		if !attr.IsOptional() {
+			t.Errorf("timeouts.%s must be optional", verb)
+		}
+	}
+}
+
 // --- end-to-end deploy flow ---
 
 func newTestDeploymentResource(c *client.Client, upload *http.Client) *webserverDeploymentResource {
@@ -191,7 +249,7 @@ func TestRunDeployFlow(t *testing.T) {
 	c.SetTenantIDForTest("t-1")
 	r := newTestDeploymentResource(c, server.Client())
 
-	deployID, status, err := r.runDeploy(context.Background(), "inst-1", archive, sum)
+	deployID, status, err := r.runDeploy(context.Background(), "inst-1", archive, sum, r.getPollTimeout())
 	if err != nil {
 		t.Fatalf("runDeploy: %v", err)
 	}
@@ -251,7 +309,7 @@ func TestRunDeployFailed(t *testing.T) {
 	c.SetTenantIDForTest("t-1")
 	r := newTestDeploymentResource(c, server.Client())
 
-	_, _, err := r.runDeploy(context.Background(), "inst-1", archive, "abc")
+	_, _, err := r.runDeploy(context.Background(), "inst-1", archive, "abc", r.getPollTimeout())
 	if err == nil {
 		t.Fatal("expected an error for a failed deploy")
 	}

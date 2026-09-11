@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 func TestConfigureNilProviderData(t *testing.T) {
@@ -55,6 +56,22 @@ func TestGetPollDefaults(t *testing.T) {
 	}
 	if r.getPollTimeout() != 30*time.Minute {
 		t.Errorf("expected default poll timeout 30m, got %v", r.getPollTimeout())
+	}
+}
+
+// TestResolveBudgetsDefaultsPinTodaysConstants pins the timeouts block's
+// fallback: with no block configured, every verb budgets at the value this
+// resource has always hardcoded (only create has a wait to bound), and a
+// test's pollTimeout injection still shrinks the default.
+func TestResolveBudgetsDefaultsPinTodaysConstants(t *testing.T) {
+	bare := (&mysqlBackupResource{}).resolveBudgets(nil)
+	if want := timeouts.Uniform(30 * time.Minute); bare != want {
+		t.Errorf("resolveBudgets(nil) = %+v, want %+v", bare, want)
+	}
+
+	r := &mysqlBackupResource{pollTimeout: time.Second}
+	if got := r.resolveBudgets(nil); got != timeouts.Uniform(time.Second) {
+		t.Errorf("an injected pollTimeout must stay the default budget, got %+v", got)
 	}
 }
 

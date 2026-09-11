@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -25,24 +24,11 @@ func NewResource() resource.Resource {
 	return &webserverDomainResource{}
 }
 
+// webserverDomainResource is synchronous end to end — Create is a direct POST
+// that returns the binding, Delete is a synchronous 204 — so it carries no
+// wait, no poll knobs and no timeouts block.
 type webserverDomainResource struct {
-	client       *client.Client
-	pollInterval time.Duration
-	pollTimeout  time.Duration
-}
-
-func (r *webserverDomainResource) getPollInterval() time.Duration {
-	if r.pollInterval > 0 {
-		return r.pollInterval
-	}
-	return 5 * time.Second
-}
-
-func (r *webserverDomainResource) getPollTimeout() time.Duration {
-	if r.pollTimeout > 0 {
-		return r.pollTimeout
-	}
-	return 10 * time.Minute
+	client *client.Client
 }
 
 // webserverDomainModel is the Terraform state model for a webserver domain binding.

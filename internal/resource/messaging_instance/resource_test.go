@@ -17,7 +17,27 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
+
+// TestTimeoutsDefaultsMatchTheOldConstants pins the defaults contract of the
+// customer-tunable timeouts block: an absent block resolves to exactly the
+// values this resource has always hardcoded (15m per verb), and the
+// pollTimeout test-injection seam still shrinks every budget that does not
+// carry an explicit override.
+func TestTimeoutsDefaultsMatchTheOldConstants(t *testing.T) {
+	r := &messagingInstanceResource{}
+	want := timeouts.Uniform(15 * time.Minute)
+	if got := r.resolveBudgets(nil); got != want {
+		t.Fatalf("an absent timeouts block must keep the old 15m default; got %+v, want %+v", got, want)
+	}
+
+	r.pollTimeout = 250 * time.Millisecond
+	wantInj := timeouts.Uniform(250 * time.Millisecond)
+	if got := r.resolveBudgets(nil); got != wantInj {
+		t.Fatalf("a shrunken pollTimeout must shrink the default budget; got %+v, want %+v", got, wantInj)
+	}
+}
 
 // --- Model unit tests ---
 

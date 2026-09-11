@@ -9,6 +9,15 @@ resource "frostmoln_postgres_instance" "main" {
   backup_enabled        = true
   backup_schedule       = "0 2 * * *"
   backup_retention_days = 35
+
+  # Customer-tunable wait budgets. Defaults: create/update/delete = 30m.
+  # Raise for slow provisions (e.g. multi-VM HA pairs) without waiting on a
+  # provider release; a timeouts change is an in-place no-op on live data.
+  timeouts {
+    create = "30m"
+    update = "30m"
+    delete = "30m"
+  }
 }
 
 output "postgres_endpoint" {

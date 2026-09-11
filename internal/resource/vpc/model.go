@@ -9,6 +9,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // VPCModel is the Terraform state model for a VPC.
@@ -23,6 +24,10 @@ type VPCModel struct {
 	SubnetCount types.Int64  `tfsdk:"subnet_count"`
 	CreatedAt   types.String `tfsdk:"created_at"`
 	UpdatedAt   types.String `tfsdk:"updated_at"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiVPC is the API representation of a VPC.
@@ -37,6 +42,12 @@ type apiVPC struct {
 	Tags        map[string]string `json:"tags,omitempty"`
 	CreatedAt   string            `json:"createdAt"`
 	UpdatedAt   string            `json:"updatedAt,omitempty"`
+}
+
+// apiVPCList is the family listing the create-timeout adoption sweep reads
+// (GET /vpcs → {"vpcs":[…]}); it wraps the item shape the package already has.
+type apiVPCList struct {
+	Items []apiVPC `json:"vpcs"`
 }
 
 // apiCreateVPCRequest is the API request to create a VPC.

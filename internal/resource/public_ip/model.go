@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // What a public IP can be attached to. One address serves one thing at a time,
@@ -84,6 +85,10 @@ type PublicIPModel struct {
 	// So the acknowledgement is asked for here, from the recorded attachment,
 	// before the request that cannot be taken back.
 	AcknowledgeAddressLoss types.Bool `tfsdk:"acknowledge_address_loss"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // IsGatewayBound reports whether the recorded attachment says this address is a

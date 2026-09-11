@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -460,6 +461,7 @@ func TestSnapshotResource_Create_TFSDK(t *testing.T) {
 	tfType := snapshotTFType(t)
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"name":        tftypes.NewValue(tftypes.String, "test-snap"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -514,6 +516,7 @@ func TestSnapshotResource_Create_APIError(t *testing.T) {
 	tfType := snapshotTFType(t)
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"name":        tftypes.NewValue(tftypes.String, "test-snap"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -570,6 +573,7 @@ func TestSnapshotResource_Read_TFSDK(t *testing.T) {
 	tfType := snapshotTFType(t)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "snap-abc"),
 		"name":        tftypes.NewValue(tftypes.String, "test-snap"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -616,6 +620,7 @@ func TestSnapshotResource_Read_NotFound_TFSDK(t *testing.T) {
 	tfType := snapshotTFType(t)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "nonexistent"),
 		"name":        tftypes.NewValue(tftypes.String, "snap"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -658,6 +663,7 @@ func TestSnapshotResource_Read_APIError(t *testing.T) {
 	tfType := snapshotTFType(t)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "snap-abc"),
 		"name":        tftypes.NewValue(tftypes.String, "snap"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -730,6 +736,7 @@ func TestSnapshotResource_Delete_TFSDK(t *testing.T) {
 	tfType := snapshotTFType(t)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "snap-abc"),
 		"name":        tftypes.NewValue(tftypes.String, "test-snap"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -768,6 +775,7 @@ func TestSnapshotResource_Delete_NotFound_TFSDK(t *testing.T) {
 	tfType := snapshotTFType(t)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "gone"),
 		"name":        tftypes.NewValue(tftypes.String, "snap"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -805,6 +813,7 @@ func TestSnapshotResource_Delete_APIError(t *testing.T) {
 	tfType := snapshotTFType(t)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, "snap-abc"),
 		"name":        tftypes.NewValue(tftypes.String, "snap"),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -834,6 +843,7 @@ func TestSnapshotResource_ImportState_TFSDK(t *testing.T) {
 
 	// Initialize state with null values so the schema type is set.
 	initVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 		"id":          tftypes.NewValue(tftypes.String, nil),
 		"name":        tftypes.NewValue(tftypes.String, nil),
 		"description": tftypes.NewValue(tftypes.String, nil),
@@ -940,5 +950,185 @@ func TestSnapshotModelFromAPIPreservesNullDescription(t *testing.T) {
 	}
 	if !model.Description.IsNull() {
 		t.Errorf("expected description to stay null despite backend default, got %q", model.Description.ValueString())
+	}
+}
+
+// --- the orphan create-timeout arm (ADOPT-AS-TRACKED) ---
+
+// snapshotOrphanPlan builds the plan row the orphan create tests apply with.
+func snapshotOrphanPlan(t *testing.T) tftypes.Value {
+	t.Helper()
+	tfType := snapshotTFType(t)
+	return tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":        tftypes.NewValue(tftypes.String, "adopt-snap"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"size_gb":     tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+}
+
+// snapshotDiagText flattens a response's diagnostics (errors AND warnings) so a
+// test can assert on the copy the orphan contract produces.
+func snapshotDiagText(diags diag.Diagnostics) string {
+	var b strings.Builder
+	for _, d := range diags.Errors() {
+		b.WriteString(d.Summary())
+		b.WriteString("\n")
+		b.WriteString(d.Detail())
+		b.WriteString("\n")
+	}
+	for _, d := range diags.Warnings() {
+		b.WriteString(d.Summary())
+		b.WriteString("\n")
+		b.WriteString(d.Detail())
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// orphanSnapshotResource is the client + 5ms/100ms budgets the orphan tests
+// run with: the waits must give up in milliseconds, not in minutes.
+func orphanSnapshotResource(t *testing.T, serverURL string) *snapshotResource {
+	t.Helper()
+	c := client.NewClient(serverURL, "test-key", client.WithHTTPClient(http.DefaultClient))
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("configure failed: %v", err)
+	}
+	return &snapshotResource{client: c, pollInterval: 5 * time.Millisecond, pollTimeout: 100 * time.Millisecond}
+}
+
+// TestSnapshotResource_TFSDKCreateAdoptsAfterTheApplyTimedOut: a 202 whose
+// operation never completes must not error with a dead-end message — the
+// volume-scoped listing finds exactly the snapshot this apply created and
+// adopts it into state with the shared warning.
+func TestSnapshotResource_TFSDKCreateAdoptsAfterTheApplyTimedOut(t *testing.T) {
+	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-123/snapshots":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-snap-adopt", "status": "running", "resourceType": "snapshot",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/operations/op-snap-adopt":
+			// The operation never completes: the apply outlives its wait.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-snap-adopt", "status": "running", "resourceType": "snapshot",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-123/snapshots":
+			// The sweep lists the volume's snapshots; exactly one matches this
+			// apply (name equal, createdAt inside the window).
+			_ = json.NewEncoder(w).Encode(apiSnapshotList{
+				Snapshots: []apiSnapshot{{
+					ID:        "snap-adopt-1",
+					Name:      "adopt-snap",
+					VolumeID:  "vol-123",
+					CreatedAt: time.Now().UTC().Add(-10 * time.Second).Format(time.RFC3339),
+				}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-123/snapshots/snap-adopt-1":
+			// The honest read the adoption is written from.
+			_ = json.NewEncoder(w).Encode(apiSnapshot{
+				ID:        "snap-adopt-1",
+				Name:      "adopt-snap",
+				VolumeID:  "vol-123",
+				Status:    "available",
+				Size:      100,
+				CreatedAt: time.Now().UTC().Add(-9 * time.Second).Format(time.RFC3339),
+			})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// A 404 stands in for a gateway without the SSE route — the
+			// supported degradation to timer polling (internal/client/events.go).
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	defer server.Close()
+
+	res := orphanSnapshotResource(t, server.URL)
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: snapshotSchema(t), Raw: snapshotOrphanPlan(t)},
+	}
+	createResp := &resource.CreateResponse{State: tfsdk.State{Schema: snapshotSchema(t)}}
+
+	res.Create(context.Background(), createReq, createResp)
+
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("adoption must not fail the apply: %v", createResp.Diagnostics.Errors())
+	}
+	if len(createResp.Diagnostics.Warnings()) != 1 {
+		t.Fatalf("expected exactly one adoption warning, got %d", len(createResp.Diagnostics.Warnings()))
+	}
+	if !strings.Contains(createResp.Diagnostics.Warnings()[0].Summary(), "Was Adopted After The Apply Timed Out") {
+		t.Errorf("warning summary must name the adoption, got %q", createResp.Diagnostics.Warnings()[0].Summary())
+	}
+
+	var model SnapshotModel
+	createResp.State.Get(context.Background(), &model)
+	if model.ID.ValueString() != "snap-adopt-1" {
+		t.Errorf("expected adopted ID snap-adopt-1, got %s", model.ID.ValueString())
+	}
+	if model.VolumeID.ValueString() != "vol-123" {
+		t.Errorf("expected honest read to carry volume_id vol-123, got %s", model.VolumeID.ValueString())
+	}
+}
+
+// TestSnapshotResource_TFSDKCreateRefusedRecordsNothingCreated: a terminal
+// operation failure is the platform's own NO — nothing was created, so the
+// refused wording says re-applying is safe, and the listing is never hit (the
+// platform already decided; a sweep would be theatre).
+func TestSnapshotResource_TFSDKCreateRefusedRecordsNothingCreated(t *testing.T) {
+	var listingHits int32
+	server := snapMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-123/snapshots":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-snap-refused", "status": "pending", "resourceType": "snapshot",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/operations/op-snap-refused":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-snap-refused", "status": "failed", "resourceType": "snapshot",
+				"error": "source volume is in a failed state",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/volumes/vol-123/snapshots":
+			atomic.AddInt32(&listingHits, 1)
+			_ = json.NewEncoder(w).Encode(apiSnapshotList{})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	defer server.Close()
+
+	res := orphanSnapshotResource(t, server.URL)
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: snapshotSchema(t), Raw: snapshotOrphanPlan(t)},
+	}
+	createResp := &resource.CreateResponse{State: tfsdk.State{Schema: snapshotSchema(t)}}
+
+	res.Create(context.Background(), createReq, createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("expected the refused create to error")
+	}
+	if atomic.LoadInt32(&listingHits) != 0 {
+		t.Errorf("a terminal refusal must not trigger the discovery sweep; listing was hit %d times", listingHits)
+	}
+	text := snapshotDiagText(createResp.Diagnostics)
+	if !strings.Contains(text, "Refused") {
+		t.Errorf("error must be worded as the platform's refusal:\n%s", text)
+	}
+	if strings.Contains(text, "Was Adopted After The Apply Timed Out") {
+		t.Errorf("a refusal created nothing to adopt:\n%s", text)
 	}
 }

@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // PoolModel is the Terraform state model for a load balancer pool.
@@ -21,6 +23,10 @@ type PoolModel struct {
 	Tags               types.Map                `tfsdk:"tags"`
 	CreatedAt          types.String             `tfsdk:"created_at"`
 	UpdatedAt          types.String             `tfsdk:"updated_at"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // SessionPersistenceModel is the Terraform state model for pool session
@@ -54,6 +60,13 @@ type apiPool struct {
 	Tags               map[string]string      `json:"tags,omitempty"`
 	CreatedAt          string                 `json:"createdAt"`
 	UpdatedAt          string                 `json:"updatedAt,omitempty"`
+}
+
+// apiPoolList is the parent load balancer's pool listing that the
+// create-timeout adoption sweep reads (GET /load-balancers/{lb}/pools →
+// {"pools":[…]}); it wraps the item shape the package already has.
+type apiPoolList struct {
+	Items []apiPool `json:"pools"`
 }
 
 // apiCreatePoolRequest is the API request to create a pool.

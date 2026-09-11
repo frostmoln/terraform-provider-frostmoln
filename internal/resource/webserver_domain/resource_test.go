@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -64,20 +63,6 @@ func TestConfigureWrongType(t *testing.T) {
 	r.Configure(context.Background(), resource.ConfigureRequest{ProviderData: "bad"}, &resp)
 	if !resp.Diagnostics.HasError() {
 		t.Error("expected error for wrong provider data type")
-	}
-}
-
-func TestPollDefaults(t *testing.T) {
-	r := &webserverDomainResource{}
-	if r.getPollInterval() != 5*time.Second {
-		t.Errorf("expected default interval 5s, got %v", r.getPollInterval())
-	}
-	if r.getPollTimeout() != 10*time.Minute {
-		t.Errorf("expected default timeout 10m, got %v", r.getPollTimeout())
-	}
-	r2 := &webserverDomainResource{pollInterval: time.Second, pollTimeout: time.Minute}
-	if r2.getPollInterval() != time.Second || r2.getPollTimeout() != time.Minute {
-		t.Error("expected overridden poll values")
 	}
 }
 

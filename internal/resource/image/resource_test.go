@@ -82,6 +82,17 @@ func createPlan(t *testing.T, s rschema.Schema, sourceFile string) tftypes.Value
 	return objectValue(s, createPlanAttrs(sourceFile))
 }
 
+// timeoutsObjectType is the terraform type of the `timeouts` block's object —
+// the create/update/delete strings timeouts.Schema() produces. It is only used
+// to spell a NULL block (an absent one) inside the full-schema literal maps
+// below: NewValue still validates every entry against the schema's own type,
+// so a shape drift panics here rather than drifting silently.
+var timeoutsObjectType = tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+	"create": tftypes.String,
+	"update": tftypes.String,
+	"delete": tftypes.String,
+}}
+
 // createPlanAttrs is createPlan's attribute map, exposed so a test can override
 // individual attributes before building the value (tftypes.Value is immutable
 // and offers no way to edit one after the fact).
@@ -107,6 +118,7 @@ func createPlanAttrs(sourceFile string) map[string]tftypes.Value {
 		"visibility":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"owner":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":         tftypes.NewValue(timeoutsObjectType, nil),
 	}
 }
 
@@ -147,6 +159,7 @@ func stateAttrs(imageID string) map[string]tftypes.Value {
 		"visibility":       tftypes.NewValue(tftypes.String, "private"),
 		"owner":            tftypes.NewValue(tftypes.String, "proj-1"),
 		"created_at":       tftypes.NewValue(tftypes.String, "2026-08-07T10:00:00Z"),
+		"timeouts":         tftypes.NewValue(timeoutsObjectType, nil),
 	}
 }
 
@@ -514,7 +527,7 @@ func TestWaitForImportTerminatesOnImportFailed(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := r.waitForImport(context.Background(), "img-fail")
+		_, err := r.waitForImport(context.Background(), "img-fail", r.getPollTimeout())
 		done <- err
 	}()
 
@@ -549,7 +562,7 @@ func TestWaitForImportSucceedsOnActive(t *testing.T) {
 	c := newTestImageClient(server)
 	r := newTestImageResource(c, server.Client())
 
-	img, err := r.waitForImport(context.Background(), "img-ok")
+	img, err := r.waitForImport(context.Background(), "img-ok", r.getPollTimeout())
 	if err != nil {
 		t.Fatalf("waitForImport: %v", err)
 	}
@@ -918,7 +931,7 @@ func TestCancellingTheWaitSaysWhatItWasWaitingFor(t *testing.T) {
 		cancel()
 	}()
 
-	err := r.deleteImage(ctx, "img-wedged")
+	err := r.deleteImage(ctx, "img-wedged", r.getPollTimeout())
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation must survive the wrap, got: %v", err)
 	}
@@ -1290,7 +1303,7 @@ func TestWaitForImportTerminatesOn404(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := r.waitForImport(context.Background(), "img-vanished")
+		_, err := r.waitForImport(context.Background(), "img-vanished", r.getPollTimeout())
 		done <- err
 	}()
 
@@ -1330,7 +1343,7 @@ func TestWaitForImportTerminatesOnOutOfBandStatuses(t *testing.T) {
 
 			done := make(chan error, 1)
 			go func() {
-				_, err := r.waitForImport(context.Background(), "img-oob")
+				_, err := r.waitForImport(context.Background(), "img-oob", r.getPollTimeout())
 				done <- err
 			}()
 
@@ -1890,15 +1903,15 @@ func TestDotSegmentImageIDsAreRefusedNotEscaped(t *testing.T) {
 			r.Delete(ctx, resource.DeleteRequest{State: tfsdk.State{Schema: s, Raw: stateVal}}, deleteResp)
 			return diagError(deleteResp.Diagnostics.HasError())
 		}},
-		{"deleteImage", func(bad string) error { return r.deleteImage(ctx, bad) }},
+		{"deleteImage", func(bad string) error { return r.deleteImage(ctx, bad, r.getPollTimeout()) }},
 		{"mint upload form", func(bad string) error {
 			created := &apiCreateImageResponse{}
 			created.ID = bad
 			_, err := r.resolveUploadForm(ctx, created)
 			return err
 		}},
-		{"startImport", func(bad string) error { return r.startImport(ctx, bad) }},
-		{"waitForImport", func(bad string) error { _, err := r.waitForImport(ctx, bad); return err }},
+		{"startImport", func(bad string) error { return r.startImport(ctx, bad, r.getPollTimeout()) }},
+		{"waitForImport", func(bad string) error { _, err := r.waitForImport(ctx, bad, r.getPollTimeout()); return err }},
 	}
 
 	// "." and ".." collapse onto a sibling or the parent; a slash or an escape

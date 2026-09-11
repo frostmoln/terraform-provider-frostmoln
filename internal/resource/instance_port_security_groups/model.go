@@ -4,6 +4,8 @@ package instance_port_security_groups
 
 import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // InstancePortSecurityGroupsModel is the Terraform state model for a single
@@ -13,6 +15,10 @@ type InstancePortSecurityGroupsModel struct {
 	InstanceID     types.String `tfsdk:"instance_id"`
 	PortID         types.String `tfsdk:"port_id"`
 	SecurityGroups types.Set    `tfsdk:"security_groups"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiSetInstancePortSecurityGroupsRequest is the body for

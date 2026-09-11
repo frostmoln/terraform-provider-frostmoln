@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -339,6 +341,13 @@ func sgrObjectType() tftypes.Object {
 			"remote_cidr":       tftypes.String,
 			"remote_group_id":   tftypes.String,
 			"description":       tftypes.String,
+			"timeouts": tftypes.Object{
+				AttributeTypes: map[string]tftypes.Type{
+					"create": tftypes.String,
+					"update": tftypes.String,
+					"delete": tftypes.String,
+				},
+			},
 		},
 	}
 }
@@ -442,6 +451,7 @@ func TestRuleResourceCreate(t *testing.T) {
 		"remote_cidr":       tftypes.NewValue(tftypes.String, "0.0.0.0/0"),
 		"remote_group_id":   tftypes.NewValue(tftypes.String, nil),
 		"description":       tftypes.NewValue(tftypes.String, "HTTPS"),
+		"timeouts":          tftypes.NewValue(sgrObjectType().AttributeTypes["timeouts"], nil),
 	})
 
 	plan := tfsdk.Plan{Schema: s, Raw: planVal}
@@ -510,6 +520,7 @@ func TestRuleResourceRead(t *testing.T) {
 		"remote_cidr":       tftypes.NewValue(tftypes.String, "10.0.0.0/8"),
 		"remote_group_id":   tftypes.NewValue(tftypes.String, nil),
 		"description":       tftypes.NewValue(tftypes.String, nil),
+		"timeouts":          tftypes.NewValue(sgrObjectType().AttributeTypes["timeouts"], nil),
 	})
 
 	state := tfsdk.State{Schema: s, Raw: stateVal}
@@ -564,6 +575,7 @@ func TestRuleResourceReadRuleNotFoundRemovesState(t *testing.T) {
 		"remote_cidr":       tftypes.NewValue(tftypes.String, nil),
 		"remote_group_id":   tftypes.NewValue(tftypes.String, nil),
 		"description":       tftypes.NewValue(tftypes.String, nil),
+		"timeouts":          tftypes.NewValue(sgrObjectType().AttributeTypes["timeouts"], nil),
 	})
 
 	state := tfsdk.State{Schema: s, Raw: stateVal}
@@ -603,6 +615,7 @@ func TestRuleResourceReadSGNotFoundRemovesState(t *testing.T) {
 		"remote_cidr":       tftypes.NewValue(tftypes.String, nil),
 		"remote_group_id":   tftypes.NewValue(tftypes.String, nil),
 		"description":       tftypes.NewValue(tftypes.String, nil),
+		"timeouts":          tftypes.NewValue(sgrObjectType().AttributeTypes["timeouts"], nil),
 	})
 
 	state := tfsdk.State{Schema: s, Raw: stateVal}
@@ -658,6 +671,7 @@ func TestRuleResourceDelete(t *testing.T) {
 		"remote_cidr":       tftypes.NewValue(tftypes.String, nil),
 		"remote_group_id":   tftypes.NewValue(tftypes.String, nil),
 		"description":       tftypes.NewValue(tftypes.String, nil),
+		"timeouts":          tftypes.NewValue(sgrObjectType().AttributeTypes["timeouts"], nil),
 	})
 
 	state := tfsdk.State{Schema: s, Raw: stateVal}
@@ -696,6 +710,7 @@ func TestRuleResourceDeleteAlreadyGone(t *testing.T) {
 		"remote_cidr":       tftypes.NewValue(tftypes.String, nil),
 		"remote_group_id":   tftypes.NewValue(tftypes.String, nil),
 		"description":       tftypes.NewValue(tftypes.String, nil),
+		"timeouts":          tftypes.NewValue(sgrObjectType().AttributeTypes["timeouts"], nil),
 	})
 
 	state := tfsdk.State{Schema: s, Raw: stateVal}
@@ -722,6 +737,7 @@ func TestRuleImportStateCompositeID(t *testing.T) {
 		"remote_cidr":       tftypes.NewValue(tftypes.String, nil),
 		"remote_group_id":   tftypes.NewValue(tftypes.String, nil),
 		"description":       tftypes.NewValue(tftypes.String, nil),
+		"timeouts":          tftypes.NewValue(sgrObjectType().AttributeTypes["timeouts"], nil),
 	})
 
 	resp := &resource.ImportStateResponse{
@@ -760,6 +776,7 @@ func TestRuleImportStateInvalidID(t *testing.T) {
 		"remote_cidr":       tftypes.NewValue(tftypes.String, nil),
 		"remote_group_id":   tftypes.NewValue(tftypes.String, nil),
 		"description":       tftypes.NewValue(tftypes.String, nil),
+		"timeouts":          tftypes.NewValue(sgrObjectType().AttributeTypes["timeouts"], nil),
 	})
 
 	resp := &resource.ImportStateResponse{
@@ -770,6 +787,300 @@ func TestRuleImportStateInvalidID(t *testing.T) {
 
 	if !resp.Diagnostics.HasError() {
 		t.Error("expected error for invalid import ID format")
+	}
+}
+
+// sgrCreatePlanValue builds a create-plan tuple for a tcp/443 ingress rule
+// narrowed to 10.0.0.0/8 — the tuple the adoption sweep matches parent rules
+// against.
+func sgrCreatePlanValue(sgID string) tftypes.Value {
+	return tftypes.NewValue(sgrObjectType(), map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"security_group_id": tftypes.NewValue(tftypes.String, sgID),
+		"direction":         tftypes.NewValue(tftypes.String, "ingress"),
+		"protocol":          tftypes.NewValue(tftypes.String, "tcp"),
+		"port_range_min":    tftypes.NewValue(tftypes.Number, 443),
+		"port_range_max":    tftypes.NewValue(tftypes.Number, 443),
+		"remote_cidr":       tftypes.NewValue(tftypes.String, "10.0.0.0/8"),
+		"remote_group_id":   tftypes.NewValue(tftypes.String, nil),
+		"description":       tftypes.NewValue(tftypes.String, nil),
+		"timeouts":          tftypes.NewValue(sgrObjectType().AttributeTypes["timeouts"], nil),
+	})
+}
+
+func runRuleCreate(t *testing.T, r resource.Resource, planVal tftypes.Value) *resource.CreateResponse {
+	t.Helper()
+	s := sgrSchema(t)
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	r.Create(context.Background(), resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: s, Raw: planVal},
+	}, resp)
+	return resp
+}
+
+// sgWithRulesBody is the parent-group read the sweep resolves through: one
+// unrelated rule, then (optionally) the tcp/443 rule the plan tuple matches.
+func sgWithRulesBody(withMatch bool) map[string]any {
+	rules := []map[string]any{
+		{"id": "rule-other", "direction": "egress", "protocol": "any", "remoteCidr": ""},
+	}
+	if withMatch {
+		rules = append(rules, map[string]any{
+			"id": "rule-adopted", "direction": "ingress", "protocol": "tcp",
+			"portRangeMin": 443, "portRangeMax": 443, "remoteCidr": "10.0.0.0/8",
+		})
+	}
+	return map[string]any{"id": "sg-1", "rules": rules}
+}
+
+// TestSecurityGroupRuleCreateAdoptsAfterTimeout pins the Gate 3
+// discovery-adopt fallback for the name-less rule: a 202 whose operation never
+// completes resolves through the parent group's rule list — the plan's tuple
+// matches exactly one rule — into an adopted, honestly-read state row and the
+// shared adoption warning.
+func TestSecurityGroupRuleCreateAdoptsAfterTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-1/rules":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-adopt-1", "status": "pending", "resourceType": "security-group-rule",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-adopt-1":
+			// The saga never lands while the provider waits.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-adopt-1", "status": "pending", "resourceType": "security-group-rule",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-1":
+			// The sweep's listing and the honest read are the same parent GET.
+			_ = json.NewEncoder(w).Encode(sgWithRulesBody(true))
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+	r := fastRuleDeleteResource(t, c)
+
+	resp := runRuleCreate(t, r, sgrCreatePlanValue("sg-1"))
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+
+	warnings := resp.Diagnostics.Warnings()
+	if len(warnings) != 1 || !strings.Contains(warnings[0].Summary(), "Was Adopted After The Apply Timed Out") {
+		t.Fatalf("expected exactly one adoption warning, got %d warning(s)", len(warnings))
+	}
+
+	var state SecurityGroupRuleModel
+	resp.State.Get(context.Background(), &state)
+	if state.ID.ValueString() != "rule-adopted" {
+		t.Errorf("expected adopted rule id rule-adopted, got %s", state.ID.ValueString())
+	}
+	if state.SecurityGroupID.ValueString() != "sg-1" {
+		t.Errorf("expected security_group_id sg-1, got %s", state.SecurityGroupID.ValueString())
+	}
+	if state.PortRangeMin.ValueInt64() != 443 {
+		t.Errorf("expected honest-read port min 443, got %d", state.PortRangeMin.ValueInt64())
+	}
+}
+
+// TestSecurityGroupRuleCreateTimesOutVerifiedAbsent pins the absent arm of the
+// rule sweep: the parent group has NO rule matching the plan's tuple after the
+// wait gives up, so the lookup is the verified absence — an error that is safe
+// to re-apply, nothing recorded in state.
+func TestSecurityGroupRuleCreateTimesOutVerifiedAbsent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-1/rules":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-absent-1", "status": "pending", "resourceType": "security-group-rule",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-absent-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-absent-1", "status": "pending", "resourceType": "security-group-rule",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-1":
+			_ = json.NewEncoder(w).Encode(sgWithRulesBody(false))
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+	r := fastRuleDeleteResource(t, c)
+
+	resp := runRuleCreate(t, r, sgrCreatePlanValue("sg-1"))
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the verified-absence error when no rule matches the tuple")
+	}
+	if summary := resp.Diagnostics.Errors()[0].Summary(); !strings.Contains(summary, "Verified Absent") {
+		t.Errorf("expected the Verified Absent summary, got %q", summary)
+	}
+	if !resp.State.Raw.IsNull() {
+		t.Error("expected null state after a verified absence")
+	}
+}
+
+// fastRuleDeleteResource is the configured resource with the operation wait cut
+// to milliseconds, the seam the async-delete tests drive.
+func fastRuleDeleteResource(t *testing.T, c *client.Client) *securityGroupRuleResource {
+	t.Helper()
+	r := NewResource().(*securityGroupRuleResource)
+	r.pollInterval = 5 * time.Millisecond
+	r.pollTimeout = 100 * time.Millisecond
+	r.Configure(context.Background(), resource.ConfigureRequest{ProviderData: c}, &resource.ConfigureResponse{})
+	return r
+}
+
+func sgrDeleteState(sgID, ruleID string) tftypes.Value {
+	return tftypes.NewValue(sgrObjectType(), map[string]tftypes.Value{
+		"id":                tftypes.NewValue(tftypes.String, ruleID),
+		"security_group_id": tftypes.NewValue(tftypes.String, sgID),
+		"direction":         tftypes.NewValue(tftypes.String, "ingress"),
+		"protocol":          tftypes.NewValue(tftypes.String, "tcp"),
+		"port_range_min":    tftypes.NewValue(tftypes.Number, nil),
+		"port_range_max":    tftypes.NewValue(tftypes.Number, nil),
+		"remote_cidr":       tftypes.NewValue(tftypes.String, "10.0.0.0/8"),
+		"remote_group_id":   tftypes.NewValue(tftypes.String, nil),
+		"description":       tftypes.NewValue(tftypes.String, nil),
+		"timeouts":          tftypes.NewValue(sgrObjectType().AttributeTypes["timeouts"], nil),
+	})
+}
+
+func runRuleDelete(t *testing.T, r resource.Resource, sgID, ruleID string) *resource.DeleteResponse {
+	t.Helper()
+	s := sgrSchema(t)
+	resp := &resource.DeleteResponse{}
+	r.Delete(context.Background(), resource.DeleteRequest{
+		State: tfsdk.State{Schema: s, Raw: sgrDeleteState(sgID, ruleID)},
+	}, resp)
+	return resp
+}
+
+// TestDeleteWaitsForTheDeleteOperation: a rule delete routes through
+// provisioning and answers 202 with an Operation envelope BEFORE the platform
+// has decided anything. The destroy is done when the operation says so, not
+// when the 202 lands — the rule may still be live behind that envelope.
+func TestDeleteWaitsForTheDeleteOperation(t *testing.T) {
+	polled := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-1/rules/rule-1":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-del", "status": "pending", "resourceType": "security-group-rule",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-del":
+			polled++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-del", "status": "completed", "resourceType": "security-group-rule",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+	r := fastRuleDeleteResource(t, c)
+
+	resp := runRuleDelete(t, r, "sg-1", "rule-1")
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	if polled == 0 {
+		t.Error("expected the delete operation endpoint to be polled; a 202 envelope alone is not a destroy")
+	}
+}
+
+// TestDeleteOperationFailureRefusesAndKeepsState: the workflow decided NO and
+// said why. Nothing was changed, the rule still exists, and the diagnostic
+// must carry the platform's own reason so the practitioner knows what to deal
+// with before destroying again.
+func TestDeleteOperationFailureRefusesAndKeepsState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-1/rules/rule-1":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-del-fail", "status": "pending", "resourceType": "security-group-rule",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-del-fail":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-del-fail", "status": "failed", "resourceType": "security-group-rule",
+				"error": "gateway holds routes in this group",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+	r := fastRuleDeleteResource(t, c)
+
+	resp := runRuleDelete(t, r, "sg-1", "rule-1")
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a delete whose operation the platform refused must error, not report success")
+	}
+	if summary := resp.Diagnostics.Errors()[0].Summary(); !strings.Contains(summary, "Refused By The Platform") {
+		t.Errorf("expected the refused-deletion summary, got %q", summary)
+	}
+	if detail := resp.Diagnostics.Errors()[0].Detail(); !strings.Contains(detail, "gateway holds routes in this group") {
+		t.Errorf("the platform's own reason must survive into the diagnostic, got: %s", detail)
+	}
+}
+
+// TestDeleteAcceptedButUnwatchableIsClassified: the destroy was accepted but
+// its envelope parses to nothing, so the workflow cannot be watched from here.
+// That is neither a success nor a verified absence — it must read as an
+// unknown outcome, never a silent return.
+func TestDeleteAcceptedButUnwatchableIsClassified(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-123/security-groups/sg-1/rules/rule-1":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte("not-json"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+	r := fastRuleDeleteResource(t, c)
+
+	resp := runRuleDelete(t, r, "sg-1", "rule-1")
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("an accepted delete whose operation cannot be watched must error, not silently succeed")
+	}
+	if summary := resp.Diagnostics.Errors()[0].Summary(); !strings.Contains(summary, "Outcome Is Unknown") {
+		t.Errorf("expected the unknown-outcome classification, got %q", summary)
 	}
 }
 

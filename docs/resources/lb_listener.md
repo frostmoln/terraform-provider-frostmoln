@@ -61,6 +61,7 @@ resource "frostmoln_lb_listener" "https" {
 - `connection_limit` (Number) The maximum number of concurrent connections allowed. If omitted, the backend default is used and reflected here.
 - `default_pool_id` (String) The default pool ID requests are forwarded to.
 - `insert_headers` (Map of String) Headers to insert into requests forwarded to backend members (HTTP/terminated_https listeners).
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `tls_certificate_id` (String) The TLS certificate (secret) ID for terminated_https listeners.
 
 ### Read-Only
@@ -69,3 +70,12 @@ resource "frostmoln_lb_listener" "https" {
 - `created_at` (String) The creation timestamp.
 - `id` (String) The unique identifier of the listener.
 - `updated_at` (String) The last update timestamp.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

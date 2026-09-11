@@ -26,6 +26,349 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
 
+// --- the orphan create-timeout arm (ADOPT-AS-TRACKED) ---
+
+// orphanInstanceDiagText flattens a response's diagnostics (errors AND
+// warnings) so a test can assert on the copy the orphan contract produces.
+func orphanInstanceDiagText(diags diag.Diagnostics) string {
+	var b strings.Builder
+	for _, d := range diags.Errors() {
+		b.WriteString(d.Summary())
+		b.WriteString("\n")
+		b.WriteString(d.Detail())
+		b.WriteString("\n")
+	}
+	for _, d := range diags.Warnings() {
+		b.WriteString(d.Summary())
+		b.WriteString("\n")
+		b.WriteString(d.Detail())
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// orphanInstanceResource is the client + 5ms/100ms budgets the orphan tests
+// run with: the waits must give up in milliseconds, not in minutes.
+func orphanInstanceResource(t *testing.T, server *httptest.Server) *instanceResource {
+	t.Helper()
+	return &instanceResource{client: newTestClient(t, server), pollInterval: 5 * time.Millisecond, pollTimeout: 100 * time.Millisecond}
+}
+
+// TestInstanceResource_TFSDKCreateAdoptsAfterTheApplyTimedOut: a 202 whose
+// operation never completes must not error with a dead-end `fm` hint — the
+// instance listing finds exactly the instance this apply created and adopts it
+// into state with the shared warning (the list items ARE the public
+// projection, so the created name is on them).
+func TestInstanceResource_TFSDKCreateAdoptsAfterTheApplyTimedOut(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			meHandler(w, r)
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-inst-adopt", "status": "running", "resourceType": "instance",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-inst-adopt":
+			// The operation never completes: the apply outlives its wait.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-inst-adopt", "status": "running", "resourceType": "instance",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances":
+			// The sweep lists the family; exactly one instance matches this apply.
+			_ = json.NewEncoder(w).Encode(apiInstanceList{
+				Instances: []apiInstance{{
+					ID:        "inst-adopt-1",
+					Name:      "adopt-vm",
+					Status:    "running",
+					CreatedAt: time.Now().UTC().Add(-10 * time.Second).Format(time.RFC3339),
+				}},
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-adopt-1":
+			// The honest read the adoption is written from.
+			_ = json.NewEncoder(w).Encode(apiInstance{
+				ID:        "inst-adopt-1",
+				Name:      "adopt-vm",
+				Status:    "running",
+				FlavorID:  "flavor-small",
+				ImageID:   "img-ubuntu",
+				CreatedAt: time.Now().UTC().Add(-9 * time.Second).Format(time.RFC3339),
+			})
+
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// A 404 stands in for a gateway without the SSE route — the
+			// supported degradation to timer polling (internal/client/events.go).
+			w.WriteHeader(http.StatusNotFound)
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	r := orphanInstanceResource(t, server)
+	schemaResp := getInstanceSchema(t)
+	tfType := schemaResp.Schema.Type().TerraformType(context.Background())
+
+	planVal := instanceTFValue(t, tfType, map[string]tftypes.Value{
+		"name": tftypes.NewValue(tftypes.String, "adopt-vm"),
+	})
+
+	createReq := resource.CreateRequest{
+		Plan:   tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: planVal},
+	}
+	createResp := &resource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+
+	r.Create(context.Background(), createReq, createResp)
+
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("adoption must not fail the apply: %v", createResp.Diagnostics.Errors())
+	}
+	if len(createResp.Diagnostics.Warnings()) != 1 {
+		t.Fatalf("expected exactly one adoption warning, got %d", len(createResp.Diagnostics.Warnings()))
+	}
+	if !strings.Contains(createResp.Diagnostics.Warnings()[0].Summary(), "Was Adopted After The Apply Timed Out") {
+		t.Errorf("warning summary must name the adoption, got %q", createResp.Diagnostics.Warnings()[0].Summary())
+	}
+
+	var model InstanceModel
+	createResp.State.Get(context.Background(), &model)
+	if model.ID.ValueString() != "inst-adopt-1" {
+		t.Errorf("expected adopted ID inst-adopt-1, got %s", model.ID.ValueString())
+	}
+	if model.Name.ValueString() != "adopt-vm" {
+		t.Errorf("expected honest read to carry the platform's name, got %s", model.Name.ValueString())
+	}
+	if model.Status.ValueString() != "running" {
+		t.Errorf("expected honest read to carry status running, got %s", model.Status.ValueString())
+	}
+}
+
+// TestInstanceResource_TFSDKCreateRefusedRecordsNothingCreated: a terminal
+// operation failure is the platform's own NO — nothing was created, so the
+// refused wording says re-applying is safe, and the listing is never hit.
+func TestInstanceResource_TFSDKCreateRefusedRecordsNothingCreated(t *testing.T) {
+	var listingHits int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			meHandler(w, r)
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-inst-refused", "status": "pending", "resourceType": "instance",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-inst-refused":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-inst-refused", "status": "failed", "resourceType": "instance",
+				"error": "flavor flavor-small is not offered in this zone",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances":
+			atomic.AddInt32(&listingHits, 1)
+			_ = json.NewEncoder(w).Encode(apiInstanceList{})
+
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	r := orphanInstanceResource(t, server)
+	schemaResp := getInstanceSchema(t)
+	tfType := schemaResp.Schema.Type().TerraformType(context.Background())
+
+	planVal := instanceTFValue(t, tfType, map[string]tftypes.Value{
+		"name": tftypes.NewValue(tftypes.String, "refused-vm"),
+	})
+
+	createReq := resource.CreateRequest{
+		Plan:   tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: planVal},
+	}
+	createResp := &resource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+
+	r.Create(context.Background(), createReq, createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("expected the refused create to error")
+	}
+	if atomic.LoadInt32(&listingHits) != 0 {
+		t.Errorf("a terminal refusal must not trigger the discovery sweep; listing was hit %d times", listingHits)
+	}
+	text := orphanInstanceDiagText(createResp.Diagnostics)
+	if !strings.Contains(text, "Refused") {
+		t.Errorf("error must be worded as the platform's refusal:\n%s", text)
+	}
+	if strings.Contains(text, "Was Adopted After The Apply Timed Out") {
+		t.Errorf("a refusal created nothing to adopt:\n%s", text)
+	}
+}
+
+// instanceTimeoutsValue builds a value for the timeouts block: pass nil for a
+// verb the configuration leaves unset.
+func instanceTimeoutsValue(tfType tftypes.Type, create, update, delete *string) tftypes.Value {
+	str := func(s *string) tftypes.Value {
+		if s == nil {
+			return tftypes.NewValue(tftypes.String, nil)
+		}
+		return tftypes.NewValue(tftypes.String, *s)
+	}
+	return tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], map[string]tftypes.Value{
+		"create": str(create),
+		"update": str(update),
+		"delete": str(delete),
+	})
+}
+
+// TestCreateTimeoutOverrideBoundsTheWait pins that the customer's
+// timeouts.create — not the hardcoded default — bounds the create wait. The
+// resource under test carries NO pollTimeout injection: its default budget is
+// ten minutes, so the ONLY thing that can end this wait quickly is the
+// timeouts block. If the block were ignored, the apply would hang for ten
+// minutes and fail the package timeout.
+func TestCreateTimeoutOverrideBoundsTheWait(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			meHandler(w, r)
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-slow", "status": "running", "resourceType": "instance",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-slow":
+			// Never completes. This is the timeout case.
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-slow", "status": "running", "resourceType": "instance",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/instances":
+			// The orphan sweep resolves nothing: verified absence, an error.
+			_ = json.NewEncoder(w).Encode(apiInstanceList{})
+
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("tenant-456")
+	// No pollTimeout injection on purpose — see the test comment.
+	r := &instanceResource{client: c, pollInterval: 10 * time.Millisecond}
+
+	schemaResp := getInstanceSchema(t)
+	tfType := schemaResp.Schema.Type().TerraformType(context.Background())
+	create := "120ms"
+	planVal := instanceTFValue(t, tfType, map[string]tftypes.Value{
+		"timeouts": instanceTimeoutsValue(tfType, &create, nil, nil),
+	})
+
+	start := time.Now()
+	createReq := resource.CreateRequest{
+		Plan:   tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+		Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: planVal},
+	}
+	createResp := &resource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	r.Create(context.Background(), createReq, createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("expected the create to fail: the operation never completed")
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("the timeouts.create override did not bound the wait: took %s", elapsed)
+	}
+}
+
+// TestUpdateResizeOverrideBoundsTheResizeWait pins the other side of the
+// resolveBudgets splice: an explicit timeouts.update override bounds the
+// resize wait, whose default (45m) is longer than the generic update budget.
+// Again no pollTimeout injection: the default budgets are 10m and 45m, so the
+// only fast path is the override.
+func TestUpdateResizeOverrideBoundsTheResizeWait(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			meHandler(w, r)
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/instances/inst-abc/resize":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]string{"operationId": "op-slow-resize"})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-slow-resize":
+			// The resize saga never lands. This is the timeout case.
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-slow-resize", "status": "running", "resourceType": "instance",
+			})
+
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("tenant-456")
+	// No pollTimeout injection on purpose — see the test comment.
+	r := &instanceResource{client: c, pollInterval: 10 * time.Millisecond}
+
+	schemaResp := getInstanceSchema(t)
+	tfType := schemaResp.Schema.Type().TerraformType(context.Background())
+	update := "120ms"
+	planVal := instanceTFValue(t, tfType, map[string]tftypes.Value{
+		"id":        tftypes.NewValue(tftypes.String, "inst-abc"),
+		"flavor_id": tftypes.NewValue(tftypes.String, "flavor-large"),
+		"timeouts":  instanceTimeoutsValue(tfType, nil, &update, nil),
+	})
+	stateVal := instanceTFValue(t, tfType, map[string]tftypes.Value{
+		"id":             tftypes.NewValue(tftypes.String, "inst-abc"),
+		"name":           tftypes.NewValue(tftypes.String, "test-vm"),
+		"flavor_id":      tftypes.NewValue(tftypes.String, "flavor-small"),
+		"image_id":       tftypes.NewValue(tftypes.String, "img-ubuntu"),
+		"status":         tftypes.NewValue(tftypes.String, "ACTIVE"),
+		"created_at":     tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"user_data_hash": tftypes.NewValue(tftypes.String, nil),
+		"timeouts":       instanceTimeoutsValue(tfType, nil, &update, nil),
+	})
+
+	start := time.Now()
+	updateResp := &resource.UpdateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+		State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal},
+	}, updateResp)
+
+	if !updateResp.Diagnostics.HasError() {
+		t.Fatal("expected the update to fail: the resize operation never completed")
+	}
+	if !strings.Contains(orphanInstanceDiagText(updateResp.Diagnostics), "did not complete") {
+		t.Errorf("the failure must name the unconverged resize:\n%s", orphanInstanceDiagText(updateResp.Diagnostics))
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("the timeouts.update override did not bound the resize wait: took %s", elapsed)
+	}
+}
+
 // --- Model unit tests ---
 
 func TestComputeUserDataHash(t *testing.T) {
@@ -957,7 +1300,7 @@ func TestInstanceResize(t *testing.T) {
 		pollTimeout:  5 * time.Second,
 	}
 
-	if err := r.resizeInstance(context.Background(), "inst-abc", "flavor-large"); err != nil {
+	if err := r.resizeInstance(context.Background(), "inst-abc", "flavor-large", 5*time.Second); err != nil {
 		t.Fatalf("resize failed: %v", err)
 	}
 
@@ -1012,7 +1355,7 @@ func TestInstanceResizeFailedOperationErrors(t *testing.T) {
 	c := newTestClient(t, server)
 	r := &instanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
 
-	err := r.resizeInstance(context.Background(), "inst-abc", "flavor-large")
+	err := r.resizeInstance(context.Background(), "inst-abc", "flavor-large", 5*time.Second)
 	if err == nil {
 		t.Fatal("expected an error for a failed resize operation")
 	}
@@ -1049,7 +1392,7 @@ func TestInstanceResizeUnexpectedStatusErrors(t *testing.T) {
 	defer server.Close()
 
 	r := &instanceResource{client: newTestClient(t, server), pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
-	err := r.resizeInstance(context.Background(), "inst-abc", "flavor-large")
+	err := r.resizeInstance(context.Background(), "inst-abc", "flavor-large", 5*time.Second)
 	if err == nil {
 		t.Fatal("expected an error for a non-202 resize response")
 	}
@@ -1086,7 +1429,7 @@ func TestInstanceResizeMissingOperationIDErrors(t *testing.T) {
 	defer server.Close()
 
 	r := &instanceResource{client: newTestClient(t, server), pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
-	err := r.resizeInstance(context.Background(), "inst-abc", "flavor-large")
+	err := r.resizeInstance(context.Background(), "inst-abc", "flavor-large", 5*time.Second)
 	if err == nil {
 		t.Fatal("expected an error when the accepted resize carried no operation id")
 	}
@@ -1138,7 +1481,7 @@ func TestInstanceResizeAttachesToInProgressResize(t *testing.T) {
 	defer server.Close()
 
 	r := &instanceResource{client: newTestClient(t, server), pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
-	if err := r.resizeInstance(context.Background(), "inst-abc", "flavor-large"); err != nil {
+	if err := r.resizeInstance(context.Background(), "inst-abc", "flavor-large", 5*time.Second); err != nil {
 		t.Fatalf("expected the resize to attach to the running operation, got: %v", err)
 	}
 	if !polled {
@@ -1173,7 +1516,7 @@ func TestInstanceResizeConflictWithoutOperationIDStillFails(t *testing.T) {
 	defer server.Close()
 
 	r := &instanceResource{client: newTestClient(t, server), pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
-	err := r.resizeInstance(context.Background(), "inst-abc", "flavor-large")
+	err := r.resizeInstance(context.Background(), "inst-abc", "flavor-large", 5*time.Second)
 	if err == nil {
 		t.Fatal("expected a 409 without an operation id to fail the apply")
 	}
@@ -1352,6 +1695,7 @@ func instanceTFValue(t *testing.T, tfType tftypes.Type, vals map[string]tftypes.
 		"private_ip":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"public_ip":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":                    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	}
 
 	for k, v := range vals {

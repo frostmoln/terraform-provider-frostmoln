@@ -61,6 +61,7 @@ resource "frostmoln_redis_instance" "cache" {
 - `eviction_policy` (String) The eviction policy for the Redis instance (e.g. "noeviction", "allkeys-lru"). Defaults to "noeviction".
 - `persistence_mode` (String) The persistence mode for the Redis instance ("rdb", "aof", or "none"). Defaults to "rdb".
 - `storage_gb` (Number) The storage size in gigabytes (defaults to 10 if unset). Can only be increased (grow-only); volumes cannot be shrunk.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
 
@@ -71,3 +72,12 @@ resource "frostmoln_redis_instance" "cache" {
 - `private_ip` (String) The private IP address of the Redis instance.
 - `status` (String) The current status of the Redis instance.
 - `updated_at` (String) The timestamp when the instance was last updated.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").

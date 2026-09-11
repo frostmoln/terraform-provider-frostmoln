@@ -4,6 +4,8 @@ package kubernetes_cluster
 import (
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // KubernetesClusterModel is the Terraform state model for a managed Kubernetes cluster.
@@ -36,6 +38,10 @@ type KubernetesClusterModel struct {
 	CreatedAt       types.String          `tfsdk:"created_at"`
 	UpdatedAt       types.String          `tfsdk:"updated_at"`
 	TenantID        types.String          `tfsdk:"tenant_id"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // InitialNodePoolModel is the Terraform state model for the cluster's initial

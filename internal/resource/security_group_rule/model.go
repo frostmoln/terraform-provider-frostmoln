@@ -3,6 +3,8 @@ package security_group_rule
 
 import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 // SecurityGroupRuleModel is the Terraform state model for a security group rule.
@@ -16,6 +18,10 @@ type SecurityGroupRuleModel struct {
 	RemoteCIDR      types.String `tfsdk:"remote_cidr"`
 	RemoteGroupID   types.String `tfsdk:"remote_group_id"`
 	Description     types.String `tfsdk:"description"`
+
+	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
+	// absent block, which resolves to the resource's hardcoded defaults.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 // apiSecurityGroupRule is the API representation of a security group rule. The
@@ -30,6 +36,9 @@ type apiSecurityGroupRule struct {
 	RemoteCIDR    string `json:"remoteCidr,omitempty"`
 	RemoteGroupID string `json:"remoteSecurityGroupId,omitempty"`
 	Description   string `json:"description,omitempty"`
+	// CreatedAt feeds the adopt sweep's created-at floor (network emits it on
+	// every rule); nothing else consumes it.
+	CreatedAt string `json:"createdAt,omitempty"`
 }
 
 // apiSecurityGroupWithRules is the API response for a security group including its rules.

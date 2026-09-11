@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -359,10 +361,28 @@ func fipObjectType() tftypes.Object {
 			"private_ip":  tftypes.String,
 			"created_at":  tftypes.String,
 			"attachment":  fipAttachmentType(),
+			"timeouts":    fipTimeoutsType(),
 
 			"acknowledge_address_loss": tftypes.Bool,
 		},
 	}
+}
+
+// fipTimeoutsType is the `timeouts` block: the customer-tunable wait budgets.
+func fipTimeoutsType() tftypes.Object {
+	return tftypes.Object{
+		AttributeTypes: map[string]tftypes.Type{
+			"create": tftypes.String,
+			"update": tftypes.String,
+			"delete": tftypes.String,
+		},
+	}
+}
+
+// fipTimeoutsNull is the value of an absent `timeouts` block, which resolves
+// to the resource's hardcoded defaults.
+func fipTimeoutsNull() tftypes.Value {
+	return tftypes.NewValue(fipTimeoutsType(), nil)
 }
 
 // fipAttachmentType is the `attachment` object: what is holding the address.
@@ -393,6 +413,7 @@ func fipGatewayBoundState(ack bool) tftypes.Value {
 		ackVal = tftypes.NewValue(tftypes.Bool, true)
 	}
 	return tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": ackVal,
 		"id":                       tftypes.NewValue(tftypes.String, "pip-1"),
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.10"),
@@ -422,6 +443,7 @@ func fipStateWithAttachment(att tftypes.Value, ack bool) tftypes.Value {
 		ackVal = tftypes.NewValue(tftypes.Bool, true)
 	}
 	return tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": ackVal,
 		"id":                       tftypes.NewValue(tftypes.String, "pip-1"),
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.10"),
@@ -535,6 +557,7 @@ func TestFIPResourceCreate(t *testing.T) {
 
 	s := fipSchema(t)
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -616,6 +639,7 @@ func TestFIPResourceCreateWithAssociation(t *testing.T) {
 
 	s := fipSchema(t)
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -677,6 +701,7 @@ func TestFIPResourceRead(t *testing.T) {
 
 	s := fipSchema(t)
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-read-1"),
@@ -731,6 +756,7 @@ func TestFIPResourceReadParsesWireContract(t *testing.T) {
 
 	s := fipSchema(t)
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-wire-1"),
@@ -778,6 +804,7 @@ func TestFIPResourceReadNotFoundRemovesState(t *testing.T) {
 
 	s := fipSchema(t)
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-gone"),
@@ -852,6 +879,7 @@ func TestFIPResourceUpdate(t *testing.T) {
 
 	// State: previously associated with inst-old
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-upd-1"),
@@ -865,6 +893,7 @@ func TestFIPResourceUpdate(t *testing.T) {
 
 	// Plan: change association to inst-new
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-upd-1"),
@@ -916,6 +945,7 @@ func TestFIPResourceDelete(t *testing.T) {
 
 	s := fipSchema(t)
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-del-1"),
@@ -954,6 +984,7 @@ func TestFIPResourceDeleteAlreadyGone(t *testing.T) {
 
 	s := fipSchema(t)
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-already-gone"),
@@ -997,6 +1028,7 @@ func TestFIPResourceCreateAPIError(t *testing.T) {
 
 	s := fipSchema(t)
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1036,6 +1068,7 @@ func TestFIPResourceCreateBadResponseBody(t *testing.T) {
 
 	s := fipSchema(t)
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1091,6 +1124,7 @@ func TestFIPResourceCreateAssociationError(t *testing.T) {
 
 	s := fipSchema(t)
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1144,6 +1178,7 @@ func TestFIPResourceCreateResolvePortError(t *testing.T) {
 
 	s := fipSchema(t)
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1209,6 +1244,7 @@ func TestFIPResourceCreateAssociationBadResponseThenReread(t *testing.T) {
 
 	s := fipSchema(t)
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1278,6 +1314,7 @@ func TestFIPResourceCreateAssocRereadGetError(t *testing.T) {
 
 	s := fipSchema(t)
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1335,6 +1372,7 @@ func TestFIPResourceCreateAssocRereadBadJSON(t *testing.T) {
 
 	s := fipSchema(t)
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1372,6 +1410,7 @@ func TestFIPResourceReadAPIError(t *testing.T) {
 
 	s := fipSchema(t)
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-err-1"),
@@ -1407,6 +1446,7 @@ func TestFIPResourceReadBadJSON(t *testing.T) {
 
 	s := fipSchema(t)
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-bad-1"),
@@ -1458,6 +1498,7 @@ func TestFIPResourceUpdateDisassociateOnly(t *testing.T) {
 
 	// State: currently associated
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-dis-1"),
@@ -1471,6 +1512,7 @@ func TestFIPResourceUpdateDisassociateOnly(t *testing.T) {
 
 	// Plan: instance_id removed (null)
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-dis-1"),
@@ -1542,6 +1584,7 @@ func TestFIPResourceUpdateTagsOnly(t *testing.T) {
 
 	// State: no tags
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-tags-1"),
@@ -1555,6 +1598,7 @@ func TestFIPResourceUpdateTagsOnly(t *testing.T) {
 
 	// Plan: add tags
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-tags-1"),
@@ -1616,6 +1660,7 @@ func TestFIPResourceUpdateDisassociateError(t *testing.T) {
 	s := fipSchema(t)
 
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-de-1"),
@@ -1628,6 +1673,7 @@ func TestFIPResourceUpdateDisassociateError(t *testing.T) {
 	})
 
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-de-1"),
@@ -1680,6 +1726,7 @@ func TestFIPResourceUpdateAssociateError(t *testing.T) {
 	s := fipSchema(t)
 
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-ae2-1"),
@@ -1692,6 +1739,7 @@ func TestFIPResourceUpdateAssociateError(t *testing.T) {
 	})
 
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-ae2-1"),
@@ -1736,6 +1784,7 @@ func TestFIPResourceUpdatePatchError(t *testing.T) {
 	s := fipSchema(t)
 
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-pe-1"),
@@ -1748,6 +1797,7 @@ func TestFIPResourceUpdatePatchError(t *testing.T) {
 	})
 
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-pe-1"),
@@ -1795,6 +1845,7 @@ func TestFIPResourceUpdateReadError(t *testing.T) {
 
 	// State and plan with same instance_id and tags (no changes to trigger)
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-re-1"),
@@ -1807,6 +1858,7 @@ func TestFIPResourceUpdateReadError(t *testing.T) {
 	})
 
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-re-1"),
@@ -1849,6 +1901,7 @@ func TestFIPResourceUpdateReadBadJSON(t *testing.T) {
 	s := fipSchema(t)
 
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-rbj-1"),
@@ -1861,6 +1914,7 @@ func TestFIPResourceUpdateReadBadJSON(t *testing.T) {
 	})
 
 	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-rbj-1"),
@@ -1899,6 +1953,7 @@ func TestFIPResourceDeleteAPIError(t *testing.T) {
 
 	s := fipSchema(t)
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, "fip-del-err"),
@@ -1926,6 +1981,7 @@ func TestFIPResourceImportState(t *testing.T) {
 	ctx := context.Background()
 	importReq := resource.ImportStateRequest{ID: "fip-import-1"}
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"attachment":               fipAttachmentNull(),
 		"id":                       tftypes.NewValue(tftypes.String, nil),
@@ -2052,6 +2108,7 @@ func TestPublicIPDestroyPlanWarnsWhenEgressBound(t *testing.T) {
 	}
 
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"id":                       tftypes.NewValue(tftypes.String, "pip-1"),
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.10"),
@@ -2093,6 +2150,7 @@ func TestPublicIPDestroyPlanSilentWhenUnattached(t *testing.T) {
 	r := NewResource().(resource.ResourceWithModifyPlan)
 
 	stateVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
 		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 		"id":                       tftypes.NewValue(tftypes.String, "pip-1"),
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.10"),
@@ -2135,6 +2193,7 @@ func TestPublicIPModifyPlanRecomputesOnAssociationChange(t *testing.T) {
 			inst = tftypes.NewValue(tftypes.String, instanceID)
 		}
 		return tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+			"timeouts":                 fipTimeoutsNull(),
 			"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 			"id":                       tftypes.NewValue(tftypes.String, "pip-1"),
 			"address":                  tftypes.NewValue(tftypes.String, "203.0.113.10"),
@@ -2634,6 +2693,7 @@ func fipUpdateStateAndPlan(fipID, oldInstance, newInstance string) (tftypes.Valu
 			privateIP = tftypes.NewValue(tftypes.String, "10.0.1.5")
 		}
 		return tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+			"timeouts":                 fipTimeoutsNull(),
 			"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
 			"attachment":               fipAttachmentNull(),
 			"id":                       tftypes.NewValue(tftypes.String, fipID),
@@ -2832,5 +2892,324 @@ func TestFIPResourceUpdateStillDetachesItsOwnBinding(t *testing.T) {
 	resp.State.Get(context.Background(), &model)
 	if model.InstanceID.ValueString() != "inst-new" {
 		t.Errorf("expected instance_id inst-new, got %s", model.InstanceID.ValueString())
+	}
+}
+
+// --- the orphan create-timeout arm (ADOPT-AS-TRACKED) ---
+
+// orphanFIPClient is the client the orphan tests run with. The budget lives on
+// the resource struct (5ms interval / 100ms timeout) so the waits give up in
+// milliseconds, not minutes.
+func orphanFIPResource(t *testing.T, serverURL string) resource.Resource {
+	t.Helper()
+	c := client.NewClient(serverURL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+	return &publicIPResource{client: c, pollInterval: 5 * time.Millisecond, pollTimeout: 100 * time.Millisecond}
+}
+
+// orphanFIPPlanVal is the allocate plan row the orphan tests apply with: an
+// allocation has no configured name — the address is server-assigned.
+func orphanFIPPlanVal() tftypes.Value {
+	return tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 fipTimeoutsNull(),
+		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
+		"attachment":               fipAttachmentNull(),
+		"id":                       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"address":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"instance_id":              tftypes.NewValue(tftypes.String, nil),
+		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"private_ip":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+}
+
+// orphanFIPDiagText flattens a response's diagnostics (errors AND warnings) so
+// a test can assert on the copy the orphan contract produces.
+func orphanFIPDiagText(diags diag.Diagnostics) string {
+	var b strings.Builder
+	for _, d := range diags.Errors() {
+		b.WriteString(d.Summary())
+		b.WriteString("\n")
+		b.WriteString(d.Detail())
+		b.WriteString("\n")
+	}
+	for _, d := range diags.Warnings() {
+		b.WriteString(d.Summary())
+		b.WriteString("\n")
+		b.WriteString(d.Detail())
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// TestFIPResourceCreateAdoptsAfterTheApplyTimedOut: a 202 whose operation
+// never completes must not error with a dead-end message — the plain
+// /public-ips listing, matched on the created-at floor ALONE (an allocation has
+// no name; the address is server-assigned), finds exactly the address this
+// apply allocated and adopts it into state with the shared warning.
+func TestFIPResourceCreateAdoptsAfterTheApplyTimedOut(t *testing.T) {
+	fipResp := apiPublicIP{
+		ID:        "fip-adopt-1",
+		Address:   "203.0.113.7",
+		Status:    "available",
+		CreatedAt: time.Now().UTC().Add(-9 * time.Second).Format(time.RFC3339),
+	}
+	var listingHits int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-pip-adopt", "status": "running", "resourceType": "public_ip",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-pip-adopt":
+			// The operation never completes: the apply outlives its wait.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-pip-adopt", "status": "running", "resourceType": "public_ip",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips":
+			// The sweep lists the family; exactly one address sits in the window.
+			atomic.AddInt32(&listingHits, 1)
+			_ = json.NewEncoder(w).Encode(apiPublicIPList{
+				PublicIPs: []apiPublicIP{{
+					ID:        "fip-adopt-1",
+					Address:   "203.0.113.7",
+					Status:    "available",
+					CreatedAt: time.Now().UTC().Add(-10 * time.Second).Format(time.RFC3339),
+				}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-adopt-1":
+			// The honest read the adoption is written from.
+			_ = json.NewEncoder(w).Encode(fipResp)
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			// A 404 stands in for a gateway without the SSE route — the
+			// supported degradation to timer polling (internal/client/events.go).
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	r := orphanFIPResource(t, server.URL)
+	s := fipSchema(t)
+
+	createReq := resource.CreateRequest{Plan: tfsdk.Plan{Schema: s, Raw: orphanFIPPlanVal()}}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	r.Create(context.Background(), createReq, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("adoption must not fail the apply: %v", resp.Diagnostics.Errors())
+	}
+	if len(resp.Diagnostics.Warnings()) != 1 {
+		t.Fatalf("expected exactly one adoption warning, got %d", len(resp.Diagnostics.Warnings()))
+	}
+	if !strings.Contains(resp.Diagnostics.Warnings()[0].Summary(), "Was Adopted After The Apply Timed Out") {
+		t.Errorf("warning summary must name the adoption, got %q", resp.Diagnostics.Warnings()[0].Summary())
+	}
+	if atomic.LoadInt32(&listingHits) == 0 {
+		t.Error("the adoption must have been decided by the listing sweep")
+	}
+
+	var state PublicIPModel
+	resp.State.Get(context.Background(), &state)
+	if state.ID.ValueString() != "fip-adopt-1" {
+		t.Errorf("expected adopted ID fip-adopt-1, got %s", state.ID.ValueString())
+	}
+	if state.Address.ValueString() != "203.0.113.7" {
+		t.Errorf("expected honest read to carry the platform's address, got %s", state.Address.ValueString())
+	}
+}
+
+// TestFIPResourceCreateRefusedRecordsNothingCreated: a terminal operation
+// failure is the platform's own NO — nothing was allocated, so the refused
+// wording says re-applying is safe, and the listing is never hit.
+func TestFIPResourceCreateRefusedRecordsNothingCreated(t *testing.T) {
+	var listingHits int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-pip-refused", "status": "pending", "resourceType": "public_ip",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-pip-refused":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-pip-refused", "status": "failed", "resourceType": "public_ip",
+				"error": "external network quota exhausted",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips":
+			atomic.AddInt32(&listingHits, 1)
+			_ = json.NewEncoder(w).Encode(apiPublicIPList{})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	r := orphanFIPResource(t, server.URL)
+	s := fipSchema(t)
+
+	createReq := resource.CreateRequest{Plan: tfsdk.Plan{Schema: s, Raw: orphanFIPPlanVal()}}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	r.Create(context.Background(), createReq, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the refused allocate to error")
+	}
+	if atomic.LoadInt32(&listingHits) != 0 {
+		t.Errorf("a terminal refusal must not trigger the discovery sweep; listing was hit %d times", listingHits)
+	}
+	text := orphanFIPDiagText(resp.Diagnostics)
+	if !strings.Contains(text, "Refused") {
+		t.Errorf("error must be worded as the platform's refusal:\n%s", text)
+	}
+}
+
+// TestFIPResourceCreateVerifiedAbsentIsSafeToReApply: the wait gave up while
+// the operation still ran, and the listing found NOTHING allocated in the
+// window — verified absence, so the error must say re-applying is safe rather
+// than invite state surgery.
+func TestFIPResourceCreateVerifiedAbsentIsSafeToReApply(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-pip-absent", "status": "running", "resourceType": "public_ip",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-pip-absent":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-pip-absent", "status": "running", "resourceType": "public_ip",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips":
+			// The listing succeeded and nothing matched: verified absence.
+			_ = json.NewEncoder(w).Encode(apiPublicIPList{})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	r := orphanFIPResource(t, server.URL)
+	s := fipSchema(t)
+
+	createReq := resource.CreateRequest{Plan: tfsdk.Plan{Schema: s, Raw: orphanFIPPlanVal()}}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	r.Create(context.Background(), createReq, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("verified absence must still fail the apply (nothing was recorded in state)")
+	}
+	text := orphanFIPDiagText(resp.Diagnostics)
+	if !strings.Contains(text, "Verified Absent") {
+		t.Errorf("error must word the verified-absence arm:\n%s", text)
+	}
+	if !strings.Contains(text, "safe to re-apply") {
+		t.Errorf("verified absence must say re-applying is safe:\n%s", text)
+	}
+}
+
+// TestTimeoutsBlockCreateOverrideBoundsTheWaitAndStillAdopts pins the
+// customer-tunable timeouts block on this resource: the configured
+// timeouts.create — NOT the hardcoded default — bounds the allocate-wait
+// (the default here is a full 5m and would hang if the block were ignored),
+// and a wait the allocation outlives still ends in the honest record: the
+// listing sweep adopts the address into state.
+func TestTimeoutsBlockCreateOverrideBoundsTheWaitAndStillAdopts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-123/public-ips":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-pip-clock", "status": "pending", "resourceType": "public_ip",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/operations/op-pip-clock":
+			// Never completes. The timeouts block under test is the
+			// ONLY thing that can end this wait inside the test's lifetime.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-pip-clock", "status": "running", "resourceType": "public_ip",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips":
+			// The sweep lists the family; exactly one address sits in the window.
+			_ = json.NewEncoder(w).Encode(apiPublicIPList{
+				PublicIPs: []apiPublicIP{{
+					ID:        "fip-clock-1",
+					Address:   "203.0.113.9",
+					Status:    "available",
+					CreatedAt: time.Now().UTC().Add(-10 * time.Second).Format(time.RFC3339),
+				}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-clock-1":
+			// The honest read the adoption is written from.
+			_ = json.NewEncoder(w).Encode(apiPublicIP{
+				ID: "fip-clock-1", Address: "203.0.113.9", Status: "available",
+				CreatedAt: time.Now().UTC().Add(-11 * time.Second).Format(time.RFC3339),
+			})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	// No pollTimeout injection: the default budget of 5m must be cut by the
+	// timeouts block, not by the test seam.
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	c.SetTenantIDForTest("t-123")
+	r := &publicIPResource{client: c, pollInterval: 5 * time.Millisecond}
+	s := fipSchema(t)
+
+	timeoutsVal := tftypes.NewValue(fipTimeoutsType(), map[string]tftypes.Value{
+		"create": tftypes.NewValue(tftypes.String, "120ms"),
+		"update": tftypes.NewValue(tftypes.String, nil),
+		"delete": tftypes.NewValue(tftypes.String, nil),
+	})
+	planVal := tftypes.NewValue(fipObjectType(), map[string]tftypes.Value{
+		"timeouts":                 timeoutsVal,
+		"acknowledge_address_loss": tftypes.NewValue(tftypes.Bool, nil),
+		"attachment":               fipAttachmentNull(),
+		"id":                       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"address":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"instance_id":              tftypes.NewValue(tftypes.String, nil),
+		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"private_ip":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+
+	start := time.Now()
+	createReq := resource.CreateRequest{Plan: tfsdk.Plan{Schema: s, Raw: planVal}}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	r.Create(context.Background(), createReq, resp)
+
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("the timeouts.create override did not bound the wait: took %s", elapsed)
+	}
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("adoption must not fail the apply: %v", resp.Diagnostics.Errors())
+	}
+	if len(resp.Diagnostics.Warnings()) != 1 {
+		t.Fatalf("expected exactly one adoption warning, got %d", len(resp.Diagnostics.Warnings()))
+	}
+	if !strings.Contains(resp.Diagnostics.Warnings()[0].Summary(), "Was Adopted After The Apply Timed Out") {
+		t.Errorf("warning summary must name the adoption, got %q", resp.Diagnostics.Warnings()[0].Summary())
+	}
+
+	var state PublicIPModel
+	resp.State.Get(context.Background(), &state)
+	if state.ID.ValueString() != "fip-clock-1" {
+		t.Errorf("expected adopted ID fip-clock-1, got %s", state.ID.ValueString())
 	}
 }

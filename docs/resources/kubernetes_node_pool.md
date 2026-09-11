@@ -53,6 +53,7 @@ resource "frostmoln_kubernetes_node_pool" "workers" {
 
 - `name` (String) The name of the node pool: a lowercase DNS label (a-z, 0-9, non-leading/trailing hyphens) of at most 18 characters — it becomes part of each node's hostname. Defaults to a generated "pool-<8 hex>" name. Pools cannot be renamed — changing it REPLACES the pool. Pool names are unique per cluster, so an explicitly named pool cannot use `lifecycle { create_before_destroy = true }` — the replacement create conflicts with the still-live pool.
 - `node_count` (Number) The number of worker nodes in the pool (1-100). Scaled in-place. Omitting it manages the pool at 1 node — an out-of-band scale will be reverted on the next apply.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
 
@@ -60,6 +61,15 @@ resource "frostmoln_kubernetes_node_pool" "workers" {
 - `id` (String) The unique identifier of the node pool.
 - `status` (String) The current status of the node pool.
 - `updated_at` (String) The timestamp when the node pool was last updated.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").
 
 ## Import
 
