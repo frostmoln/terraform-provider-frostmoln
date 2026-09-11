@@ -38,7 +38,7 @@ func TestSchema(t *testing.T) {
 	ds.Schema(context.Background(), datasource.SchemaRequest{}, &resp)
 
 	expectedAttrs := []string{
-		"id", "name", "engine", "version", "flavor_id", "vpc_id",
+		"id", "name", "type", "version", "flavor_id", "vpc_id",
 		"subnet_id", "persistence_mode", "status", "private_ip", "port",
 		"amqps_port", "management_port", "created_at", "updated_at",
 	}
@@ -112,7 +112,7 @@ func configVal(t *testing.T, id string) tftypes.Value {
 	return tftypes.NewValue(tfType, map[string]tftypes.Value{
 		"id":               tftypes.NewValue(tftypes.String, id),
 		"name":             tftypes.NewValue(tftypes.String, nil),
-		"engine":           tftypes.NewValue(tftypes.String, nil),
+		"type":             tftypes.NewValue(tftypes.String, nil),
 		"version":          tftypes.NewValue(tftypes.String, nil),
 		"flavor_id":        tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":           tftypes.NewValue(tftypes.String, nil),
@@ -135,8 +135,8 @@ func TestReadByID(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiMessagingInstance{
 				ID:              "mq-1",
 				Name:            "my-broker",
-				Engine:          "lavinmq",
-				EngineVersion:   "2.3",
+				Type:            "lavinmq",
+				TypeVersion:     "2.3",
 				FlavorID:        "mq.gp1.small",
 				VPCID:           "vpc-1",
 				SubnetID:        "sn-1",
@@ -182,8 +182,8 @@ func TestReadByID(t *testing.T) {
 	if state.ID.ValueString() != "mq-1" {
 		t.Errorf("expected ID mq-1, got %s", state.ID.ValueString())
 	}
-	if state.Engine.ValueString() != "lavinmq" {
-		t.Errorf("expected Engine lavinmq, got %s", state.Engine.ValueString())
+	if state.Type.ValueString() != "lavinmq" {
+		t.Errorf("expected Type lavinmq, got %s", state.Type.ValueString())
 	}
 	if state.Version.ValueString() != "2.3" {
 		t.Errorf("expected Version 2.3, got %s", state.Version.ValueString())
@@ -209,8 +209,8 @@ func TestReadByIDNullableFieldsEmpty(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiMessagingInstance{
 				ID:              "mq-2",
 				Name:            "minimal",
-				Engine:          "lavinmq",
-				EngineVersion:   "2.3",
+				Type:            "lavinmq",
+				TypeVersion:     "2.3",
 				FlavorID:        "mq.gp1.small",
 				VPCID:           "vpc-1",
 				SubnetID:        "sn-1",

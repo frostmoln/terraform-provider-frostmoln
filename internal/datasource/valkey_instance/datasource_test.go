@@ -134,8 +134,8 @@ func TestReadByID(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiValkeyInstance{
 				ID:              "valkey-1",
 				Name:            "my-valkey",
-				Engine:          "valkey",
-				EngineVersion:   "8.0",
+				Type:            "valkey",
+				TypeVersion:     "8.0",
 				FlavorID:        "cache.small",
 				VPCID:           "vpc-1",
 				SubnetID:        "sn-1",
@@ -205,8 +205,8 @@ func TestReadByIDNullableFieldsEmpty(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiValkeyInstance{
 				ID:              "valkey-2",
 				Name:            "minimal",
-				Engine:          "valkey",
-				EngineVersion:   "8.0",
+				Type:            "valkey",
+				TypeVersion:     "8.0",
 				FlavorID:        "cache.small",
 				VPCID:           "vpc-1",
 				SubnetID:        "sn-1",

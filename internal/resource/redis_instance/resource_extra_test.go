@@ -95,9 +95,9 @@ func TestCreatePollErrorState(t *testing.T) {
 		switch r.Method {
 		case http.MethodPost:
 			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":"redis-err","name":"redis-1","engineVersion":"7.2","flavorId":"cache.small","vpcId":"vpc-1","subnetId":"sn-1","persistenceMode":"rdb","evictionPolicy":"noeviction","status":"provisioning","createdAt":"2025-01-01T00:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"id":"redis-err","name":"redis-1","typeVersion":"7.2","flavorId":"cache.small","vpcId":"vpc-1","subnetId":"sn-1","persistenceMode":"rdb","evictionPolicy":"noeviction","status":"provisioning","createdAt":"2025-01-01T00:00:00Z"}`))
 		case http.MethodGet:
-			_, _ = w.Write([]byte(`{"id":"redis-err","name":"redis-1","engineVersion":"7.2","flavorId":"cache.small","vpcId":"vpc-1","subnetId":"sn-1","persistenceMode":"rdb","evictionPolicy":"noeviction","status":"error","createdAt":"2025-01-01T00:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"id":"redis-err","name":"redis-1","typeVersion":"7.2","flavorId":"cache.small","vpcId":"vpc-1","subnetId":"sn-1","persistenceMode":"rdb","evictionPolicy":"noeviction","status":"error","createdAt":"2025-01-01T00:00:00Z"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -121,11 +121,11 @@ func TestCreateRefreshError(t *testing.T) {
 		switch r.Method {
 		case http.MethodPost:
 			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":"redis-ref","name":"redis-1","engineVersion":"7.2","flavorId":"cache.small","vpcId":"vpc-1","subnetId":"sn-1","persistenceMode":"rdb","evictionPolicy":"noeviction","status":"provisioning","createdAt":"2025-01-01T00:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"id":"redis-ref","name":"redis-1","typeVersion":"7.2","flavorId":"cache.small","vpcId":"vpc-1","subnetId":"sn-1","persistenceMode":"rdb","evictionPolicy":"noeviction","status":"provisioning","createdAt":"2025-01-01T00:00:00Z"}`))
 		case http.MethodGet:
 			getCount++
 			if getCount == 1 {
-				_, _ = w.Write([]byte(`{"id":"redis-ref","name":"redis-1","engineVersion":"7.2","flavorId":"cache.small","vpcId":"vpc-1","subnetId":"sn-1","persistenceMode":"rdb","evictionPolicy":"noeviction","status":"running","createdAt":"2025-01-01T00:00:00Z"}`))
+				_, _ = w.Write([]byte(`{"id":"redis-ref","name":"redis-1","typeVersion":"7.2","flavorId":"cache.small","vpcId":"vpc-1","subnetId":"sn-1","persistenceMode":"rdb","evictionPolicy":"noeviction","status":"running","createdAt":"2025-01-01T00:00:00Z"}`))
 				return
 			}
 			w.WriteHeader(http.StatusInternalServerError)
@@ -153,7 +153,7 @@ func TestUpdatePollErrorState(t *testing.T) {
 		case http.MethodPut:
 			_, _ = w.Write([]byte(`{}`))
 		case http.MethodGet:
-			_, _ = w.Write([]byte(`{"id":"redis-1","name":"redis-1","engineVersion":"7.2","flavorId":"cache.small","vpcId":"vpc-1","subnetId":"sn-1","persistenceMode":"rdb","evictionPolicy":"noeviction","status":"error","createdAt":"2025-01-01T00:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"id":"redis-1","name":"redis-1","typeVersion":"7.2","flavorId":"cache.small","vpcId":"vpc-1","subnetId":"sn-1","persistenceMode":"rdb","evictionPolicy":"noeviction","status":"error","createdAt":"2025-01-01T00:00:00Z"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

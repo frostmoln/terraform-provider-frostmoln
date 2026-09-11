@@ -49,29 +49,29 @@ type nginxInstanceModel struct {
 }
 
 // apiWebserverInstance is the API representation of a managed webserver instance.
-// The flavor is `flavorId`, vpcId/subnetId are returned, and `engineConfig` is a
+// The flavor is `flavorId`, vpcId/subnetId are returned, and `typeConfig` is a
 // JSON object (webserver/internal/domain/instance.go).
 type apiWebserverInstance struct {
-	ID            string            `json:"id"`
-	Name          string            `json:"name"`
-	Engine        string            `json:"engine"`
-	EngineVersion string            `json:"engineVersion"`
-	FlavorID      string            `json:"flavorId"`
-	StorageGB     int               `json:"storageGb"`
-	VPCID         string            `json:"vpcId"`
-	SubnetID      string            `json:"subnetId"`
-	TLSEnabled    bool              `json:"tlsEnabled"`
-	PHPEnabled    bool              `json:"phpEnabled"`
-	PHPVersion    string            `json:"phpVersion,omitempty"`
-	EngineConfig  map[string]string `json:"engineConfig,omitempty"`
-	Public        bool              `json:"public"`
-	PublicIP      string            `json:"publicIp,omitempty"`
-	Status        string            `json:"status"`
-	PrivateIP     string            `json:"privateIp,omitempty"`
-	Port          int               `json:"port,omitempty"`
-	CreatedAt     string            `json:"createdAt"`
-	UpdatedAt     string            `json:"updatedAt,omitempty"`
-	TenantID      string            `json:"tenantId,omitempty"`
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Type        string            `json:"type"`
+	TypeVersion string            `json:"typeVersion"`
+	FlavorID    string            `json:"flavorId"`
+	StorageGB   int               `json:"storageGb"`
+	VPCID       string            `json:"vpcId"`
+	SubnetID    string            `json:"subnetId"`
+	TLSEnabled  bool              `json:"tlsEnabled"`
+	PHPEnabled  bool              `json:"phpEnabled"`
+	PHPVersion  string            `json:"phpVersion,omitempty"`
+	TypeConfig  map[string]string `json:"typeConfig,omitempty"`
+	Public      bool              `json:"public"`
+	PublicIP    string            `json:"publicIp,omitempty"`
+	Status      string            `json:"status"`
+	PrivateIP   string            `json:"privateIp,omitempty"`
+	Port        int               `json:"port,omitempty"`
+	CreatedAt   string            `json:"createdAt"`
+	UpdatedAt   string            `json:"updatedAt,omitempty"`
+	TenantID    string            `json:"tenantId,omitempty"`
 	// Platform-managed SG built by the create saga and attached to the instance
 	// port; read-only to the customer (network refuses customer-plane writes).
 	SecurityGroupID string `json:"securityGroupId,omitempty"`
@@ -126,7 +126,7 @@ func (d *nginxInstanceDataSource) Schema(_ context.Context, _ datasource.SchemaR
 				Computed:    true,
 			},
 			"config": schema.MapAttribute{
-				Description: "Engine-specific configuration as key/value pairs (the applied engineConfig object).",
+				Description: "Type-specific configuration as key/value pairs (the applied typeConfig object).",
 				Computed:    true,
 				ElementType: types.StringType,
 			},
@@ -206,7 +206,7 @@ func (d *nginxInstanceDataSource) Read(ctx context.Context, req datasource.ReadR
 
 	state.ID = types.StringValue(inst.ID)
 	state.Name = types.StringValue(inst.Name)
-	state.Version = types.StringValue(inst.EngineVersion)
+	state.Version = types.StringValue(inst.TypeVersion)
 	state.FlavorID = types.StringValue(inst.FlavorID)
 	state.StorageGB = types.Int64Value(int64(inst.StorageGB))
 	state.VPCID = types.StringValue(inst.VPCID)
@@ -229,8 +229,8 @@ func (d *nginxInstanceDataSource) Read(ctx context.Context, req datasource.ReadR
 		state.PHPVersion = types.StringNull()
 	}
 
-	if len(inst.EngineConfig) > 0 {
-		cfgMap, d := types.MapValueFrom(ctx, types.StringType, inst.EngineConfig)
+	if len(inst.TypeConfig) > 0 {
+		cfgMap, d := types.MapValueFrom(ctx, types.StringType, inst.TypeConfig)
 		resp.Diagnostics.Append(d...)
 		state.Config = cfgMap
 	} else {

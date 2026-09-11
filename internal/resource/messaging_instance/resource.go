@@ -16,6 +16,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -70,6 +71,10 @@ func (r *messagingInstanceResource) Metadata(_ context.Context, req resource.Met
 
 func (r *messagingInstanceResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		// v1: the attribute `engine` was renamed to `type`. See UpgradeState — without the
+		// migration this rename DESTROYS brokers, because `type` carries a Default and
+		// RequiresReplace.
+		Version:     1,
 		Description: "Manages a managed messaging (LavinMQ) instance in the Frostmoln platform." + "\n\n" + scopedecl.Summary("frostmoln_messaging_instance"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -83,8 +88,8 @@ func (r *messagingInstanceResource) Schema(_ context.Context, _ resource.SchemaR
 				Description: "The name of the messaging instance.",
 				Required:    true,
 			},
-			"engine": schema.StringAttribute{
-				Description: "The messaging engine type. Only \"lavinmq\" is currently supported. Defaults to \"lavinmq\".",
+			"type": schema.StringAttribute{
+				Description: "The messaging type. Only \"lavinmq\" is currently supported. Defaults to \"lavinmq\".",
 				Optional:    true,
 				Computed:    true,
 				Default:     stringdefault.StaticString("lavinmq"),
@@ -93,7 +98,7 @@ func (r *messagingInstanceResource) Schema(_ context.Context, _ resource.SchemaR
 				},
 			},
 			"version": schema.StringAttribute{
-				Description: "The engine version (e.g. \"2.3\"). Defaults to the recommended version when omitted.",
+				Description: "The version (e.g. \"2.3\"). Defaults to the recommended version when omitted.",
 				Optional:    true,
 				Computed:    true,
 				PlanModifiers: []planmodifier.String{
@@ -176,6 +181,28 @@ func (r *messagingInstanceResource) Schema(_ context.Context, _ resource.SchemaR
 			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
 			"timeouts": timeouts.Schema(),
 		},
+	}
+}
+
+// UpgradeState migrates prior state across the HCL-surface rename `engine` -> `type`.
+//
+// 🔴 WITHOUT THIS THE RENAME DESTROYS BROKERS, and not on some exotic path. `type` carries a
+// Default, so it is present in EVERY state file written by an older provider. On upgrade the
+// framework drops the unknown `engine` key and leaves `type` NULL. With refresh on, Read
+// repopulates it and the plan is clean — but `terraform plan -refresh=false`, which is ordinary
+// in CI, never calls Read: the Default plans "lavinmq" against a null prior value, RequiresReplace
+// fires, and Terraform proposes to destroy and recreate the instance. A persistent LavinMQ broker
+// loses its queues for a rename.
+//
+// This is the same shape, and the same fix, as load_balancer's provider_type -> type migration and
+// mysql_instance's flavor -> flavor_id. It does NOT reintroduce a deprecated alias: this is the
+// only code that reads the pre-rename DATA, and the request path, the response path and the schema
+// are all canonical-only.
+func (r *messagingInstanceResource) UpgradeState(ctx context.Context) map[int64]resource.StateUpgrader {
+	schemaResp := resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
+	return map[int64]resource.StateUpgrader{
+		0: stateupgrade.RenameStringAttr(ctx, schemaResp.Schema, "engine", "type"),
 	}
 }
 

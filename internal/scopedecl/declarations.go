@@ -286,7 +286,7 @@ var Declarations = map[string]Decl{
 	"frostmoln_messaging_instance": {
 		ImmutableWhy: "the platform has no in-place migration for it — a change re-creates the instance",
 		Immutable: []Field{
-			{Path: "engine", Why: "the engine is chosen at create — one engine's instance does not become another's in place"},
+			{Path: "type", Why: "the type is chosen at create — one type's instance does not become another's in place"},
 			{Path: "subnet_id"},
 			{Path: "version"},
 			{Path: "vpc_id"},

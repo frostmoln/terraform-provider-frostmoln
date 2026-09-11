@@ -112,7 +112,7 @@ var AttachingSurfaces = []AttachingSurface{
 	{
 		TypeName: "frostmoln_nginx_instance", Attribute: "public",
 		When: "when `public` is true", Placement: OnResource,
-		Why: "the expose saga attaches a platform-allocated address to the instance's engine port, in the vpc_id/subnet_id this resource names (provisioning expose_webserver.go -> AssociatePublicIPResource)",
+		Why: "the expose saga attaches a platform-allocated address to the instance's service port, in the vpc_id/subnet_id this resource names (provisioning expose_webserver.go -> AssociatePublicIPResource)",
 	},
 	{
 		TypeName: "frostmoln_apache_instance", Attribute: "public",

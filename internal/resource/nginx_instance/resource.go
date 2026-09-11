@@ -58,11 +58,11 @@ func (r *nginxInstanceResource) getPollTimeout() time.Duration {
 	return 15 * time.Minute
 }
 
-// configApplyTimeout bounds the wait for an engine-config apply. It MATCHES provisioning's
+// configApplyTimeout bounds the wait for a config apply. It MATCHES provisioning's
 // applyConfigPollDeadline (2h, itself pinned to the agent job's queue-side TTL): a shorter
 // ceiling would give up on an apply the platform still considers live, and because the
 // instance read-back returns the stored revision without its status, the next plan would
-// then converge on a configuration the engine never loaded.
+// then converge on a configuration the server never loaded.
 const configApplyTimeout = 2 * time.Hour
 
 func (r *nginxInstanceResource) getConfigApplyTimeout() time.Duration {
@@ -77,7 +77,7 @@ func (r *nginxInstanceResource) getConfigApplyTimeout() time.Duration {
 // (getPollTimeout's 15m). Routing the defaults through the accessor keeps the
 // test-injection seam intact: a test that shrinks pollTimeout shrinks every
 // wait that does not carry an explicit timeouts override, exactly as before.
-// The engine-config apply's 2h ceiling stays on its own accessor: it is pinned
+// The type-config apply's 2h ceiling stays on its own accessor: it is pinned
 // to provisioning's applyConfigPollDeadline, not to a per-verb wait budget.
 func (r *nginxInstanceResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
 	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
@@ -157,20 +157,20 @@ func (r *nginxInstanceResource) awaitResize(ctx context.Context, id string, apiR
 	return runningErr
 }
 
-// applyEngineConfig routes an engine-config change to PUT /webservers/{id}/config — the
+// applyTypeConfig routes a type-config change to PUT /webservers/{id}/config — the
 // only route that validates, renders and actuates it (the instance PUT rejects
-// engineConfig with 400). An empty cfg resets the engine to its boot defaults.
+// typeConfig with 400). An empty cfg resets the instance to its boot defaults.
 //
-// The apply is asynchronous: the ack reports configStatus "applying" and the engine's own
+// The apply is asynchronous: the ack reports configStatus "applying" and the server's own
 // runtime validator can still reject the rendered config, so wait for a terminal state
 // instead of declaring success on the 202.
-func (r *nginxInstanceResource) applyEngineConfig(ctx context.Context, id string, cfg map[string]string) error {
+func (r *nginxInstanceResource) applyTypeConfig(ctx context.Context, id string, cfg map[string]string) error {
 	configPath := r.client.TenantPath("/webservers/" + url.PathEscape(id) + "/config")
-	resp, err := r.client.Put(ctx, configPath, apiUpdateEngineConfigRequest{EngineConfig: cfg})
+	resp, err := r.client.Put(ctx, configPath, apiUpdateTypeConfigRequest{TypeConfig: cfg})
 	if err != nil {
 		return err
 	}
-	ack, err := client.ParseResponse[apiEngineConfigResponse](resp)
+	ack, err := client.ParseResponse[apiTypeConfigResponse](resp)
 	if err != nil {
 		return err
 	}
@@ -182,7 +182,7 @@ func (r *nginxInstanceResource) applyEngineConfig(ctx context.Context, id string
 		return configApplyResult(ack)
 	}
 
-	var last apiEngineConfigResponse
+	var last apiTypeConfigResponse
 	// terminalErr carries a better message for the two states synthesised below, which are
 	// not platform statuses: they exist so the poller stops on the spot rather than
 	// spinning to the (2 h) timeout.
@@ -192,7 +192,7 @@ func (r *nginxInstanceResource) applyEngineConfig(ctx context.Context, id string
 		Timeout:      r.getConfigApplyTimeout(),
 		TargetStates: []string{"applied"},
 		ErrorStates:  []string{"failed", "superseded", "gone"},
-		ResourceName: "nginx_instance engine config apply",
+		ResourceName: "nginx_instance config apply",
 		PollFunc: func(pollCtx context.Context) (string, error) {
 			pollResp, pollErr := r.client.Get(pollCtx, configPath, nil)
 			if pollErr != nil {
@@ -200,12 +200,12 @@ func (r *nginxInstanceResource) applyEngineConfig(ctx context.Context, id string
 					// The instance was deleted out of band. WaitForState retries every
 					// PollFunc error as transient, so without this the apply would block
 					// for the whole timeout and then blame the timeout.
-					terminalErr = fmt.Errorf("instance %s no longer exists; the engine config apply cannot complete", id)
+					terminalErr = fmt.Errorf("instance %s no longer exists; the config apply cannot complete", id)
 					return "gone", nil
 				}
 				return "", pollErr
 			}
-			current, parseErr := client.ParseResponse[apiEngineConfigResponse](pollResp)
+			current, parseErr := client.ParseResponse[apiTypeConfigResponse](pollResp)
 			if parseErr != nil {
 				return "", parseErr
 			}
@@ -219,7 +219,7 @@ func (r *nginxInstanceResource) applyEngineConfig(ctx context.Context, id string
 				// config while ours was in flight. Its terminal state says nothing about
 				// ours, so fail closed instead of reporting someone else's outcome.
 				terminalErr = fmt.Errorf(
-					"engine config revision %d was superseded by revision %d applied by another client; "+
+					"config revision %d was superseded by revision %d applied by another client; "+
 						"re-run to converge on the configuration in this Terraform configuration",
 					ack.ConfigVersion, current.ConfigVersion,
 				)
@@ -240,11 +240,11 @@ func (r *nginxInstanceResource) applyEngineConfig(ctx context.Context, id string
 	return nil
 }
 
-// configApplyResult turns a terminal engine-config apply state into an error (or nil when
-// it applied). The failure message names the engine's own rejection reason AND the fact
+// configApplyResult turns a terminal config apply state into an error (or nil when
+// it applied). The failure message names the server's own rejection reason AND the fact
 // that the platform keeps the rejected configuration stored: a later plan reads it back
 // from the instance and shows no diff until it is corrected.
-func configApplyResult(resp *apiEngineConfigResponse) error {
+func configApplyResult(resp *apiTypeConfigResponse) error {
 	if resp.ConfigStatus == "applied" {
 		return nil
 	}
@@ -253,9 +253,9 @@ func configApplyResult(resp *apiEngineConfigResponse) error {
 	case reason == "":
 		reason = "no reason reported by the platform"
 	case len(reason) > maxConfigErrorBytes:
-		// The platform caps the ENGINE's own validator detail, but its infrastructure
+		// The platform caps the SERVER's own validator detail, but its infrastructure
 		// failure paths pass a raw error through. Bound what lands in a practitioner's
-		// (often archived) CI log. Engine output is not guaranteed ASCII, so cut back to
+		// (often archived) CI log. Type output is not guaranteed ASCII, so cut back to
 		// a rune boundary rather than splitting a multibyte rune into U+FFFD.
 		cut := maxConfigErrorBytes
 		for cut > 0 && !utf8.RuneStart(reason[cut]) {
@@ -264,7 +264,7 @@ func configApplyResult(resp *apiEngineConfigResponse) error {
 		reason = reason[:cut] + "… (truncated)"
 	}
 	return fmt.Errorf(
-		"engine config apply finished in state %q: %s. The platform stores the rejected configuration, "+
+		"config apply finished in state %q: %s. The platform stores the rejected configuration, "+
 			"so a later plan reads it back and shows no diff until the config is corrected",
 		resp.ConfigStatus, reason,
 	)
@@ -476,13 +476,13 @@ func (r *nginxInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				},
 			},
 			"config": schema.MapAttribute{
-				Description: "Engine-specific configuration applied to the webserver, as key/value pairs " +
-					"(sent as the engineConfig object). Keys must be from the platform's curated allowlist " +
+				Description: "Type-specific configuration applied to the webserver, as key/value pairs " +
+					"(sent as the typeConfig object). Keys must be from the platform's curated allowlist " +
 					"(e.g. gzip, securityHeaders, clientMaxBodySize, spaFallback); unknown keys are rejected. " +
 					"Changing this reconfigures the running instance: Terraform waits for the platform to " +
-					"validate the new configuration and load it into the engine (up to the platform's two-hour " +
+					"validate the new configuration and load it into the server (up to the platform's two-hour " +
 					"apply deadline, reached only when the instance's agent is unreachable), and the apply fails if the " +
-					"engine rejects it. Setting it to an empty map resets the engine to its boot defaults; " +
+					"server rejects it. Setting it to an empty map resets the instance to its boot defaults; " +
 					"removing the attribute leaves the current configuration in place.",
 				Optional:    true,
 				Computed:    true,
@@ -493,7 +493,7 @@ func (r *nginxInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 			},
 			"public": schema.BoolAttribute{
 				Description: "Whether the instance is publicly exposed: when true a Public IP is " +
-					"associated to the instance's engine port so the deployed site is reachable on the public " +
+					"associated to the instance's service port so the deployed site is reachable on the public " +
 					"internet, and public_ip is populated. Set at create to expose immediately; toggling it " +
 					"afterwards runs the platform's expose (true) or unexpose (false) action.\n\n" +
 					"Setting it true makes this instance depend on the VPC having a gateway, which " +
@@ -557,7 +557,7 @@ func (r *nginxInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 			// resource has always hardcoded (15m per verb). A timeouts change
 			// is an in-place no-op on real infrastructure — verified by the
 			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
-			// The engine-config apply's two-hour ceiling is NOT tunable here:
+			// The type-config apply's two-hour ceiling is NOT tunable here:
 			// it is pinned to the platform's own apply deadline.
 			"timeouts": timeouts.Schema(),
 		},
@@ -802,7 +802,7 @@ func (r *nginxInstanceResource) Update(ctx context.Context, req resource.UpdateR
 	}
 
 	// In-place field updates (name, TLS) via PUT. Skip the call entirely when nothing
-	// PUT-able changed (e.g. a storage-only resize). Engine config is NOT part of this
+	// PUT-able changed (e.g. a storage-only resize). Type config is NOT part of this
 	// PUT — see the config apply below.
 	updateReq := plan.toUpdateRequest(&state)
 	if updateReq.hasChanges() {
@@ -818,23 +818,23 @@ func (r *nginxInstanceResource) Update(ctx context.Context, req resource.UpdateR
 		}
 	}
 
-	// Engine config is applied through its own route (PUT /:id/config), which validates,
+	// Type config is applied through its own route (PUT /:id/config), which validates,
 	// renders and actuates it. It runs after any resize/PUT above, both of which poll back
 	// to "running" — the apply is refused with 409 in any other state. A config-only change
 	// takes neither branch, so it is applied against whatever state the instance is in and
 	// a stopped instance surfaces the platform's own 409.
-	cfg, cfgChanged := plan.engineConfigChange(ctx, &state, &resp.Diagnostics)
+	cfg, cfgChanged := plan.typeConfigChange(ctx, &state, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 	if cfgChanged {
-		if err := r.applyEngineConfig(ctx, id, cfg); err != nil {
+		if err := r.applyTypeConfig(ctx, id, cfg); err != nil {
 			// A resize and/or the instance PUT above may already have succeeded. Record
 			// what actually landed before failing, so a later `-refresh=false` apply does
 			// not re-propose a resize the backend has already performed (and now rejects
 			// as a shrink). Terraform persists a returned state even alongside errors.
 			r.refreshStateAfterPartialUpdate(ctx, id, &plan, resp)
-			resp.Diagnostics.AddError("Failed to apply Nginx instance engine config", err.Error())
+			resp.Diagnostics.AddError("Failed to apply Nginx instance config", err.Error())
 			return
 		}
 	}

@@ -71,8 +71,8 @@ func TestRead(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		if r.URL.Query().Get("engine") != "mysql" {
-			t.Errorf("expected engine=mysql query param, got %s", r.URL.Query().Get("engine"))
+		if r.URL.Query().Get("type") != "mysql" {
+			t.Errorf("expected type=mysql query param, got %s", r.URL.Query().Get("type"))
 		}
 		_ = json.NewEncoder(w).Encode(apiMysqlVersionList{
 			Versions: []apiMysqlVersion{

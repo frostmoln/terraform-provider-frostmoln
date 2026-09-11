@@ -28,7 +28,7 @@ type messagingInstanceDataSource struct {
 type messagingInstanceModel struct {
 	ID              types.String `tfsdk:"id"`
 	Name            types.String `tfsdk:"name"`
-	Engine          types.String `tfsdk:"engine"`
+	Type            types.String `tfsdk:"type"`
 	Version         types.String `tfsdk:"version"`
 	FlavorID        types.String `tfsdk:"flavor_id"`
 	VPCID           types.String `tfsdk:"vpc_id"`
@@ -47,8 +47,8 @@ type messagingInstanceModel struct {
 type apiMessagingInstance struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
-	Engine          string `json:"engine"`
-	EngineVersion   string `json:"engineVersion"`
+	Type            string `json:"type"`
+	TypeVersion     string `json:"typeVersion"`
 	FlavorID        string `json:"flavorId"`
 	VPCID           string `json:"vpcId"`
 	SubnetID        string `json:"subnetId"`
@@ -78,12 +78,12 @@ func (d *messagingInstanceDataSource) Schema(_ context.Context, _ datasource.Sch
 				Description: "The name of the messaging instance.",
 				Computed:    true,
 			},
-			"engine": schema.StringAttribute{
-				Description: "The messaging engine type (e.g. \"lavinmq\").",
+			"type": schema.StringAttribute{
+				Description: "The messaging type (e.g. \"lavinmq\").",
 				Computed:    true,
 			},
 			"version": schema.StringAttribute{
-				Description: "The engine version.",
+				Description: "The version.",
 				Computed:    true,
 			},
 			"flavor_id": schema.StringAttribute{
@@ -170,8 +170,8 @@ func (d *messagingInstanceDataSource) Read(ctx context.Context, req datasource.R
 
 	state.ID = types.StringValue(inst.ID)
 	state.Name = types.StringValue(inst.Name)
-	state.Engine = types.StringValue(inst.Engine)
-	state.Version = types.StringValue(inst.EngineVersion)
+	state.Type = types.StringValue(inst.Type)
+	state.Version = types.StringValue(inst.TypeVersion)
 	state.FlavorID = types.StringValue(inst.FlavorID)
 	state.VPCID = types.StringValue(inst.VPCID)
 	state.SubnetID = types.StringValue(inst.SubnetID)

@@ -58,8 +58,8 @@ func TestNginxInstanceModelToCreateRequest(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
 
-	if req.Engine != "nginx" {
-		t.Errorf("expected engine nginx, got %s", req.Engine)
+	if req.Type != "nginx" {
+		t.Errorf("expected type nginx, got %s", req.Type)
 	}
 	if req.Name != "my-nginx" {
 		t.Errorf("expected name my-nginx, got %s", req.Name)
@@ -82,8 +82,8 @@ func TestNginxInstanceModelToCreateRequest(t *testing.T) {
 	if req.PHPEnabled != nil {
 		t.Error("expected nil phpEnabled for null value")
 	}
-	if req.EngineConfig != nil {
-		t.Error("expected nil engineConfig for null config")
+	if req.TypeConfig != nil {
+		t.Error("expected nil typeConfig for null config")
 	}
 }
 
@@ -118,8 +118,8 @@ func TestNginxInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 	if req.PHPVersion != "8.3" {
 		t.Errorf("expected phpVersion 8.3, got %s", req.PHPVersion)
 	}
-	if req.EngineConfig["client_max_body_size"] != "10m" {
-		t.Errorf("expected engineConfig client_max_body_size=10m, got %v", req.EngineConfig)
+	if req.TypeConfig["client_max_body_size"] != "10m" {
+		t.Errorf("expected typeConfig client_max_body_size=10m, got %v", req.TypeConfig)
 	}
 }
 
@@ -154,31 +154,31 @@ func TestNginxInstanceModelToUpdateRequest(t *testing.T) {
 		t.Error("expected tlsEnabled update")
 	}
 
-	// Engine config is NOT part of the instance PUT (the backend rejects it there with
+	// Type config is NOT part of the instance PUT (the backend rejects it there with
 	// 400); it is reported separately so Update can route it to PUT /:id/config.
-	cfg, changed := plan.engineConfigChange(ctx, &state, &diags)
+	cfg, changed := plan.typeConfigChange(ctx, &state, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
 	if !changed {
-		t.Fatal("expected an engine config change")
+		t.Fatal("expected a config change")
 	}
 	if cfg["gzip"] != "true" {
-		t.Errorf("expected engineConfig gzip=true, got %v", cfg)
+		t.Errorf("expected typeConfig gzip=true, got %v", cfg)
 	}
 }
 
-// TestNginxInstanceModelEngineConfigChange covers the three plan shapes that decide
-// whether an engine config apply runs at all: an explicit empty map is a real change
+// TestNginxInstanceModelTypeConfigChange covers the three plan shapes that decide
+// whether an config apply runs at all: an explicit empty map is a real change
 // (reset to boot defaults), while null (attribute removed) and unknown are not.
-func TestNginxInstanceModelEngineConfigChange(t *testing.T) {
+func TestNginxInstanceModelTypeConfigChange(t *testing.T) {
 	ctx := context.Background()
 	state := NginxInstanceModel{Config: mustCfgMap(map[string]string{"gzip": "true"})}
 
 	t.Run("empty map is a reset", func(t *testing.T) {
 		diags := diag.Diagnostics{}
 		plan := NginxInstanceModel{Config: mustCfgMap(map[string]string{})}
-		cfg, changed := plan.engineConfigChange(ctx, &state, &diags)
+		cfg, changed := plan.typeConfigChange(ctx, &state, &diags)
 		if diags.HasError() {
 			t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 		}
@@ -194,8 +194,8 @@ func TestNginxInstanceModelEngineConfigChange(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			diags := diag.Diagnostics{}
 			plan := NginxInstanceModel{Config: planCfg}
-			if _, changed := plan.engineConfigChange(ctx, &state, &diags); changed {
-				t.Error("expected no engine config change")
+			if _, changed := plan.typeConfigChange(ctx, &state, &diags); changed {
+				t.Error("expected no config change")
 			}
 			if diags.HasError() {
 				t.Fatalf("unexpected diagnostics: %v", diags.Errors())
@@ -222,8 +222,8 @@ func TestNginxInstanceModelToUpdateRequestNoChanges(t *testing.T) {
 	if req.Name != nil || req.TLSEnabled != nil {
 		t.Error("expected no changes in update request")
 	}
-	if _, changed := same.engineConfigChange(ctx, &same, &diags); changed {
-		t.Error("expected no engine config change")
+	if _, changed := same.typeConfigChange(ctx, &same, &diags); changed {
+		t.Error("expected no config change")
 	}
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
@@ -237,8 +237,8 @@ func TestNginxInstanceModelFromAPI(t *testing.T) {
 	api := &apiWebserverInstance{
 		ID:              "nginx-123",
 		Name:            "my-nginx",
-		Engine:          "nginx",
-		EngineVersion:   "1.27",
+		Type:            "nginx",
+		TypeVersion:     "1.27",
 		FlavorID:        "web.gp1.small",
 		StorageGB:       20,
 		VPCID:           "vpc-1",
@@ -246,7 +246,7 @@ func TestNginxInstanceModelFromAPI(t *testing.T) {
 		TLSEnabled:      true,
 		PHPEnabled:      true,
 		PHPVersion:      "8.3",
-		EngineConfig:    map[string]string{"client_max_body_size": "10m"},
+		TypeConfig:      map[string]string{"client_max_body_size": "10m"},
 		Status:          "running",
 		PrivateIP:       "10.0.1.5",
 		Port:            443,
@@ -301,18 +301,18 @@ func TestNginxInstanceModelFromAPINulls(t *testing.T) {
 	diags := diag.Diagnostics{}
 
 	api := &apiWebserverInstance{
-		ID:            "nginx-123",
-		Name:          "my-nginx",
-		Engine:        "nginx",
-		EngineVersion: "1.27",
-		FlavorID:      "web.gp1.small",
-		StorageGB:     20,
-		VPCID:         "vpc-1",
-		SubnetID:      "sn-1",
-		TLSEnabled:    false,
-		PHPEnabled:    false,
-		Status:        "provisioning",
-		CreatedAt:     "2025-01-01T00:00:00Z",
+		ID:          "nginx-123",
+		Name:        "my-nginx",
+		Type:        "nginx",
+		TypeVersion: "1.27",
+		FlavorID:    "web.gp1.small",
+		StorageGB:   20,
+		VPCID:       "vpc-1",
+		SubnetID:    "sn-1",
+		TLSEnabled:  false,
+		PHPEnabled:  false,
+		Status:      "provisioning",
+		CreatedAt:   "2025-01-01T00:00:00Z",
 	}
 
 	var model NginxInstanceModel
@@ -595,8 +595,8 @@ func TestCreate(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Errorf("failed to decode request: %v", err)
 			}
-			if body.Engine != "nginx" {
-				t.Errorf("expected engine nginx, got %s", body.Engine)
+			if body.Type != "nginx" {
+				t.Errorf("expected type nginx, got %s", body.Type)
 			}
 			if body.FlavorID != "web.gp1.small" {
 				t.Errorf("expected flavorId web.gp1.small, got %s", body.FlavorID)
@@ -607,22 +607,22 @@ func TestCreate(t *testing.T) {
 			if body.SubnetID != "sn-1" {
 				t.Errorf("expected subnetId sn-1, got %s", body.SubnetID)
 			}
-			if body.EngineConfig["client_max_body_size"] != "10m" {
-				t.Errorf("expected engineConfig object client_max_body_size=10m, got %v", body.EngineConfig)
+			if body.TypeConfig["client_max_body_size"] != "10m" {
+				t.Errorf("expected typeConfig object client_max_body_size=10m, got %v", body.TypeConfig)
 			}
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
-				ID:            "nginx-new",
-				Name:          body.Name,
-				Engine:        "nginx",
-				EngineVersion: body.EngineVersion,
-				FlavorID:      body.FlavorID,
-				StorageGB:     body.StorageGB,
-				VPCID:         body.VPCID,
-				SubnetID:      body.SubnetID,
-				EngineConfig:  body.EngineConfig,
-				Status:        "provisioning",
-				CreatedAt:     "2025-01-01T00:00:00Z",
+				ID:          "nginx-new",
+				Name:        body.Name,
+				Type:        "nginx",
+				TypeVersion: body.TypeVersion,
+				FlavorID:    body.FlavorID,
+				StorageGB:   body.StorageGB,
+				VPCID:       body.VPCID,
+				SubnetID:    body.SubnetID,
+				TypeConfig:  body.TypeConfig,
+				Status:      "provisioning",
+				CreatedAt:   "2025-01-01T00:00:00Z",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-new":
 			count := callCount.Add(1)
@@ -631,21 +631,21 @@ func TestCreate(t *testing.T) {
 				status = "running"
 			}
 			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
-				ID:            "nginx-new",
-				Name:          "test-nginx",
-				Engine:        "nginx",
-				EngineVersion: "1.27",
-				FlavorID:      "web.gp1.small",
-				StorageGB:     20,
-				VPCID:         "vpc-1",
-				SubnetID:      "sn-1",
-				TLSEnabled:    true,
-				EngineConfig:  map[string]string{"client_max_body_size": "10m"},
-				Status:        status,
-				PrivateIP:     "10.0.1.5",
-				Port:          443,
-				CreatedAt:     "2025-01-01T00:00:00Z",
-				TenantID:      "t-1",
+				ID:          "nginx-new",
+				Name:        "test-nginx",
+				Type:        "nginx",
+				TypeVersion: "1.27",
+				FlavorID:    "web.gp1.small",
+				StorageGB:   20,
+				VPCID:       "vpc-1",
+				SubnetID:    "sn-1",
+				TLSEnabled:  true,
+				TypeConfig:  map[string]string{"client_max_body_size": "10m"},
+				Status:      status,
+				PrivateIP:   "10.0.1.5",
+				Port:        443,
+				CreatedAt:   "2025-01-01T00:00:00Z",
+				TenantID:    "t-1",
 			})
 		case strings.HasSuffix(r.URL.Path, "/events"):
 			// The client waits on the tenant SSE stream instead of a timer
@@ -719,13 +719,13 @@ func TestCreatePollErrorState(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/webservers":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
-				ID: "nginx-err", Name: "x", Engine: "nginx", EngineVersion: "1.27",
+				ID: "nginx-err", Name: "x", Type: "nginx", TypeVersion: "1.27",
 				FlavorID: "f", StorageGB: 20, VPCID: "vpc-1", SubnetID: "sn-1",
 				Status: "provisioning", CreatedAt: "2025-01-01T00:00:00Z",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-err":
 			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
-				ID: "nginx-err", Name: "x", Engine: "nginx", EngineVersion: "1.27",
+				ID: "nginx-err", Name: "x", Type: "nginx", TypeVersion: "1.27",
 				FlavorID: "f", StorageGB: 20, VPCID: "vpc-1", SubnetID: "sn-1",
 				Status: "failed", CreatedAt: "2025-01-01T00:00:00Z",
 			})
@@ -751,19 +751,19 @@ func TestRead(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123" {
 			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
-				ID:            "nginx-123",
-				Name:          "my-nginx",
-				Engine:        "nginx",
-				EngineVersion: "1.27",
-				FlavorID:      "web.gp1.small",
-				StorageGB:     20,
-				VPCID:         "vpc-1",
-				SubnetID:      "sn-1",
-				TLSEnabled:    true,
-				EngineConfig:  map[string]string{"client_max_body_size": "10m"},
-				Status:        "running",
-				Port:          443,
-				CreatedAt:     "2025-01-01T00:00:00Z",
+				ID:          "nginx-123",
+				Name:        "my-nginx",
+				Type:        "nginx",
+				TypeVersion: "1.27",
+				FlavorID:    "web.gp1.small",
+				StorageGB:   20,
+				VPCID:       "vpc-1",
+				SubnetID:    "sn-1",
+				TLSEnabled:  true,
+				TypeConfig:  map[string]string{"client_max_body_size": "10m"},
+				Status:      "running",
+				Port:        443,
+				CreatedAt:   "2025-01-01T00:00:00Z",
 			})
 			return
 		}
@@ -871,18 +871,18 @@ func TestUpdate(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123":
 			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
-				ID:            "nginx-123",
-				Name:          "updated-nginx",
-				Engine:        "nginx",
-				EngineVersion: "1.27",
-				FlavorID:      "web.gp1.small",
-				StorageGB:     20,
-				VPCID:         "vpc-1",
-				SubnetID:      "sn-1",
-				TLSEnabled:    true,
-				Status:        "running",
-				Port:          443,
-				CreatedAt:     "2025-01-01T00:00:00Z",
+				ID:          "nginx-123",
+				Name:        "updated-nginx",
+				Type:        "nginx",
+				TypeVersion: "1.27",
+				FlavorID:    "web.gp1.small",
+				StorageGB:   20,
+				VPCID:       "vpc-1",
+				SubnetID:    "sn-1",
+				TLSEnabled:  true,
+				Status:      "running",
+				Port:        443,
+				CreatedAt:   "2025-01-01T00:00:00Z",
 			})
 		case strings.HasSuffix(r.URL.Path, "/events"):
 			// The client waits on the tenant SSE stream instead of a timer
@@ -930,7 +930,7 @@ func TestUpdate(t *testing.T) {
 }
 
 // TestUpdateConfigUsesConfigRoute verifies a `config` change is routed to
-// PUT /webservers/{id}/config — never to the instance PUT, which rejects engineConfig
+// PUT /webservers/{id}/config — never to the instance PUT, which rejects typeConfig
 // with 400 — and that the provider waits for the async apply to reach "applied".
 func TestUpdateConfigUsesConfigRoute(t *testing.T) {
 	var configBody string
@@ -942,22 +942,22 @@ func TestUpdateConfigUsesConfigRoute(t *testing.T) {
 			b, _ := io.ReadAll(r.Body)
 			configBody = string(b)
 			w.WriteHeader(http.StatusAccepted)
-			_, _ = fmt.Fprint(w, `{"engineConfig":{"gzip":"true"},"configVersion":4,"configStatus":"applying"}`)
+			_, _ = fmt.Fprint(w, `{"typeConfig":{"gzip":"true"},"configVersion":4,"configStatus":"applying"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123/config":
 			// Still applying on the first poll, terminal on the next.
 			if atomic.AddInt32(&configGets, 1) == 1 {
-				_, _ = fmt.Fprint(w, `{"engineConfig":{"gzip":"true"},"configVersion":4,"configStatus":"applying"}`)
+				_, _ = fmt.Fprint(w, `{"typeConfig":{"gzip":"true"},"configVersion":4,"configStatus":"applying"}`)
 				return
 			}
-			_, _ = fmt.Fprint(w, `{"engineConfig":{"gzip":"true"},"configVersion":4,"configStatus":"applied"}`)
+			_, _ = fmt.Fprint(w, `{"typeConfig":{"gzip":"true"},"configVersion":4,"configStatus":"applied"}`)
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123":
 			instancePutCalled = true
 			w.WriteHeader(http.StatusOK)
 			_, _ = fmt.Fprint(w, `{}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123":
-			_, _ = fmt.Fprint(w, `{"id":"nginx-123","name":"my-nginx","engine":"nginx","engineVersion":"1.27",`+
+			_, _ = fmt.Fprint(w, `{"id":"nginx-123","name":"my-nginx","type":"nginx","typeVersion":"1.27",`+
 				`"flavorId":"web.gp1.small","storageGb":20,"vpcId":"vpc-1","subnetId":"sn-1","tlsEnabled":true,`+
-				`"engineConfig":{"gzip":"true"},"status":"running","port":443,"createdAt":"2025-01-01T00:00:00Z"}`)
+				`"typeConfig":{"gzip":"true"},"status":"running","port":443,"createdAt":"2025-01-01T00:00:00Z"}`)
 		case strings.HasSuffix(r.URL.Path, "/events"):
 			// The client waits on the tenant SSE stream instead of a timer
 			// (internal/client/events.go). A 404 stands in for a gateway that does
@@ -994,9 +994,9 @@ func TestUpdateConfigUsesConfigRoute(t *testing.T) {
 		t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
 	}
 	if instancePutCalled {
-		t.Error("engineConfig must not be PUT on the instance route (the backend rejects it with 400)")
+		t.Error("typeConfig must not be PUT on the instance route (the backend rejects it with 400)")
 	}
-	if configBody != `{"engineConfig":{"gzip":"true"}}` {
+	if configBody != `{"typeConfig":{"gzip":"true"}}` {
 		t.Errorf("unexpected config body: %s", configBody)
 	}
 	if configGets < 2 {
@@ -1018,13 +1018,13 @@ func TestUpdateConfigEmptyMapResets(t *testing.T) {
 			// The service ALWAYS acks "applying" (it starts the apply saga), so the reset
 			// path polls to a terminal state exactly like any other config change.
 			w.WriteHeader(http.StatusAccepted)
-			_, _ = fmt.Fprint(w, `{"engineConfig":{},"configVersion":9,"configStatus":"applying"}`)
+			_, _ = fmt.Fprint(w, `{"typeConfig":{},"configVersion":9,"configStatus":"applying"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123/config":
 			atomic.AddInt32(&configGets, 1)
-			_, _ = fmt.Fprint(w, `{"engineConfig":{},"configVersion":9,"configStatus":"applied"}`)
+			_, _ = fmt.Fprint(w, `{"typeConfig":{},"configVersion":9,"configStatus":"applied"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123":
-			// An instance with an empty stored config OMITS engineConfig entirely.
-			_, _ = fmt.Fprint(w, `{"id":"nginx-123","name":"my-nginx","engine":"nginx","engineVersion":"1.27",`+
+			// An instance with an empty stored config OMITS typeConfig entirely.
+			_, _ = fmt.Fprint(w, `{"id":"nginx-123","name":"my-nginx","type":"nginx","typeVersion":"1.27",`+
 				`"flavorId":"web.gp1.small","storageGb":20,"vpcId":"vpc-1","subnetId":"sn-1","tlsEnabled":true,`+
 				`"status":"running","port":443,"createdAt":"2025-01-01T00:00:00Z"}`)
 		case strings.HasSuffix(r.URL.Path, "/events"):
@@ -1062,14 +1062,14 @@ func TestUpdateConfigEmptyMapResets(t *testing.T) {
 	if updateResp.Diagnostics.HasError() {
 		t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
 	}
-	if configBody != `{"engineConfig":{}}` {
-		t.Errorf("expected an explicit empty engineConfig object, got: %s", configBody)
+	if configBody != `{"typeConfig":{}}` {
+		t.Errorf("expected an explicit empty typeConfig object, got: %s", configBody)
 	}
 	if configGets == 0 {
 		t.Error("expected the reset to poll the config route to a terminal state")
 	}
 
-	// The read-back omits engineConfig; the configured empty map must survive, otherwise
+	// The read-back omits typeConfig; the configured empty map must survive, otherwise
 	// `config = {}` diffs forever.
 	var saved NginxInstanceModel
 	if diags := updateResp.State.Get(context.Background(), &saved); diags.HasError() {
@@ -1089,14 +1089,14 @@ func TestUpdateConfigSupersededByAnotherClient(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123/config":
 			w.WriteHeader(http.StatusAccepted)
-			_, _ = fmt.Fprint(w, `{"engineConfig":{"gzip":"true"},"configVersion":4,"configStatus":"applying"}`)
+			_, _ = fmt.Fprint(w, `{"typeConfig":{"gzip":"true"},"configVersion":4,"configStatus":"applying"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123/config":
 			// Someone else's revision 5 landed and applied cleanly.
-			_, _ = fmt.Fprint(w, `{"engineConfig":{"spaFallback":"true"},"configVersion":5,"configStatus":"applied"}`)
+			_, _ = fmt.Fprint(w, `{"typeConfig":{"spaFallback":"true"},"configVersion":5,"configStatus":"applied"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123":
-			_, _ = fmt.Fprint(w, `{"id":"nginx-123","name":"my-nginx","engine":"nginx","engineVersion":"1.27",`+
+			_, _ = fmt.Fprint(w, `{"id":"nginx-123","name":"my-nginx","type":"nginx","typeVersion":"1.27",`+
 				`"flavorId":"web.gp1.small","storageGb":20,"vpcId":"vpc-1","subnetId":"sn-1","tlsEnabled":true,`+
-				`"engineConfig":{"spaFallback":"true"},"status":"running","port":443,"createdAt":"2025-01-01T00:00:00Z"}`)
+				`"typeConfig":{"spaFallback":"true"},"status":"running","port":443,"createdAt":"2025-01-01T00:00:00Z"}`)
 		case strings.HasSuffix(r.URL.Path, "/events"):
 			// The client waits on the tenant SSE stream instead of a timer
 			// (internal/client/events.go). A 404 stands in for a gateway that does
@@ -1139,19 +1139,19 @@ func TestUpdateConfigSupersededByAnotherClient(t *testing.T) {
 }
 
 // TestUpdateConfigApplyFailed verifies a failed runtime apply fails the Terraform apply
-// and surfaces the engine's own rejection reason rather than reporting success.
+// and surfaces the server's own rejection reason rather than reporting success.
 func TestUpdateConfigApplyFailed(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123/config":
 			w.WriteHeader(http.StatusAccepted)
-			_, _ = fmt.Fprint(w, `{"engineConfig":{"gzip":"true"},"configVersion":7,"configStatus":"applying"}`)
+			_, _ = fmt.Fprint(w, `{"typeConfig":{"gzip":"true"},"configVersion":7,"configStatus":"applying"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123/config":
-			_, _ = fmt.Fprint(w, `{"engineConfig":{"gzip":"true"},"configVersion":7,"configStatus":"failed",`+
+			_, _ = fmt.Fprint(w, `{"typeConfig":{"gzip":"true"},"configVersion":7,"configStatus":"failed",`+
 				`"configError":"nginx: [emerg] unknown directive"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123":
 			// A rename that landed BEFORE the config apply failed.
-			_, _ = fmt.Fprint(w, `{"id":"nginx-123","name":"renamed-nginx","engine":"nginx","engineVersion":"1.27",`+
+			_, _ = fmt.Fprint(w, `{"id":"nginx-123","name":"renamed-nginx","type":"nginx","typeVersion":"1.27",`+
 				`"flavorId":"web.gp1.small","storageGb":20,"vpcId":"vpc-1","subnetId":"sn-1","tlsEnabled":true,`+
 				`"status":"running","port":443,"createdAt":"2025-01-01T00:00:00Z"}`)
 		case strings.HasSuffix(r.URL.Path, "/events"):
@@ -1187,10 +1187,10 @@ func TestUpdateConfigApplyFailed(t *testing.T) {
 	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
 
 	if !updateResp.Diagnostics.HasError() {
-		t.Fatal("expected the update to fail when the engine rejects the config")
+		t.Fatal("expected the update to fail when the server rejects the config")
 	}
 	if !strings.Contains(updateResp.Diagnostics.Errors()[0].Detail(), "unknown directive") {
-		t.Errorf("expected the engine's rejection reason in the diagnostic, got: %s",
+		t.Errorf("expected the server's rejection reason in the diagnostic, got: %s",
 			updateResp.Diagnostics.Errors()[0].Detail())
 	}
 
@@ -1226,18 +1226,18 @@ func TestUpdateStorageResize(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123":
 			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
-				ID:            "nginx-123",
-				Name:          "my-nginx",
-				Engine:        "nginx",
-				EngineVersion: "1.27",
-				FlavorID:      "web.gp1.small",
-				StorageGB:     80,
-				VPCID:         "vpc-1",
-				SubnetID:      "sn-1",
-				TLSEnabled:    true,
-				Status:        "running",
-				Port:          443,
-				CreatedAt:     "2025-01-01T00:00:00Z",
+				ID:          "nginx-123",
+				Name:        "my-nginx",
+				Type:        "nginx",
+				TypeVersion: "1.27",
+				FlavorID:    "web.gp1.small",
+				StorageGB:   80,
+				VPCID:       "vpc-1",
+				SubnetID:    "sn-1",
+				TLSEnabled:  true,
+				Status:      "running",
+				Port:        443,
+				CreatedAt:   "2025-01-01T00:00:00Z",
 			})
 		case strings.HasSuffix(r.URL.Path, "/events"):
 			// The client waits on the tenant SSE stream instead of a timer
@@ -1603,7 +1603,7 @@ func TestUpdateStorageResizeWaitsForTheOperation(t *testing.T) {
 				"operationId": "op-resize", "status": "completed", "resourceType": "webserver",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-1":
-			_ = json.NewEncoder(w).Encode(apiWebserverInstance{ID: "nginx-1", Name: "nginx", Engine: "nginx", Status: "running", StorageGB: 40})
+			_ = json.NewEncoder(w).Encode(apiWebserverInstance{ID: "nginx-1", Name: "nginx", Type: "nginx", Status: "running", StorageGB: 40})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
@@ -1640,7 +1640,7 @@ func TestUpdateStorageResizeOperationRefusedSurfaces(t *testing.T) {
 				"errorCode": "invalid", "error": "storage can only grow",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-1":
-			_ = json.NewEncoder(w).Encode(apiWebserverInstance{ID: "nginx-1", Name: "nginx", Engine: "nginx", Status: "running", StorageGB: 20})
+			_ = json.NewEncoder(w).Encode(apiWebserverInstance{ID: "nginx-1", Name: "nginx", Type: "nginx", Status: "running", StorageGB: 20})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})

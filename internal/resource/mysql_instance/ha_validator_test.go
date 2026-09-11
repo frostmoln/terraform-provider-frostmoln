@@ -14,7 +14,7 @@ import (
 
 // TestHAEnabledIsRejectedAtPlanTime pins the MySQL half of the HA refusal.
 //
-// The API refuses engine=mysql with haEnabled (high availability needs a different mechanism end
+// The API refuses type=mysql with haEnabled (high availability needs a different mechanism end
 // to end for MySQL). Without a schema validator that refusal lands at APPLY time, mid-graph, after
 // the VPC and subnet in the same plan have already been created — so the customer gets a 400 and a
 // half-built plan. The validator moves it to plan time, where it costs nothing.

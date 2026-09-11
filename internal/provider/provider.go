@@ -29,7 +29,7 @@ import (
 	dscontainerregistryartifacts "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/container_registry_artifacts"
 	dscontainerregistrycacheupstreams "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/container_registry_cache_upstreams"
 	dscontainerregistryrepositories "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/container_registry_repositories"
-	databaseenginesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/database_engines"
+	databasetypesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/database_types"
 	dnszoneds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/dns_zone"
 	flavords "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/flavor"
 	flavorsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/flavors"
@@ -664,7 +664,7 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		instanceds.NewDataSource,
 		postgresversionsds.NewDataSource,
 		mysqlversionsds.NewDataSource,
-		databaseenginesds.NewDataSource,
+		databasetypesds.NewDataSource,
 		redisinstanceds.NewDataSource,
 		valkeyinstanceds.NewDataSource,
 		messaginginstanceds.NewDataSource,

@@ -37,8 +37,8 @@ type ValkeyInstanceModel struct {
 type apiValkeyInstance struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
-	Engine          string `json:"engine"`
-	EngineVersion   string `json:"engineVersion"`
+	Type            string `json:"type"`
+	TypeVersion     string `json:"typeVersion"`
 	FlavorID        string `json:"flavorId"`
 	StorageGB       int    `json:"storageGb"`
 	VPCID           string `json:"vpcId"`
@@ -56,8 +56,8 @@ type apiValkeyInstance struct {
 // apiCreateValkeyInstanceRequest is the API request to create a managed Valkey instance.
 type apiCreateValkeyInstanceRequest struct {
 	Name            string `json:"name"`
-	Engine          string `json:"engine"`
-	EngineVersion   string `json:"engineVersion"`
+	Type            string `json:"type"`
+	TypeVersion     string `json:"typeVersion"`
 	FlavorID        string `json:"flavorId"`
 	StorageGB       int    `json:"storageGb,omitempty"`
 	VPCID           string `json:"vpcId"`
@@ -93,12 +93,12 @@ type apiResizeValkeyInstanceRequest struct {
 // toCreateRequest converts the Terraform model to an API create request.
 func (m *ValkeyInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnostics) apiCreateValkeyInstanceRequest {
 	req := apiCreateValkeyInstanceRequest{
-		Name:          m.Name.ValueString(),
-		Engine:        "valkey",
-		EngineVersion: m.Version.ValueString(),
-		FlavorID:      m.FlavorID.ValueString(),
-		VPCID:         m.VPCID.ValueString(),
-		SubnetID:      m.SubnetID.ValueString(),
+		Name:        m.Name.ValueString(),
+		Type:        "valkey",
+		TypeVersion: m.Version.ValueString(),
+		FlavorID:    m.FlavorID.ValueString(),
+		VPCID:       m.VPCID.ValueString(),
+		SubnetID:    m.SubnetID.ValueString(),
 	}
 
 	if !m.StorageGB.IsNull() && !m.StorageGB.IsUnknown() {
@@ -138,7 +138,7 @@ func (m *ValkeyInstanceModel) toUpdateRequest(state *ValkeyInstanceModel) apiUpd
 func (m *ValkeyInstanceModel) fromAPI(_ context.Context, inst *apiValkeyInstance, _ *diag.Diagnostics) {
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
-	m.Version = types.StringValue(inst.EngineVersion)
+	m.Version = types.StringValue(inst.TypeVersion)
 	m.FlavorID = types.StringValue(inst.FlavorID)
 	m.StorageGB = types.Int64Value(int64(inst.StorageGB))
 	m.VPCID = types.StringValue(inst.VPCID)

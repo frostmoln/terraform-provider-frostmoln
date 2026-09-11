@@ -58,7 +58,7 @@ type PostgresInstanceModel struct {
 type apiPostgresInstance struct {
 	ID                  string `json:"id"`
 	Name                string `json:"name"`
-	PostgresVersion     string `json:"engineVersion"`
+	PostgresVersion     string `json:"typeVersion"`
 	FlavorID            string `json:"flavorId"`
 	StorageGB           int    `json:"storageGb"`
 	VPCID               string `json:"vpcId"`
@@ -82,7 +82,7 @@ type apiPostgresInstance struct {
 // apiCreatePostgresInstanceRequest is the API request to create a managed PostgreSQL instance.
 type apiCreatePostgresInstanceRequest struct {
 	Name                string `json:"name"`
-	PostgresVersion     string `json:"engineVersion"`
+	PostgresVersion     string `json:"typeVersion"`
 	FlavorID            string `json:"flavorId"`
 	StorageGB           int    `json:"storageGb"`
 	VPCID               string `json:"vpcId"`

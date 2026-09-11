@@ -46,8 +46,8 @@ type valkeyInstanceModel struct {
 type apiValkeyInstance struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
-	Engine          string `json:"engine"`
-	EngineVersion   string `json:"engineVersion"`
+	Type            string `json:"type"`
+	TypeVersion     string `json:"typeVersion"`
 	FlavorID        string `json:"flavorId"`
 	VPCID           string `json:"vpcId"`
 	SubnetID        string `json:"subnetId"`
@@ -165,7 +165,7 @@ func (d *valkeyInstanceDataSource) Read(ctx context.Context, req datasource.Read
 
 	state.ID = types.StringValue(inst.ID)
 	state.Name = types.StringValue(inst.Name)
-	state.Version = types.StringValue(inst.EngineVersion)
+	state.Version = types.StringValue(inst.TypeVersion)
 	state.FlavorID = types.StringValue(inst.FlavorID)
 	state.VPCID = types.StringValue(inst.VPCID)
 	state.SubnetID = types.StringValue(inst.SubnetID)

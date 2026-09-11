@@ -111,7 +111,7 @@ func (d *postgresVersionsDataSource) Read(ctx context.Context, req datasource.Re
 	}
 
 	query := url.Values{}
-	query.Set("engine", "postgresql")
+	query.Set("type", "postgresql")
 
 	apiResp, err := d.client.Get(ctx, "/v1/databases/versions", query)
 	if err != nil {

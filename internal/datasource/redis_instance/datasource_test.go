@@ -132,7 +132,7 @@ func TestTFSDK_ReadRedisInstanceByID(t *testing.T) {
 		"redis-1": {
 			ID:              "redis-1",
 			Name:            "my-cache",
-			EngineVersion:   "7.2",
+			TypeVersion:     "7.2",
 			FlavorID:        "cache.small",
 			VPCID:           "vpc-1",
 			SubnetID:        "sub-1",
@@ -269,7 +269,7 @@ func TestAPIRedisInstanceSerialization(t *testing.T) {
 	inst := apiRedisInstance{
 		ID:              "redis-1",
 		Name:            "test-cache",
-		EngineVersion:   "7.2",
+		TypeVersion:     "7.2",
 		FlavorID:        "cache.small",
 		VPCID:           "vpc-1",
 		SubnetID:        "sub-1",
@@ -299,8 +299,8 @@ func TestAPIRedisInstanceSerialization(t *testing.T) {
 	if decoded.Name != inst.Name {
 		t.Errorf("expected Name %s, got %s", inst.Name, decoded.Name)
 	}
-	if decoded.EngineVersion != inst.EngineVersion {
-		t.Errorf("expected EngineVersion %s, got %s", inst.EngineVersion, decoded.EngineVersion)
+	if decoded.TypeVersion != inst.TypeVersion {
+		t.Errorf("expected TypeVersion %s, got %s", inst.TypeVersion, decoded.TypeVersion)
 	}
 	if decoded.FlavorID != inst.FlavorID {
 		t.Errorf("expected FlavorID %s, got %s", inst.FlavorID, decoded.FlavorID)

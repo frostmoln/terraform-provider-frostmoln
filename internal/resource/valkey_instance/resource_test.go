@@ -43,8 +43,8 @@ func TestValkeyInstanceModelToCreateRequest(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
 
-	if req.Engine != "valkey" {
-		t.Errorf("expected engine valkey, got %s", req.Engine)
+	if req.Type != "valkey" {
+		t.Errorf("expected type valkey, got %s", req.Type)
 	}
 	if req.StorageGB != 10 {
 		t.Errorf("expected storageGb 10, got %d", req.StorageGB)
@@ -52,8 +52,8 @@ func TestValkeyInstanceModelToCreateRequest(t *testing.T) {
 	if req.Name != "my-valkey" {
 		t.Errorf("expected name my-valkey, got %s", req.Name)
 	}
-	if req.EngineVersion != "7.2" {
-		t.Errorf("expected engineVersion 7.2, got %s", req.EngineVersion)
+	if req.TypeVersion != "7.2" {
+		t.Errorf("expected typeVersion 7.2, got %s", req.TypeVersion)
 	}
 	if req.FlavorID != "cache.gp1.small" {
 		t.Errorf("expected flavorId cache.gp1.small, got %s", req.FlavorID)
@@ -142,8 +142,8 @@ func TestValkeyInstanceModelFromAPI(t *testing.T) {
 	api := &apiValkeyInstance{
 		ID:              "valkey-123",
 		Name:            "my-valkey",
-		Engine:          "valkey",
-		EngineVersion:   "7.2",
+		Type:            "valkey",
+		TypeVersion:     "7.2",
 		FlavorID:        "cache.gp1.small",
 		StorageGB:       25,
 		VPCID:           "vpc-123",
@@ -191,8 +191,8 @@ func TestValkeyInstanceModelFromAPINulls(t *testing.T) {
 	api := &apiValkeyInstance{
 		ID:              "valkey-123",
 		Name:            "my-valkey",
-		Engine:          "valkey",
-		EngineVersion:   "7.2",
+		Type:            "valkey",
+		TypeVersion:     "7.2",
 		FlavorID:        "cache.gp1.small",
 		VPCID:           "vpc-123",
 		SubnetID:        "subnet-456",
@@ -362,15 +362,15 @@ func TestCreate(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Errorf("failed to decode request: %v", err)
 			}
-			if body.Engine != "valkey" {
-				t.Errorf("expected engine valkey, got %s", body.Engine)
+			if body.Type != "valkey" {
+				t.Errorf("expected type valkey, got %s", body.Type)
 			}
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(apiValkeyInstance{
 				ID:              "valkey-new",
 				Name:            body.Name,
-				Engine:          "valkey",
-				EngineVersion:   body.EngineVersion,
+				Type:            "valkey",
+				TypeVersion:     body.TypeVersion,
 				FlavorID:        body.FlavorID,
 				VPCID:           body.VPCID,
 				SubnetID:        body.SubnetID,
@@ -388,8 +388,8 @@ func TestCreate(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiValkeyInstance{
 				ID:              "valkey-new",
 				Name:            "test-valkey",
-				Engine:          "valkey",
-				EngineVersion:   "7.2",
+				Type:            "valkey",
+				TypeVersion:     "7.2",
 				FlavorID:        "cache.gp1.small",
 				VPCID:           "vpc-1",
 				SubnetID:        "sn-1",
@@ -489,13 +489,13 @@ func TestCreatePollErrorState(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/caches":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(apiValkeyInstance{
-				ID: "valkey-err", Name: "x", Engine: "valkey", EngineVersion: "7.2",
+				ID: "valkey-err", Name: "x", Type: "valkey", TypeVersion: "7.2",
 				FlavorID: "f", VPCID: "v", SubnetID: "s", Status: "provisioning",
 				CreatedAt: "2025-01-01T00:00:00Z",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/caches/valkey-err":
 			_ = json.NewEncoder(w).Encode(apiValkeyInstance{
-				ID: "valkey-err", Name: "x", Engine: "valkey", EngineVersion: "7.2",
+				ID: "valkey-err", Name: "x", Type: "valkey", TypeVersion: "7.2",
 				FlavorID: "f", VPCID: "v", SubnetID: "s", Status: "failed",
 				CreatedAt: "2025-01-01T00:00:00Z",
 			})
@@ -533,8 +533,8 @@ func TestRead(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiValkeyInstance{
 				ID:              "valkey-123",
 				Name:            "my-valkey",
-				Engine:          "valkey",
-				EngineVersion:   "7.2",
+				Type:            "valkey",
+				TypeVersion:     "7.2",
 				FlavorID:        "cache.gp1.small",
 				StorageGB:       25,
 				VPCID:           "vpc-1",
@@ -673,8 +673,8 @@ func TestUpdate(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiValkeyInstance{
 				ID:              "valkey-123",
 				Name:            "updated-valkey",
-				Engine:          "valkey",
-				EngineVersion:   "7.2",
+				Type:            "valkey",
+				TypeVersion:     "7.2",
 				FlavorID:        "cache.gp1.large",
 				VPCID:           "vpc-1",
 				SubnetID:        "sn-1",
@@ -761,7 +761,7 @@ func TestUpdateStorageResize(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/caches/valkey-123":
 			_ = json.NewEncoder(w).Encode(apiValkeyInstance{
-				ID: "valkey-123", Name: "v", EngineVersion: "8.1", FlavorID: "cache.gp1.small",
+				ID: "valkey-123", Name: "v", TypeVersion: "8.1", FlavorID: "cache.gp1.small",
 				VPCID: "vpc-1", SubnetID: "sn-1", PersistenceMode: "rdb", EvictionPolicy: "noeviction",
 				Status: "running", StorageGB: 20, Port: 6379, CreatedAt: "2025-01-01T00:00:00Z",
 			})
@@ -825,7 +825,7 @@ func TestUpdateFlavorResize(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/caches/valkey-123":
 			_ = json.NewEncoder(w).Encode(apiValkeyInstance{
-				ID: "valkey-123", Name: "v", EngineVersion: "8.1", FlavorID: "cache.gp1.large",
+				ID: "valkey-123", Name: "v", TypeVersion: "8.1", FlavorID: "cache.gp1.large",
 				VPCID: "vpc-1", SubnetID: "sn-1", PersistenceMode: "rdb", EvictionPolicy: "noeviction",
 				Status: "running", StorageGB: 10, Port: 6379, CreatedAt: "2025-01-01T00:00:00Z",
 			})

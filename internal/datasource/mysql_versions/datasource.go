@@ -111,7 +111,7 @@ func (d *mysqlVersionsDataSource) Read(ctx context.Context, req datasource.ReadR
 	}
 
 	query := url.Values{}
-	query.Set("engine", "mysql")
+	query.Set("type", "mysql")
 
 	apiResp, err := d.client.Get(ctx, "/v1/databases/versions", query)
 	if err != nil {

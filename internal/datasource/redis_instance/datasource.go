@@ -46,7 +46,7 @@ type redisInstanceModel struct {
 type apiRedisInstance struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
-	EngineVersion   string `json:"engineVersion"`
+	TypeVersion     string `json:"typeVersion"`
 	FlavorID        string `json:"flavorId"`
 	VPCID           string `json:"vpcId"`
 	SubnetID        string `json:"subnetId"`
@@ -164,7 +164,7 @@ func (d *redisInstanceDataSource) Read(ctx context.Context, req datasource.ReadR
 
 	state.ID = types.StringValue(inst.ID)
 	state.Name = types.StringValue(inst.Name)
-	state.Version = types.StringValue(inst.EngineVersion)
+	state.Version = types.StringValue(inst.TypeVersion)
 	state.FlavorID = types.StringValue(inst.FlavorID)
 	state.VPCID = types.StringValue(inst.VPCID)
 	state.SubnetID = types.StringValue(inst.SubnetID)

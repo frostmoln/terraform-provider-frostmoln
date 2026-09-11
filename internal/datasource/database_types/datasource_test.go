@@ -1,4 +1,4 @@
-package database_engines
+package database_types
 
 import (
 	"context"
@@ -26,8 +26,8 @@ func TestMetadata(t *testing.T) {
 	req := datasource.MetadataRequest{ProviderTypeName: "frostmoln"}
 	var resp datasource.MetadataResponse
 	ds.Metadata(context.Background(), req, &resp)
-	if resp.TypeName != "frostmoln_database_engines" {
-		t.Errorf("expected type name frostmoln_database_engines, got %s", resp.TypeName)
+	if resp.TypeName != "frostmoln_database_types" {
+		t.Errorf("expected type name frostmoln_database_types, got %s", resp.TypeName)
 	}
 }
 
@@ -37,13 +37,13 @@ func TestSchema(t *testing.T) {
 	var resp datasource.SchemaResponse
 	ds.Schema(context.Background(), req, &resp)
 
-	if _, ok := resp.Schema.Attributes["engines"]; !ok {
-		t.Error("expected engines attribute in schema")
+	if _, ok := resp.Schema.Attributes["types"]; !ok {
+		t.Error("expected types attribute in schema")
 	}
 }
 
 func TestConfigureNilProviderData(t *testing.T) {
-	ds := &databaseEnginesDataSource{}
+	ds := &databaseTypesDataSource{}
 	req := datasource.ConfigureRequest{}
 	var resp datasource.ConfigureResponse
 	ds.Configure(context.Background(), req, &resp)
@@ -53,7 +53,7 @@ func TestConfigureNilProviderData(t *testing.T) {
 }
 
 func TestConfigureWrongType(t *testing.T) {
-	ds := &databaseEnginesDataSource{}
+	ds := &databaseTypesDataSource{}
 	req := datasource.ConfigureRequest{
 		ProviderData: "not-a-client",
 	}
@@ -68,22 +68,22 @@ func TestRead(t *testing.T) {
 	ctx := context.Background()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/databases/engines" {
+		if r.URL.Path != "/v1/databases/types" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(apiDatabaseEngineList{
-			Engines: []apiDatabaseEngine{
+		_ = json.NewEncoder(w).Encode(apiDatabaseTypeList{
+			Types: []apiDatabaseType{
 				{
-					Engine: "postgresql",
+					Type: "postgresql",
 					Versions: []apiDatabaseVersion{
 						{Version: "15", Status: "supported", EndOfLife: "2027-11-11", IsDefault: false},
 						{Version: "16", Status: "current", IsDefault: true},
 					},
 				},
 				{
-					Engine: "mysql",
+					Type: "mysql",
 					Versions: []apiDatabaseVersion{
 						{Version: "8.0", Status: "supported", IsDefault: false},
 						{Version: "8.4", Status: "current", IsDefault: true},
@@ -96,7 +96,7 @@ func TestRead(t *testing.T) {
 
 	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client()))
 
-	ds := &databaseEnginesDataSource{client: c}
+	ds := &databaseTypesDataSource{client: c}
 
 	var schemaResp datasource.SchemaResponse
 	ds.Schema(ctx, datasource.SchemaRequest{}, &schemaResp)
@@ -104,11 +104,11 @@ func TestRead(t *testing.T) {
 	stateVal := tftypes.NewValue(schemaResp.Schema.Type().TerraformType(ctx), nil)
 	state := tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal}
 
-	// Build a config with a null engines list, derived from the schema's own type
-	// (engines is a nested list of objects with a nested list of version objects).
-	enginesType := schemaResp.Schema.Attributes["engines"].GetType().TerraformType(ctx)
+	// Build a config with a null types list, derived from the schema's own type
+	// (types is a nested list of objects with a nested list of version objects).
+	typesType := schemaResp.Schema.Attributes["types"].GetType().TerraformType(ctx)
 	configVal := tftypes.NewValue(schemaResp.Schema.Type().TerraformType(ctx), map[string]tftypes.Value{
-		"engines": tftypes.NewValue(enginesType, nil),
+		"types": tftypes.NewValue(typesType, nil),
 	})
 	config := tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal}
 
@@ -119,25 +119,25 @@ func TestRead(t *testing.T) {
 		t.Fatalf("read failed: %v", readResp.Diagnostics.Errors())
 	}
 
-	var result databaseEnginesModel
+	var result databaseTypesModel
 	readResp.State.Get(ctx, &result)
-	if result.Engines.IsNull() || result.Engines.IsUnknown() {
-		t.Fatal("expected non-null engines list")
+	if result.Types.IsNull() || result.Types.IsUnknown() {
+		t.Fatal("expected non-null types list")
 	}
 
-	var items []engineItemModel
-	diags := result.Engines.ElementsAs(ctx, &items, false)
+	var items []typeItemModel
+	diags := result.Types.ElementsAs(ctx, &items, false)
 	if diags.HasError() {
-		t.Fatalf("failed to extract engines: %v", diags.Errors())
+		t.Fatalf("failed to extract types: %v", diags.Errors())
 	}
 	if len(items) != 2 {
-		t.Fatalf("expected 2 engines, got %d", len(items))
+		t.Fatalf("expected 2 types, got %d", len(items))
 	}
-	if items[0].Engine.ValueString() != "postgresql" {
-		t.Errorf("expected first engine postgresql, got %s", items[0].Engine.ValueString())
+	if items[0].Type.ValueString() != "postgresql" {
+		t.Errorf("expected first type postgresql, got %s", items[0].Type.ValueString())
 	}
-	if items[1].Engine.ValueString() != "mysql" {
-		t.Errorf("expected second engine mysql, got %s", items[1].Engine.ValueString())
+	if items[1].Type.ValueString() != "mysql" {
+		t.Errorf("expected second type mysql, got %s", items[1].Type.ValueString())
 	}
 
 	var pgVersions []versionItemModel

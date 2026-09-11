@@ -1,5 +1,5 @@
-// Package database_engines implements the frostmoln_database_engines Terraform data source.
-package database_engines
+// Package database_types implements the frostmoln_database_types Terraform data source.
+package database_types
 
 import (
 	"context"
@@ -14,29 +14,29 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
 
-var _ datasource.DataSource = &databaseEnginesDataSource{}
+var _ datasource.DataSource = &databaseTypesDataSource{}
 
-// NewDataSource returns a new frostmoln_database_engines data source factory.
+// NewDataSource returns a new frostmoln_database_types data source factory.
 func NewDataSource() datasource.DataSource {
-	return &databaseEnginesDataSource{}
+	return &databaseTypesDataSource{}
 }
 
-type databaseEnginesDataSource struct {
+type databaseTypesDataSource struct {
 	client *client.Client
 }
 
-// databaseEnginesModel is the Terraform state model for the database engines list.
-type databaseEnginesModel struct {
-	Engines types.List `tfsdk:"engines"`
+// databaseTypesModel is the Terraform state model for the database types list.
+type databaseTypesModel struct {
+	Types types.List `tfsdk:"types"`
 }
 
-// engineItemModel represents a single database engine in the list.
-type engineItemModel struct {
-	Engine   types.String `tfsdk:"engine"`
+// typeItemModel represents a single database type in the list.
+type typeItemModel struct {
+	Type     types.String `tfsdk:"type"`
 	Versions types.List   `tfsdk:"versions"`
 }
 
-// versionItemModel represents a single version of a database engine.
+// versionItemModel represents a single version of a database type.
 type versionItemModel struct {
 	Version   types.String `tfsdk:"version"`
 	Status    types.String `tfsdk:"status"`
@@ -44,7 +44,7 @@ type versionItemModel struct {
 	IsDefault types.Bool   `tfsdk:"is_default"`
 }
 
-// apiDatabaseVersion is the API representation of a database engine version
+// apiDatabaseVersion is the API representation of a database type version
 // (database/internal/domain/version.go DatabaseVersion).
 type apiDatabaseVersion struct {
 	Version   string `json:"version"`
@@ -53,17 +53,17 @@ type apiDatabaseVersion struct {
 	IsDefault bool   `json:"isDefault"`
 }
 
-// apiDatabaseEngine is the API representation of a database engine. The engines
-// endpoint serializes the engine name under `engine` and the versions as an
-// array of objects (database/internal/service/interfaces.go EngineInfo).
-type apiDatabaseEngine struct {
-	Engine   string               `json:"engine"`
+// apiDatabaseType is the API representation of a database type. The types
+// endpoint serializes the type name under `type` and the versions as an
+// array of objects (database/internal/service/interfaces.go TypeInfo).
+type apiDatabaseType struct {
+	Type     string               `json:"type"`
 	Versions []apiDatabaseVersion `json:"versions,omitempty"`
 }
 
-// apiDatabaseEngineList is the API response for listing database engines.
-type apiDatabaseEngineList struct {
-	Engines []apiDatabaseEngine `json:"engines"`
+// apiDatabaseTypeList is the API response for listing database types.
+type apiDatabaseTypeList struct {
+	Types []apiDatabaseType `json:"types"`
 }
 
 var versionItemAttrTypes = map[string]attr.Type{
@@ -73,30 +73,30 @@ var versionItemAttrTypes = map[string]attr.Type{
 	"is_default":  types.BoolType,
 }
 
-var engineItemAttrTypes = map[string]attr.Type{
-	"engine":   types.StringType,
+var typeItemAttrTypes = map[string]attr.Type{
+	"type":     types.StringType,
 	"versions": types.ListType{ElemType: types.ObjectType{AttrTypes: versionItemAttrTypes}},
 }
 
-func (d *databaseEnginesDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_database_engines"
+func (d *databaseTypesDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_database_types"
 }
 
-func (d *databaseEnginesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *databaseTypesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Lists all available database engines and their versions for managed database instances.",
+		Description: "Lists all available database types and their versions for managed database instances.",
 		Attributes: map[string]schema.Attribute{
-			"engines": schema.ListNestedAttribute{
-				Description: "The list of available database engines.",
+			"types": schema.ListNestedAttribute{
+				Description: "The list of available database types.",
 				Computed:    true,
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
-						"engine": schema.StringAttribute{
-							Description: "The engine name (e.g. \"postgresql\", \"mysql\").",
+						"type": schema.StringAttribute{
+							Description: "The type name (e.g. \"postgresql\", \"mysql\").",
 							Computed:    true,
 						},
 						"versions": schema.ListNestedAttribute{
-							Description: "The supported versions for this engine.",
+							Description: "The supported versions for this type.",
 							Computed:    true,
 							NestedObject: schema.NestedAttributeObject{
 								Attributes: map[string]schema.Attribute{
@@ -126,7 +126,7 @@ func (d *databaseEnginesDataSource) Schema(_ context.Context, _ datasource.Schem
 	}
 }
 
-func (d *databaseEnginesDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+func (d *databaseTypesDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -141,27 +141,27 @@ func (d *databaseEnginesDataSource) Configure(_ context.Context, req datasource.
 	d.client = c
 }
 
-func (d *databaseEnginesDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	var state databaseEnginesModel
+func (d *databaseTypesDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var state databaseTypesModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	apiResp, err := d.client.Get(ctx, "/v1/databases/engines", nil)
+	apiResp, err := d.client.Get(ctx, "/v1/databases/types", nil)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to list database engines", err.Error())
+		resp.Diagnostics.AddError("Failed to list database types", err.Error())
 		return
 	}
 
-	var list apiDatabaseEngineList
+	var list apiDatabaseTypeList
 	if err := json.Unmarshal(apiResp.Body, &list); err != nil {
-		resp.Diagnostics.AddError("Failed to parse database engines response", err.Error())
+		resp.Diagnostics.AddError("Failed to parse database types response", err.Error())
 		return
 	}
 
-	items := make([]engineItemModel, 0, len(list.Engines))
-	for _, e := range list.Engines {
+	items := make([]typeItemModel, 0, len(list.Types))
+	for _, e := range list.Types {
 		versionItems := make([]versionItemModel, 0, len(e.Versions))
 		for _, v := range e.Versions {
 			item := versionItemModel{
@@ -183,18 +183,18 @@ func (d *databaseEnginesDataSource) Read(ctx context.Context, req datasource.Rea
 			return
 		}
 
-		items = append(items, engineItemModel{
-			Engine:   types.StringValue(e.Engine),
+		items = append(items, typeItemModel{
+			Type:     types.StringValue(e.Type),
 			Versions: versionsList,
 		})
 	}
 
-	enginesList, diags := types.ListValueFrom(ctx, types.ObjectType{AttrTypes: engineItemAttrTypes}, items)
+	typesList, diags := types.ListValueFrom(ctx, types.ObjectType{AttrTypes: typeItemAttrTypes}, items)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	state.Engines = enginesList
+	state.Types = typesList
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

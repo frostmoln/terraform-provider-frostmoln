@@ -47,11 +47,11 @@ func TestMysqlInstanceModelToCreateRequest(t *testing.T) {
 	if req.Name != "my-mysql" {
 		t.Errorf("expected name my-mysql, got %s", req.Name)
 	}
-	if req.Engine != "mysql" {
-		t.Errorf("expected engine mysql, got %s", req.Engine)
+	if req.Type != "mysql" {
+		t.Errorf("expected type mysql, got %s", req.Type)
 	}
-	if req.EngineVersion != "8.4" {
-		t.Errorf("expected engineVersion 8.4, got %s", req.EngineVersion)
+	if req.TypeVersion != "8.4" {
+		t.Errorf("expected typeVersion 8.4, got %s", req.TypeVersion)
 	}
 	if req.FlavorID != "db.small" {
 		t.Errorf("expected flavor db.small, got %s", req.FlavorID)
@@ -93,8 +93,8 @@ func TestMysqlInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
 
-	if req.Engine != "mysql" {
-		t.Errorf("expected engine mysql, got %s", req.Engine)
+	if req.Type != "mysql" {
+		t.Errorf("expected type mysql, got %s", req.Type)
 	}
 	if req.HAEnabled == nil || !*req.HAEnabled {
 		t.Error("expected haEnabled true")
@@ -159,8 +159,8 @@ func TestMysqlInstanceModelFromAPI(t *testing.T) {
 	api := &apiMysqlInstance{
 		ID:            "db-123",
 		Name:          "my-mysql",
-		Engine:        "mysql",
-		EngineVersion: "8.4",
+		Type:          "mysql",
+		TypeVersion:   "8.4",
 		FlavorID:      "db.small",
 		StorageGB:     50,
 		VPCID:         "vpc-123",
@@ -204,16 +204,16 @@ func TestMysqlInstanceModelFromAPINulls(t *testing.T) {
 	diags := diag.Diagnostics{}
 
 	api := &apiMysqlInstance{
-		ID:            "db-123",
-		Name:          "my-mysql",
-		Engine:        "mysql",
-		EngineVersion: "8.0",
-		FlavorID:      "db.small",
-		StorageGB:     50,
-		VPCID:         "vpc-123",
-		SubnetID:      "subnet-456",
-		Status:        "provisioning",
-		CreatedAt:     "2025-01-01T00:00:00Z",
+		ID:          "db-123",
+		Name:        "my-mysql",
+		Type:        "mysql",
+		TypeVersion: "8.0",
+		FlavorID:    "db.small",
+		StorageGB:   50,
+		VPCID:       "vpc-123",
+		SubnetID:    "subnet-456",
+		Status:      "provisioning",
+		CreatedAt:   "2025-01-01T00:00:00Z",
 	}
 
 	var model MysqlInstanceModel
@@ -462,24 +462,24 @@ func TestCreate(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Errorf("failed to decode request: %v", err)
 			}
-			if body.Engine != "mysql" {
-				t.Errorf("expected engine mysql, got %s", body.Engine)
+			if body.Type != "mysql" {
+				t.Errorf("expected type mysql, got %s", body.Type)
 			}
-			if body.EngineVersion != "8.4" {
-				t.Errorf("expected engineVersion 8.4, got %s", body.EngineVersion)
+			if body.TypeVersion != "8.4" {
+				t.Errorf("expected typeVersion 8.4, got %s", body.TypeVersion)
 			}
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(apiMysqlInstance{
-				ID:            "db-new",
-				Name:          body.Name,
-				Engine:        "mysql",
-				EngineVersion: body.EngineVersion,
-				FlavorID:      body.FlavorID,
-				StorageGB:     body.StorageGB,
-				VPCID:         body.VPCID,
-				SubnetID:      body.SubnetID,
-				Status:        "provisioning",
-				CreatedAt:     "2025-01-01T00:00:00Z",
+				ID:          "db-new",
+				Name:        body.Name,
+				Type:        "mysql",
+				TypeVersion: body.TypeVersion,
+				FlavorID:    body.FlavorID,
+				StorageGB:   body.StorageGB,
+				VPCID:       body.VPCID,
+				SubnetID:    body.SubnetID,
+				Status:      "provisioning",
+				CreatedAt:   "2025-01-01T00:00:00Z",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/databases/db-new":
 			count := callCount.Add(1)
@@ -490,8 +490,8 @@ func TestCreate(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiMysqlInstance{
 				ID:            "db-new",
 				Name:          "test-mysql",
-				Engine:        "mysql",
-				EngineVersion: "8.4",
+				Type:          "mysql",
+				TypeVersion:   "8.4",
 				FlavorID:      "db.small",
 				StorageGB:     50,
 				VPCID:         "vpc-1",
@@ -559,17 +559,17 @@ func TestRead(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/databases/db-123" {
 			_ = json.NewEncoder(w).Encode(apiMysqlInstance{
-				ID:            "db-123",
-				Name:          "my-mysql",
-				Engine:        "mysql",
-				EngineVersion: "8.0",
-				FlavorID:      "db.small",
-				StorageGB:     50,
-				VPCID:         "vpc-1",
-				SubnetID:      "sn-1",
-				Status:        "running",
-				Port:          3306,
-				CreatedAt:     "2025-01-01T00:00:00Z",
+				ID:          "db-123",
+				Name:        "my-mysql",
+				Type:        "mysql",
+				TypeVersion: "8.0",
+				FlavorID:    "db.small",
+				StorageGB:   50,
+				VPCID:       "vpc-1",
+				SubnetID:    "sn-1",
+				Status:      "running",
+				Port:        3306,
+				CreatedAt:   "2025-01-01T00:00:00Z",
 			})
 			return
 		}
@@ -731,17 +731,17 @@ func TestUpdate(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/databases/db-123":
 			_ = json.NewEncoder(w).Encode(apiMysqlInstance{
-				ID:            "db-123",
-				Name:          "updated-mysql",
-				Engine:        "mysql",
-				EngineVersion: "8.4",
-				FlavorID:      "db.small",
-				StorageGB:     200,
-				VPCID:         "vpc-1",
-				SubnetID:      "sn-1",
-				Status:        "running",
-				Port:          3306,
-				CreatedAt:     "2025-01-01T00:00:00Z",
+				ID:          "db-123",
+				Name:        "updated-mysql",
+				Type:        "mysql",
+				TypeVersion: "8.4",
+				FlavorID:    "db.small",
+				StorageGB:   200,
+				VPCID:       "vpc-1",
+				SubnetID:    "sn-1",
+				Status:      "running",
+				Port:        3306,
+				CreatedAt:   "2025-01-01T00:00:00Z",
 			})
 		case strings.HasSuffix(r.URL.Path, "/events"):
 			// The client waits on the tenant SSE stream instead of a timer
@@ -992,8 +992,8 @@ func TestCreateTimeoutOverrideBoundsTheWaitAndStateStillRecords(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/databases/db-slow"):
 			// The state-before-the-wait early read.
 			_ = json.NewEncoder(w).Encode(apiMysqlInstance{
-				ID: "db-slow", Name: "test-mysql", Engine: "mysql",
-				EngineVersion: "8.4", FlavorID: "db.small", StorageGB: 50,
+				ID: "db-slow", Name: "test-mysql", Type: "mysql",
+				TypeVersion: "8.4", FlavorID: "db.small", StorageGB: 50,
 				VPCID: "vpc-1", SubnetID: "sn-1", Status: "provisioning",
 				CreatedAt: "2025-01-01T00:00:00Z",
 			})

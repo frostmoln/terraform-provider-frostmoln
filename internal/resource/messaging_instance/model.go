@@ -14,7 +14,7 @@ import (
 type MessagingInstanceModel struct {
 	ID              types.String `tfsdk:"id"`
 	Name            types.String `tfsdk:"name"`
-	Engine          types.String `tfsdk:"engine"`
+	Type            types.String `tfsdk:"type"`
 	Version         types.String `tfsdk:"version"`
 	FlavorID        types.String `tfsdk:"flavor_id"`
 	VPCID           types.String `tfsdk:"vpc_id"`
@@ -37,8 +37,8 @@ type MessagingInstanceModel struct {
 type apiMessagingInstance struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
-	Engine          string `json:"engine"`
-	EngineVersion   string `json:"engineVersion"`
+	Type            string `json:"type"`
+	TypeVersion     string `json:"typeVersion"`
 	FlavorID        string `json:"flavorId"`
 	VPCID           string `json:"vpcId"`
 	SubnetID        string `json:"subnetId"`
@@ -55,8 +55,8 @@ type apiMessagingInstance struct {
 // apiCreateMessagingInstanceRequest is the API request to create a managed messaging instance.
 type apiCreateMessagingInstanceRequest struct {
 	Name            string `json:"name"`
-	Engine          string `json:"engine"`
-	EngineVersion   string `json:"engineVersion"`
+	Type            string `json:"type"`
+	TypeVersion     string `json:"typeVersion"`
 	FlavorID        string `json:"flavorId"`
 	VPCID           string `json:"vpcId"`
 	SubnetID        string `json:"subnetId"`
@@ -81,12 +81,12 @@ func (r apiUpdateMessagingInstanceRequest) hasChanges() bool {
 // toCreateRequest converts the Terraform model to an API create request.
 func (m *MessagingInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnostics) apiCreateMessagingInstanceRequest {
 	req := apiCreateMessagingInstanceRequest{
-		Name:          m.Name.ValueString(),
-		Engine:        m.Engine.ValueString(),
-		EngineVersion: m.Version.ValueString(),
-		FlavorID:      m.FlavorID.ValueString(),
-		VPCID:         m.VPCID.ValueString(),
-		SubnetID:      m.SubnetID.ValueString(),
+		Name:        m.Name.ValueString(),
+		Type:        m.Type.ValueString(),
+		TypeVersion: m.Version.ValueString(),
+		FlavorID:    m.FlavorID.ValueString(),
+		VPCID:       m.VPCID.ValueString(),
+		SubnetID:    m.SubnetID.ValueString(),
 	}
 
 	if !m.PersistenceMode.IsNull() && !m.PersistenceMode.IsUnknown() {
@@ -116,8 +116,8 @@ func (m *MessagingInstanceModel) toUpdateRequest(state *MessagingInstanceModel) 
 func (m *MessagingInstanceModel) fromAPI(_ context.Context, inst *apiMessagingInstance, _ *diag.Diagnostics) {
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
-	m.Engine = types.StringValue(inst.Engine)
-	m.Version = types.StringValue(inst.EngineVersion)
+	m.Type = types.StringValue(inst.Type)
+	m.Version = types.StringValue(inst.TypeVersion)
 	m.FlavorID = types.StringValue(inst.FlavorID)
 	m.VPCID = types.StringValue(inst.VPCID)
 	m.SubnetID = types.StringValue(inst.SubnetID)

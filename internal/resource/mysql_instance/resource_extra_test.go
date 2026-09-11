@@ -60,7 +60,7 @@ func TestModelFromAPIFullyPopulated(t *testing.T) {
 	api := &apiMysqlInstance{
 		ID:             "db-1",
 		Name:           "db",
-		EngineVersion:  "8.0",
+		TypeVersion:    "8.0",
 		FlavorID:       "db.small",
 		StorageGB:      100,
 		VPCID:          "vpc-1",
@@ -183,9 +183,9 @@ func TestCreatePollErrorState(t *testing.T) {
 		switch r.Method {
 		case http.MethodPost:
 			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":"db-err","name":"db-1","engineVersion":"8.0","flavorId":"db.small","storageGb":100,"vpcId":"vpc-1","subnetId":"sn-1","status":"provisioning","createdAt":"2025-01-01T00:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"id":"db-err","name":"db-1","typeVersion":"8.0","flavorId":"db.small","storageGb":100,"vpcId":"vpc-1","subnetId":"sn-1","status":"provisioning","createdAt":"2025-01-01T00:00:00Z"}`))
 		case http.MethodGet:
-			_, _ = w.Write([]byte(`{"id":"db-err","name":"db-1","engineVersion":"8.0","flavorId":"db.small","storageGb":100,"vpcId":"vpc-1","subnetId":"sn-1","status":"error","createdAt":"2025-01-01T00:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"id":"db-err","name":"db-1","typeVersion":"8.0","flavorId":"db.small","storageGb":100,"vpcId":"vpc-1","subnetId":"sn-1","status":"error","createdAt":"2025-01-01T00:00:00Z"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

@@ -204,7 +204,7 @@ func (r *mysqlInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 			},
 			// NOT SUPPORTED FOR MySQL. High availability needs a different mechanism end to
 			// end here -- semi-synchronous replication or Group Replication, with different
-			// promote and fence semantics -- so the API refuses engine=mysql with haEnabled.
+			// promote and fence semantics -- so the API refuses type=mysql with haEnabled.
 			//
 			// The attribute is KEPT rather than removed: removing it turns every existing config
 			// that carries it into an "Unsupported argument" error at parse time, which is a

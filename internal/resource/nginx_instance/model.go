@@ -40,24 +40,24 @@ type NginxInstanceModel struct {
 
 // apiWebserverInstance is the API representation of a managed webserver instance.
 // Field names match the webserver service (webserver/internal/domain/instance.go):
-// the flavor is `flavorId`, vpcId/subnetId are returned, and `engineConfig` is a
+// the flavor is `flavorId`, vpcId/subnetId are returned, and `typeConfig` is a
 // JSON object (not a string). The workerProcesses/gzipEnabled/tryFiles/proxyPass
-// fields are NOT part of the contract (they only ever live inside engineConfig).
+// fields are NOT part of the contract (they only ever live inside typeConfig).
 type apiWebserverInstance struct {
-	ID            string            `json:"id"`
-	Name          string            `json:"name"`
-	Engine        string            `json:"engine"`
-	EngineVersion string            `json:"engineVersion"`
-	FlavorID      string            `json:"flavorId"`
-	StorageGB     int               `json:"storageGb"`
-	VPCID         string            `json:"vpcId"`
-	SubnetID      string            `json:"subnetId"`
-	TLSEnabled    bool              `json:"tlsEnabled"`
-	PHPEnabled    bool              `json:"phpEnabled"`
-	PHPVersion    string            `json:"phpVersion,omitempty"`
-	EngineConfig  map[string]string `json:"engineConfig,omitempty"`
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Type        string            `json:"type"`
+	TypeVersion string            `json:"typeVersion"`
+	FlavorID    string            `json:"flavorId"`
+	StorageGB   int               `json:"storageGb"`
+	VPCID       string            `json:"vpcId"`
+	SubnetID    string            `json:"subnetId"`
+	TLSEnabled  bool              `json:"tlsEnabled"`
+	PHPEnabled  bool              `json:"phpEnabled"`
+	PHPVersion  string            `json:"phpVersion,omitempty"`
+	TypeConfig  map[string]string `json:"typeConfig,omitempty"`
 	// Public is OBSERVED (ADR-0097): true when a Public IP is currently
-	// associated to the instance's engine port. PublicIP is that FIP. Both are
+	// associated to the instance's service port. PublicIP is that FIP. Both are
 	// set by the create saga (create with public=true) or the expose/unexpose
 	// action, never written directly on the instance PUT.
 	Public    bool   `json:"public"`
@@ -77,19 +77,19 @@ type apiWebserverInstance struct {
 
 // apiCreateWebserverInstanceRequest is the API request to create a managed
 // webserver instance. The webserver service requires flavorId, vpcId and
-// subnetId; engineConfig is a JSON object.
+// subnetId; typeConfig is a JSON object.
 type apiCreateWebserverInstanceRequest struct {
-	Name          string            `json:"name"`
-	Engine        string            `json:"engine"`
-	EngineVersion string            `json:"engineVersion"`
-	FlavorID      string            `json:"flavorId"`
-	StorageGB     int               `json:"storageGb"`
-	VPCID         string            `json:"vpcId"`
-	SubnetID      string            `json:"subnetId"`
-	TLSEnabled    *bool             `json:"tlsEnabled,omitempty"`
-	PHPEnabled    *bool             `json:"phpEnabled,omitempty"`
-	PHPVersion    string            `json:"phpVersion,omitempty"`
-	EngineConfig  map[string]string `json:"engineConfig,omitempty"`
+	Name        string            `json:"name"`
+	Type        string            `json:"type"`
+	TypeVersion string            `json:"typeVersion"`
+	FlavorID    string            `json:"flavorId"`
+	StorageGB   int               `json:"storageGb"`
+	VPCID       string            `json:"vpcId"`
+	SubnetID    string            `json:"subnetId"`
+	TLSEnabled  *bool             `json:"tlsEnabled,omitempty"`
+	PHPEnabled  *bool             `json:"phpEnabled,omitempty"`
+	PHPVersion  string            `json:"phpVersion,omitempty"`
+	TypeConfig  map[string]string `json:"typeConfig,omitempty"`
 	// Public opts the instance into public exposure at create time (ADR-0097):
 	// the create saga associates a Public IP and surfaces publicIp. Post-create,
 	// exposure toggles via the POST /expose and /unexpose actions, never here.
@@ -106,9 +106,9 @@ type apiUpdateWebserverInstanceRequest struct {
 	// No PHP fields: php_enabled / php_version force a replacement (the API rejects a
 	// PHP change on this PUT with 400), so they can never reach an update.
 	//
-	// No engineConfig either: this PUT rejects it with 400 ("use PUT /:id/config to
-	// change engine configuration") because a write here would never be validated,
-	// rendered or actuated on the VM. Config goes through apiUpdateEngineConfigRequest.
+	// No typeConfig either: this PUT rejects it with 400 ("use PUT /:id/config to
+	// change configuration") because a write here would never be validated,
+	// rendered or actuated on the VM. Config goes through apiUpdateTypeConfigRequest.
 	Name       *string `json:"name,omitempty"`
 	TLSEnabled *bool   `json:"tlsEnabled,omitempty"`
 }
@@ -124,20 +124,20 @@ type apiResizeWebserverInstanceRequest struct {
 	StorageGB int `json:"storageGb"`
 }
 
-// apiUpdateEngineConfigRequest is the body for PUT /webservers/{id}/config — the only
-// route that applies engine config. NO omitempty: an empty map is meaningful (it resets
-// the engine to its boot defaults), and omitting the field would make a reset a silent
+// apiUpdateTypeConfigRequest is the body for PUT /webservers/{id}/config — the only
+// route that applies the config. NO omitempty: an empty map is meaningful (it resets
+// the instance to its boot defaults), and omitting the field would make a reset a silent
 // no-op server-side.
-type apiUpdateEngineConfigRequest struct {
-	EngineConfig map[string]string `json:"engineConfig"`
+type apiUpdateTypeConfigRequest struct {
+	TypeConfig map[string]string `json:"typeConfig"`
 }
 
-// apiEngineConfigResponse is the PUT /config ack and the GET /config body. The apply is
+// apiTypeConfigResponse is the PUT /config ack and the GET /config body. The apply is
 // asynchronous: the ack reports configStatus "applying" and the runtime validator can
 // still fail it, so the terminal state is reached by polling GET /config. configError
-// carries the engine's rejection message on a failure. The stored engineConfig itself is
+// carries the server's rejection message on a failure. The stored typeConfig itself is
 // not modelled here — state is refreshed from the instance read-back.
-type apiEngineConfigResponse struct {
+type apiTypeConfigResponse struct {
 	ConfigVersion int64  `json:"configVersion"`
 	ConfigStatus  string `json:"configStatus,omitempty"`
 	ConfigError   string `json:"configError,omitempty"`
@@ -150,13 +150,13 @@ const maxConfigErrorBytes = 512
 // toCreateRequest converts the Terraform model to an API create request.
 func (m *NginxInstanceModel) toCreateRequest(ctx context.Context, diags *diag.Diagnostics) apiCreateWebserverInstanceRequest {
 	req := apiCreateWebserverInstanceRequest{
-		Name:          m.Name.ValueString(),
-		Engine:        "nginx",
-		EngineVersion: m.Version.ValueString(),
-		FlavorID:      m.FlavorID.ValueString(),
-		StorageGB:     int(m.StorageGB.ValueInt64()),
-		VPCID:         m.VPCID.ValueString(),
-		SubnetID:      m.SubnetID.ValueString(),
+		Name:        m.Name.ValueString(),
+		Type:        "nginx",
+		TypeVersion: m.Version.ValueString(),
+		FlavorID:    m.FlavorID.ValueString(),
+		StorageGB:   int(m.StorageGB.ValueInt64()),
+		VPCID:       m.VPCID.ValueString(),
+		SubnetID:    m.SubnetID.ValueString(),
 	}
 
 	if !m.TLSEnabled.IsNull() && !m.TLSEnabled.IsUnknown() {
@@ -173,7 +173,7 @@ func (m *NginxInstanceModel) toCreateRequest(ctx context.Context, diags *diag.Di
 	if !m.Config.IsNull() && !m.Config.IsUnknown() {
 		cfg := make(map[string]string)
 		diags.Append(m.Config.ElementsAs(ctx, &cfg, false)...)
-		req.EngineConfig = cfg
+		req.TypeConfig = cfg
 	}
 	if !m.Public.IsNull() && !m.Public.IsUnknown() {
 		v := m.Public.ValueBool()
@@ -199,12 +199,12 @@ func (m *NginxInstanceModel) toUpdateRequest(state *NginxInstanceModel) apiUpdat
 	return req
 }
 
-// engineConfigChange reports the engine config to apply, and whether it changed at all.
-// An explicitly configured EMPTY map is a real change (it resets the engine to its boot
+// typeConfigChange reports the config to apply, and whether it changed at all.
+// An explicitly configured EMPTY map is a real change (it resets the instance to its boot
 // defaults). A null or unknown plan value is NOT: `config` is Optional+Computed, so an
 // attribute left out of the configuration keeps its prior value, and an unknown must never
 // be read as "reset to defaults".
-func (m *NginxInstanceModel) engineConfigChange(ctx context.Context, state *NginxInstanceModel, diags *diag.Diagnostics) (map[string]string, bool) {
+func (m *NginxInstanceModel) typeConfigChange(ctx context.Context, state *NginxInstanceModel, diags *diag.Diagnostics) (map[string]string, bool) {
 	if m.Config.IsNull() || m.Config.IsUnknown() || m.Config.Equal(state.Config) {
 		return nil, false
 	}
@@ -217,7 +217,7 @@ func (m *NginxInstanceModel) engineConfigChange(ctx context.Context, state *Ngin
 func (m *NginxInstanceModel) fromAPI(ctx context.Context, inst *apiWebserverInstance, diags *diag.Diagnostics) {
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
-	m.Version = types.StringValue(inst.EngineVersion)
+	m.Version = types.StringValue(inst.TypeVersion)
 	m.FlavorID = types.StringValue(inst.FlavorID)
 	m.StorageGB = types.Int64Value(int64(inst.StorageGB))
 	m.VPCID = types.StringValue(inst.VPCID)
@@ -241,12 +241,12 @@ func (m *NginxInstanceModel) fromAPI(ctx context.Context, inst *apiWebserverInst
 	}
 
 	switch {
-	case len(inst.EngineConfig) > 0:
-		cfgMap, d := types.MapValueFrom(ctx, types.StringType, inst.EngineConfig)
+	case len(inst.TypeConfig) > 0:
+		cfgMap, d := types.MapValueFrom(ctx, types.StringType, inst.TypeConfig)
 		diags.Append(d...)
 		m.Config = cfgMap
 	case !m.Config.IsNull() && !m.Config.IsUnknown() && len(m.Config.Elements()) == 0:
-		// The instance read-back OMITS engineConfig when the stored config is empty, so an
+		// The instance read-back OMITS typeConfig when the stored config is empty, so an
 		// explicit `config = {}` (reset to boot defaults) would otherwise flip to null on
 		// every refresh and diff forever. Keep the configured empty map.
 	default:

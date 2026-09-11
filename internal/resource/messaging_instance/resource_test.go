@@ -47,7 +47,7 @@ func TestMessagingInstanceModelToCreateRequest(t *testing.T) {
 
 	model := MessagingInstanceModel{
 		Name:            types.StringValue("my-broker"),
-		Engine:          types.StringValue("lavinmq"),
+		Type:            types.StringValue("lavinmq"),
 		Version:         types.StringValue("2.3"),
 		FlavorID:        types.StringValue("mq.gp1.small"),
 		VPCID:           types.StringValue("vpc-123"),
@@ -60,14 +60,14 @@ func TestMessagingInstanceModelToCreateRequest(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
 
-	if req.Engine != "lavinmq" {
-		t.Errorf("expected engine lavinmq, got %s", req.Engine)
+	if req.Type != "lavinmq" {
+		t.Errorf("expected type lavinmq, got %s", req.Type)
 	}
 	if req.Name != "my-broker" {
 		t.Errorf("expected name my-broker, got %s", req.Name)
 	}
-	if req.EngineVersion != "2.3" {
-		t.Errorf("expected engineVersion 2.3, got %s", req.EngineVersion)
+	if req.TypeVersion != "2.3" {
+		t.Errorf("expected typeVersion 2.3, got %s", req.TypeVersion)
 	}
 	if req.FlavorID != "mq.gp1.small" {
 		t.Errorf("expected flavorId mq.gp1.small, got %s", req.FlavorID)
@@ -89,7 +89,7 @@ func TestMessagingInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 
 	model := MessagingInstanceModel{
 		Name:            types.StringValue("my-broker"),
-		Engine:          types.StringValue("lavinmq"),
+		Type:            types.StringValue("lavinmq"),
 		Version:         types.StringValue("2.3"),
 		FlavorID:        types.StringValue("mq.gp1.medium"),
 		VPCID:           types.StringValue("vpc-123"),
@@ -102,8 +102,8 @@ func TestMessagingInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
 
-	if req.Engine != "lavinmq" {
-		t.Errorf("expected engine lavinmq, got %s", req.Engine)
+	if req.Type != "lavinmq" {
+		t.Errorf("expected type lavinmq, got %s", req.Type)
 	}
 	if req.PersistenceMode != "persistent" {
 		t.Errorf("expected persistenceMode persistent, got %s", req.PersistenceMode)
@@ -153,8 +153,8 @@ func TestMessagingInstanceModelFromAPI(t *testing.T) {
 	api := &apiMessagingInstance{
 		ID:              "mq-123",
 		Name:            "my-broker",
-		Engine:          "lavinmq",
-		EngineVersion:   "2.3",
+		Type:            "lavinmq",
+		TypeVersion:     "2.3",
 		FlavorID:        "mq.gp1.small",
 		VPCID:           "vpc-123",
 		SubnetID:        "subnet-456",
@@ -177,8 +177,8 @@ func TestMessagingInstanceModelFromAPI(t *testing.T) {
 	if model.ID.ValueString() != "mq-123" {
 		t.Errorf("expected ID mq-123, got %s", model.ID.ValueString())
 	}
-	if model.Engine.ValueString() != "lavinmq" {
-		t.Errorf("expected engine lavinmq, got %s", model.Engine.ValueString())
+	if model.Type.ValueString() != "lavinmq" {
+		t.Errorf("expected type lavinmq, got %s", model.Type.ValueString())
 	}
 	if model.Port.ValueInt64() != 5672 {
 		t.Errorf("expected port 5672, got %d", model.Port.ValueInt64())
@@ -204,8 +204,8 @@ func TestMessagingInstanceModelFromAPINulls(t *testing.T) {
 	api := &apiMessagingInstance{
 		ID:              "mq-123",
 		Name:            "my-broker",
-		Engine:          "lavinmq",
-		EngineVersion:   "2.3",
+		Type:            "lavinmq",
+		TypeVersion:     "2.3",
 		FlavorID:        "mq.gp1.small",
 		VPCID:           "vpc-123",
 		SubnetID:        "subnet-456",
@@ -378,8 +378,8 @@ func TestCreate(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Errorf("failed to decode request: %v", err)
 			}
-			if body.Engine != "lavinmq" {
-				t.Errorf("expected engine lavinmq, got %s", body.Engine)
+			if body.Type != "lavinmq" {
+				t.Errorf("expected type lavinmq, got %s", body.Type)
 			}
 			// Provisioning returns 202 + an Operation envelope (operationId only).
 			w.WriteHeader(http.StatusAccepted)
@@ -394,8 +394,8 @@ func TestCreate(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiMessagingInstance{
 				ID:              "mq-new",
 				Name:            "test-broker",
-				Engine:          "lavinmq",
-				EngineVersion:   "2.3",
+				Type:            "lavinmq",
+				TypeVersion:     "2.3",
 				FlavorID:        "mq.gp1.small",
 				VPCID:           "vpc-1",
 				SubnetID:        "sn-1",
@@ -428,7 +428,7 @@ func TestCreate(t *testing.T) {
 
 	plan := buildMessagingInstancePlan(t, MessagingInstanceModel{
 		Name:            types.StringValue("test-broker"),
-		Engine:          types.StringValue("lavinmq"),
+		Type:            types.StringValue("lavinmq"),
 		Version:         types.StringValue("2.3"),
 		FlavorID:        types.StringValue("mq.gp1.small"),
 		VPCID:           types.StringValue("vpc-1"),
@@ -477,8 +477,8 @@ func TestCreateLegacy201(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiMessagingInstance{
 				ID:              "mq-legacy",
 				Name:            body.Name,
-				Engine:          body.Engine,
-				EngineVersion:   body.EngineVersion,
+				Type:            body.Type,
+				TypeVersion:     body.TypeVersion,
 				FlavorID:        body.FlavorID,
 				VPCID:           body.VPCID,
 				SubnetID:        body.SubnetID,
@@ -490,8 +490,8 @@ func TestCreateLegacy201(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiMessagingInstance{
 				ID:              "mq-legacy",
 				Name:            "test-broker",
-				Engine:          "lavinmq",
-				EngineVersion:   "2.3",
+				Type:            "lavinmq",
+				TypeVersion:     "2.3",
 				FlavorID:        "mq.gp1.small",
 				VPCID:           "vpc-1",
 				SubnetID:        "sn-1",
@@ -524,7 +524,7 @@ func TestCreateLegacy201(t *testing.T) {
 
 	plan := buildMessagingInstancePlan(t, MessagingInstanceModel{
 		Name:            types.StringValue("test-broker"),
-		Engine:          types.StringValue("lavinmq"),
+		Type:            types.StringValue("lavinmq"),
 		Version:         types.StringValue("2.3"),
 		FlavorID:        types.StringValue("mq.gp1.small"),
 		VPCID:           types.StringValue("vpc-1"),
@@ -570,7 +570,7 @@ func TestCreateAPIError(t *testing.T) {
 
 	plan := buildMessagingInstancePlan(t, MessagingInstanceModel{
 		Name:            types.StringValue("test-broker"),
-		Engine:          types.StringValue("lavinmq"),
+		Type:            types.StringValue("lavinmq"),
 		Version:         types.StringValue("2.3"),
 		FlavorID:        types.StringValue("mq.gp1.small"),
 		VPCID:           types.StringValue("vpc-1"),
@@ -614,7 +614,7 @@ func TestCreateOperationFailed(t *testing.T) {
 
 	plan := buildMessagingInstancePlan(t, MessagingInstanceModel{
 		Name:            types.StringValue("x"),
-		Engine:          types.StringValue("lavinmq"),
+		Type:            types.StringValue("lavinmq"),
 		Version:         types.StringValue("2.3"),
 		FlavorID:        types.StringValue("f"),
 		VPCID:           types.StringValue("v"),
@@ -635,8 +635,8 @@ func TestRead(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiMessagingInstance{
 				ID:              "mq-123",
 				Name:            "my-broker",
-				Engine:          "lavinmq",
-				EngineVersion:   "2.3",
+				Type:            "lavinmq",
+				TypeVersion:     "2.3",
 				FlavorID:        "mq.gp1.small",
 				VPCID:           "vpc-1",
 				SubnetID:        "sn-1",
@@ -662,7 +662,7 @@ func TestRead(t *testing.T) {
 	state := buildMessagingInstanceState(t, MessagingInstanceModel{
 		ID:              types.StringValue("mq-123"),
 		Name:            types.StringValue("my-broker"),
-		Engine:          types.StringValue("lavinmq"),
+		Type:            types.StringValue("lavinmq"),
 		Version:         types.StringValue("2.3"),
 		FlavorID:        types.StringValue("mq.gp1.small"),
 		VPCID:           types.StringValue("vpc-1"),
@@ -701,7 +701,7 @@ func TestReadNotFound(t *testing.T) {
 	state := buildMessagingInstanceState(t, MessagingInstanceModel{
 		ID:              types.StringValue("mq-gone"),
 		Name:            types.StringValue("gone"),
-		Engine:          types.StringValue("lavinmq"),
+		Type:            types.StringValue("lavinmq"),
 		Version:         types.StringValue("2.3"),
 		FlavorID:        types.StringValue("mq.gp1.small"),
 		VPCID:           types.StringValue("vpc-1"),
@@ -742,7 +742,7 @@ func TestReadServerError(t *testing.T) {
 	state := buildMessagingInstanceState(t, MessagingInstanceModel{
 		ID:              types.StringValue("mq-123"),
 		Name:            types.StringValue("x"),
-		Engine:          types.StringValue("lavinmq"),
+		Type:            types.StringValue("lavinmq"),
 		Version:         types.StringValue("2.3"),
 		FlavorID:        types.StringValue("f"),
 		VPCID:           types.StringValue("v"),
@@ -771,8 +771,8 @@ func TestUpdate(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiMessagingInstance{
 				ID:              "mq-123",
 				Name:            "updated-broker",
-				Engine:          "lavinmq",
-				EngineVersion:   "2.3",
+				Type:            "lavinmq",
+				TypeVersion:     "2.3",
 				FlavorID:        "mq.gp1.small",
 				VPCID:           "vpc-1",
 				SubnetID:        "sn-1",
@@ -803,7 +803,7 @@ func TestUpdate(t *testing.T) {
 	state := buildMessagingInstanceState(t, MessagingInstanceModel{
 		ID:              types.StringValue("mq-123"),
 		Name:            types.StringValue("old-broker"),
-		Engine:          types.StringValue("lavinmq"),
+		Type:            types.StringValue("lavinmq"),
 		Version:         types.StringValue("2.3"),
 		FlavorID:        types.StringValue("mq.gp1.small"),
 		VPCID:           types.StringValue("vpc-1"),
@@ -818,7 +818,7 @@ func TestUpdate(t *testing.T) {
 	plan := buildMessagingInstancePlan(t, MessagingInstanceModel{
 		ID:              types.StringValue("mq-123"),
 		Name:            types.StringValue("updated-broker"),
-		Engine:          types.StringValue("lavinmq"),
+		Type:            types.StringValue("lavinmq"),
 		Version:         types.StringValue("2.3"),
 		FlavorID:        types.StringValue("mq.gp1.small"),
 		VPCID:           types.StringValue("vpc-1"),
@@ -862,7 +862,7 @@ func TestUpdateAPIError(t *testing.T) {
 	base := MessagingInstanceModel{
 		ID:              types.StringValue("mq-123"),
 		Name:            types.StringValue("old"),
-		Engine:          types.StringValue("lavinmq"),
+		Type:            types.StringValue("lavinmq"),
 		Version:         types.StringValue("2.3"),
 		FlavorID:        types.StringValue("mq.gp1.small"),
 		VPCID:           types.StringValue("vpc-1"),
@@ -918,7 +918,7 @@ func TestDelete(t *testing.T) {
 	state := buildMessagingInstanceState(t, MessagingInstanceModel{
 		ID:              types.StringValue("mq-123"),
 		Name:            types.StringValue("my-broker"),
-		Engine:          types.StringValue("lavinmq"),
+		Type:            types.StringValue("lavinmq"),
 		Version:         types.StringValue("2.3"),
 		FlavorID:        types.StringValue("mq.gp1.small"),
 		VPCID:           types.StringValue("vpc-1"),
@@ -958,7 +958,7 @@ func TestDeleteAlreadyGone(t *testing.T) {
 	state := buildMessagingInstanceState(t, MessagingInstanceModel{
 		ID:              types.StringValue("mq-gone"),
 		Name:            types.StringValue("gone"),
-		Engine:          types.StringValue("lavinmq"),
+		Type:            types.StringValue("lavinmq"),
 		Version:         types.StringValue("2.3"),
 		FlavorID:        types.StringValue("f"),
 		VPCID:           types.StringValue("v"),
@@ -1000,7 +1000,7 @@ func TestDeletePollError(t *testing.T) {
 	state := buildMessagingInstanceState(t, MessagingInstanceModel{
 		ID:              types.StringValue("mq-123"),
 		Name:            types.StringValue("x"),
-		Engine:          types.StringValue("lavinmq"),
+		Type:            types.StringValue("lavinmq"),
 		Version:         types.StringValue("2.3"),
 		FlavorID:        types.StringValue("f"),
 		VPCID:           types.StringValue("v"),
@@ -1071,7 +1071,7 @@ func TestUpdateFlavorChangeRejected(t *testing.T) {
 	stateModel := MessagingInstanceModel{
 		ID:              types.StringValue("mq-123"),
 		Name:            types.StringValue("my-broker"),
-		Engine:          types.StringValue("lavinmq"),
+		Type:            types.StringValue("lavinmq"),
 		Version:         types.StringValue("2.3"),
 		FlavorID:        types.StringValue("mq.gp1.small"),
 		VPCID:           types.StringValue("vpc-1"),

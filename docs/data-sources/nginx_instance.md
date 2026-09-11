@@ -35,7 +35,7 @@ output "nginx_existing_public_ip" {
 
 ### Read-Only
 
-- `config` (Map of String) Engine-specific configuration as key/value pairs (the applied engineConfig object).
+- `config` (Map of String) Type-specific configuration as key/value pairs (the applied typeConfig object).
 - `created_at` (String) The timestamp when the instance was created.
 - `flavor_id` (String) The flavor ID/size of the Nginx instance.
 - `name` (String) The name of the Nginx instance.

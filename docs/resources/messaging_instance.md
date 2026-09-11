@@ -6,7 +6,7 @@ description: |-
   Manages a managed messaging (LavinMQ) instance in the Frostmoln platform.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
-  Create-immutable — engine: the engine is chosen at create — one engine's instance does not become another's in place.
+  Create-immutable — type: the type is chosen at create — one type's instance does not become another's in place.
   Create-immutable — subnet_id, version, vpc_id: the platform has no in-place migration for it — a change re-creates the instance.
   Observed, not enacted — private_ip: platform-assigned from the subnet at create.
 ---
@@ -19,7 +19,7 @@ Manages a managed messaging (LavinMQ) instance in the Frostmoln platform.
 
 **Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
 
-**Create-immutable** — `engine`: the engine is chosen at create — one engine's instance does not become another's in place.
+**Create-immutable** — `type`: the type is chosen at create — one type's instance does not become another's in place.
 
 **Create-immutable** — `subnet_id`, `version`, `vpc_id`: the platform has no in-place migration for it — a change re-creates the instance.
 
@@ -30,7 +30,7 @@ Manages a managed messaging (LavinMQ) instance in the Frostmoln platform.
 ```terraform
 resource "frostmoln_messaging_instance" "broker" {
   name      = "my-broker"
-  engine    = "lavinmq"
+  type      = "lavinmq"
   version   = "2.3"
   flavor_id = "mq.gp1.small"
   vpc_id    = frostmoln_vpc.main.id
@@ -52,10 +52,10 @@ resource "frostmoln_messaging_instance" "broker" {
 
 ### Optional
 
-- `engine` (String) The messaging engine type. Only "lavinmq" is currently supported. Defaults to "lavinmq".
 - `persistence_mode` (String) The persistence mode for the messaging instance ("none" or "persistent"). Defaults to "persistent".
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
-- `version` (String) The engine version (e.g. "2.3"). Defaults to the recommended version when omitted.
+- `type` (String) The messaging type. Only "lavinmq" is currently supported. Defaults to "lavinmq".
+- `version` (String) The version (e.g. "2.3"). Defaults to the recommended version when omitted.
 
 ### Read-Only
 

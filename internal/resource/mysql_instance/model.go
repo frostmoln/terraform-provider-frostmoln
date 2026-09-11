@@ -57,8 +57,8 @@ type MysqlInstanceModel struct {
 type apiMysqlInstance struct {
 	ID                  string `json:"id"`
 	Name                string `json:"name"`
-	Engine              string `json:"engine"`
-	EngineVersion       string `json:"engineVersion"`
+	Type                string `json:"type"`
+	TypeVersion         string `json:"typeVersion"`
 	FlavorID            string `json:"flavorId"`
 	StorageGB           int    `json:"storageGb"`
 	VPCID               string `json:"vpcId"`
@@ -82,8 +82,8 @@ type apiMysqlInstance struct {
 // apiCreateMysqlInstanceRequest is the API request to create a managed MySQL instance.
 type apiCreateMysqlInstanceRequest struct {
 	Name                string `json:"name"`
-	Engine              string `json:"engine"`
-	EngineVersion       string `json:"engineVersion"`
+	Type                string `json:"type"`
+	TypeVersion         string `json:"typeVersion"`
 	FlavorID            string `json:"flavorId"`
 	StorageGB           int    `json:"storageGb"`
 	VPCID               string `json:"vpcId"`
@@ -123,13 +123,13 @@ type apiResizeMysqlInstanceRequest struct {
 // toCreateRequest converts the Terraform model to an API create request.
 func (m *MysqlInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnostics) apiCreateMysqlInstanceRequest {
 	req := apiCreateMysqlInstanceRequest{
-		Name:          m.Name.ValueString(),
-		Engine:        "mysql",
-		EngineVersion: m.Version.ValueString(),
-		FlavorID:      m.FlavorID.ValueString(),
-		StorageGB:     int(m.StorageGB.ValueInt64()),
-		VPCID:         m.VPCID.ValueString(),
-		SubnetID:      m.SubnetID.ValueString(),
+		Name:        m.Name.ValueString(),
+		Type:        "mysql",
+		TypeVersion: m.Version.ValueString(),
+		FlavorID:    m.FlavorID.ValueString(),
+		StorageGB:   int(m.StorageGB.ValueInt64()),
+		VPCID:       m.VPCID.ValueString(),
+		SubnetID:    m.SubnetID.ValueString(),
 	}
 
 	if !m.HAEnabled.IsNull() && !m.HAEnabled.IsUnknown() {
@@ -198,7 +198,7 @@ func (m *MysqlInstanceModel) toUpdateRequest(state *MysqlInstanceModel) apiUpdat
 func (m *MysqlInstanceModel) fromAPI(_ context.Context, inst *apiMysqlInstance, _ *diag.Diagnostics) {
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
-	m.Version = types.StringValue(inst.EngineVersion)
+	m.Version = types.StringValue(inst.TypeVersion)
 	m.FlavorID = types.StringValue(inst.FlavorID)
 	m.StorageGB = types.Int64Value(int64(inst.StorageGB))
 	m.VPCID = types.StringValue(inst.VPCID)

@@ -140,8 +140,8 @@ func TestReadByID(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
 				ID:              "ws-1",
 				Name:            "my-nginx",
-				Engine:          "nginx",
-				EngineVersion:   "1.27",
+				Type:            "nginx",
+				TypeVersion:     "1.27",
 				FlavorID:        "web.small",
 				StorageGB:       20,
 				VPCID:           "vpc-1",
@@ -149,7 +149,7 @@ func TestReadByID(t *testing.T) {
 				TLSEnabled:      true,
 				PHPEnabled:      true,
 				PHPVersion:      "8.3",
-				EngineConfig:    map[string]string{"client_max_body_size": "10m"},
+				TypeConfig:      map[string]string{"client_max_body_size": "10m"},
 				Status:          "running",
 				PrivateIP:       "10.0.1.6",
 				Port:            443,
@@ -233,14 +233,14 @@ func TestReadByIDNullableFieldsEmpty(t *testing.T) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/webservers/ws-2" {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
-				ID:            "ws-2",
-				Name:          "minimal",
-				Engine:        "nginx",
-				EngineVersion: "1.27",
-				FlavorID:      "web.small",
-				StorageGB:     10,
-				Status:        "provisioning",
-				CreatedAt:     "2025-01-01T00:00:00Z",
+				ID:          "ws-2",
+				Name:        "minimal",
+				Type:        "nginx",
+				TypeVersion: "1.27",
+				FlavorID:    "web.small",
+				StorageGB:   10,
+				Status:      "provisioning",
+				CreatedAt:   "2025-01-01T00:00:00Z",
 			})
 			return
 		}

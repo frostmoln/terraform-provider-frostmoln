@@ -43,8 +43,8 @@ func TestRedisInstanceModelToCreateRequest(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
 
-	if req.Engine != "redis" {
-		t.Errorf("expected engine redis, got %s", req.Engine)
+	if req.Type != "redis" {
+		t.Errorf("expected type redis, got %s", req.Type)
 	}
 	if req.StorageGB != 10 {
 		t.Errorf("expected storageGb 10, got %d", req.StorageGB)
@@ -52,8 +52,8 @@ func TestRedisInstanceModelToCreateRequest(t *testing.T) {
 	if req.Name != "my-redis" {
 		t.Errorf("expected name my-redis, got %s", req.Name)
 	}
-	if req.EngineVersion != "7.2" {
-		t.Errorf("expected engineVersion 7.2, got %s", req.EngineVersion)
+	if req.TypeVersion != "7.2" {
+		t.Errorf("expected typeVersion 7.2, got %s", req.TypeVersion)
 	}
 	if req.FlavorID != "cache.small" {
 		t.Errorf("expected flavorId cache.small, got %s", req.FlavorID)
@@ -94,8 +94,8 @@ func TestRedisInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
 
-	if req.Engine != "redis" {
-		t.Errorf("expected engine redis, got %s", req.Engine)
+	if req.Type != "redis" {
+		t.Errorf("expected type redis, got %s", req.Type)
 	}
 	if req.PersistenceMode != "aof" {
 		t.Errorf("expected persistenceMode aof, got %s", req.PersistenceMode)
@@ -240,7 +240,7 @@ func TestRedisInstanceModelFromAPI(t *testing.T) {
 	api := &apiRedisInstance{
 		ID:                  "redis-123",
 		Name:                "my-redis",
-		EngineVersion:       "7.2",
+		TypeVersion:         "7.2",
 		FlavorID:            "cache.small",
 		StorageGB:           25,
 		VPCID:               "vpc-123",
@@ -306,7 +306,7 @@ func TestRedisInstanceModelFromAPINulls(t *testing.T) {
 	api := &apiRedisInstance{
 		ID:              "redis-123",
 		Name:            "my-redis",
-		EngineVersion:   "7.2",
+		TypeVersion:     "7.2",
 		FlavorID:        "cache.small",
 		VPCID:           "vpc-123",
 		SubnetID:        "subnet-456",
@@ -467,17 +467,17 @@ func TestCreate(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Errorf("failed to decode request: %v", err)
 			}
-			if body.Engine != "redis" {
-				t.Errorf("expected engine redis, got %s", body.Engine)
+			if body.Type != "redis" {
+				t.Errorf("expected type redis, got %s", body.Type)
 			}
-			if body.EngineVersion != "7.2" {
-				t.Errorf("expected engineVersion 7.2, got %s", body.EngineVersion)
+			if body.TypeVersion != "7.2" {
+				t.Errorf("expected typeVersion 7.2, got %s", body.TypeVersion)
 			}
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(apiRedisInstance{
 				ID:              "redis-new",
 				Name:            body.Name,
-				EngineVersion:   body.EngineVersion,
+				TypeVersion:     body.TypeVersion,
 				FlavorID:        body.FlavorID,
 				VPCID:           body.VPCID,
 				SubnetID:        body.SubnetID,
@@ -495,7 +495,7 @@ func TestCreate(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiRedisInstance{
 				ID:              "redis-new",
 				Name:            "test-redis",
-				EngineVersion:   "7.2",
+				TypeVersion:     "7.2",
 				FlavorID:        "cache.small",
 				VPCID:           "vpc-1",
 				SubnetID:        "sn-1",
@@ -566,7 +566,7 @@ func TestRead(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiRedisInstance{
 				ID:              "redis-123",
 				Name:            "my-redis",
-				EngineVersion:   "7.2",
+				TypeVersion:     "7.2",
 				FlavorID:        "cache.small",
 				StorageGB:       25,
 				VPCID:           "vpc-1",
@@ -738,7 +738,7 @@ func TestUpdate(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiRedisInstance{
 				ID:              "redis-123",
 				Name:            "updated-redis",
-				EngineVersion:   "7.2",
+				TypeVersion:     "7.2",
 				FlavorID:        "cache.large",
 				VPCID:           "vpc-1",
 				SubnetID:        "sn-1",
@@ -835,7 +835,7 @@ func TestUpdateStorageResize(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/caches/redis-123":
 			_ = json.NewEncoder(w).Encode(apiRedisInstance{
-				ID: "redis-123", Name: "r", EngineVersion: "7.2", FlavorID: "cache.small",
+				ID: "redis-123", Name: "r", TypeVersion: "7.2", FlavorID: "cache.small",
 				VPCID: "vpc-1", SubnetID: "sn-1", PersistenceMode: "rdb", EvictionPolicy: "noeviction",
 				Status: "running", StorageGB: 20, Port: 6379, CreatedAt: "2025-01-01T00:00:00Z",
 			})
@@ -899,7 +899,7 @@ func TestUpdateFlavorResize(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/caches/redis-123":
 			_ = json.NewEncoder(w).Encode(apiRedisInstance{
-				ID: "redis-123", Name: "r", EngineVersion: "7.2", FlavorID: "cache.large",
+				ID: "redis-123", Name: "r", TypeVersion: "7.2", FlavorID: "cache.large",
 				VPCID: "vpc-1", SubnetID: "sn-1", PersistenceMode: "rdb", EvictionPolicy: "noeviction",
 				Status: "running", StorageGB: 10, Port: 6379, CreatedAt: "2025-01-01T00:00:00Z",
 			})

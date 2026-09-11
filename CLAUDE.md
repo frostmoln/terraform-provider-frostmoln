@@ -219,17 +219,30 @@ A new resource ships only with its declaration.
 Managed-service offers (databases, caches, web servers, messaging, and the
 coming managed Kubernetes) follow one HCL surface — keep new ones consistent:
 
-- **Engine-specific resources, no generic `*_instance`.** Each engine gets its
-  own resource (`frostmoln_redis_instance`, `frostmoln_valkey_instance`, …).
-  There is no generic `frostmoln_cache_instance`-style umbrella resource (the
-  one that existed was removed in #91).
-- **Expose `version`, never an engine-prefixed name.** Use the bare `version`
-  attribute — not `engine_version` / `mysql_version` / `postgres_version`. The
-  backend JSON wire tag stays engine-specific (`engineVersion` / `postgresVersion`);
-  the rename is HCL-surface only (the model's `toCreateRequest`/`fromAPI` map
-  `version` ↔ the wire tag), so CLI/portals are unaffected (CLAUDE.md #10).
-- **Freeform config is `config` (Map of String)**, not `engine_config`, sent as
-  the `engineConfig` object on the wire.
+- **THE WORD "ENGINE" IS RETIRED. A managed offer's implementations are TYPES.**
+  PostgreSQL and MySQL share neither a wire protocol, a dialect, a parameter
+  vocabulary nor a backup format; Apache and Nginx take different configuration.
+  "Engine" tells a customer they are interchangeable. It survives ONLY for things
+  that are not a customer's choice between implementations — the Application
+  Gateway's WAF *inspection engine*. `no_engine_vocabulary_test.go` enforces this
+  over `docs/`, `examples/` and every schema description.
+- **Type-specific resources, no generic `*_instance`.** Each type gets its own
+  resource (`frostmoln_redis_instance`, `frostmoln_valkey_instance`, …). There is
+  no generic `frostmoln_cache_instance`-style umbrella resource (the one that
+  existed was removed in #91).
+- **Expose `version`, never a type-prefixed name.** Use the bare `version`
+  attribute — not `type_version` / `mysql_version` / `postgres_version`. The
+  backend JSON wire tag is `typeVersion` (postgres keeps the Go field name
+  `PostgresVersion`, but its tag is `typeVersion` too); the model's
+  `toCreateRequest`/`fromAPI` map `version` ↔ the wire tag.
+- **Freeform config is `config` (Map of String)**, not `type_config`, sent as the
+  `typeConfig` object on the wire.
+- **Renaming an HCL attribute REQUIRES a schema `Version` bump and a state
+  upgrader** — `stateupgrade.RenameStringAttr`. Skipping it on an attribute that
+  carries a Default makes `terraform plan -refresh=false` propose a DESTROY: the
+  old key is dropped from state, the Default plans against null, and
+  `RequiresReplace` fires. See `messaging_instance` (engine → type),
+  `load_balancer` (provider_type → type) and `mysql_instance` (flavor → flavor_id).
 - **Flavor is `flavor_id` everywhere.** All managed-service resources expose
   `flavor_id` (the value is a flavor id, e.g. `db.gp1.small`; the wire tag is
   `flavorId`). The db/web resources (mysql/postgres/apache/nginx) were
