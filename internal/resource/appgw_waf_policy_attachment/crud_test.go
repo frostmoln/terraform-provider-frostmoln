@@ -590,12 +590,19 @@ func TestTheAttachmentPlanIsHonestAboutTheEffectiveMode(t *testing.T) {
 		plan.EffectiveMode = state.EffectiveMode
 		return plan
 	}
-	planned := func(t *testing.T, plan, state AttachmentModel) AttachmentModel {
+	// modify runs ModifyPlan over a plan the caller has already shaped, so a
+	// test can hand it the plan the FRAMEWORK would produce rather than only
+	// the one proposedNewState builds.
+	modify := func(t *testing.T, proposed, state AttachmentModel) AttachmentModel {
 		t.Helper()
-		out := proposedNewState(plan, state)
+		out := proposed
 		mp, ok := NewResource().(resource.ResourceWithModifyPlan)
 		if !ok {
-			return out
+			// Returning `out` untouched here would make every case below pass by
+			// doing nothing at all -- the resource dropping ModifyPlan is the
+			// loudest possible failure, not a reason to skip.
+			t.Fatalf("the attachment resource no longer implements ModifyPlan, so nothing " +
+				"decides effective_mode between unknown and the refreshed value")
 		}
 		resp := resource.ModifyPlanResponse{Plan: planOf(t, out)}
 		mp.ModifyPlan(context.Background(), resource.ModifyPlanRequest{
@@ -606,6 +613,10 @@ func TestTheAttachmentPlanIsHonestAboutTheEffectiveMode(t *testing.T) {
 		}
 		resp.Plan.Get(context.Background(), &out)
 		return out
+	}
+	planned := func(t *testing.T, plan, state AttachmentModel) AttachmentModel {
+		t.Helper()
+		return modify(t, proposedNewState(plan, state), state)
 	}
 	// A settled attachment on a listener, carrying an overlay policy that the
 	// gateway resolved to "detect" when the refresh ran.
@@ -671,6 +682,50 @@ func TestTheAttachmentPlanIsHonestAboutTheEffectiveMode(t *testing.T) {
 		}
 		if !out.EffectiveMode.Equal(state.EffectiveMode) {
 			t.Errorf("effective_mode = %v, want the refreshed %v", out.EffectiveMode, state.EffectiveMode)
+		}
+	})
+
+	// 🔴 THE NULL LEG -- THE ONE settled() CANNOT REACH. Every case above
+	// starts from a state whose effective_mode is the literal "detect", so all
+	// they prove about the unchanged branch is that it carries a RESOLVED value
+	// forward. The value the branch exists for is the other one: the schema
+	// documents effective_mode as "`null` when that cannot be determined", and
+	// TestAttachmentEffectiveModeIsNullWhenItCannotBeResolved shows a refresh
+	// producing exactly that.
+	//
+	// The plan this hands ModifyPlan is the one MarkComputedNilsAsUnknown
+	// leaves behind: a Computed attribute that is null IN THE CONFIGURATION and
+	// carries no schema Default comes out UNKNOWN whatever the proposed state
+	// held -- the transform never inspects that value. And the transform runs
+	// before this resource's ModifyPlan --
+	// TestAttachmentPlanRPCMarksComputedNilsUnknownBeforeModifyPlan pins that
+	// ordering against the real RPC rather than taking the comment's word for
+	// it. So "keep the refreshed value" has to mean keeping a null one too: an
+	// unknown here is "(known after apply)" on a plan with nothing to apply.
+	//
+	// Today's schema never delivers that plan -- the transform is gated on the
+	// proposed state already differing from prior, and ModifyPlan's own doc
+	// comment works through why that gate and this branch cannot both fire. This
+	// case is therefore the guard on the branch that makes it correct the day a
+	// non-replacing attribute other than policy_id is added, not a reproduction
+	// of something happening now.
+	t.Run("an unresolved mode is pinned back to null, not left unknown", func(t *testing.T) {
+		state := settled()
+		state.EffectiveMode = types.StringNull() // the server resolved nothing
+
+		proposed := state
+		proposed.EffectiveMode = types.StringUnknown() // MarkComputedNilsAsUnknown
+
+		out := modify(t, proposed, state)
+
+		if out.EffectiveMode.IsUnknown() {
+			t.Fatalf("effective_mode is \"(known after apply)\" on an attachment with nothing " +
+				"to change, so the plan reports an update forever and every apply re-PUTs an " +
+				"attachment nobody asked to move; want the refreshed null")
+		}
+		if !out.EffectiveMode.IsNull() {
+			t.Fatalf("effective_mode = %v, want the refreshed null -- the unchanged branch has "+
+				"to carry an UNRESOLVED value back, not only a resolved one", out.EffectiveMode)
 		}
 	})
 }

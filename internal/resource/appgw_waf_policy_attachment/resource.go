@@ -205,26 +205,85 @@ func (r *attachmentResource) ValidateConfig(ctx context.Context, req resource.Va
 	}
 }
 
-// ModifyPlan decides between "unknown" and "unchanged" for effective_mode, and
-// BOTH answers are load-bearing.
+// ModifyPlan decides between "unknown" and "unchanged" for effective_mode.
 //
-// 🔴 WITHOUT THE UNKNOWN BRANCH, MOVING AN ATTACHMENT IS A GUARANTEED APPLY
-// FAILURE. effective_mode is Computed-only, so Terraform's proposed new state
-// carries its PRIOR value into the plan -- a promise about a value this
-// resource reads back off the policy on every attach. `policy_id` is the only
-// attribute here that changes without forcing a replacement, and re-pointing an
-// attachment at another policy is exactly what changes the mode in force, so
-// the promise is wrong precisely when it is made:
+// 🔴 ON TODAY'S SCHEMA, NEITHER BRANCH CHANGES A PLAN. Both write the value the
+// framework has already put there. That is not a reason to delete them -- each
+// guards a different, plausible edit that WOULD change a plan, and each one's
+// trigger is named below. It is a reason not to describe them as rescues: a
+// hazard that does not reproduce gets the guard deleted by the next reader who
+// goes looking for it.
+//
+// The one fact both arguments turn on is what MarkComputedNilsAsUnknown keys
+// on. It is the CONFIG value, not the planned value (verified against
+// terraform-plugin-framework v1.19.0: the transform returns early only for a
+// non-null config value, a non-Computed attribute, or one carrying a schema
+// Default -- it never inspects the value in the plan). id, scope and
+// effective_mode are all Computed-only, absent from configuration and
+// Default-less, so on any plan where the transform runs, all three arrive here
+// already unknown. CLAUDE.md states the same rule for the whole provider.
+//
+// 🔴 THE UNKNOWN BRANCH GUARDS AGAINST UseStateForUnknown BEING ADDED HERE.
+// Re-pointing an attachment at another policy is the one non-replacing edit
+// this resource has, and it is exactly what changes the mode in force -- so the
+// plan must not promise the old policy's mode. Today it does not: policy_id
+// differs, the transform runs, and effective_mode is unknown before this method
+// is reached. Deleting this branch changes nothing.
+//
+// What changes everything is one line in the schema. This provider adds
+// `UseStateForUnknown()` to Computed attributes as a matter of course -- 343 of
+// them across 83 files, codified in CLAUDE.md -- and it is the obvious reach for
+// anyone wanting to quiet effective_mode's "(known after apply)" churn. That
+// modifier copies the state value over an unknown planned value, and schema
+// modifiers run BEFORE this method. So with it added, effective_mode reaches
+// this branch pinned to the PRIOR policy's mode, this SetAttribute is the only
+// thing that restores unknown, and without it the run ends:
 //
 //	Provider produced inconsistent result after apply: .effective_mode:
 //	was cty.StringVal("detect"), but now cty.StringVal("block")
 //
-// 🔴 WITHOUT THE UNCHANGED BRANCH, AN UNRESOLVED MODE DIFFS FOREVER. Where the
-// server does not resolve an inheriting overlay, effective_mode is null, and
-// MarkComputedNilsAsUnknown turns a null computed attribute into "(known after
-// apply)" on every plan -- an update reported forever, with an empty re-PUT of
-// an attachment nobody asked to move behind it. An unchanged policy_id reaches
-// no Update, so nothing can contradict the value the refresh found.
+// It is not dead code; do not delete it.
+//
+// 🔴 THE UNCHANGED BRANCH GUARDS AGAINST A NEW NON-REPLACING ATTRIBUTE. The
+// diff it prevents is real in shape: where the server does not resolve an
+// inheriting overlay, effective_mode is null, and an unknown planted over that
+// null is an update reported forever, with an empty re-PUT of an attachment
+// nobody asked to move behind it. An unchanged policy_id reaches no Update, so
+// nothing can contradict the value the refresh found.
+//
+// Today that cannot happen, because the transform is GATED. In
+// fwserver.PlanResourceChange it runs under
+//
+//	if !resp.PlannedState.Raw.IsNull() &&
+//		!resp.PlannedState.Raw.Equal(req.PriorState.Raw) {
+//
+// -- so only on a plan that ALREADY differs from prior, not on every plan. (The
+// compared value is the planned state after the framework's own defaulting and
+// write-only nulling passes, which are no-ops on this schema; the first schema
+// Default added here would change what that comparison sees.) On THIS schema
+// that gate and this branch are mutually exclusive. A Computed-only attribute
+// keeps its prior value in a proposed new state, so it can never be the source
+// of the difference; gateway_id, listener_id and route_id carry RequiresReplace
+// and hit the replacement early-return below; and policy_id, the only attribute
+// left that could differ, takes the unknown branch. So no plan Terraform core
+// can produce reaches this line with the states differing, the transform never
+// ran, and the value written is the value already there. (Nothing ENFORCES
+// that -- the RPC will plan whatever proposed state it is handed, and
+// plan_rpc_test.go constructs the excluded shape on purpose to isolate the
+// ordering.)
+//
+// 🔴 IT GOES LIVE THE MOMENT A NON-REPLACING ATTRIBUTE THAT IS NOT policy_id IS
+// ADDED TO THE SCHEMA. That single change is what lets the gate fire on a plan
+// that still reaches this branch, and from then on an unresolved effective_mode
+// arrives here unknown and diffs forever unless it is pinned back. Until then
+// the branch still holds the shape against the over-broad fix -- an
+// unconditional SetUnknown reads reasonable and costs exactly that perpetual
+// diff. It is not dead code; do not delete it.
+//
+// The ordering both branches depend on is established, not assumed:
+// TestAttachmentPlanRPCMarksComputedNilsUnknownBeforeModifyPlan drives the real
+// RPC and shows the transform running BEFORE this method, so a value written
+// here survives to the planned state.
 //
 // 🔴 AND THE CONDITION IS policy_id, NOT `inherit`. The cross-resource hazard
 // the POLICY resource has to handle -- the gateway policy flipping under an
@@ -235,8 +294,10 @@ func (r *attachmentResource) ValidateConfig(ctx context.Context, req resource.Va
 // not fit the level, so an update that would change it fails with that
 // diagnostic rather than an inconsistent result.
 func (r *attachmentResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	// Create (no prior state) and destroy (no plan) have nothing to decide: the
-	// framework already marks every computed attribute unknown on a create.
+	// Create (no prior state) and destroy (no plan) have nothing to decide: on a
+	// create the framework already marks every Computed attribute whose config
+	// value is null and which carries no schema Default as unknown -- which on
+	// this schema is all three of them.
 	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
 		return
 	}
