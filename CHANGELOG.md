@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.57.0] - 2026-09-11
+
+### 🚀 Features
+
+- *(provider)* Convergence wall leg A — async shim, orphan contract, discovery-adopt, timeouts blocks (#517)
+
 ## [0.56.0] - 2026-09-10
 
 ### 🚀 Features
