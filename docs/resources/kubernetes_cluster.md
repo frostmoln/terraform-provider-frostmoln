@@ -6,7 +6,6 @@ description: |-
   Manages a managed Kubernetes cluster in the Frostmoln platform. The cluster owns its initial node pool (created embedded, scaled in-place). Additional node pools are managed with the frostmoln_kubernetes_node_pool resource.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
-  Create-immutable — addons: adding an addon is a supported in-place day-2 operation, but REMOVING one is not — nothing uninstalls an addon the platform already applied, so a removal forces replacement.
   Create-immutable — control_plane_tier, initial_node_pool.flavor_id, initial_node_pool.name, region, subnet_id, version, vpc_id: the platform has no in-place migration for it — a change destroys and re-creates the cluster.
   Create-immutable — public_ip_id: retained and deprecated: every new cluster's apiserver is a private VIP and the API refuses any value with a 400 — the attribute exists so a stale configuration is told so.
   Observed, not enacted — endpoint: platform-issued once the apiserver is up. kubeconfig: platform-issued once the apiserver is up. load_balancer_id: the platform provisions the load balancer the cluster rides on.
@@ -19,8 +18,6 @@ Manages a managed Kubernetes cluster in the Frostmoln platform. The cluster owns
 **Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
 
 **Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
-
-**Create-immutable** — `addons`: adding an addon is a supported in-place day-2 operation, but REMOVING one is not — nothing uninstalls an addon the platform already applied, so a removal forces replacement.
 
 **Create-immutable** — `control_plane_tier`, `initial_node_pool.flavor_id`, `initial_node_pool.name`, `region`, `subnet_id`, `version`, `vpc_id`: the platform has no in-place migration for it — a change destroys and re-creates the cluster.
 
@@ -47,12 +44,11 @@ resource "frostmoln_kubernetes_cluster" "main" {
   # .status.loadBalancer.ingress. The cluster itself provisions none — `endpoint`
   # below is the Kubernetes API endpoint, for kubectl, not for traffic.
 
-  # Cluster addons. ADDING a key here is applied in place to a running cluster
-  # and reaches it within the platform's addon reconciliation period; REMOVING a
-  # key replaces the cluster, because the platform cannot uninstall an addon it
-  # has already applied. Omit the attribute to install the platform defaults; set
-  # an empty list ([]) to install none. See the frostmoln_kubernetes_addons data
-  # source for available keys.
+  # Cluster addons. Adding OR removing a key is applied in place to a running
+  # cluster and reaches it within the platform's addon reconciliation period;
+  # removing one DELETES the objects that addon installed. Omit the attribute to
+  # install the platform defaults; set an empty list ([]) to install none. See the
+  # frostmoln_kubernetes_addons data source for available keys.
   addons = ["external-secrets"]
 
   initial_node_pool = {
@@ -86,7 +82,7 @@ output "kubeconfig" {
 
 ### Optional
 
-- `addons` (Set of String) The set of cluster-addon catalog keys for this cluster (see the frostmoln_kubernetes_addons data source for available keys). ADDING a key is applied IN PLACE to a running cluster and reaches it within the platform's addon reconciliation period rather than immediately. REMOVING a key REPLACES the cluster, because the platform has no way to uninstall an addon it has already applied. Leave it unset to apply the platform default addons (the frostmoln_kubernetes_addons data source reports which are defaulted); set it to an explicit empty set ([]) to select none. An addon's upstream container images are pulled from a public registry when its pods start rather than preloaded onto your nodes, so the addon needs your worker nodes to have outbound HTTPS to that registry; where an addon has such a prerequisite its catalog description states it (external-dns: registry.k8s.io, which redirects image downloads to cloud-hosted backing stores on other domains, so allowing that hostname alone is not enough if you filter egress by name). That reachability is a property of your own VPC at the moment of the pull, and every new node pulls again, so the platform does not validate it: applying a key your nodes cannot pull succeeds here and leaves the addon's pods in ImagePullBackOff. Nothing about the cluster itself depends on it.
+- `addons` (Set of String) The set of cluster-addon catalog keys for this cluster (see the frostmoln_kubernetes_addons data source for available keys). ADDING a key is applied IN PLACE to a running cluster and reaches it within the platform's addon reconciliation period rather than immediately. REMOVING a key is ALSO applied in place and DELETES the objects that addon installed; a cluster whose control plane predates the platform's ability to remove an addon is refused with an error saying so, and must be recreated to gain it. When you SET this attribute, note that it is refreshed from the API before every plan, so an addon added outside Terraform (the portal, the fm CLI) appears in state and will be REMOVED on the next apply, as ordinary configuration drift — terraform plan shows the removal before anything happens. Leaving the attribute unset keeps such an addon, since nothing in configuration asks for its removal. Removal leaves behind what the platform will not delete for you: the addon's namespace, any CustomResourceDefinition, StorageClass or CSIDriver it created, and anything you put in that namespace yourself. Leave it unset to apply the platform default addons (the frostmoln_kubernetes_addons data source reports which are defaulted); set it to an explicit empty set ([]) to select none. An addon's upstream container images are pulled from a public registry when its pods start rather than preloaded onto your nodes, so the addon needs your worker nodes to have outbound HTTPS to that registry; where an addon has such a prerequisite its catalog description states it (external-dns: registry.k8s.io, which redirects image downloads to cloud-hosted backing stores on other domains, so allowing that hostname alone is not enough if you filter egress by name). That reachability is a property of your own VPC at the moment of the pull, and every new node pulls again, so the platform does not validate it: applying a key your nodes cannot pull succeeds here and leaves the addon's pods in ImagePullBackOff. Nothing about the cluster itself depends on it.
 - `control_plane_tier` (String) The control-plane tier key (see the frostmoln_kubernetes_tiers data source for canonical keys). Defaults to the platform default tier.
 - `public_ip_id` (String, Deprecated) REMOVED. Any value is rejected by the API with a 400, on every account — remove this attribute from your configuration.
 

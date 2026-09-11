@@ -14,12 +14,11 @@ resource "frostmoln_kubernetes_cluster" "main" {
   # .status.loadBalancer.ingress. The cluster itself provisions none — `endpoint`
   # below is the Kubernetes API endpoint, for kubectl, not for traffic.
 
-  # Cluster addons. ADDING a key here is applied in place to a running cluster
-  # and reaches it within the platform's addon reconciliation period; REMOVING a
-  # key replaces the cluster, because the platform cannot uninstall an addon it
-  # has already applied. Omit the attribute to install the platform defaults; set
-  # an empty list ([]) to install none. See the frostmoln_kubernetes_addons data
-  # source for available keys.
+  # Cluster addons. Adding OR removing a key is applied in place to a running
+  # cluster and reaches it within the platform's addon reconciliation period;
+  # removing one DELETES the objects that addon installed. Omit the attribute to
+  # install the platform defaults; set an empty list ([]) to install none. See the
+  # frostmoln_kubernetes_addons data source for available keys.
   addons = ["external-secrets"]
 
   initial_node_pool = {

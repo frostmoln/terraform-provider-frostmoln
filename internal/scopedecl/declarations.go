@@ -225,7 +225,6 @@ var Declarations = map[string]Decl{
 	"frostmoln_kubernetes_cluster": {
 		ImmutableWhy: "the platform has no in-place migration for it — a change destroys and re-creates the cluster",
 		Immutable: []Field{
-			{Path: "addons", Why: "adding an addon is a supported in-place day-2 operation, but REMOVING one is not — nothing uninstalls an addon the platform already applied, so a removal forces replacement"},
 			{Path: "control_plane_tier"},
 			{Path: "initial_node_pool.flavor_id"},
 			{Path: "initial_node_pool.name"},

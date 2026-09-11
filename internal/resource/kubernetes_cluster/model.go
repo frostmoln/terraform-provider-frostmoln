@@ -274,11 +274,41 @@ func setToStringSlice(set types.Set) []string {
 //
 // `addons` is REQUIRED and is a plain slice, not the create request's pointer-to-slice:
 // the endpoint takes the full desired selection and has no "omitted means defaults"
-// case — on a running cluster that would silently mean a removal, so the server 400s a
-// null. It is also add-only, which is why a removal never reaches this type (see
-// requiresReplaceOnAddonRemoval).
+// case — on a running cluster that would mean removing everything, so the server 400s a
+// null.
+//
+// Remove names the keys being DROPPED. The endpoint refuses a selection short of the
+// cluster's current one unless they are named, so that a client working from a stale read
+// cannot delete; omitted (omitempty) when nothing is being removed.
 type apiUpdateClusterAddonsRequest struct {
 	Addons []string `json:"addons"`
+	Remove []string `json:"remove,omitempty"`
+}
+
+// removedAddons is state-minus-plan: the keys the practitioner's configuration no longer
+// asks for. Nil when nothing is dropped, so the field disappears from the body entirely
+// and a pure addition can never carry a removal.
+func removedAddons(state, plan types.Set) []string {
+	if state.IsNull() || state.IsUnknown() || plan.IsNull() || plan.IsUnknown() {
+		return nil
+	}
+	keep := make(map[string]struct{}, len(plan.Elements()))
+	for _, e := range plan.Elements() {
+		if s, ok := e.(types.String); ok {
+			keep[s.ValueString()] = struct{}{}
+		}
+	}
+	var out []string
+	for _, e := range state.Elements() {
+		s, ok := e.(types.String)
+		if !ok {
+			continue
+		}
+		if _, kept := keep[s.ValueString()]; !kept {
+			out = append(out, s.ValueString())
+		}
+	}
+	return out
 }
 
 // stringSliceToSet builds a Terraform set of strings. A nil OR empty slice

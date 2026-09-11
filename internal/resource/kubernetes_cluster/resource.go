@@ -245,8 +245,16 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 				Description: "The set of cluster-addon catalog keys for this cluster (see the " +
 					"frostmoln_kubernetes_addons data source for available keys). ADDING a key is applied " +
 					"IN PLACE to a running cluster and reaches it within the platform's addon reconciliation " +
-					"period rather than immediately. REMOVING a key REPLACES the cluster, because the platform " +
-					"has no way to uninstall an addon it has already applied. Leave it unset to apply the " +
+					"period rather than immediately. REMOVING a key is ALSO applied in place and DELETES the " +
+					"objects that addon installed; a cluster whose control plane predates the platform's " +
+					"ability to remove an addon is refused with an error saying so, and must be recreated " +
+					"to gain it. When you SET this attribute, note that it is refreshed from the API before " +
+					"every plan, so an addon added outside Terraform (the portal, the fm CLI) appears in " +
+					"state and will be REMOVED on the next apply, as ordinary configuration drift — " +
+					"terraform plan shows the removal before anything happens. Leaving the attribute unset " +
+					"keeps such an addon, since nothing in configuration asks for its removal. Removal leaves behind what the platform will not " +
+					"delete for you: the addon's namespace, any CustomResourceDefinition, StorageClass or " +
+					"CSIDriver it created, and anything you put in that namespace yourself. Leave it unset to apply the " +
 					"platform default addons (the frostmoln_kubernetes_addons data source reports which are " +
 					"defaulted); set it to an explicit empty set ([]) to select none. An addon's " +
 					"upstream container images are pulled from a public registry when its pods start " +
@@ -264,15 +272,15 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 				ElementType: types.StringType,
 				PlanModifiers: []planmodifier.Set{
 					setplanmodifier.UseStateForUnknown(),
-					// 🔴 REPLACE ONLY ON A REMOVAL, and the asymmetry is the API's, not a
-					// preference. Addition is a supported day-2 operation
-					// (PUT .../clusters/{id}/addons, add-only). Removal is refused by that
-					// endpoint with a 400, because nothing in the platform deletes the
-					// objects an addon has already installed — so destroying and rebuilding
-					// the cluster really IS the only way to get rid of one, and a plain
-					// RequiresReplace() over both directions would destroy a customer's
-					// cluster to perform an operation the API does in place.
-					requiresReplaceOnAddonRemoval(),
+					// 🔴 NO RequiresReplace IN EITHER DIRECTION, AND THE REMOVAL ONE WAS
+					// DELETED RATHER THAN NEVER WRITTEN. Both directions are now day-2
+					// operations on PUT .../clusters/{id}/addons: an addition applies in
+					// place, and a removal prunes the addon's objects in place. Until the
+					// platform could prune, a removal genuinely did require rebuilding the
+					// cluster, and the modifier that planned it was correct. It is not any
+					// more — keeping it would destroy a customer's cluster, and every
+					// workload on it, to perform an operation that now happens in the
+					// background without an outage.
 				},
 			},
 			"initial_node_pool": schema.SingleNestedAttribute{
@@ -774,18 +782,41 @@ func (r *kubernetesClusterResource) Update(ctx context.Context, req resource.Upd
 		}
 	}
 
-	// ADDONS — additions only; a removal never reaches here, because
-	// requiresReplaceOnAddonRemoval planned a replacement instead.
+	// ADDONS — ADDITIONS AND REMOVALS, BOTH IN PLACE. Removing one used to plan a full
+	// cluster REPLACEMENT, because the API was add-only and rebuilding really was the
+	// only way to be rid of an addon. The API prunes now, so `requiresReplaceOnAddonRemoval`
+	// is deleted: destroying a customer's cluster and every workload on it, to perform an
+	// operation the platform does in the background without an outage, is not a plan any
+	// practitioner should be shown again.
+	//
+	// 🔴 THE REMOVAL MUST BE NAMED, NOT INFERRED FROM THE OMISSION. The endpoint refuses a
+	// selection short of the cluster's current one unless the request also NAMES the keys
+	// it drops — deliberately, so a client working from a stale read cannot delete. So
+	// `remove` is computed as state-minus-plan and sent alongside.
+	//
+	// 🔴 AND THAT MEANS AN ADDON ADDED OUT OF BAND WILL BE DELETED ON THE NEXT APPLY. Read
+	// refreshes `state.Addons` from the API before every plan, so an addon added via the
+	// portal or `fm` lands in state, is absent from config, and is therefore planned for
+	// removal. That is ordinary Terraform — config is authoritative and drift is reverted
+	// — and `terraform plan` prints it for approval before anything happens. It is NOT
+	// safe "by construction", so the schema description says so in as many words.
+	//
+	// `-refresh=false` fails CLOSED rather than silently: a stale state yields a `remove`
+	// that does not cover what the server computes, and the server refuses.
+	//
 	// 🔴 NULL IS GUARDED ALONGSIDE UNKNOWN, and they mean different things. Unknown is
 	// "not resolved yet"; null is "the practitioner did not configure it". Neither is
-	// "the empty set" — but setToStringSlice(null) produces `{"addons": []}`, which the
-	// server reads as a removal of everything and refuses with a 400. Not reachable
-	// today (Optional+Computed with UseStateForUnknown cannot present a null plan against
-	// a non-null state), which is exactly why it is worth guarding: the day some other
-	// modifier changes that, the failure is a customer-facing error on an apply that
-	// asked for nothing.
+	// "the empty set" — and setToStringSlice(null) produces `{"addons": []}`, which with a
+	// matching `remove` would now DELETE every addon rather than being refused. The guard
+	// mattered before as a 400; it matters more now that the same request would succeed.
+	// Not reachable today (Optional+Computed with UseStateForUnknown cannot present a null
+	// plan against a non-null state), which is exactly why it is worth keeping.
 	if !plan.Addons.IsUnknown() && !plan.Addons.IsNull() && !plan.Addons.Equal(state.Addons) {
-		if _, err := r.client.Put(ctx, r.clusterPath(id)+"/addons", apiUpdateClusterAddonsRequest{Addons: setToStringSlice(plan.Addons)}); err != nil {
+		body := apiUpdateClusterAddonsRequest{
+			Addons: setToStringSlice(plan.Addons),
+			Remove: removedAddons(state.Addons, plan.Addons),
+		}
+		if _, err := r.client.Put(ctx, r.clusterPath(id)+"/addons", body); err != nil {
 			resp.Diagnostics.AddError("Failed to change the cluster's addons", err.Error())
 			return
 		}
