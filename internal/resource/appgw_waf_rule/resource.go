@@ -166,7 +166,30 @@ func (r *ruleResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 					"`jsonencode({ conditions = [...], action = {...}, phase = 2 })`.\n\n" +
 					"A string rather than a nested block because the condition list is an ordered " +
 					"sequence whose shape the server owns; encoding it as JSON keeps this resource " +
-					"from having to re-declare — and drift from — that schema.",
+					"from having to re-declare — and drift from — that schema.\n\n" +
+					"**Conditions are ANDed** — every one must match. An OR is two rules.\n\n" +
+					"**`action.type`** is one of three:\n\n" +
+					"* `deny` — refuse the request with `action.status` (403 when unset).\n" +
+					"* `log` — record the match and change nothing else.\n" +
+					"* `allow` — do not refuse this request.\n\n" +
+					"`action.status` is the response code for a `deny` and is ignored otherwise. " +
+					"`action.message` is recorded whatever the action is, and is how you tell your " +
+					"own rules apart in the decision log — including which `allow` rule exempted a " +
+					"request.\n\n" +
+					"~> **`allow` exempts far less than the word suggests.** What it skips is the " +
+					"managed ruleset's anomaly-score decision — the one that answers 403 because a " +
+					"request accumulated enough suspicion, and the one that produces false " +
+					"positives. Everything else still refuses: the policy's `allowed_methods` and " +
+					"`allowed_request_content_types`, a request body the gateway could not parse, " +
+					"your own denying rules and any rule Frostmoln placed on the policy, because " +
+					"the rule runs after them. **Every condition must match** — an `allow` with two " +
+					"conditions exempts a request only when both are true, exactly like a `deny`. " +
+					"An allowed request is also not scored, so it carries no anomaly-score line in " +
+					"the inspection record.\n\n" +
+					"`allow` requires `phase = 2` and phase 1 is **refused rather than moved**: " +
+					"there it would also skip the gateway's own method and content-type refusals, " +
+					"which are not exemptable. A rule that only reads headers still works at phase " +
+					"2. `allow` is not available to `kind = \"raw\"`.",
 				Optional: true,
 			},
 			"raw": schema.StringAttribute{
