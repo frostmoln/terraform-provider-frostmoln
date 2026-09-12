@@ -2,7 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.60.0] - 2026-09-11
+## [0.60.1] - 2026-09-12
+
+### 📚 Documentation
+
+- *(appgw_waf_rule)* Document the allow and log actions, and fix the operators (#527)
+
+## [0.60.0] - 2026-09-12
 
 ### 🚀 Features
 
