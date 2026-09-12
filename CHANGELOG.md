@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.60.0] - 2026-09-11
+
+### 🚀 Features
+
+- *(provider)* Enforce the description-behavior contract — walker + honest drift-prone descriptions (#525)
+
+### 🧪 Testing
+
+- *(appgw)* Cover the attachment's null effective_mode leg, and correct what the pin actually closes (#523)
+
 ## [0.59.0] - 2026-09-11
 
 ### 🚀 Features
