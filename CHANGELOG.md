@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.61.1] - 2026-09-13
+
+### 🐛 Bug Fixes
+
+- *(tags)* Read-back hides drift on bucket, five resources cannot clear tags (#531)
+
 ## [0.61.0] - 2026-09-13
 
 ### 🚀 Features
