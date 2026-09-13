@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.62.0] - 2026-09-13
+
+### 🚀 Features
+
+- *(provider)* Default_tags and computed tags_all on every taggable resource (#533)
+
 ## [0.61.1] - 2026-09-13
 
 ### 🐛 Bug Fixes
