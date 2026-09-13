@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.61.0] - 2026-09-13
+
+### 🚀 Features
+
+- *(kubernetes)* Pin cluster addon versions and read pinned vs applied (#529)
+
 ## [0.60.1] - 2026-09-12
 
 ### 📚 Documentation
