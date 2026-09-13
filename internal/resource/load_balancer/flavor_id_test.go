@@ -21,7 +21,7 @@ import (
 // creation and immutable, so an empty flavorId is an API gap, never a change.
 func TestFromAPIPreservesConfiguredFlavorWhenTheAPIOmitsIt(t *testing.T) {
 	t.Run("configured flavor survives an omitted flavorId", func(t *testing.T) {
-		m := &LoadBalancerModel{FlavorID: types.StringValue("lb-large")}
+		m := &LoadBalancerModel{FlavorID: types.StringValue("lb-large"), TagsAll: types.MapNull(types.StringType)}
 		m.fromAPI(context.Background(), &apiLoadBalancer{ID: "lb-1", Name: "web", Type: "l7"}, &diag.Diagnostics{})
 		if m.FlavorID.IsNull() {
 			t.Fatal("configured flavor was nulled; the next plan would propose a replacement")
@@ -40,7 +40,7 @@ func TestFromAPIPreservesConfiguredFlavorWhenTheAPIOmitsIt(t *testing.T) {
 	})
 
 	t.Run("an unset flavor stays null", func(t *testing.T) {
-		m := &LoadBalancerModel{FlavorID: types.StringNull()}
+		m := &LoadBalancerModel{FlavorID: types.StringNull(), TagsAll: types.MapNull(types.StringType)}
 		m.fromAPI(context.Background(), &apiLoadBalancer{ID: "lb-1", Name: "web", Type: "l4"}, &diag.Diagnostics{})
 		if !m.FlavorID.IsNull() {
 			t.Errorf("flavor = %q, want null", m.FlavorID.ValueString())
@@ -49,7 +49,7 @@ func TestFromAPIPreservesConfiguredFlavorWhenTheAPIOmitsIt(t *testing.T) {
 
 	// public_ip_id keeps the opposite behaviour on purpose.
 	t.Run("public_ip_id still nulls on absence, deliberately", func(t *testing.T) {
-		m := &LoadBalancerModel{PublicIPID: types.StringValue("pip-1")}
+		m := &LoadBalancerModel{PublicIPID: types.StringValue("pip-1"), TagsAll: types.MapNull(types.StringType)}
 		m.fromAPI(context.Background(), &apiLoadBalancer{ID: "lb-1", Name: "web", Type: "l7"}, &diag.Diagnostics{})
 		if !m.PublicIPID.IsNull() {
 			t.Error("public_ip_id must reflect detachment; an address CAN go away out-of-band")

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -24,6 +25,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // --- the orphan create-timeout arm (ADOPT-AS-TRACKED) ---
@@ -412,9 +414,14 @@ func TestInstanceModelToCreateRequest(t *testing.T) {
 		ConsolePassword: types.StringValue("s3cret-console"),
 		InstanceAccess:  types.BoolValue(true),
 		Tags:            tags,
+		TagsAll:         types.MapNull(types.StringType),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
+
+	// Tags are merged by Create (tftags.ForCreate); assemble the request as it does.
+
+	req.Tags = tftags.ForCreate(ctx, tftags.Defaults{}, model.Tags, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
@@ -474,6 +481,7 @@ func TestInstanceModelToCreateRequestMinimal(t *testing.T) {
 		ConsolePassword: types.StringNull(),
 		InstanceAccess:  types.BoolNull(),
 		Tags:            types.MapNull(types.StringType),
+		TagsAll:         types.MapNull(types.StringType),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
@@ -512,6 +520,7 @@ func TestInstanceCreateRequestInstanceAccessMarshalling(t *testing.T) {
 		FlavorID:       types.StringValue("f"),
 		ImageID:        types.StringValue("i"),
 		InstanceAccess: types.BoolValue(true),
+		TagsAll:        types.MapNull(types.StringType),
 	}
 	diags := diag.Diagnostics{}
 	body, err := json.Marshal(set.toCreateRequest(ctx, &diags))
@@ -534,6 +543,7 @@ func TestInstanceCreateRequestInstanceAccessMarshalling(t *testing.T) {
 			FlavorID:       types.StringValue("f"),
 			ImageID:        types.StringValue("i"),
 			InstanceAccess: val,
+			TagsAll:        types.MapNull(types.StringType),
 		}
 		diags = diag.Diagnostics{}
 		body, err = json.Marshal(m.toCreateRequest(ctx, &diags))
@@ -580,16 +590,14 @@ func TestInstanceModelToUpdateRequest(t *testing.T) {
 
 	sgs, d := types.SetValueFrom(ctx, types.StringType, []string{"sg-new"})
 	diags.Append(d...)
-	tags, d := types.MapValueFrom(ctx, types.StringType, map[string]string{"env": "prod"})
-	diags.Append(d...)
 
 	model := InstanceModel{
 		Name:           types.StringValue("renamed-vm"),
 		SecurityGroups: sgs,
-		Tags:           tags,
+		TagsAll:        types.MapNull(types.StringType),
 	}
 
-	req := model.toUpdateRequest(ctx, true, &diags)
+	req := model.toUpdateRequest(map[string]string{"env": "prod"}, true)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
@@ -621,6 +629,10 @@ func TestInstanceUpdateRequestMetadataSerialization(t *testing.T) {
 	if d.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", d.Errors())
 	}
+
+	// The request is assembled as Update assembles it: tftags.ForUpdate
+	// against a prior that held a tag, then the builder.
+	priorTags := types.MapValueMust(types.StringType, map[string]attr.Value{"old": types.StringValue("x")})
 
 	cases := []struct {
 		name        string
@@ -660,8 +672,9 @@ func TestInstanceUpdateRequestMetadataSerialization(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			diags := diag.Diagnostics{}
-			model := InstanceModel{Tags: tc.tags}
-			req := model.toUpdateRequest(ctx, tc.tagsChanged, &diags)
+			model := InstanceModel{Tags: tc.tags, TagsAll: types.MapNull(types.StringType)}
+			tags, _ := tftags.ForUpdate(ctx, tftags.Defaults{}, tc.tags, tftags.Prior{Tags: priorTags, TagsAll: priorTags}, &diags)
+			req := model.toUpdateRequest(tags, tc.tagsChanged)
 			if diags.HasError() {
 				t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 			}
@@ -711,6 +724,7 @@ func TestInstanceModelFromAPI(t *testing.T) {
 		SecurityGroups: priorSGs,
 		SSHKeyNames:    types.SetNull(types.StringType),
 		Tags:           types.MapNull(types.StringType),
+		TagsAll:        types.MapNull(types.StringType),
 	}
 	model.fromAPI(ctx, inst, &diags)
 	if diags.HasError() {
@@ -785,6 +799,7 @@ func TestInstanceModelFromAPIMinimalFields(t *testing.T) {
 		SecurityGroups: types.SetNull(types.StringType),
 		SSHKeyNames:    types.SetNull(types.StringType),
 		Tags:           types.MapNull(types.StringType),
+		TagsAll:        types.MapNull(types.StringType),
 	}
 	model.fromAPI(ctx, inst, &diags)
 	if diags.HasError() {
@@ -837,7 +852,7 @@ func TestInstanceModelFromAPIFiltersReservedTags(t *testing.T) {
 			CreatedAt: "2025-06-01T12:00:00Z",
 			Metadata:  map[string]string{"frostmoln_id": "7f58a27e-...", "frostmoln_type": "compute", "frostmoln_engine": "mysql"},
 		}
-		model := InstanceModel{Tags: types.MapNull(types.StringType)}
+		model := InstanceModel{Tags: types.MapNull(types.StringType), TagsAll: types.MapNull(types.StringType)}
 		model.fromAPI(ctx, inst, &diags)
 		if diags.HasError() {
 			t.Fatalf("unexpected diagnostics: %v", diags.Errors())
@@ -862,7 +877,7 @@ func TestInstanceModelFromAPIFiltersReservedTags(t *testing.T) {
 			CreatedAt: "2025-06-01T12:00:00Z",
 			Metadata:  map[string]string{"frostmoln_id": "abc", "frostmoln_type": "compute"},
 		}
-		model := InstanceModel{Tags: emptyTags}
+		model := InstanceModel{Tags: emptyTags, TagsAll: types.MapNull(types.StringType)}
 		model.fromAPI(ctx, inst, &diags)
 		if diags.HasError() {
 			t.Fatalf("unexpected diagnostics: %v", diags.Errors())
@@ -891,7 +906,7 @@ func TestInstanceModelFromAPIFiltersReservedTags(t *testing.T) {
 			CreatedAt: "2025-06-01T12:00:00Z",
 			Metadata:  map[string]string{"env": "prod", "frostmoln_id": "abc", "frostmoln_type": "compute"},
 		}
-		model := InstanceModel{Tags: priorTags}
+		model := InstanceModel{Tags: priorTags, TagsAll: types.MapNull(types.StringType)}
 		model.fromAPI(ctx, inst, &diags)
 		if diags.HasError() {
 			t.Fatalf("unexpected diagnostics: %v", diags.Errors())
@@ -920,7 +935,7 @@ func TestInstanceModelFromAPIFiltersReservedTags(t *testing.T) {
 			CreatedAt: "2025-06-01T12:00:00Z",
 			Metadata:  map[string]string{"customer-id": "mine", "frostmoln_id": "abc"},
 		}
-		model := InstanceModel{Tags: priorTags}
+		model := InstanceModel{Tags: priorTags, TagsAll: types.MapNull(types.StringType)}
 		model.fromAPI(ctx, inst, &diags)
 		if diags.HasError() {
 			t.Fatalf("unexpected diagnostics: %v", diags.Errors())
@@ -1689,6 +1704,7 @@ func instanceTFValue(t *testing.T, tfType tftypes.Type, vals map[string]tftypes.
 		"instance_access":             tftypes.NewValue(tftypes.Bool, nil),
 		"user_data_hash":              tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"tags":                        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"flavor_name":                 tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"image_name":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1899,6 +1915,7 @@ func TestInstanceResource_TFSDKCreate(t *testing.T) {
 		"tags": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{
 			"env": tftypes.NewValue(tftypes.String, "test"),
 		}),
+		"tags_all": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	createReq := resource.CreateRequest{
@@ -2291,6 +2308,7 @@ func TestInstanceResource_TFSDKRead(t *testing.T) {
 			"env":  tftypes.NewValue(tftypes.String, "prod"),
 			"team": tftypes.NewValue(tftypes.String, "platform"),
 		}),
+		"tags_all":   tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"created_at": tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
@@ -2911,6 +2929,10 @@ func TestInstanceResource_TFSDKUpdateResize(t *testing.T) {
 func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 	var patchCalled bool
 	var sgPutCalled bool
+	// The instance's metadata as the backend holds it: untagged until the
+	// PATCH. The update reads it before it writes, so a fake that answered
+	// with the post-update tags all along would make the write look redundant.
+	stored := map[string]string{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -2941,6 +2963,9 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 			if req.Tags == nil || (*req.Tags)["env"] != "prod" {
 				t.Errorf("expected tag env=prod (metadata), got %v", req.Tags)
 			}
+			if req.Tags != nil {
+				stored = *req.Tags
+			}
 			_ = json.NewEncoder(w).Encode(apiInstance{
 				ID:             "inst-tags-1",
 				Name:           "tags-vm",
@@ -2960,7 +2985,7 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 				FlavorID:       "flavor-small",
 				ImageID:        "img-ubuntu",
 				SecurityGroups: []string{"sg-new-1", "sg-new-2"},
-				Metadata:       map[string]string{"env": "prod"},
+				Metadata:       stored,
 				CreatedAt:      "2025-06-01T12:00:00Z",
 			})
 
@@ -3005,6 +3030,7 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 		"tags": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{
 			"env": tftypes.NewValue(tftypes.String, "dev"),
 		}),
+		"tags_all":       tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"flavor_name":    tftypes.NewValue(tftypes.String, nil),
 		"image_name":     tftypes.NewValue(tftypes.String, nil),
 		"private_ip":     tftypes.NewValue(tftypes.String, nil),
@@ -3027,6 +3053,7 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 		"tags": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{
 			"env": tftypes.NewValue(tftypes.String, "prod"),
 		}),
+		"tags_all":       tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"flavor_name":    tftypes.NewValue(tftypes.String, nil),
 		"image_name":     tftypes.NewValue(tftypes.String, nil),
 		"private_ip":     tftypes.NewValue(tftypes.String, nil),
@@ -3119,6 +3146,7 @@ func TestInstanceResource_TFSDKClearSecurityGroups(t *testing.T) {
 		"flavor_id": tftypes.NewValue(tftypes.String, "flavor-small"), "image_id": tftypes.NewValue(tftypes.String, "img-ubuntu"),
 		"status":      tftypes.NewValue(tftypes.String, "running"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"flavor_name": tftypes.NewValue(tftypes.String, nil), "image_name": tftypes.NewValue(tftypes.String, nil),
 		"private_ip": tftypes.NewValue(tftypes.String, nil), "public_ip": tftypes.NewValue(tftypes.String, nil),
 		"user_data": tftypes.NewValue(tftypes.String, nil), "user_data_hash": tftypes.NewValue(tftypes.String, nil),

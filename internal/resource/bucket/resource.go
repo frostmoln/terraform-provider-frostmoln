@@ -17,11 +17,13 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 var (
 	_ resource.Resource                = &bucketResource{}
 	_ resource.ResourceWithImportState = &bucketResource{}
+	_ resource.ResourceWithModifyPlan  = &bucketResource{}
 )
 
 // NewResource returns a new bucket resource factory.
@@ -80,13 +82,14 @@ func (r *bucketResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				},
 			},
 			"tags": schema.MapAttribute{
-				Description: "Tags associated with the bucket.",
+				Description: "Tags associated with the bucket." + tftags.TagsNote,
 				Optional:    true,
 				ElementType: types.StringType,
 				PlanModifiers: []planmodifier.Map{
 					mapplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"tags_all": tftags.TagsAllAttribute(),
 			"object_count": schema.Int64Attribute{
 				Description: "The number of objects in the bucket.",
 				Computed:    true,
@@ -128,8 +131,9 @@ func (r *bucketResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	apiReq, diags := plan.toCreateRequest(ctx)
-	resp.Diagnostics.Append(diags...)
+	defaults := r.client.DefaultTags()
+	apiReq := plan.toCreateRequest()
+	apiReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -139,6 +143,7 @@ func (r *bucketResource) Create(ctx context.Context, req resource.CreateRequest,
 		resp.Diagnostics.AddError("Failed to create bucket", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	b, err := client.ParseResponse[apiBucket](apiResp)
 	if err != nil {
@@ -178,6 +183,7 @@ func (r *bucketResource) Read(ctx context.Context, req resource.ReadRequest, res
 	}
 
 	resp.Diagnostics.Append(state.fromAPI(ctx, b)...)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -192,8 +198,21 @@ func (r *bucketResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	apiReq, diags := plan.toUpdateRequest(ctx)
-	resp.Diagnostics.Append(diags...)
+	var state BucketModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	defaults := r.client.DefaultTags()
+	apiReq := plan.toUpdateRequest()
+	current, err := r.currentTags(ctx, r.client.TenantPath("/buckets/"+url.PathEscape(state.Name.ValueString())))
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	prior := tftags.PriorOf(ctx, state.Tags, state.TagsAll, req.Private, &resp.Diagnostics).WithCurrent(current)
+	apiReq.Tags, _ = tftags.ForUpdate(ctx, defaults, plan.Tags, prior, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -207,6 +226,7 @@ func (r *bucketResource) Update(ctx context.Context, req resource.UpdateRequest,
 		resp.Diagnostics.AddError("Failed to update bucket", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	b, err := client.ParseResponse[apiBucket](apiResp)
 	if err != nil {
@@ -240,4 +260,27 @@ func (r *bucketResource) Delete(ctx context.Context, req resource.DeleteRequest,
 
 func (r *bucketResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
+}
+
+// ModifyPlan predicts tags_all: unknown whenever the next write changes the
+// platform's tag set, including a change to the provider's default_tags.
+func (r *bucketResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+}
+
+// currentTags reads the tags the platform holds right now, at memberPath. An update
+// derives the keys it keeps — the ones this configuration does not manage —
+// from this rather than from state, which is only as fresh as the last
+// refresh (tftags.Prior.WithCurrent).
+func (r *bucketResource) currentTags(ctx context.Context, memberPath string) (map[string]string, error) {
+	apiResp, err := r.client.Get(ctx, memberPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := client.ParseResponse[apiBucket](apiResp)
+	if err != nil {
+		return nil, err
+	}
+	return obj.customerTags(), nil
 }

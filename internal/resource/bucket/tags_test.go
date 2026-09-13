@@ -59,6 +59,7 @@ func TestBucketReadUntaggedDropsPriorTags(t *testing.T) {
 		ObjectCount:  types.Int64Value(0),
 		SizeBytes:    types.Int64Value(0),
 		CreatedAt:    types.StringValue("2025-01-01T00:00:00Z"),
+		TagsAll:      types.MapNull(types.StringType),
 	}); d.HasError() {
 		t.Fatalf("fixture: %v", d)
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // --- Model unit tests ---
@@ -44,9 +45,14 @@ func TestScaleGroupModelToCreateRequest(t *testing.T) {
 		CooldownSeconds:        types.Int64Value(60),
 		TerminationPolicy:      types.StringValue("newest_first"),
 		Tags:                   tags,
+		TagsAll:                types.MapNull(types.StringType),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
+
+	// Tags are merged by Create (tftags.ForCreate); assemble the request as it does.
+
+	req.Tags = tftags.ForCreate(ctx, tftags.Defaults{}, model.Tags, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
@@ -101,6 +107,7 @@ func TestScaleGroupModelToCreateRequestMinimal(t *testing.T) {
 		CooldownSeconds:        types.Int64Null(),
 		TerminationPolicy:      types.StringNull(),
 		Tags:                   types.MapNull(types.StringType),
+		TagsAll:                types.MapNull(types.StringType),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
@@ -139,6 +146,7 @@ func TestScaleGroupModelToUpdateRequest(t *testing.T) {
 		CooldownSeconds:        types.Int64Value(90),
 		TerminationPolicy:      types.StringValue("newest_first"),
 		Tags:                   types.MapNull(types.StringType),
+		TagsAll:                types.MapNull(types.StringType),
 	}
 	state := ScaleGroupModel{
 		Name:                   types.StringValue("old"),
@@ -154,6 +162,7 @@ func TestScaleGroupModelToUpdateRequest(t *testing.T) {
 		CooldownSeconds:        types.Int64Value(300),
 		TerminationPolicy:      types.StringValue("oldest_first"),
 		Tags:                   types.MapNull(types.StringType),
+		TagsAll:                types.MapNull(types.StringType),
 	}
 
 	req := plan.toUpdateRequest(ctx, &state, &diags)
@@ -212,6 +221,7 @@ func TestScaleGroupModelToUpdateRequestNoChanges(t *testing.T) {
 		CooldownSeconds:        types.Int64Value(300),
 		TerminationPolicy:      types.StringValue("oldest_first"),
 		Tags:                   types.MapNull(types.StringType),
+		TagsAll:                types.MapNull(types.StringType),
 	}
 
 	req := same.toUpdateRequest(ctx, &same, &diags)
@@ -498,6 +508,7 @@ func fullSGModel(t *testing.T) ScaleGroupModel {
 		Tags:                   types.MapNull(types.StringType),
 		CreatedAt:              types.StringValue("2025-01-01T00:00:00Z"),
 		UpdatedAt:              types.StringNull(),
+		TagsAll:                types.MapNull(types.StringType),
 	}
 }
 

@@ -12,6 +12,7 @@ description: |-
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — vpc_id: the network API has no in-place update for it, so a change destroys and re-creates the group.
   Not enacted state — delete_default_egress: a create-time directive: it applies when the group is created, and changing it on an existing group is a documented no-op (the plan warns to that effect).
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
   Platform-invented default — allow-all egress pair (IPv4 + IPv6, empty remote prefix, injected by the network service on every new group): delete-on-create. The pair is not load-bearing; delete_default_egress = true removes it at create (opt-in today, the default flips to true at provider v2 with a deprecation notice ahead of it).
   Platform-invented default — the tenant's default security group (is_default): keep-with-docs. Readable as the computed is_default; no default_* resource exists to adopt it today.
 ---
@@ -35,6 +36,8 @@ Manages a security group in the Frostmoln Cloud Platform.
 **Create-immutable** — `vpc_id`: the network API has no in-place update for it, so a change destroys and re-creates the group.
 
 **Not enacted state** — `delete_default_egress`: a create-time directive: it applies when the group is created, and changing it on an existing group is a documented no-op (the plan warns to that effect).
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 **Platform-invented default** — allow-all egress pair (IPv4 + IPv6, empty remote prefix, injected by the network service on every new group): **delete-on-create**. The pair is not load-bearing; `delete_default_egress = true` removes it at create (opt-in today, the default flips to `true` at provider v2 with a deprecation notice ahead of it).
 
@@ -88,7 +91,7 @@ resource "frostmoln_security_group_rule" "web_egress_https" {
 
 This is create-time behaviour only. The value is carried in state so plans stay clean, changing it on an existing group does nothing, and Read never lists or manages rules. Defaults to `false` today; at provider v2 the default flips to `true`, announced by a deprecation notice in the v1 line ahead of the flip.
 - `description` (String) A description of the security group. The platform does not persist it yet: its storage layer reserves the description field for internal metadata, so the value reads back empty and a configured description reappears as a pending change on every plan until the platform persists it. Do not rely on this attribute for anything an audit trail would need.
-- `tags` (Map of String) Tags for the security group.
+- `tags` (Map of String) Tags for the security group. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `vpc_id` (String) The ID of the VPC this security group belongs to.
 
@@ -97,6 +100,7 @@ This is create-time behaviour only. The value is carried in state so plans stay 
 - `created_at` (String) The creation timestamp.
 - `id` (String) The unique identifier of the security group.
 - `is_default` (Boolean) Whether this is the default security group.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 
 <a id="nestedblock--timeouts"></a>
 ### Nested Schema for `timeouts`

@@ -77,6 +77,7 @@ func TestPoolToCreateRequestSessionPersistence(t *testing.T) {
 			CookieName:         types.StringValue("SESSIONID"),
 			PersistenceTimeout: types.Int64Value(60),
 		},
+		TagsAll: types.MapNull(types.StringType),
 	}
 	req := m.toCreateRequest(context.Background(), &diag.Diagnostics{})
 	if req.SessionPersistence == nil {
@@ -92,12 +93,12 @@ func TestPoolToCreateRequestSessionPersistence(t *testing.T) {
 		t.Errorf("expected 60, got %d", req.SessionPersistence.PersistenceTimeout)
 	}
 
-	up := m.toUpdateRequest(context.Background(), types.MapNull(types.StringType), &diag.Diagnostics{})
+	up := m.toUpdateRequest()
 	if up.SessionPersistence == nil || up.SessionPersistence.Type != "APP_COOKIE" {
 		t.Errorf("expected session_persistence in update request")
 	}
 
-	empty := &PoolModel{Name: types.StringValue("x"), Protocol: types.StringValue("tcp"), LBAlgorithm: types.StringValue("round_robin")}
+	empty := &PoolModel{Name: types.StringValue("x"), Protocol: types.StringValue("tcp"), LBAlgorithm: types.StringValue("round_robin"), TagsAll: types.MapNull(types.StringType)}
 	if empty.toCreateRequest(context.Background(), &diag.Diagnostics{}).SessionPersistence != nil {
 		t.Errorf("expected nil session_persistence when unset")
 	}
@@ -160,6 +161,7 @@ func emptyPool(ctx context.Context, schemaResp resource.SchemaResponse) tftypes.
 		"proxy_protocol":      tftypes.NewValue(tftypes.String, nil),
 		"session_persistence": tftypes.NewValue(spType, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":            tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"created_at":          tftypes.NewValue(tftypes.String, nil),
 		"updated_at":          tftypes.NewValue(tftypes.String, nil),
 		"timeouts":            tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
@@ -189,6 +191,7 @@ func poolCreatePlanValue(ctx context.Context, schemaResp resource.SchemaResponse
 		"proxy_protocol":      tftypes.NewValue(tftypes.String, "none"),
 		"session_persistence": tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["session_persistence"], nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":            tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"created_at":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"updated_at":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"timeouts":            tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),

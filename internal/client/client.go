@@ -17,6 +17,7 @@ import (
 
 	"go.frostmoln.internal/oidc"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/clicreds"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // Client is the Frostmoln API client for the Terraform provider.
@@ -39,6 +40,10 @@ type Client struct {
 	// of adopting the default tenant from GET /v1/me.
 	tenantOverridden bool
 	userID           string
+	// defaultTags is the provider's default_tags block. It rides on the client
+	// because the client is what every resource already receives as its
+	// ProviderData, so no resource's Configure had to change to reach it.
+	defaultTags tftags.Defaults
 }
 
 // ProviderVersionHeader carries the Frostmoln Terraform provider build version
@@ -125,6 +130,25 @@ func WithTenantID(tenantID string) Option {
 	}
 }
 
+// WithDefaultTags sets the provider's default_tags, which every taggable
+// resource merges into its writes (see internal/tftags). The map is copied.
+func WithDefaultTags(d tftags.Defaults) Option {
+	return func(c *Client) {
+		c.defaultTags = copyDefaults(d)
+	}
+}
+
+func copyDefaults(d tftags.Defaults) tftags.Defaults {
+	out := tftags.Defaults{Unknown: d.Unknown}
+	if len(d.Tags) > 0 {
+		out.Tags = make(map[string]string, len(d.Tags))
+		for k, v := range d.Tags {
+			out.Tags[k] = v
+		}
+	}
+	return out
+}
+
 // UserProfile represents the response from GET /v1/me.
 type UserProfile struct {
 	ID       string `json:"id"`
@@ -187,6 +211,15 @@ func (c *Client) TenantID() string {
 // UserID returns the resolved user ID.
 func (c *Client) UserID() string {
 	return c.userID
+}
+
+// DefaultTags returns a copy of the provider's default_tags. A nil client (a
+// resource whose provider was never configured) has none.
+func (c *Client) DefaultTags() tftags.Defaults {
+	if c == nil {
+		return tftags.Defaults{}
+	}
+	return copyDefaults(c.defaultTags)
 }
 
 // SetTenantIDForTest sets the tenant ID directly for testing purposes.

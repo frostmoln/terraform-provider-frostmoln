@@ -7,7 +7,7 @@ description: |-
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — name: the zone's name is its identity — the zone IS the name.
-  Observed, not enacted — name_servers: platform-assigned when the zone is created; delegate to these. serial: the platform bumps it on every record change, including changes made out of band.
+  Observed, not enacted — name_servers: platform-assigned when the zone is created; delegate to these. serial: the platform bumps it on every record change, including changes made out of band. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_dns_zone (Resource)
@@ -20,7 +20,7 @@ Manages a managed DNS zone in the Frostmoln Cloud Platform. Each primary zone is
 
 **Create-immutable** — `name`: the zone's name is its identity — the zone IS the name.
 
-**Observed, not enacted** — `name_servers`: platform-assigned when the zone is created; delegate to these. `serial`: the platform bumps it on every record change, including changes made out of band.
+**Observed, not enacted** — `name_servers`: platform-assigned when the zone is created; delegate to these. `serial`: the platform bumps it on every record change, including changes made out of band. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -54,7 +54,7 @@ output "delegation_name_servers" {
 ### Optional
 
 - `description` (String) A description of the zone.
-- `tags` (Map of String) Key-value tags for the zone.
+- `tags` (Map of String) Key-value tags for the zone. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `ttl` (Number) The default record TTL in seconds.
 
 ### Read-Only
@@ -65,5 +65,6 @@ output "delegation_name_servers" {
 - `record_count` (Number) The number of editable records in the zone.
 - `serial` (Number) The SOA serial of the zone.
 - `status` (String) The status of the zone.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `type` (String) The zone type (primary).
 - `updated_at` (String) The last update timestamp.

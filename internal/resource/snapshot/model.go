@@ -19,6 +19,7 @@ type SnapshotModel struct {
 	Description types.String `tfsdk:"description"`
 	VolumeID    types.String `tfsdk:"volume_id"`
 	Tags        types.Map    `tfsdk:"tags"`
+	TagsAll     types.Map    `tfsdk:"tags_all"`
 	Status      types.String `tfsdk:"status"`
 	SizeGB      types.Int64  `tfsdk:"size_gb"`
 	CreatedAt   types.String `tfsdk:"created_at"`
@@ -51,6 +52,20 @@ type apiCreateSnapshotRequest struct {
 	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
+// apiUpdateSnapshotRequest is the in-place update of a snapshot's tags
+// (PUT /tenants/{t}/volumes/{v}/snapshots/{s}, served by storage since v1.23.0).
+//
+// Metadata carries no omitempty. storage acts on it whenever it is non-nil: it
+// drops any reserved key from the incoming map, re-stamps the snapshot's
+// existing reserved keys (customer-id above all — ownership and metering
+// resolve through it), and Cinder applies the result as a REPLACE. So {} clears
+// the customer's tags and leaves the platform's in place. Name and description
+// could ride along too, but this resource replaces on them, so they are not
+// sent.
+type apiUpdateSnapshotRequest struct {
+	Metadata map[string]string `json:"metadata"`
+}
+
 // toCreateRequest converts the Terraform model to an API create request.
 func (m *SnapshotModel) toCreateRequest(ctx context.Context, diags *diag.Diagnostics) apiCreateSnapshotRequest {
 	req := apiCreateSnapshotRequest{
@@ -61,11 +76,8 @@ func (m *SnapshotModel) toCreateRequest(ctx context.Context, diags *diag.Diagnos
 	if !m.Description.IsNull() && !m.Description.IsUnknown() {
 		req.Description = m.Description.ValueString()
 	}
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		tags := make(map[string]string)
-		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		req.Metadata = tags
-	}
+	// Tags are set by Create, which merges the provider's default_tags into
+	// them (tftags.ForCreate).
 
 	return req
 }
@@ -96,5 +108,13 @@ func (m *SnapshotModel) fromAPI(ctx context.Context, snap *apiSnapshot, diags *d
 	// stamps with reserved keys (bare *-id + frostmoln_*). They are NOT customer
 	// tags — filter them out (same storage set as volumes), otherwise a null/unset
 	// tags plan reads back the system keys ("inconsistent result after apply").
-	m.Tags = tftags.FromAPI(ctx, reservedmeta.FilterVolume(snap.Metadata), m.Tags, diags)
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, snap.customerTags(), m.Tags, diags)
+}
+
+// customerTags is the tag set the platform holds on the object, as Terraform
+// sees it: platform-reserved keys filtered out. The read-back and the fresh
+// read an update makes before it writes (tftags.Prior.WithCurrent) both use
+// it, so the two cannot disagree about what counts as a tag.
+func (a *apiSnapshot) customerTags() map[string]string {
+	return reservedmeta.FilterVolume(a.Metadata)
 }

@@ -63,8 +63,9 @@ func TestHealthMonitorToUpdateRequestExpectedCodes(t *testing.T) {
 		Timeout:       types.Int64Value(5),
 		MaxRetries:    types.Int64Value(3),
 		ExpectedCodes: types.StringValue("200,202"),
+		TagsAll:       types.MapNull(types.StringType),
 	}
-	req := m.toUpdateRequest(context.Background(), types.MapNull(types.StringType), &diag.Diagnostics{})
+	req := m.toUpdateRequest()
 	if req.ExpectedCodes == nil {
 		t.Fatalf("expected ExpectedCodes in update request, got nil")
 	}
@@ -73,8 +74,8 @@ func TestHealthMonitorToUpdateRequestExpectedCodes(t *testing.T) {
 	}
 
 	// Null expected_codes should be omitted.
-	empty := &HealthMonitorModel{ExpectedCodes: types.StringNull()}
-	if empty.toUpdateRequest(context.Background(), types.MapNull(types.StringType), &diag.Diagnostics{}).ExpectedCodes != nil {
+	empty := &HealthMonitorModel{ExpectedCodes: types.StringNull(), TagsAll: types.MapNull(types.StringType)}
+	if empty.toUpdateRequest().ExpectedCodes != nil {
 		t.Errorf("expected nil ExpectedCodes when unset")
 	}
 }
@@ -132,6 +133,7 @@ func emptyHM(ctx context.Context, schemaResp resource.SchemaResponse) tftypes.Va
 		"http_method":      tftypes.NewValue(tftypes.String, nil),
 		"expected_codes":   tftypes.NewValue(tftypes.String, nil),
 		"tags":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"created_at":       tftypes.NewValue(tftypes.String, nil),
 		"updated_at":       tftypes.NewValue(tftypes.String, nil),
 		"timeouts":         tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
@@ -290,6 +292,7 @@ func hmCreatePlanValue(ctx context.Context, schemaResp resource.SchemaResponse) 
 		"http_method":      tftypes.NewValue(tftypes.String, nil),
 		"expected_codes":   tftypes.NewValue(tftypes.String, nil),
 		"tags":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"created_at":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"updated_at":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"timeouts":         tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),

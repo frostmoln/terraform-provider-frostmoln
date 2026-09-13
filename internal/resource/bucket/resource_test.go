@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -17,24 +18,19 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 func TestBucketModelToCreateRequest(t *testing.T) {
-	ctx := context.Background()
-	tags, _ := types.MapValueFrom(ctx, types.StringType, map[string]string{"env": "prod"})
-
 	model := BucketModel{
 		Name:         types.StringValue("my-bucket"),
 		Region:       types.StringValue("sweden"),
 		StorageClass: types.StringValue("standard"),
 		Versioning:   types.StringValue("enabled"),
-		Tags:         tags,
+		TagsAll:      types.MapNull(types.StringType),
 	}
 
-	req, diags := model.toCreateRequest(ctx)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
+	req := model.toCreateRequest()
 
 	if req.Name != "my-bucket" {
 		t.Errorf("expected name my-bucket, got %s", req.Name)
@@ -48,26 +44,23 @@ func TestBucketModelToCreateRequest(t *testing.T) {
 	if !req.Versioning {
 		t.Errorf("expected versioning true, got %v", req.Versioning)
 	}
-	if req.Tags["env"] != "prod" {
-		t.Errorf("expected tag env=prod, got %v", req.Tags)
+	// Tags are Create's job (tftags.ForCreate), covered by tags_test.go.
+	if req.Tags != nil {
+		t.Errorf("the builder must leave tags to Create, got %v", req.Tags)
 	}
 }
 
 func TestBucketModelToCreateRequestOptionalFieldsNull(t *testing.T) {
-	ctx := context.Background()
-
 	model := BucketModel{
 		Name:         types.StringValue("minimal-bucket"),
 		Region:       types.StringNull(),
 		StorageClass: types.StringNull(),
 		Versioning:   types.StringNull(),
 		Tags:         types.MapNull(types.StringType),
+		TagsAll:      types.MapNull(types.StringType),
 	}
 
-	req, diags := model.toCreateRequest(ctx)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
+	req := model.toCreateRequest()
 
 	if req.Name != "minimal-bucket" {
 		t.Errorf("expected name minimal-bucket, got %s", req.Name)
@@ -84,24 +77,15 @@ func TestBucketModelToCreateRequestOptionalFieldsNull(t *testing.T) {
 }
 
 func TestBucketModelToUpdateRequest(t *testing.T) {
-	ctx := context.Background()
-	tags, _ := types.MapValueFrom(ctx, types.StringType, map[string]string{"team": "ops"})
-
 	model := BucketModel{
 		Versioning: types.StringValue("suspended"),
-		Tags:       tags,
+		TagsAll:    types.MapNull(types.StringType),
 	}
 
-	req, diags := model.toUpdateRequest(ctx)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
+	req := model.toUpdateRequest()
 
 	if req.Versioning == nil || *req.Versioning != "suspended" {
 		t.Errorf("expected versioning suspended, got %v", req.Versioning)
-	}
-	if req.Tags["team"] != "ops" {
-		t.Errorf("expected tag team=ops, got %v", req.Tags)
 	}
 }
 
@@ -111,8 +95,12 @@ func TestBucketModelToUpdateRequest(t *testing.T) {
 // omitempty it vanished, the server kept the old tags, and reading them back
 // against a config that declares none is an inconsistent-result error with no
 // HCL that can fix it. This path was unreachable while every update 404'd.
+//
+// The request is assembled exactly as Update assembles it: the builder, then
+// the tags tftags.ForUpdate computes against a prior that held a tag.
 func TestBucketModelToUpdateRequestClearsTags(t *testing.T) {
 	ctx := context.Background()
+	prior := types.MapValueMust(types.StringType, map[string]attr.Value{"env": types.StringValue("prod")})
 
 	for _, tc := range []struct {
 		name string
@@ -122,8 +110,10 @@ func TestBucketModelToUpdateRequestClearsTags(t *testing.T) {
 		{"null map", types.MapNull(types.StringType)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			model := BucketModel{Tags: tc.tags}
-			req, diags := model.toUpdateRequest(ctx)
+			model := BucketModel{Tags: tc.tags, TagsAll: types.MapNull(types.StringType)}
+			req := model.toUpdateRequest()
+			var diags diag.Diagnostics
+			req.Tags, _ = tftags.ForUpdate(ctx, tftags.Defaults{}, model.Tags, tftags.Prior{Tags: prior, TagsAll: prior}, &diags)
 			if diags.HasError() {
 				t.Fatalf("unexpected diagnostics: %v", diags)
 			}
@@ -429,6 +419,7 @@ func bucketObjectType() tftypes.Object {
 			"storage_class": tftypes.String,
 			"versioning":    tftypes.String,
 			"tags":          tftypes.Map{ElementType: tftypes.String},
+			"tags_all":      tftypes.Map{ElementType: tftypes.String},
 			"object_count":  tftypes.Number,
 			"size_bytes":    tftypes.Number,
 			"created_at":    tftypes.String,
@@ -529,6 +520,7 @@ func TestBucketResourceCreate(t *testing.T) {
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"created_at":    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -587,6 +579,7 @@ func TestBucketResourceRead(t *testing.T) {
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 0),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, 0),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -630,6 +623,7 @@ func TestBucketResourceReadNotFoundRemovesState(t *testing.T) {
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 0),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, 0),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -669,6 +663,11 @@ func TestBucketResourceUpdate(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(bucketResp)
 			return
 		}
+		// The update reads the bucket's current tags before it writes them.
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/buckets/upd-bucket" {
+			_ = json.NewEncoder(w).Encode(bucketResp)
+			return
+		}
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 	}))
@@ -688,6 +687,7 @@ func TestBucketResourceUpdate(t *testing.T) {
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 10),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, 5000),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -699,6 +699,7 @@ func TestBucketResourceUpdate(t *testing.T) {
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "suspended"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -746,6 +747,7 @@ func TestBucketResourceDelete(t *testing.T) {
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 0),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, 0),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -783,6 +785,7 @@ func TestBucketResourceDeleteAlreadyGone(t *testing.T) {
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 0),
 		"size_bytes":    tftypes.NewValue(tftypes.Number, 0),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),

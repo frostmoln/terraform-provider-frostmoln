@@ -59,6 +59,7 @@ type PublicIPModel struct {
 	Address    types.String `tfsdk:"address"`
 	InstanceID types.String `tfsdk:"instance_id"`
 	Tags       types.Map    `tfsdk:"tags"`
+	TagsAll    types.Map    `tfsdk:"tags_all"`
 	Status     types.String `tfsdk:"status"`
 	PrivateIP  types.String `tfsdk:"private_ip"`
 	CreatedAt  types.String `tfsdk:"created_at"`
@@ -214,23 +215,10 @@ type apiInstanceForPort struct {
 
 // apiUpdatePublicIPRequest is the API request to update tags on a public IP.
 type apiUpdatePublicIPRequest struct {
-	// No `omitempty`: see tftags.ForUpdate. network merges on
+	// No `omitempty`: see tftags.ForUpdate. network replaces on
 	// `if req.Tags != nil`, and omitempty drops an empty non-nil map, so the two
 	// together made clearing tags impossible.
 	Tags map[string]string `json:"tags"`
-}
-
-// toAllocateRequest converts the Terraform model to an API allocate request.
-func (m *PublicIPModel) toAllocateRequest(ctx context.Context, diags *diag.Diagnostics) apiAllocatePublicIPRequest {
-	req := apiAllocatePublicIPRequest{}
-
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		tags := make(map[string]string)
-		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		req.Tags = tags
-	}
-
-	return req
 }
 
 // fromAPI populates the Terraform model from an API response.
@@ -268,8 +256,8 @@ func (m *PublicIPModel) fromAPI(ctx context.Context, fip *apiPublicIP, diags *di
 	// Same treatment as volume/instance.
 	//
 	// Filtering runs first, so a read holding only platform-owned keys is "no
-	// tags" to tftags.FromAPI.
-	m.Tags = tftags.FromAPI(ctx, reservedmeta.FilterNetwork(fip.Tags), m.Tags, diags)
+	// tags" to tftags.ReadBack.
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, fip.customerTags(), m.Tags, diags)
 }
 
 // AttachmentObject renders the attachment as a Terraform object, always
@@ -315,4 +303,12 @@ func nullIfEmpty(s string) types.String {
 		return types.StringNull()
 	}
 	return types.StringValue(s)
+}
+
+// customerTags is the tag set the platform holds on the object, as Terraform
+// sees it: platform-reserved keys filtered out. The read-back and the fresh
+// read an update makes before it writes (tftags.Prior.WithCurrent) both use
+// it, so the two cannot disagree about what counts as a tag.
+func (a *apiPublicIP) customerTags() map[string]string {
+	return reservedmeta.FilterNetwork(a.Tags)
 }

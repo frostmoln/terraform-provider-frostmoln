@@ -140,13 +140,14 @@ func (r *publicIPResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Optional: true,
 			},
 			"tags": schema.MapAttribute{
-				Description: "Tags for the public IP.",
+				Description: "Tags for the public IP." + tftags.TagsNote,
 				Optional:    true,
 				ElementType: types.StringType,
 				PlanModifiers: []planmodifier.Map{
 					mapplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"tags_all": tftags.TagsAllAttribute(),
 			"status": schema.StringAttribute{
 				Description: "The status of the public IP.",
 				Computed:    true,
@@ -279,7 +280,11 @@ func (r *publicIPResource) Configure(_ context.Context, req resource.ConfigureRe
 // aborts with "Provider produced inconsistent result after apply", which no
 // retry clears. With `instance_id` unchanged the state value is kept, so an
 // unchanged resource still plans empty.
+//
+// 3. It predicts tags_all (tftags.PlanTagsAll).
 func (r *publicIPResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+
 	if req.State.Raw.IsNull() {
 		// Create: every null Computed attribute is unknown already.
 		return
@@ -504,7 +509,10 @@ func (r *publicIPResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
-	allocateReq := plan.toAllocateRequest(ctx, &resp.Diagnostics)
+	defaults := r.client.DefaultTags()
+	allocateReq := apiAllocatePublicIPRequest{
+		Tags: tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics),
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -519,6 +527,7 @@ func (r *publicIPResource) Create(ctx context.Context, req resource.CreateReques
 		resp.Diagnostics.AddError("Failed to Allocate Public IP", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// Allocate routes through provisioning → 202 + an Operation envelope
 	// (operationId only, NOT the public IP). Resolve the FIP id from the
@@ -637,6 +646,7 @@ func (r *publicIPResource) Read(ctx context.Context, req resource.ReadRequest, r
 	}
 
 	state.fromAPI(ctx, &fip, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -805,22 +815,29 @@ func (r *publicIPResource) Update(ctx context.Context, req resource.UpdateReques
 		}
 	}
 
-	// Handle tags update
-	if !plan.Tags.Equal(state.Tags) {
-		updateReq := apiUpdatePublicIPRequest{
-			Tags: tftags.ForUpdate(ctx, plan.Tags, &resp.Diagnostics),
-		}
-		if resp.Diagnostics.HasError() {
-			return
-		}
+	// Tags: written only when the platform's set would change — this
+	// resource's tags, the provider's default_tags, or a drifted managed key.
+	defaults := r.client.DefaultTags()
+	current, err := r.currentTags(ctx, r.client.TenantPath(fmt.Sprintf("/public-ips/%s", fipID)))
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	prior := tftags.PriorOf(ctx, state.Tags, state.TagsAll, req.Private, &resp.Diagnostics).WithCurrent(current)
+	tags, tagsChanged := tftags.ForUpdate(ctx, defaults, plan.Tags, prior, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if tagsChanged {
 		// PUT, not PATCH — network registers PUT for the in-place update and
 		// nothing registers PATCH. See the frostmoln_vpc Update for the full note.
-		_, err := r.client.Put(ctx, r.client.TenantPath(fmt.Sprintf("/public-ips/%s", fipID)), updateReq)
+		_, err := r.client.Put(ctx, r.client.TenantPath(fmt.Sprintf("/public-ips/%s", fipID)), apiUpdatePublicIPRequest{Tags: tags})
 		if err != nil {
 			resp.Diagnostics.AddError("Failed to Update Public IP Tags", err.Error())
 			return
 		}
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// Re-read the public IP to get the final state
 	readResp, err := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf("/public-ips/%s", fipID)), nil)
@@ -920,4 +937,21 @@ func (r *publicIPResource) Delete(ctx context.Context, req resource.DeleteReques
 
 func (r *publicIPResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
+}
+
+// currentTags reads the tags the platform holds right now, at memberPath. An update
+// derives the keys it keeps — the ones this configuration does not manage —
+// from this rather than from state, which is only as fresh as the last
+// refresh (tftags.Prior.WithCurrent).
+func (r *publicIPResource) currentTags(ctx context.Context, memberPath string) (map[string]string, error) {
+	apiResp, err := r.client.Get(ctx, memberPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := client.ParseResponse[apiPublicIP](apiResp)
+	if err != nil {
+		return nil, err
+	}
+	return obj.customerTags(), nil
 }

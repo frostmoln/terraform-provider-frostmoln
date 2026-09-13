@@ -26,6 +26,7 @@ type LoadBalancerModel struct {
 	Type               types.String `tfsdk:"type"`
 	FlavorID           types.String `tfsdk:"flavor_id"`
 	Tags               types.Map    `tfsdk:"tags"`
+	TagsAll            types.Map    `tfsdk:"tags_all"`
 	VIPPortID          types.String `tfsdk:"vip_port_id"`
 	Status             types.String `tfsdk:"status"`
 	ProvisioningStatus types.String `tfsdk:"provisioning_status"`
@@ -89,7 +90,8 @@ type apiCreateLoadBalancerRequest struct {
 // ones (nlmeta.MergePlatformOwnedTags). So {} is how they are cleared — a plain
 // map with omitempty dropped exactly that — while an update that does not
 // change tags must not send the key at all, or every rename would be a tag
-// write. Set only when the planned tags differ from state.
+// write. Set only when the tag set the platform should hold differs from the
+// one it holds.
 type apiUpdateLoadBalancerRequest struct {
 	Name        *string            `json:"name,omitempty"`
 	Description *string            `json:"description,omitempty"`
@@ -97,7 +99,7 @@ type apiUpdateLoadBalancerRequest struct {
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
-func (m *LoadBalancerModel) toCreateRequest(ctx context.Context, diags *diag.Diagnostics) apiCreateLoadBalancerRequest {
+func (m *LoadBalancerModel) toCreateRequest() apiCreateLoadBalancerRequest {
 	req := apiCreateLoadBalancerRequest{
 		Name:     m.Name.ValueString(),
 		VPCID:    m.VPCID.ValueString(),
@@ -122,18 +124,16 @@ func (m *LoadBalancerModel) toCreateRequest(ctx context.Context, diags *diag.Dia
 	if !m.FlavorID.IsNull() && !m.FlavorID.IsUnknown() {
 		req.FlavorID = m.FlavorID.ValueString()
 	}
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		tags := make(map[string]string)
-		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		req.Tags = tags
-	}
+	// Tags are set by Create, which merges the provider's default_tags into
+	// them (tftags.ForCreate).
 
 	return req
 }
 
-// toUpdateRequest converts the Terraform model to an API update request,
-// comparing with current state for the tags.
-func (m *LoadBalancerModel) toUpdateRequest(ctx context.Context, state *LoadBalancerModel, diags *diag.Diagnostics) apiUpdateLoadBalancerRequest {
+// toUpdateRequest converts the Terraform model to an API update request. Tags
+// are set by Update, and only when the platform's tag set would change
+// (tftags.ForUpdate).
+func (m *LoadBalancerModel) toUpdateRequest() apiUpdateLoadBalancerRequest {
 	req := apiUpdateLoadBalancerRequest{}
 
 	if !m.Name.IsNull() && !m.Name.IsUnknown() {
@@ -147,11 +147,6 @@ func (m *LoadBalancerModel) toUpdateRequest(ctx context.Context, state *LoadBala
 		empty := ""
 		req.Description = &empty
 	}
-	if !m.Tags.Equal(state.Tags) {
-		tags := tftags.ForUpdate(ctx, m.Tags, diags)
-		req.Tags = &tags
-	}
-
 	return req
 }
 
@@ -248,5 +243,13 @@ func (m *LoadBalancerModel) fromAPI(ctx context.Context, lb *apiLoadBalancer, di
 	// refused on every customer write and carried across every update, so no
 	// config can converge on them; filter them before the empty/non-empty
 	// decision, as vpc/subnet/public_ip do.
-	m.Tags = tftags.FromAPI(ctx, reservedmeta.FilterNetwork(lb.Tags), m.Tags, diags)
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, lb.customerTags(), m.Tags, diags)
+}
+
+// customerTags is the tag set the platform holds on the object, as Terraform
+// sees it: platform-reserved keys filtered out. The read-back and the fresh
+// read an update makes before it writes (tftags.Prior.WithCurrent) both use
+// it, so the two cannot disagree about what counts as a tag.
+func (a *apiLoadBalancer) customerTags() map[string]string {
+	return reservedmeta.FilterNetwork(a.Tags)
 }

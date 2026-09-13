@@ -9,7 +9,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -17,12 +16,14 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
 	_ resource.Resource                = &snapshotResource{}
 	_ resource.ResourceWithImportState = &snapshotResource{}
+	_ resource.ResourceWithModifyPlan  = &snapshotResource{}
 )
 
 // NewResource returns a new snapshot resource factory.
@@ -76,7 +77,13 @@ func (r *snapshotResource) Metadata(_ context.Context, req resource.MetadataRequ
 
 func (r *snapshotResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a volume snapshot in the Frostmoln platform. Snapshots are immutable after creation." + "\n\n" + scopedecl.Summary("frostmoln_snapshot"),
+		Description: "Manages a volume snapshot in the Frostmoln platform. A snapshot's content, name, description " +
+			"and source volume are fixed when it is taken; its tags change in place.\n\n" +
+			"The platform refuses a tag update, with a 409 error, while the snapshot is not `available` (still " +
+			"being taken, or being restored) — apply again once it is — and on a snapshot that carries no owner " +
+			"tag (some older snapshots, taken before the platform stamped one). Manage such a " +
+			"snapshot with an aliased provider configuration that has no `default_tags`, and leave its `tags` " +
+			"unchanged, or take a new snapshot to replace it." + "\n\n" + scopedecl.Summary("frostmoln_snapshot"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the snapshot.",
@@ -107,13 +114,16 @@ func (r *snapshotResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				},
 			},
 			"tags": schema.MapAttribute{
-				Description: "Key-value tags for the snapshot.",
+				// In place, not RequiresReplace: storage has updated snapshot
+				// tags since v1.23.0 (PUT .../snapshots/{id}, Cinder metadata
+				// REPLACE with the platform keys re-stamped). Replacing here would
+				// also make a provider default_tags change destroy and re-take
+				// every snapshot.
+				Description: "Key-value tags for the snapshot. Changed in place." + tftags.TagsNote,
 				Optional:    true,
 				ElementType: types.StringType,
-				PlanModifiers: []planmodifier.Map{
-					mapplanmodifier.RequiresReplace(),
-				},
 			},
+			"tags_all": tftags.TagsAllAttribute(),
 			"status": schema.StringAttribute{
 				Description: "The current status of the snapshot.",
 				Computed:    true,
@@ -230,7 +240,9 @@ func (r *snapshotResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
+	defaults := r.client.DefaultTags()
 	apiReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
+	apiReq.Metadata = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -243,6 +255,7 @@ func (r *snapshotResource) Create(ctx context.Context, req resource.CreateReques
 		resp.Diagnostics.AddError("Failed to create snapshot", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// Snapshot writes route through provisioning, which returns 202 with an
 	// Operation envelope (operationId only, not the snapshot). Poll the operation
@@ -345,14 +358,59 @@ func (r *snapshotResource) Read(ctx context.Context, req resource.ReadRequest, r
 	}
 
 	state.fromAPI(ctx, snap, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-func (r *snapshotResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError(
-		"Update Not Supported",
-		"Snapshots are immutable and cannot be updated. All attribute changes require resource replacement.",
-	)
+// Update changes a snapshot's tags in place. Every other configurable
+// attribute replaces the snapshot, so a tag change (the resource's own tags or
+// the provider's default_tags) and a timeouts change are all that reach here.
+func (r *snapshotResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state SnapshotModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// The current snapshot first: the keys to keep come from the tags it holds
+	// now (tftags.Prior.WithCurrent), and when nothing changes it is also the
+	// read-back.
+	memberPath := r.client.TenantPath("/volumes/" + state.VolumeID.ValueString() + "/snapshots/" + state.ID.ValueString())
+	getResp, err := r.client.Get(ctx, memberPath, nil)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to read snapshot", err.Error())
+		return
+	}
+	snap, err := client.ParseResponse[apiSnapshot](getResp)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to parse snapshot response", err.Error())
+		return
+	}
+
+	defaults := r.client.DefaultTags()
+	prior := tftags.PriorOf(ctx, state.Tags, state.TagsAll, req.Private, &resp.Diagnostics).WithCurrent(snap.customerTags())
+	tags, tagsChanged := tftags.ForUpdate(ctx, defaults, plan.Tags, prior, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if tagsChanged {
+		// PUT answers with the snapshot re-read after the metadata replace.
+		putResp, err := r.client.Put(ctx, memberPath, apiUpdateSnapshotRequest{Metadata: tags})
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to update snapshot tags", err.Error())
+			return
+		}
+		if snap, err = client.ParseResponse[apiSnapshot](putResp); err != nil {
+			resp.Diagnostics.AddError("Failed to parse snapshot response", err.Error())
+			return
+		}
+	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+
+	plan.fromAPI(ctx, snap, &resp.Diagnostics)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 func (r *snapshotResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -395,4 +453,11 @@ func (r *snapshotResource) Delete(ctx context.Context, req resource.DeleteReques
 
 func (r *snapshotResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
+}
+
+// ModifyPlan predicts tags_all: unknown whenever the next write changes the
+// platform's tag set, including a change to the provider's default_tags.
+func (r *snapshotResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
 }

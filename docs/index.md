@@ -28,6 +28,15 @@ provider "frostmoln" {
   # account's default tenant). Targeting another tenant needs an fm CLI / OIDC
   # session — an API key is bound to a single tenant. Also FROSTMOLN_TENANT_ID.
   # tenant_id = "00000000-0000-0000-0000-000000000000"
+
+  # Optional: tags applied to every taggable resource this provider manages. A
+  # key a resource sets in its own `tags` wins; each resource's `tags_all`
+  # holds the merged set. Changing this block updates every taggable resource.
+  default_tags {
+    tags = {
+      managed-by = "terraform"
+    }
+  }
 }
 
 variable "frostmoln_api_key" {
@@ -51,6 +60,56 @@ This lets the provider "just work" after `fm auth login`, like `kubectl`, `aws`,
 
 Terraform writes every managed attribute to state, including the ones marked `sensitive` — marking an attribute sensitive redacts CLI output, not the state file. API keys, S3 secret keys, registry credentials and kubeconfigs land in state in plaintext, as do saved plan files, and for those there is no way around it: the platform mints or re-issues them, so state is where they have to live. The values you *supply* — secret values, `user_data`, console passwords and certificate private keys — each have a [write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral/write-only) `_wo` form that never reaches the plan or the state file at all, on Terraform 1.11 or later. See the [Secrets in Terraform state guide](guides/state-and-secrets.md) for the full list, where else the values appear, and how to protect them.
 
+## Default tags
+
+`default_tags` applies a set of tags to every taggable resource the provider manages, the same way the AWS provider's `default_tags` does:
+
+```terraform
+provider "frostmoln" {
+  default_tags {
+    tags = {
+      environment = "production"
+      cost-center = "platform"
+    }
+  }
+}
+
+resource "frostmoln_vpc" "example" {
+  name = "example"
+  cidr = "10.0.0.0/16"
+
+  tags = {
+    cost-center = "network" # a resource tag wins over a default of the same key
+  }
+}
+
+output "vpc_tags" {
+  # { environment = "production", cost-center = "network" } plus any key the
+  # platform or someone else put on the VPC
+  value = frostmoln_vpc.example.tags_all
+}
+```
+
+The taggable resources are `frostmoln_bucket`, `frostmoln_dns_zone`, `frostmoln_instance`, `frostmoln_launch_template`, `frostmoln_lb_health_monitor`, `frostmoln_lb_pool`, `frostmoln_load_balancer`, `frostmoln_public_ip`, `frostmoln_scale_group`, `frostmoln_secret`, `frostmoln_security_group`, `frostmoln_snapshot`, `frostmoln_subnet`, `frostmoln_volume` and `frostmoln_vpc`.
+
+**`tags` and `tags_all`.** Each of them has two tag attributes. `tags` holds exactly what the resource's configuration sets. `tags_all` is read-only and holds every tag the platform has on the resource: the provider's `default_tags`, the resource's own `tags`, and anything set outside Terraform. Reference `tags_all` when you need the full set. A key in a resource's `tags` wins over the same key in `default_tags`.
+
+**Keys set outside Terraform are kept.** Keys set outside Terraform — in the portal, by the `fm` CLI, or stamped by the platform — appear only in `tags_all` and are kept on every apply. The provider removes only the keys it manages: the ones in a resource's `tags` and the ones it applied from `default_tags`. Removing a key from `default_tags` removes it from every resource that got it from there, unless the resource sets that key in its own `tags`. Every update reads the resource's current tags right before it writes them, so a key added between a plan and its apply (a saved `plan -out`, say) is kept too. The platform's tag updates replace the whole set, so a key added in the instant between that read and the write can still be overwritten; no replace-only API can close that window. It is widest on the resources whose every update writes their tags: `frostmoln_bucket`, `frostmoln_dns_zone`, `frostmoln_lb_health_monitor`, `frostmoln_lb_pool`, `frostmoln_security_group`, `frostmoln_subnet` and `frostmoln_vpc`.
+
+~> **Behaviour change.** Before `tags_all` existed, a key set outside the configuration showed up as a difference on `tags`, and the next apply removed it. It now stays. Keys already in state from an earlier provider version are still treated as configured, so a difference Terraform was already showing for one of them is still applied; keys added after the upgrade are kept. Resources created by a provider version without `tags_all` get it filled on their next refresh, and plan no change unless `default_tags` is set.
+
+~> **Changing `default_tags` updates every taggable resource.** Adding, removing or changing a default plans an in-place update of every taggable resource the provider manages; each shows `tags_all` as `(known after apply)`. Nothing is replaced. Review the plan size before you apply a `default_tags` change to a large configuration. Any other in-place update of a taggable resource also shows `tags_all` as `(known after apply)`: the update reads the tags back, and they may have changed outside Terraform since the last refresh.
+
+**Values known only at apply.** A default tag whose value is computed during the apply (for example, from another resource's attribute) makes `tags_all` `(known after apply)` on every taggable resource for that plan. The value is filled in when the provider is configured for the apply.
+
+**Import.** An imported resource's `tags` is set to its full tag set minus every tag whose key and value match an entry in `default_tags`. The first plan after an import is always an in-place update that shows `tags_all` as `(known after apply)`, even when the configuration matches the resource: that apply is when the provider takes the tags the configuration names as its own. It never removes a key the configuration does not name — a configuration that lists only some of the imported tags is fine, and the plan shows the others leaving `tags`, but after the apply they are still on the resource, in `tags_all`, like any other key set outside Terraform. From then on, removing a key from `tags` removes it from the resource.
+
+**Snapshots.** A snapshot's tags change in place, so a `default_tags` change updates snapshots rather than replacing them. The platform refuses a snapshot tag update, with a 409 error, while the snapshot is not `available` (it is still being taken, or is being restored) — apply again once it is — and on a snapshot that carries no owner tag (some older snapshots, taken before the platform stamped one). For such a snapshot, manage it with a second, aliased provider configuration that has no `default_tags` and leave its `tags` unchanged, or take a new snapshot to replace it.
+
+**`-refresh=false`.** Without a refresh, the plan compares against `tags_all` as the last refresh left it, so a change made outside Terraform since then shows up only on the next refreshing plan. The update itself is not affected: it reads the current tags before it writes. On the first `-refresh=false` plan after upgrading from a provider version without `tags_all`, the attribute is still empty in state; the plan falls back to `tags` for the comparison, and the next refresh fills it in.
+
+**Rules for default tags.** A default is added to every resource type, so it has to be accepted by all of them, and the provider refuses one that is not when it configures: at most 10 tags; keys of 1 to 64 bytes made of letters, digits and `.` `_` `:` `-`, starting and ending with a letter or digit; values of at most 255 bytes made of letters, digits, spaces and `+` `-` `.` `_` `:` `/` `@` `=` (or empty). Keys the platform reserves are refused in any letter case: the prefixes `frostmoln_`, `frostmoln-`, `os_`, `instance_` and `nova_`, and the keys `request-id`, `customer-id`, `project-id`, `tenant-id`, `created-at`, `acl`, `storage-class`, `quota-bytes` and `cors-config`.
+
 <!-- schema generated by tfplugindocs -->
 ## Schema
 
@@ -60,5 +119,13 @@ Terraform writes every managed attribute to state, including the ones marked `se
 - `api_key` (String, Sensitive) The API key for authentication. Can also be set via the FROSTMOLN_API_KEY environment variable. When unset, the provider falls back to an existing fm CLI session (see use_cli_config).
 - `cli_config_path` (String) Path to the fm CLI config file. Defaults to ~/.fm/config.yaml. Can also be set via the FROSTMOLN_CLI_CONFIG environment variable.
 - `cli_context` (String) Name of the fm CLI context to read credentials from. Defaults to the config file's current_context.
+- `default_tags` (Block, Optional) Tags applied to every taggable resource this provider manages, merged into each resource's own `tags` on every write; a key a resource sets itself wins. The merged set the platform holds is each resource's `tags_all`. Changing this block plans an in-place update of EVERY taggable resource the provider manages. Because a default lands on every resource type, it must be accepted by all of them: at most 10 tags; keys of 1 to 64 bytes made of letters, digits and `.` `_` `:` `-`, starting and ending with a letter or digit; values of at most 255 bytes made of letters, digits, spaces and `+` `-` `.` `_` `:` `/` `@` `=`. Keys the platform reserves are refused, in any letter case: the prefixes `frostmoln_`, `frostmoln-`, `os_`, `instance_` and `nova_`, and the keys `request-id`, `customer-id`, `project-id`, `tenant-id`, `created-at`, `acl`, `storage-class`, `quota-bytes` and `cors-config`. (see [below for nested schema](#nestedblock--default_tags))
 - `tenant_id` (String) The tenant to manage resources in. Defaults to your account's default tenant. Targeting another tenant requires an fm CLI / OIDC session whose user belongs to multiple tenants; an API key is bound to a single tenant. One tenant per provider instance — use a second provider with an alias to span tenants. Can also be set via the FROSTMOLN_TENANT_ID environment variable.
 - `use_cli_config` (Boolean) When no api_key is configured, fall back to the credentials in the fm CLI config (~/.fm/config.yaml): its stored API key, or its OIDC session (with automatic token refresh). Defaults to true. Can also be set via FROSTMOLN_USE_CLI_CONFIG. Set to false in CI to require an explicit api_key.
+
+<a id="nestedblock--default_tags"></a>
+### Nested Schema for `default_tags`
+
+Optional:
+
+- `tags` (Map of String) The default tags, as a map of key to value.

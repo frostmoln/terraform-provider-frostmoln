@@ -23,6 +23,7 @@ type VolumeModel struct {
 	SnapshotID  types.String `tfsdk:"snapshot_id"`
 	Encrypted   types.Bool   `tfsdk:"encrypted"`
 	Tags        types.Map    `tfsdk:"tags"`
+	TagsAll     types.Map    `tfsdk:"tags_all"`
 	Status      types.String `tfsdk:"status"`
 	IOPS        types.Int64  `tfsdk:"iops"`
 	Throughput  types.Int64  `tfsdk:"throughput"`
@@ -116,11 +117,8 @@ func (m *VolumeModel) toCreateRequest(ctx context.Context, diags *diag.Diagnosti
 	if !m.SnapshotID.IsNull() && !m.SnapshotID.IsUnknown() {
 		req.SourceSnapshotID = m.SnapshotID.ValueString()
 	}
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		tags := make(map[string]string)
-		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		req.Metadata = tags
-	}
+	// Tags are set by Create, which merges the provider's default_tags into
+	// them (tftags.ForCreate).
 
 	return req
 }
@@ -186,5 +184,13 @@ func (m *VolumeModel) fromAPI(ctx context.Context, vol *apiVolume, diags *diag.D
 	// returns it unfiltered. It is NOT a customer tag — filter it out, otherwise
 	// a null/unset tags plan is overwritten on read-back ("inconsistent result
 	// after apply"). Shared with the instance filter via reservedmeta.
-	m.Tags = tftags.FromAPI(ctx, reservedmeta.FilterVolume(vol.Metadata), m.Tags, diags)
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, vol.customerTags(), m.Tags, diags)
+}
+
+// customerTags is the tag set the platform holds on the object, as Terraform
+// sees it: platform-reserved keys filtered out. The read-back and the fresh
+// read an update makes before it writes (tftags.Prior.WithCurrent) both use
+// it, so the two cannot disagree about what counts as a tag.
+func (a *apiVolume) customerTags() map[string]string {
+	return reservedmeta.FilterVolume(a.Metadata)
 }

@@ -14,6 +14,15 @@ provider "frostmoln" {
   # account's default tenant). Targeting another tenant needs an fm CLI / OIDC
   # session — an API key is bound to a single tenant. Also FROSTMOLN_TENANT_ID.
   # tenant_id = "00000000-0000-0000-0000-000000000000"
+
+  # Optional: tags applied to every taggable resource this provider manages. A
+  # key a resource sets in its own `tags` wins; each resource's `tags_all`
+  # holds the merged set. Changing this block updates every taggable resource.
+  default_tags {
+    tags = {
+      managed-by = "terraform"
+    }
+  }
 }
 
 variable "frostmoln_api_key" {

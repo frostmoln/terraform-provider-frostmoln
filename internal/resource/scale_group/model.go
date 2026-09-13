@@ -29,6 +29,7 @@ type ScaleGroupModel struct {
 	CooldownSeconds        types.Int64  `tfsdk:"cooldown_seconds"`
 	TerminationPolicy      types.String `tfsdk:"termination_policy"`
 	Tags                   types.Map    `tfsdk:"tags"`
+	TagsAll                types.Map    `tfsdk:"tags_all"`
 	CreatedAt              types.String `tfsdk:"created_at"`
 	UpdatedAt              types.String `tfsdk:"updated_at"`
 
@@ -143,11 +144,8 @@ func (m *ScaleGroupModel) toCreateRequest(ctx context.Context, diags *diag.Diagn
 		req.TerminationPolicy = m.TerminationPolicy.ValueString()
 	}
 
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		tags := make(map[string]string)
-		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		req.Tags = tags
-	}
+	// Tags are set by Create, which merges the provider's default_tags into
+	// them (tftags.ForCreate).
 
 	return req
 }
@@ -222,9 +220,8 @@ func (m *ScaleGroupModel) toUpdateRequest(ctx context.Context, state *ScaleGroup
 		req.TerminationPolicy = &v
 	}
 
-	if !m.Tags.Equal(state.Tags) {
-		req.Tags = tftags.ForUpdate(ctx, m.Tags, diags)
-	}
+	// Tags are set by Update, and only when the platform's tag set would
+	// change (tftags.ForUpdate).
 
 	return req
 }
@@ -307,5 +304,13 @@ func (m *ScaleGroupModel) fromAPI(ctx context.Context, sg *apiScaleGroup, diags 
 		m.LoadBalancerPoolIDs = types.SetNull(types.StringType)
 	}
 
-	m.Tags = tftags.FromAPI(ctx, sg.Tags, m.Tags, diags)
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, sg.customerTags(), m.Tags, diags)
+}
+
+// customerTags is the tag set the platform holds on the object, as Terraform
+// sees it: platform-reserved keys filtered out. The read-back and the fresh
+// read an update makes before it writes (tftags.Prior.WithCurrent) both use
+// it, so the two cannot disagree about what counts as a tag.
+func (a *apiScaleGroup) customerTags() map[string]string {
+	return a.Tags
 }

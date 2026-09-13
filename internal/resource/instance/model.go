@@ -34,6 +34,7 @@ type InstanceModel struct {
 	InstanceAccess     types.Bool   `tfsdk:"instance_access"`
 	UserDataHash       types.String `tfsdk:"user_data_hash"`
 	Tags               types.Map    `tfsdk:"tags"`
+	TagsAll            types.Map    `tfsdk:"tags_all"`
 	Status             types.String `tfsdk:"status"`
 	FlavorName         types.String `tfsdk:"flavor_name"`
 	ImageName          types.String `tfsdk:"image_name"`
@@ -206,25 +207,21 @@ func (m *InstanceModel) toCreateRequest(ctx context.Context, diags *diag.Diagnos
 		req.InstanceAccess = m.InstanceAccess.ValueBool()
 	}
 
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		tags := make(map[string]string)
-		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		req.Tags = tags
-	}
+	// Tags are set by Create, which merges the provider's default_tags into
+	// them (tftags.ForCreate).
 
 	return req
 }
 
 // toUpdateRequest converts the Terraform model to an API update request.
 //
-// tagsChanged reports whether the planned tags differ from state (the Update
-// method's own check). metadata is emitted only when they changed, and then
-// ALWAYS as a non-nil map — including for a null/unknown tags attribute, which
-// is how "the practitioner deleted the whole tags block" reaches this function.
-// Both "no tags left" spellings therefore serialize as {"metadata":{}}, the only
-// body the backend treats as "clear every tag"; when tags did not change the key
-// is absent and the backend leaves them untouched.
-func (m *InstanceModel) toUpdateRequest(ctx context.Context, tagsChanged bool, diags *diag.Diagnostics) apiUpdateInstanceRequest {
+// tags is the full tag set the platform should hold (tftags.ForUpdate) and
+// tagsChanged whether it differs from the one it holds. metadata is emitted
+// only when it changed, and then ALWAYS as a non-nil map — an emptied set, the
+// removed-tags-block case included, serializes as {"metadata":{}}, the only
+// body the backend treats as "clear every tag"; when nothing changed the key is
+// absent and the backend leaves the tags untouched.
+func (m *InstanceModel) toUpdateRequest(tags map[string]string, tagsChanged bool) apiUpdateInstanceRequest {
 	req := apiUpdateInstanceRequest{}
 
 	if !m.Name.IsNull() && !m.Name.IsUnknown() {
@@ -233,9 +230,8 @@ func (m *InstanceModel) toUpdateRequest(ctx context.Context, tagsChanged bool, d
 	}
 
 	if tagsChanged {
-		tags := make(map[string]string)
-		if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-			diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
+		if tags == nil {
+			tags = map[string]string{}
 		}
 		req.Tags = &tags
 	}
@@ -308,7 +304,7 @@ func (m *InstanceModel) fromAPI(ctx context.Context, inst *apiInstance, diags *d
 	// Platform-internal metadata (the frostmoln_/frostmoln- namespace) is injected by the backend
 	// and is NOT a customer tag — filter it out, otherwise a null/unset tags plan is
 	// overwritten by system keys on read-back ("inconsistent result after apply").
-	m.Tags = tftags.FromAPI(ctx, reservedmeta.FilterInstance(inst.Metadata), m.Tags, diags)
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, inst.customerTags(), m.Tags, diags)
 
 	// user_data, user_data_hash, console_password and instance_access are NOT set
 	// here because the API doesn't return them. They are preserved from the
@@ -331,4 +327,12 @@ func (m *InstanceModel) fromAPI(ctx context.Context, inst *apiInstance, diags *d
 	// ConsolePassword field either, so adopting a returned password is a compile
 	// error. TestCreateWriteOnlyIgnoresConsolePasswordFromTheAPI pins it, and
 	// console_password_wo_version is practitioner-set and lives only in state.
+}
+
+// customerTags is the tag set the platform holds on the object, as Terraform
+// sees it: platform-reserved keys filtered out. The read-back and the fresh
+// read an update makes before it writes (tftags.Prior.WithCurrent) both use
+// it, so the two cannot disagree about what counts as a tag.
+func (a *apiInstance) customerTags() map[string]string {
+	return reservedmeta.FilterInstance(a.Metadata)
 }

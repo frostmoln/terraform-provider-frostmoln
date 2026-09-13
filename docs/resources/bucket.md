@@ -8,6 +8,7 @@ description: |-
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — name: the bucket's name IS its identity on the wire — buckets are addressed by name.
   Create-immutable — region, storage_class: the platform pins it at create; there is no in-place migration.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_bucket (Resource)
@@ -21,6 +22,8 @@ Manages an object storage bucket in the Frostmoln platform.
 **Create-immutable** — `name`: the bucket's name IS its identity on the wire — buckets are addressed by name.
 
 **Create-immutable** — `region`, `storage_class`: the platform pins it at create; there is no in-place migration.
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -49,7 +52,7 @@ resource "frostmoln_bucket" "example" {
 
 - `region` (String) The region where the bucket is located.
 - `storage_class` (String) The default storage class for objects in the bucket. One of `STANDARD`, `STANDARD_IA`, `REDUCED_REDUNDANCY`, `GLACIER` — the values are case-sensitive. Defaults server-side to `STANDARD`.
-- `tags` (Map of String) Tags associated with the bucket.
+- `tags` (Map of String) Tags associated with the bucket. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `versioning` (String) The versioning state of the bucket: `enabled` or `suspended`. A bucket starts `disabled`, and S3 versioning cannot be turned back off once enabled — only suspended — so `disabled` is not settable: the server would answer with the unchanged state and the apply would fail on the mismatch.
 
 ### Read-Only
@@ -57,3 +60,4 @@ resource "frostmoln_bucket" "example" {
 - `created_at` (String) The timestamp when the bucket was created.
 - `object_count` (Number) The number of objects in the bucket.
 - `size_bytes` (Number) The total size of all objects in the bucket, in bytes.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.

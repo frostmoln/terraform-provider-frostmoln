@@ -8,10 +8,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -123,6 +126,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/webserver_deployment"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/webserver_domain"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/workload_identity_binding"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 var _ provider.Provider = &FrostmolnProvider{}
@@ -140,6 +144,10 @@ type FrostmolnProviderModel struct {
 	UseCLIConfig  types.Bool   `tfsdk:"use_cli_config"`
 	CLIConfigPath types.String `tfsdk:"cli_config_path"`
 	CLIContext    types.String `tfsdk:"cli_context"`
+	// DefaultTags is the `default_tags` block. An Object rather than a struct
+	// pointer: a `dynamic "default_tags"` whose for_each is not known yet makes
+	// the whole block unknown, which a struct cannot hold.
+	DefaultTags types.Object `tfsdk:"default_tags"`
 }
 
 // New creates a new provider factory function.
@@ -194,6 +202,27 @@ func (p *FrostmolnProvider) Schema(_ context.Context, _ provider.SchemaRequest, 
 				Optional:    true,
 			},
 		},
+		Blocks: map[string]schema.Block{
+			"default_tags": schema.SingleNestedBlock{
+				Description: "Tags applied to every taggable resource this provider manages, merged into each " +
+					"resource's own `tags` on every write; a key a resource sets itself wins. The merged set the " +
+					"platform holds is each resource's `tags_all`. Changing this block plans an in-place update of " +
+					"EVERY taggable resource the provider manages. Because a default lands on every resource type, " +
+					"it must be accepted by all of them: at most 10 tags; keys of 1 to 64 bytes made of letters, " +
+					"digits and `.` `_` `:` `-`, starting and ending with a letter or digit; values of at most 255 " +
+					"bytes made of letters, digits, spaces and `+` `-` `.` `_` `:` `/` `@` `=`. Keys the platform " +
+					"reserves are refused, in any letter case: the prefixes `frostmoln_`, `frostmoln-`, `os_`, " +
+					"`instance_` and `nova_`, and the keys `request-id`, `customer-id`, `project-id`, `tenant-id`, " +
+					"`created-at`, `acl`, `storage-class`, `quota-bytes` and `cors-config`.",
+				Attributes: map[string]schema.Attribute{
+					"tags": schema.MapAttribute{
+						Description: "The default tags, as a map of key to value.",
+						Optional:    true,
+						ElementType: types.StringType,
+					},
+				},
+			},
+		},
 	}
 }
 
@@ -203,6 +232,14 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// Refused before any credential is resolved: a reserved default key is a
+	// configuration error whatever the credentials turn out to be.
+	defaultTags := resolveDefaultTags(config.DefaultTags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	dt := client.WithDefaultTags(defaultTags)
 
 	// Resolve API endpoint. Track whether it was set explicitly: when it was
 	// not and the credential comes from the CLI config, we adopt that config's
@@ -269,7 +306,7 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 		if apiKeyFromAttribute {
 			credentialSource, credentialKind = "the api_key provider attribute", "api_key_attribute"
 		}
-		c = client.NewClient(apiEndpoint, apiKey, ua, ver, tenantOpt)
+		c = client.NewClient(apiEndpoint, apiKey, ua, ver, tenantOpt, dt)
 
 	case useCLI:
 		resolved, rerr := clicreds.Resolve(clicreds.Options{
@@ -295,7 +332,7 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 			case resolved.APIKey != "":
 				credentialSource = fmt.Sprintf("the API key stored in the fm CLI config (%s)", cliSourceLabel(resolved.Path, resolved.Context))
 				credentialKind = "cli_api_key"
-				c = client.NewClient(endpoint, resolved.APIKey, ua, ver, tenantOpt)
+				c = client.NewClient(endpoint, resolved.APIKey, ua, ver, tenantOpt, dt)
 			case resolved.AccessToken != "":
 				// The OIDC bearer token (and the refresh token it is exchanged
 				// with) must only travel over https; refuse an insecure endpoint.
@@ -308,7 +345,7 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 				}
 				credentialSource = fmt.Sprintf("the fm CLI login session (%s), NOT an API key", cliSourceLabel(resolved.Path, resolved.Context))
 				credentialKind = "cli_session"
-				c = client.NewClient(endpoint, "", ua, ver, tenantOpt, client.WithTokenSource(client.TokenSourceConfig{
+				c = client.NewClient(endpoint, "", ua, ver, tenantOpt, dt, client.WithTokenSource(client.TokenSourceConfig{
 					AccessToken:  resolved.AccessToken,
 					RefreshToken: resolved.RefreshToken,
 					ExpiresAt:    resolved.ExpiresAt,
@@ -368,6 +405,69 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 
 	resp.DataSourceData = c
 	resp.ResourceData = c
+}
+
+// resolveDefaultTags reads the default_tags block and validates it against the
+// rules identity enforces on a tenant's default tags (tftags.CheckDefaultTag,
+// identity internal/domain/tag_settings.go ValidateTenantDefaultTags): at most
+// tftags.MaxDefaultTags keys, no platform-reserved key, and keys and values
+// every backend accepts. A default lands on every taggable resource, so one a
+// backend refuses would fail every apply that writes that resource type;
+// refusing it here fails the configuration instead, naming the key and rule.
+//
+// Unknown is not an error. A default_tags value can reference something that
+// is only known during the apply; Terraform configures the provider again with
+// the known value before it applies, so the plan marks every taggable
+// resource's tags_all "(known after apply)" (tftags.Defaults.Unknown) instead of
+// guessing — the AWS provider's behaviour for a computed default tag. Keys are
+// always known inside a known map, so the key checks still run on them; an
+// unknown value, map or block is checked by the apply-time configure.
+func resolveDefaultTags(block types.Object, diags *diag.Diagnostics) tftags.Defaults {
+	if block.IsNull() {
+		return tftags.Defaults{}
+	}
+	if block.IsUnknown() {
+		return tftags.Defaults{Unknown: true}
+	}
+	tags, ok := block.Attributes()["tags"].(types.Map)
+	if !ok || tags.IsNull() {
+		return tftags.Defaults{}
+	}
+	if tags.IsUnknown() {
+		return tftags.Defaults{Unknown: true}
+	}
+
+	tagsPath := path.Root("default_tags").AtName("tags")
+	out := tftags.Defaults{Tags: map[string]string{}}
+	keys := make([]string, 0, len(tags.Elements()))
+	for k, v := range tags.Elements() {
+		// A null value means "no default for this key".
+		if sv, isString := v.(types.String); isString && !sv.IsNull() {
+			keys = append(keys, k)
+		}
+	}
+	if len(keys) > tftags.MaxDefaultTags {
+		diags.AddAttributeError(tagsPath, "Too Many Default Tags", tftags.TooManyDefaultTagsDetail(len(keys)))
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := tags.Elements()[k].(types.String)
+		var value *string
+		if !v.IsUnknown() {
+			s := v.ValueString()
+			value = &s
+		}
+		if problem := tftags.CheckDefaultTag(k, value); problem != nil {
+			diags.AddAttributeError(tagsPath.AtMapKey(k), problem.Summary, problem.Detail)
+			continue
+		}
+		if value == nil {
+			out.Unknown = true
+			continue
+		}
+		out.Tags[k] = *value
+	}
+	return out
 }
 
 // defaultAPIEndpoint is the endpoint used when neither api_endpoint nor

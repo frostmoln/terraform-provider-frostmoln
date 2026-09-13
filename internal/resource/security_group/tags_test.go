@@ -42,6 +42,7 @@ func TestReadEmptyTagsRoundTrips(t *testing.T) {
 		VPCID: types.StringValue("vpc-abc"), Tags: types.MapValueMust(types.StringType, map[string]attr.Value{}),
 		IsDefault: types.BoolValue(false), DeleteDefaultEgress: types.BoolValue(false),
 		CreatedAt: types.StringValue("2025-06-01T12:00:00Z"),
+		TagsAll:   types.MapNull(types.StringType),
 	}); d.HasError() {
 		t.Fatalf("fixture: %v", d)
 	}
@@ -73,7 +74,9 @@ func TestReadFiltersPlatformTags(t *testing.T) {
 		want    map[string]string
 		wantNil bool
 	}{
-		{"customer and platform keys", map[string]string{"k": "v", "frostmoln_managed_by": "cluster"}, types.MapNull(types.StringType), map[string]string{"k": "v"}, false},
+		{"customer and platform keys", map[string]string{"k": "v", "frostmoln_managed_by": "cluster"}, types.MapValueMust(types.StringType, map[string]attr.Value{"k": types.StringValue("v")}), map[string]string{"k": "v"}, false},
+		// A key the configuration does not name lives in tags_all only.
+		{"customer key not configured", map[string]string{"k": "v", "frostmoln_managed_by": "cluster"}, types.MapNull(types.StringType), nil, true},
 		{"only platform keys, no tags configured", map[string]string{"frostmoln_managed_by": "cluster"}, types.MapNull(types.StringType), nil, true},
 		{"only platform keys, tags = {}", map[string]string{"frostmoln_managed_by": "cluster"}, empty, map[string]string{}, false},
 	} {
@@ -95,6 +98,7 @@ func TestReadFiltersPlatformTags(t *testing.T) {
 				VPCID: types.StringValue("vpc-abc"), Tags: tc.prior,
 				IsDefault: types.BoolValue(false), DeleteDefaultEgress: types.BoolValue(false),
 				CreatedAt: types.StringValue("2025-06-01T12:00:00Z"),
+				TagsAll:   types.MapNull(types.StringType),
 			}); d.HasError() {
 				t.Fatalf("fixture: %v", d)
 			}
@@ -106,6 +110,16 @@ func TestReadFiltersPlatformTags(t *testing.T) {
 
 			var got SecurityGroupModel
 			resp.State.Get(context.Background(), &got)
+			// tags_all is the whole filtered read-back: the customer key, never the
+			// platform's.
+			if _, leaked := got.TagsAll.Elements()["frostmoln_managed_by"]; leaked {
+				t.Errorf("a platform-owned key reached tags_all: %v", got.TagsAll)
+			}
+			if _, has := tc.api["k"]; has {
+				if _, kept := got.TagsAll.Elements()["k"]; !kept {
+					t.Errorf("tags_all = %v, want the customer key k", got.TagsAll)
+				}
+			}
 			if tc.wantNil {
 				if !got.Tags.IsNull() {
 					t.Errorf("state tags = %v, want null", got.Tags)

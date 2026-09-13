@@ -27,6 +27,7 @@ type HealthMonitorModel struct {
 	HTTPMethod     types.String `tfsdk:"http_method"`
 	ExpectedCodes  types.String `tfsdk:"expected_codes"`
 	Tags           types.Map    `tfsdk:"tags"`
+	TagsAll        types.Map    `tfsdk:"tags_all"`
 	CreatedAt      types.String `tfsdk:"created_at"`
 	UpdatedAt      types.String `tfsdk:"updated_at"`
 
@@ -98,22 +99,15 @@ func (m *HealthMonitorModel) toCreateRequest(ctx context.Context, diags *diag.Di
 	if !m.ExpectedCodes.IsNull() && !m.ExpectedCodes.IsUnknown() {
 		req.ExpectedCodes = m.ExpectedCodes.ValueString()
 	}
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		tags := make(map[string]string)
-		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		req.Tags = tags
-	}
+	// Tags are set by Create, which merges the provider's default_tags into
+	// them (tftags.ForCreate).
 
 	return req
 }
 
-// toUpdateRequest converts the Terraform model to an API update request.
-//
-// prior is the tag set currently in state; a null/empty plan over a non-empty
-// prior means the config dropped the `tags` block, which must go out as an
-// explicit clearTags rather than as an omission the backend reads as "leave
-// them alone". See apiUpdateHealthMonitorRequest.
-func (m *HealthMonitorModel) toUpdateRequest(ctx context.Context, prior types.Map, diags *diag.Diagnostics) apiUpdateHealthMonitorRequest {
+// toUpdateRequest converts the Terraform model to an API update request. Tags
+// are set by Update (setTags).
+func (m *HealthMonitorModel) toUpdateRequest() apiUpdateHealthMonitorRequest {
 	req := apiUpdateHealthMonitorRequest{}
 
 	if !m.Delay.IsNull() && !m.Delay.IsUnknown() {
@@ -140,18 +134,6 @@ func (m *HealthMonitorModel) toUpdateRequest(ctx context.Context, prior types.Ma
 		v := m.ExpectedCodes.ValueString()
 		req.ExpectedCodes = &v
 	}
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		tags := make(map[string]string)
-		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		if len(tags) > 0 {
-			req.Tags = tags
-		} else if len(prior.Elements()) > 0 {
-			req.ClearTags = true
-		}
-	} else if m.Tags.IsNull() && len(prior.Elements()) > 0 {
-		req.ClearTags = true
-	}
-
 	return req
 }
 
@@ -195,5 +177,28 @@ func (m *HealthMonitorModel) fromAPI(ctx context.Context, lbID string, hm *apiHe
 	// every customer write, so no config can converge on one). An untagged
 	// monitor then reads back as null under a config with no `tags` block, and
 	// as {} under `tags = {}` — either way exactly what was configured.
-	m.Tags = tftags.FromAPI(ctx, reservedmeta.FilterNetwork(hm.Tags), m.Tags, diags)
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, hm.customerTags(), m.Tags, diags)
+}
+
+// setTags puts the desired tag set on an update (tftags.ForUpdate's result).
+//
+// A non-empty set is sent as `tags`. An empty one cannot be: the write is
+// forwarded to network over gRPC, where an empty map is indistinguishable from
+// an absent one, so emptying a set the platform still holds (changed) goes out
+// as the explicit clearTags flag. Never both — that is a 400.
+func (req *apiUpdateHealthMonitorRequest) setTags(tags map[string]string, changed bool) {
+	switch {
+	case len(tags) > 0:
+		req.Tags = tags
+	case changed:
+		req.ClearTags = true
+	}
+}
+
+// customerTags is the tag set the platform holds on the object, as Terraform
+// sees it: platform-reserved keys filtered out. The read-back and the fresh
+// read an update makes before it writes (tftags.Prior.WithCurrent) both use
+// it, so the two cannot disagree about what counts as a tag.
+func (a *apiHealthMonitor) customerTags() map[string]string {
+	return reservedmeta.FilterNetwork(a.Tags)
 }

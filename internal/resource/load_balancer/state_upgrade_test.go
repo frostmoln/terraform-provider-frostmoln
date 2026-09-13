@@ -15,6 +15,13 @@ import (
 // resulting `type`.
 func upgradeFrom(t *testing.T, priorProviderType any) (string, bool) {
 	t.Helper()
+	out := upgradeV0(t, priorProviderType, tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil))
+	return out.Type.ValueString(), out.Type.IsNull()
+}
+
+// upgradeV0 runs the v0 -> v1 state upgrade and returns the upgraded model.
+func upgradeV0(t *testing.T, priorProviderType any, priorTags tftypes.Value) LoadBalancerModel {
+	t.Helper()
 	ctx := context.Background()
 	r := &loadBalancerResource{}
 
@@ -43,7 +50,7 @@ func upgradeFrom(t *testing.T, priorProviderType any) (string, bool) {
 		"public_ip_address":   str(nil),
 		"provider_type":       str(priorProviderType),
 		"flavor_id":           str(nil),
-		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags":                priorTags,
 		"vip_port_id":         str("port-1"),
 		"status":              str("active"),
 		"provisioning_status": str("ACTIVE"),
@@ -53,7 +60,8 @@ func upgradeFrom(t *testing.T, priorProviderType any) (string, bool) {
 	})
 	// NOTE: no `timeouts` key — v0 state PREDATES the block, and priorSchemaV0
 	// carries no Blocks for exactly that reason (see state_upgrade.go); a v0
-	// fixture naming it would not be a v0 state at all.
+	// fixture naming it would not be a v0 state at all. No `tags_all` either:
+	// it is younger still, and the upgrader derives it.
 
 	var currentSchema resource.SchemaResponse
 	r.Schema(ctx, resource.SchemaRequest{}, &currentSchema)
@@ -73,7 +81,33 @@ func upgradeFrom(t *testing.T, priorProviderType any) (string, bool) {
 	if diags := resp.State.Get(ctx, &out); diags.HasError() {
 		t.Fatalf("reading upgraded state: %v", diags)
 	}
-	return out.Type.ValueString(), out.Type.IsNull()
+	return out
+}
+
+// TestUpgradeStateSetsTagsAll: v0's `tags` was read back verbatim — every
+// non-reserved key the platform held — which is what tags_all holds now, so the
+// upgrade seeds tags_all from it. A null tags_all would make the first
+// `plan -refresh=false` after the bump fall back to guessing.
+func TestUpgradeStateSetsTagsAll(t *testing.T) {
+	mapType := tftypes.Map{ElementType: tftypes.String}
+
+	tagged := upgradeV0(t, "amphora", tftypes.NewValue(mapType, map[string]tftypes.Value{
+		"env": tftypes.NewValue(tftypes.String, "prod"),
+	}))
+	if tagged.TagsAll.IsNull() || tagged.TagsAll.IsUnknown() {
+		t.Fatalf("tags_all = %v after the upgrade, want the v0 tags", tagged.TagsAll)
+	}
+	if !tagged.TagsAll.Equal(tagged.Tags) {
+		t.Errorf("tags_all = %v, want the v0 tags %v", tagged.TagsAll, tagged.Tags)
+	}
+
+	untagged := upgradeV0(t, "amphora", tftypes.NewValue(mapType, nil))
+	if untagged.TagsAll.IsNull() || len(untagged.TagsAll.Elements()) != 0 {
+		t.Errorf("tags_all = %v for an untagged v0 load balancer, want {}", untagged.TagsAll)
+	}
+	if !untagged.Tags.IsNull() {
+		t.Errorf("tags = %v, want the v0 null kept", untagged.Tags)
+	}
 }
 
 // TestUpgradeStateMapsProviderTypeToType is the guard for the single highest
@@ -126,6 +160,9 @@ func TestUpgradeStatePreservesEveryOtherAttribute(t *testing.T) {
 	for name := range currentSchema.Schema.Attributes {
 		if name == "type" {
 			continue // renamed; covered above
+		}
+		if name == "tags_all" {
+			continue // younger than v0; derived by the upgrader (TestUpgradeStateSetsTagsAll)
 		}
 		if _, ok := up.PriorSchema.Attributes[name]; !ok {
 			t.Errorf("attribute %q is missing from the v0 prior schema; its value would be dropped on upgrade", name)

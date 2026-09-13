@@ -3,18 +3,27 @@
 page_title: "frostmoln_snapshot Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a volume snapshot in the Frostmoln platform. Snapshots are immutable after creation.
+  Manages a volume snapshot in the Frostmoln platform. A snapshot's content, name, description and source volume are fixed when it is taken; its tags change in place.
+  The platform refuses a tag update, with a 409 error, while the snapshot is not available (still being taken, or being restored) — apply again once it is — and on a snapshot that carries no owner tag (some older snapshots, taken before the platform stamped one). Manage such a snapshot with an aliased provider configuration that has no default_tags, and leave its tags unchanged, or take a new snapshot to replace it.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
-  Create-immutable — description, name, tags, volume_id: a snapshot is immutable after create — changing any attribute destroys it and takes a new snapshot of the volume.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — description, name, volume_id: a snapshot's content is fixed when it is taken, and so are its name, description and source volume here — changing one destroys it and takes a new snapshot of the volume (its tags change in place).
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_snapshot (Resource)
 
-Manages a volume snapshot in the Frostmoln platform. Snapshots are immutable after creation.
+Manages a volume snapshot in the Frostmoln platform. A snapshot's content, name, description and source volume are fixed when it is taken; its tags change in place.
+
+The platform refuses a tag update, with a 409 error, while the snapshot is not `available` (still being taken, or being restored) — apply again once it is — and on a snapshot that carries no owner tag (some older snapshots, taken before the platform stamped one). Manage such a snapshot with an aliased provider configuration that has no `default_tags`, and leave its `tags` unchanged, or take a new snapshot to replace it.
 
 **Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
 
-**Create-immutable** — `description`, `name`, `tags`, `volume_id`: a snapshot is immutable after create — changing any attribute destroys it and takes a new snapshot of the volume.
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `description`, `name`, `volume_id`: a snapshot's content is fixed when it is taken, and so are its name, description and source volume here — changing one destroys it and takes a new snapshot of the volume (its tags change in place).
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -24,6 +33,8 @@ resource "frostmoln_snapshot" "backup" {
   description = "Daily backup of data volume"
   volume_id   = frostmoln_volume.data.id
 
+  # Tags change in place; a tag change (or a provider default_tags change) never
+  # re-takes the snapshot.
   tags = {
     type = "backup"
   }
@@ -41,7 +52,7 @@ resource "frostmoln_snapshot" "backup" {
 ### Optional
 
 - `description` (String) A human-readable description of the snapshot.
-- `tags` (Map of String) Key-value tags for the snapshot.
+- `tags` (Map of String) Key-value tags for the snapshot. Changed in place. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
@@ -50,6 +61,7 @@ resource "frostmoln_snapshot" "backup" {
 - `id` (String) The unique identifier of the snapshot.
 - `size_gb` (Number) The size of the snapshot in gigabytes.
 - `status` (String) The current status of the snapshot.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 
 <a id="nestedblock--timeouts"></a>
 ### Nested Schema for `timeouts`

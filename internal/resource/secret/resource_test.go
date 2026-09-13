@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -18,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // --- Model unit tests ---
@@ -35,9 +37,14 @@ func TestSecretModelToCreateRequest(t *testing.T) {
 		Tags:               tags,
 		MaxVersions:        types.Int64Value(5),
 		RecoveryWindowDays: types.Int64Value(14),
+		TagsAll:            types.MapNull(types.StringType),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
+
+	// Tags are merged by Create (tftags.ForCreate); assemble the request as it does.
+
+	req.Tags = tftags.ForCreate(ctx, tftags.Defaults{}, model.Tags, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
@@ -77,6 +84,7 @@ func TestSecretModelToCreateRequestMinimal(t *testing.T) {
 		Tags:               types.MapNull(types.StringType),
 		MaxVersions:        types.Int64Null(),
 		RecoveryWindowDays: types.Int64Null(),
+		TagsAll:            types.MapNull(types.StringType),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
@@ -108,6 +116,7 @@ func TestSecretModelToUpdateRequest(t *testing.T) {
 		Tags:               planTags,
 		MaxVersions:        types.Int64Value(20),
 		RecoveryWindowDays: types.Int64Value(30),
+		TagsAll:            types.MapNull(types.StringType),
 	}
 	state := SecretModel{
 		Description:        types.StringValue("old desc"),
@@ -116,6 +125,7 @@ func TestSecretModelToUpdateRequest(t *testing.T) {
 		Tags:               stateTags,
 		MaxVersions:        types.Int64Value(10),
 		RecoveryWindowDays: types.Int64Value(7),
+		TagsAll:            types.MapNull(types.StringType),
 	}
 
 	req := plan.toUpdateRequest(ctx, &state, &diags)
@@ -128,8 +138,9 @@ func TestSecretModelToUpdateRequest(t *testing.T) {
 	if req.SecretValue == nil || *req.SecretValue != "newval" { // pragma: allowlist secret
 		t.Error("expected secretValue update")
 	}
-	if req.Tags["k"] != "v2" {
-		t.Errorf("expected tag k=v2, got %v", req.Tags)
+	// Tags are Update's job, sent only on a change (tags_test.go).
+	if req.Tags != nil {
+		t.Errorf("the builder must leave tags to Update, got %v", req.Tags)
 	}
 }
 
@@ -144,6 +155,7 @@ func TestSecretModelToUpdateRequestDescriptionToNull(t *testing.T) {
 		Tags:               types.MapNull(types.StringType),
 		MaxVersions:        types.Int64Value(10),
 		RecoveryWindowDays: types.Int64Value(7),
+		TagsAll:            types.MapNull(types.StringType),
 	}
 	state := SecretModel{
 		Description:        types.StringValue("had desc"),
@@ -152,6 +164,7 @@ func TestSecretModelToUpdateRequestDescriptionToNull(t *testing.T) {
 		Tags:               types.MapNull(types.StringType),
 		MaxVersions:        types.Int64Value(10),
 		RecoveryWindowDays: types.Int64Value(7),
+		TagsAll:            types.MapNull(types.StringType),
 	}
 
 	req := plan.toUpdateRequest(ctx, &state, &diags)
@@ -171,6 +184,7 @@ func TestSecretModelToUpdateRequestNoChanges(t *testing.T) {
 		Tags:               types.MapNull(types.StringType),
 		MaxVersions:        types.Int64Value(10),
 		RecoveryWindowDays: types.Int64Value(7),
+		TagsAll:            types.MapNull(types.StringType),
 	}
 
 	req := same.toUpdateRequest(ctx, &same, &diags)
@@ -200,7 +214,12 @@ func TestSecretModelFromAPI(t *testing.T) {
 
 	// A non-null secret_value is the legacy path: the practitioner configured it
 	// here, so the API's value is adopted for drift detection.
-	model := SecretModel{SecretValue: types.StringValue("stale")} // pragma: allowlist secret
+	// The configuration names env, so the read-back puts it in tags.
+	model := SecretModel{
+		SecretValue: types.StringValue("stale"), // pragma: allowlist secret
+		Tags:        types.MapValueMust(types.StringType, map[string]attr.Value{"env": types.StringValue("old")}),
+		TagsAll:     types.MapNull(types.StringType),
+	}
 	model.fromAPI(ctx, api, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
@@ -225,8 +244,11 @@ func TestSecretModelFromAPI(t *testing.T) {
 		t.Errorf("expected updatedAt set, got %s", model.UpdatedAt.ValueString())
 	}
 	tags := model.Tags.Elements()
-	if len(tags) != 1 {
-		t.Errorf("expected 1 tag, got %d", len(tags))
+	if len(tags) != 1 || !tags["env"].Equal(types.StringValue("prod")) {
+		t.Errorf("expected tags env=prod, got %v", tags)
+	}
+	if len(model.TagsAll.Elements()) != 1 {
+		t.Errorf("expected tags_all to hold the read-back, got %v", model.TagsAll)
 	}
 }
 
@@ -391,6 +413,7 @@ func fullSecretModel() SecretModel {
 		Status:             types.StringValue("active"),
 		CreatedAt:          types.StringValue("2025-01-01T00:00:00Z"),
 		UpdatedAt:          types.StringNull(),
+		TagsAll:            types.MapNull(types.StringType),
 	}
 }
 
@@ -450,6 +473,7 @@ func TestCreate(t *testing.T) {
 		Tags:               types.MapNull(types.StringType),
 		MaxVersions:        types.Int64Value(10),
 		RecoveryWindowDays: types.Int64Value(7),
+		TagsAll:            types.MapNull(types.StringType),
 	}
 	plan := buildSecretPlan(t, planModel)
 
@@ -488,6 +512,7 @@ func TestCreateAPIError(t *testing.T) {
 		Tags:               types.MapNull(types.StringType),
 		MaxVersions:        types.Int64Value(10),
 		RecoveryWindowDays: types.Int64Value(7),
+		TagsAll:            types.MapNull(types.StringType),
 	}
 	plan := buildSecretPlan(t, planModel)
 
@@ -1099,7 +1124,7 @@ func TestSecretModelFromAPIKeepsNullSecretValueNull(t *testing.T) {
 	diags := diag.Diagnostics{}
 
 	api := secretJSONWithValue("active", "wo-value")
-	model := SecretModel{SecretValue: types.StringNull()}
+	model := SecretModel{SecretValue: types.StringNull(), TagsAll: types.MapNull(types.StringType)}
 	model.fromAPI(ctx, &api, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())

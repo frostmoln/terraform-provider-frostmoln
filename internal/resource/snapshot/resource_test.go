@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 func TestSnapshotModel_toCreateRequest(t *testing.T) {
@@ -34,9 +35,14 @@ func TestSnapshotModel_toCreateRequest(t *testing.T) {
 		Description: types.StringValue("daily backup"),
 		VolumeID:    types.StringValue("vol-123"),
 		Tags:        tags,
+		TagsAll:     types.MapNull(types.StringType),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
+
+	// Tags are merged by Create (tftags.ForCreate); assemble the request as it does.
+
+	req.Metadata = tftags.ForCreate(ctx, tftags.Defaults{}, model.Tags, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %s", diags.Errors())
 	}
@@ -64,6 +70,7 @@ func TestSnapshotModel_toCreateRequest_minimal(t *testing.T) {
 		Description: types.StringNull(),
 		VolumeID:    types.StringValue("vol-456"),
 		Tags:        types.MapNull(types.StringType),
+		TagsAll:     types.MapNull(types.StringType),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
@@ -102,7 +109,7 @@ func TestSnapshotModel_fromAPI(t *testing.T) {
 
 	// description is Optional-only and preserved from plan/state on read: a
 	// user-set description (non-null) adopts the backend value.
-	model := &SnapshotModel{Description: types.StringValue("test description")}
+	model := &SnapshotModel{Description: types.StringValue("test description"), TagsAll: types.MapNull(types.StringType)}
 	model.fromAPI(ctx, apiSnap, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %s", diags.Errors())
@@ -467,6 +474,7 @@ func TestSnapshotResource_Create_TFSDK(t *testing.T) {
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"size_gb":     tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -522,6 +530,7 @@ func TestSnapshotResource_Create_APIError(t *testing.T) {
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"size_gb":     tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -579,6 +588,7 @@ func TestSnapshotResource_Read_TFSDK(t *testing.T) {
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"size_gb":     tftypes.NewValue(tftypes.Number, int64(100)),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -626,6 +636,7 @@ func TestSnapshotResource_Read_NotFound_TFSDK(t *testing.T) {
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"size_gb":     tftypes.NewValue(tftypes.Number, int64(50)),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -669,6 +680,7 @@ func TestSnapshotResource_Read_APIError(t *testing.T) {
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"size_gb":     tftypes.NewValue(tftypes.Number, int64(50)),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -685,27 +697,6 @@ func TestSnapshotResource_Read_APIError(t *testing.T) {
 
 	if !readResp.Diagnostics.HasError() {
 		t.Fatal("expected error from API failure")
-	}
-}
-
-func TestSnapshotResource_Update_TFSDK(t *testing.T) {
-	r := &snapshotResource{}
-	resp := &resource.UpdateResponse{}
-	r.Update(context.Background(), resource.UpdateRequest{}, resp)
-
-	if !resp.Diagnostics.HasError() {
-		t.Fatal("expected error from unsupported update")
-	}
-
-	found := false
-	for _, d := range resp.Diagnostics.Errors() {
-		if d.Summary() == "Update Not Supported" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected 'Update Not Supported' error")
 	}
 }
 
@@ -742,6 +733,7 @@ func TestSnapshotResource_Delete_TFSDK(t *testing.T) {
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"size_gb":     tftypes.NewValue(tftypes.Number, int64(100)),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -781,6 +773,7 @@ func TestSnapshotResource_Delete_NotFound_TFSDK(t *testing.T) {
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"size_gb":     tftypes.NewValue(tftypes.Number, int64(50)),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -819,6 +812,7 @@ func TestSnapshotResource_Delete_APIError(t *testing.T) {
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"size_gb":     tftypes.NewValue(tftypes.Number, int64(50)),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -849,6 +843,7 @@ func TestSnapshotResource_ImportState_TFSDK(t *testing.T) {
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"volume_id":   tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, nil),
@@ -894,7 +889,7 @@ func TestSnapshotModel_fromAPI_FiltersReservedTags(t *testing.T) {
 				"frostmoln_type": "managed",
 			},
 		}
-		model := &SnapshotModel{Tags: types.MapNull(types.StringType)}
+		model := &SnapshotModel{Tags: types.MapNull(types.StringType), TagsAll: types.MapNull(types.StringType)}
 		model.fromAPI(ctx, snap, &diags)
 		if diags.HasError() {
 			t.Fatalf("unexpected diagnostics: %v", diags.Errors())
@@ -916,7 +911,7 @@ func TestSnapshotModel_fromAPI_FiltersReservedTags(t *testing.T) {
 			Status:   "available",
 			Metadata: map[string]string{"backup": "daily", "customer-id": "c1", "project-id": "p1"},
 		}
-		model := &SnapshotModel{Tags: priorTags}
+		model := &SnapshotModel{Tags: priorTags, TagsAll: types.MapNull(types.StringType)}
 		model.fromAPI(ctx, snap, &diags)
 		if diags.HasError() {
 			t.Fatalf("unexpected diagnostics: %v", diags.Errors())
@@ -943,7 +938,7 @@ func TestSnapshotModelFromAPIPreservesNullDescription(t *testing.T) {
 		Status:      "available",
 		Description: "Created by provisioning for customer 94981d9c-8d35-4fa2-9704-2bc34cca0836",
 	}
-	model := &SnapshotModel{Description: types.StringNull()}
+	model := &SnapshotModel{Description: types.StringNull(), TagsAll: types.MapNull(types.StringType)}
 	model.fromAPI(ctx, apiSnap, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
@@ -966,6 +961,7 @@ func snapshotOrphanPlan(t *testing.T) tftypes.Value {
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"size_gb":     tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),

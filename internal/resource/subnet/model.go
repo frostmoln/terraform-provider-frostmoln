@@ -23,6 +23,7 @@ type SubnetModel struct {
 	GatewayIP    types.String `tfsdk:"gateway_ip"`
 	DNSServers   types.List   `tfsdk:"dns_servers"`
 	Tags         types.Map    `tfsdk:"tags"`
+	TagsAll      types.Map    `tfsdk:"tags_all"`
 	Status       types.String `tfsdk:"status"`
 	AvailableIPs types.Int64  `tfsdk:"available_ips"`
 	CreatedAt    types.String `tfsdk:"created_at"`
@@ -115,17 +116,16 @@ func (m *SubnetModel) toCreateRequest(ctx context.Context, diags *diag.Diagnosti
 		req.DNSServers = servers
 	}
 
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		tags := make(map[string]string)
-		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		req.Tags = tags
-	}
+	// Tags are set by Create, which merges the provider's default_tags into
+	// them (tftags.ForCreate).
 
 	return req
 }
 
-// toUpdateRequest converts the Terraform model to an API update request (tags only).
-func (m *SubnetModel) toUpdateRequest(ctx context.Context, diags *diag.Diagnostics) apiUpdateSubnetRequest {
+// toUpdateRequest converts the Terraform model to an API update request. Tags
+// are set by Update, which merges them with the provider's default_tags and
+// the keys it does not manage (tftags.ForUpdate).
+func (m *SubnetModel) toUpdateRequest() apiUpdateSubnetRequest {
 	req := apiUpdateSubnetRequest{}
 
 	if !m.Name.IsNull() && !m.Name.IsUnknown() {
@@ -140,8 +140,6 @@ func (m *SubnetModel) toUpdateRequest(ctx context.Context, diags *diag.Diagnosti
 		empty := ""
 		req.Description = &empty
 	}
-
-	req.Tags = tftags.ForUpdate(ctx, m.Tags, diags)
 
 	return req
 }
@@ -199,6 +197,14 @@ func (m *SubnetModel) fromAPI(ctx context.Context, subnet *apiSubnet, diags *dia
 	// Same treatment as volume/instance.
 	//
 	// Filtering runs first, so a read holding only platform-owned keys is "no
-	// tags" to tftags.FromAPI.
-	m.Tags = tftags.FromAPI(ctx, reservedmeta.FilterNetwork(subnet.Tags), m.Tags, diags)
+	// tags" to tftags.ReadBack.
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, subnet.customerTags(), m.Tags, diags)
+}
+
+// customerTags is the tag set the platform holds on the object, as Terraform
+// sees it: platform-reserved keys filtered out. The read-back and the fresh
+// read an update makes before it writes (tftags.Prior.WithCurrent) both use
+// it, so the two cannot disagree about what counts as a tag.
+func (a *apiSubnet) customerTags() map[string]string {
+	return reservedmeta.FilterNetwork(a.Tags)
 }

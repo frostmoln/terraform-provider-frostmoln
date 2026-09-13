@@ -38,3 +38,9 @@ resource "frostmoln_gateway" "example" {
 # frostmoln_public_ip instead when a partner allow-list or a DNS record does.
 # See the frostmoln_gateway resource for that, and for the
 # acknowledge_connectivity_loss guard that removing a gateway requires.
+
+# tags holds only what this configuration sets; tags_all adds the provider's
+# default_tags and any tag set outside this configuration.
+output "production_vpc_tags" {
+  value = frostmoln_vpc.example.tags_all
+}

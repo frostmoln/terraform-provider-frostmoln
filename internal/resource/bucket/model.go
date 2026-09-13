@@ -17,6 +17,7 @@ type BucketModel struct {
 	StorageClass types.String `tfsdk:"storage_class"`
 	Versioning   types.String `tfsdk:"versioning"`
 	Tags         types.Map    `tfsdk:"tags"`
+	TagsAll      types.Map    `tfsdk:"tags_all"`
 	ObjectCount  types.Int64  `tfsdk:"object_count"`
 	SizeBytes    types.Int64  `tfsdk:"size_bytes"`
 	CreatedAt    types.String `tfsdk:"created_at"`
@@ -62,7 +63,7 @@ type apiUpdateBucketRequest struct {
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
-func (m *BucketModel) toCreateRequest(ctx context.Context) (apiCreateBucketRequest, diag.Diagnostics) {
+func (m *BucketModel) toCreateRequest() apiCreateBucketRequest {
 	req := apiCreateBucketRequest{
 		Name: m.Name.ValueString(),
 	}
@@ -80,18 +81,17 @@ func (m *BucketModel) toCreateRequest(ctx context.Context) (apiCreateBucketReque
 		req.Versioning = m.Versioning.ValueString() == "enabled"
 	}
 
-	var diags diag.Diagnostics
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		tags := make(map[string]string)
-		diags = m.Tags.ElementsAs(ctx, &tags, false)
-		req.Tags = tags
-	}
-
-	return req, diags
+	// Tags are set by Create, which merges the provider's default_tags into
+	// them (tftags.ForCreate).
+	return req
 }
 
-// toUpdateRequest converts the Terraform model to an API update request.
-func (m *BucketModel) toUpdateRequest(ctx context.Context) (apiUpdateBucketRequest, diag.Diagnostics) {
+// toUpdateRequest converts the Terraform model to an API update request. Tags
+// are set by Update: always the full desired set, merged with the provider's
+// default_tags and the keys it does not manage (tftags.ForUpdate), so a
+// removed tags block or an empty map clears the bucket's tags rather than
+// silently leaving them in place.
+func (m *BucketModel) toUpdateRequest() apiUpdateBucketRequest {
 	req := apiUpdateBucketRequest{}
 
 	if !m.Versioning.IsNull() && !m.Versioning.IsUnknown() {
@@ -99,16 +99,7 @@ func (m *BucketModel) toUpdateRequest(ctx context.Context) (apiUpdateBucketReque
 		req.Versioning = &v
 	}
 
-	// Always populated, never left nil: config is authoritative on update, so a
-	// removed tags block or an empty map must clear the bucket's tags rather
-	// than silently leave them in place.
-	var diags diag.Diagnostics
-	req.Tags = make(map[string]string)
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		diags = m.Tags.ElementsAs(ctx, &req.Tags, false)
-	}
-
-	return req, diags
+	return req
 }
 
 // fromAPI populates the Terraform model from an API response.
@@ -123,8 +114,18 @@ func (m *BucketModel) fromAPI(ctx context.Context, b *apiBucket) diag.Diagnostic
 
 	// storage omits an empty tag map, so an absent `tags` is "no tags", never
 	// "unchanged": keeping the model's tags here hid an out-of-band removal.
+	// storage already strips its six control-plane keys from this map
+	// (IsReservedBucketTagKey), so there is nothing to filter here.
 	var diags diag.Diagnostics
-	m.Tags = tftags.FromAPI(ctx, b.Tags, m.Tags, &diags)
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, b.customerTags(), m.Tags, &diags)
 
 	return diags
+}
+
+// customerTags is the tag set the platform holds on the object, as Terraform
+// sees it: platform-reserved keys filtered out. The read-back and the fresh
+// read an update makes before it writes (tftags.Prior.WithCurrent) both use
+// it, so the two cannot disagree about what counts as a tag.
+func (a *apiBucket) customerTags() map[string]string {
+	return a.Tags
 }

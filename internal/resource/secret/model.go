@@ -20,6 +20,7 @@ type SecretModel struct {
 	SecretValueWOVer   types.String `tfsdk:"secret_value_wo_version"`
 	ContentType        types.String `tfsdk:"content_type"`
 	Tags               types.Map    `tfsdk:"tags"`
+	TagsAll            types.Map    `tfsdk:"tags_all"`
 	MaxVersions        types.Int64  `tfsdk:"max_versions"`
 	RecoveryWindowDays types.Int64  `tfsdk:"recovery_window_days"`
 	CurrentVersion     types.Int64  `tfsdk:"current_version"`
@@ -89,11 +90,8 @@ func (m *SecretModel) toCreateRequest(ctx context.Context, diags *diag.Diagnosti
 		req.ContentType = m.ContentType.ValueString()
 	}
 
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		tags := make(map[string]string)
-		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		req.Tags = tags
-	}
+	// Tags are set by Create, which merges the provider's default_tags into
+	// them (tftags.ForCreate).
 
 	if !m.MaxVersions.IsNull() && !m.MaxVersions.IsUnknown() {
 		req.MaxVersions = int(m.MaxVersions.ValueInt64())
@@ -130,9 +128,8 @@ func (m *SecretModel) toUpdateRequest(ctx context.Context, state *SecretModel, d
 		req.SecretValue = &v
 	}
 
-	if !m.Tags.Equal(state.Tags) {
-		req.Tags = tftags.ForUpdate(ctx, m.Tags, diags)
-	}
+	// Tags are set by Update, and only when the platform's tag set would
+	// change (tftags.ForUpdate).
 
 	return req
 }
@@ -181,5 +178,13 @@ func (m *SecretModel) fromAPI(ctx context.Context, s *apiSecret, diags *diag.Dia
 	}
 
 	// The service answers an untagged secret with `"tags": {}`.
-	m.Tags = tftags.FromAPI(ctx, s.Tags, m.Tags, diags)
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, s.customerTags(), m.Tags, diags)
+}
+
+// customerTags is the tag set the platform holds on the object, as Terraform
+// sees it: platform-reserved keys filtered out. The read-back and the fresh
+// read an update makes before it writes (tftags.Prior.WithCurrent) both use
+// it, so the two cannot disagree about what counts as a tag.
+func (a *apiSecret) customerTags() map[string]string {
+	return a.Tags
 }

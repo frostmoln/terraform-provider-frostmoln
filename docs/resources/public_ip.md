@@ -12,7 +12,7 @@ description: |-
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Not enacted state — acknowledge_address_loss: an acknowledgement flag for a destroy that would drop the address — carried in state, not a platform setting the apply pushes.
-  Observed, not enacted — address: platform-assigned at allocation. attachment.kind: the platform attaches addresses for load balancers, clusters and managed web servers under the customer — an attachment made out of band is read back, not fought. attachment.resource_id: the platform attaches addresses for load balancers, clusters and managed web servers under the customer — an attachment made out of band is read back, not fought. attachment.vpc_id: the platform attaches addresses for load balancers, clusters and managed web servers under the customer — an attachment made out of band is read back, not fought.
+  Observed, not enacted — address: platform-assigned at allocation. attachment.kind: the platform attaches addresses for load balancers, clusters and managed web servers under the customer — an attachment made out of band is read back, not fought. attachment.resource_id: the platform attaches addresses for load balancers, clusters and managed web servers under the customer — an attachment made out of band is read back, not fought. attachment.vpc_id: the platform attaches addresses for load balancers, clusters and managed web servers under the customer — an attachment made out of band is read back, not fought. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_public_ip (Resource)
@@ -35,7 +35,7 @@ Use **`frostmoln_public_ip_association`** when the address ALREADY EXISTS (look 
 
 **Not enacted state** — `acknowledge_address_loss`: an acknowledgement flag for a destroy that would drop the address — carried in state, not a platform setting the apply pushes.
 
-**Observed, not enacted** — `address`: platform-assigned at allocation. `attachment.kind`: the platform attaches addresses for load balancers, clusters and managed web servers under the customer — an attachment made out of band is read back, not fought. `attachment.resource_id`: the platform attaches addresses for load balancers, clusters and managed web servers under the customer — an attachment made out of band is read back, not fought. `attachment.vpc_id`: the platform attaches addresses for load balancers, clusters and managed web servers under the customer — an attachment made out of band is read back, not fought.
+**Observed, not enacted** — `address`: platform-assigned at allocation. `attachment.kind`: the platform attaches addresses for load balancers, clusters and managed web servers under the customer — an attachment made out of band is read back, not fought. `attachment.resource_id`: the platform attaches addresses for load balancers, clusters and managed web servers under the customer — an attachment made out of band is read back, not fought. `attachment.vpc_id`: the platform attaches addresses for load balancers, clusters and managed web servers under the customer — an attachment made out of band is read back, not fought. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -166,7 +166,7 @@ The ATTACHMENT is the place for it because an address that is merely allocated d
 Do not write it the other way about — on the gateway, listing what attaches. `depends_on` orders the resource it is written on, so that reverses both orders and turns a race that sometimes passed into a teardown that fails every time.
 
 It changes ORDER only: nothing is created and nothing is released. It does not arm the gateway's own destroy either — without `acknowledge_connectivity_loss` the teardown stops at that refusal instead, and never reaches the ordering at all. And if a gateway was already adopted, nothing needs importing or rebuilding: it is in state already — add the ordering so it cannot recur, then give the gateway the address you meant with `public_ip_id`, which is applied in place.
-- `tags` (Map of String) Tags for the public IP.
+- `tags` (Map of String) Tags for the public IP. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
@@ -179,6 +179,7 @@ Read this, not `instance_id`, to tell whether the address is free. An address se
 - `id` (String) The unique identifier of the public IP.
 - `private_ip` (String) The private IP of the associated instance.
 - `status` (String) The status of the public IP.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 
 <a id="nestedblock--timeouts"></a>
 ### Nested Schema for `timeouts`

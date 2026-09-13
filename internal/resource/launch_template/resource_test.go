@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // --- Model unit tests ---
@@ -40,9 +41,14 @@ func TestLaunchTemplateModelToCreateRequest(t *testing.T) {
 		UserData:         types.StringValue("#cloud-config"),
 		Metadata:         meta,
 		Tags:             tags,
+		TagsAll:          types.MapNull(types.StringType),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
+
+	// Tags are merged by Create (tftags.ForCreate); assemble the request as it does.
+
+	req.Tags = tftags.ForCreate(ctx, tftags.Defaults{}, model.Tags, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
@@ -80,6 +86,7 @@ func TestLaunchTemplateModelToCreateRequestMinimal(t *testing.T) {
 		UserData:         types.StringNull(),
 		Metadata:         types.MapNull(types.StringType),
 		Tags:             types.MapNull(types.StringType),
+		TagsAll:          types.MapNull(types.StringType),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
@@ -113,6 +120,7 @@ func TestLaunchTemplateModelToUpdateRequest(t *testing.T) {
 		UserData:         types.StringValue("data"),
 		Metadata:         planMeta,
 		Tags:             types.MapNull(types.StringType),
+		TagsAll:          types.MapNull(types.StringType),
 	}
 	state := LaunchTemplateModel{
 		Name:             types.StringValue("old"),
@@ -124,6 +132,7 @@ func TestLaunchTemplateModelToUpdateRequest(t *testing.T) {
 		UserData:         types.StringNull(),
 		Metadata:         stateMeta,
 		Tags:             types.MapNull(types.StringType),
+		TagsAll:          types.MapNull(types.StringType),
 	}
 
 	req := plan.toUpdateRequest(ctx, &state, &diags)
@@ -171,6 +180,7 @@ func TestLaunchTemplateModelToUpdateRequestNoChanges(t *testing.T) {
 		UserData:         types.StringNull(),
 		Metadata:         types.MapNull(types.StringType),
 		Tags:             types.MapNull(types.StringType),
+		TagsAll:          types.MapNull(types.StringType),
 	}
 
 	req := same.toUpdateRequest(ctx, &same, &diags)
@@ -276,6 +286,7 @@ func TestLaunchTemplateModelToUpdateRequestCollectionsToNull(t *testing.T) {
 		UserData:         types.StringNull(),
 		Metadata:         types.MapNull(types.StringType),
 		Tags:             types.MapNull(types.StringType),
+		TagsAll:          types.MapNull(types.StringType),
 	}
 	state := LaunchTemplateModel{
 		Name:             types.StringValue("same"),
@@ -287,6 +298,7 @@ func TestLaunchTemplateModelToUpdateRequestCollectionsToNull(t *testing.T) {
 		UserData:         types.StringNull(),
 		Metadata:         stateMeta,
 		Tags:             stateTags,
+		TagsAll:          types.MapNull(types.StringType),
 	}
 
 	req := plan.toUpdateRequest(ctx, &state, &diags)
@@ -299,8 +311,12 @@ func TestLaunchTemplateModelToUpdateRequestCollectionsToNull(t *testing.T) {
 	if req.Metadata == nil || len(req.Metadata) != 0 {
 		t.Errorf("expected empty metadata map, got %v", req.Metadata)
 	}
-	if req.Tags == nil || len(req.Tags) != 0 {
-		t.Errorf("expected empty tags map, got %v", req.Tags)
+
+	// Tags are cleared by Update: tftags.ForUpdate against the state's tags
+	// renders the emptied set as {}, never nil (tags_test.go drives it).
+	tags, changed := tftags.ForUpdate(ctx, tftags.Defaults{}, plan.Tags, tftags.Prior{Tags: state.Tags, TagsAll: state.TagsAll}, &diags)
+	if !changed || tags == nil || len(tags) != 0 {
+		t.Errorf("expected an empty, non-nil tag map on a change, got %v (changed=%v)", tags, changed)
 	}
 }
 
@@ -494,6 +510,7 @@ func fullLTModel() LaunchTemplateModel {
 		Tags:             types.MapNull(types.StringType),
 		CreatedAt:        types.StringValue("2025-01-01T00:00:00Z"),
 		UpdatedAt:        types.StringNull(),
+		TagsAll:          types.MapNull(types.StringType),
 	}
 }
 
@@ -551,6 +568,7 @@ func TestCreate(t *testing.T) {
 		UserData:         types.StringValue("#cloud-config"),
 		Metadata:         types.MapNull(types.StringType),
 		Tags:             types.MapNull(types.StringType),
+		TagsAll:          types.MapNull(types.StringType),
 	})
 
 	createResp := resource.CreateResponse{State: emptyLTState(t)}
@@ -590,6 +608,7 @@ func TestCreateAPIError(t *testing.T) {
 		UserData:         types.StringNull(),
 		Metadata:         types.MapNull(types.StringType),
 		Tags:             types.MapNull(types.StringType),
+		TagsAll:          types.MapNull(types.StringType),
 	})
 
 	createResp := resource.CreateResponse{State: emptyLTState(t)}

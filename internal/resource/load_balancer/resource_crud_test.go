@@ -20,38 +20,32 @@ import (
 // --- model unit tests ---
 
 func TestLoadBalancerToUpdateRequest(t *testing.T) {
-	ctx := context.Background()
-	tags, _ := types.MapValueFrom(ctx, types.StringType, map[string]string{"env": "prod"})
 	m := LoadBalancerModel{
 		Name:        types.StringValue("renamed"),
 		Description: types.StringValue("new desc"),
-		Tags:        tags,
+		TagsAll:     types.MapNull(types.StringType),
 	}
-	var diags diag.Diagnostics
-	req := m.toUpdateRequest(ctx, &LoadBalancerModel{Tags: types.MapNull(types.StringType)}, &diags)
-	if diags.HasError() {
-		t.Fatalf("unexpected diags: %v", diags)
-	}
+	req := m.toUpdateRequest()
 	if req.Name == nil || *req.Name != "renamed" {
 		t.Error("expected name in update")
 	}
 	if req.Description == nil || *req.Description != "new desc" {
 		t.Error("expected description in update")
 	}
-	if req.Tags == nil || (*req.Tags)["env"] != "prod" {
-		t.Errorf("expected tag env=prod, got %v", req.Tags)
+	// Tags are Update's job, sent only on a change (tags_test.go).
+	if req.Tags != nil {
+		t.Errorf("the builder must leave tags to Update, got %v", req.Tags)
 	}
 }
 
 func TestLoadBalancerToUpdateRequestNullDescription(t *testing.T) {
-	ctx := context.Background()
 	m := LoadBalancerModel{
 		Name:        types.StringValue("n"),
 		Description: types.StringNull(),
 		Tags:        types.MapNull(types.StringType),
+		TagsAll:     types.MapNull(types.StringType),
 	}
-	var diags diag.Diagnostics
-	req := m.toUpdateRequest(ctx, &LoadBalancerModel{Tags: types.MapNull(types.StringType)}, &diags)
+	req := m.toUpdateRequest()
 	// null description maps to an explicit empty string (clear).
 	if req.Description == nil || *req.Description != "" {
 		t.Errorf("expected empty description for null, got %v", req.Description)
@@ -248,6 +242,7 @@ func lbStateValue(t *testing.T, schemaResp resource.SchemaResponse, ctx context.
 		"type":                tftypes.NewValue(tftypes.String, "l7"),
 		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":            tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"vip_port_id":         tftypes.NewValue(tftypes.String, "port-1"),
 		"status":              tftypes.NewValue(tftypes.String, "active"),
 		"provisioning_status": tftypes.NewValue(tftypes.String, "ACTIVE"),
@@ -345,6 +340,9 @@ func TestLoadBalancerUpdate(t *testing.T) {
 				Status: "active", ProvisioningStatus: "ACTIVE", OperatingStatus: "ONLINE",
 				VIPAddress: "10.0.0.7", CreatedAt: "2025-01-01T00:00:00Z", UpdatedAt: "2025-02-01T00:00:00Z",
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/load-balancers/lb-u-1":
+			// The update reads the current tags before it writes them.
+			_ = json.NewEncoder(w).Encode(apiLoadBalancer{ID: "lb-u-1"})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -373,6 +371,7 @@ func TestLoadBalancerUpdate(t *testing.T) {
 		"type":                tftypes.NewValue(tftypes.String, "l7"),
 		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":            tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"vip_port_id":         tftypes.NewValue(tftypes.String, "port-1"),
 		"status":              tftypes.NewValue(tftypes.String, "active"),
 		"provisioning_status": tftypes.NewValue(tftypes.String, "ACTIVE"),

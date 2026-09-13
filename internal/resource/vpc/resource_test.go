@@ -103,21 +103,14 @@ func TestVPCModelFromAPINoOptionalFields(t *testing.T) {
 }
 
 func TestVPCModelToCreateRequest(t *testing.T) {
-	ctx := context.Background()
-	tags, _ := types.MapValueFrom(ctx, types.StringType, map[string]string{"env": "prod"})
 	model := VPCModel{
 		Name:        types.StringValue("my-vpc"),
 		Description: types.StringValue("My VPC"),
 		CIDR:        types.StringValue("10.0.0.0/16"),
-		Tags:        tags,
+		TagsAll:     types.MapNull(types.StringType),
 	}
 
-	var diags diag.Diagnostics
-	req := model.toCreateRequest(ctx, &diags)
-
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
+	req := model.toCreateRequest()
 
 	if req.Name != "my-vpc" {
 		t.Errorf("expected Name my-vpc, got %s", req.Name)
@@ -128,26 +121,20 @@ func TestVPCModelToCreateRequest(t *testing.T) {
 	if req.CIDR != "10.0.0.0/16" {
 		t.Errorf("expected CIDR 10.0.0.0/16, got %s", req.CIDR)
 	}
-	if req.Tags["env"] != "prod" {
-		t.Errorf("expected tag env=prod, got %v", req.Tags)
+	// Tags are Create's job (tftags.ForCreate), covered by tags_test.go.
+	if req.Tags != nil {
+		t.Errorf("the builder must leave tags to Create, got %v", req.Tags)
 	}
 }
 
 func TestVPCModelToUpdateRequest(t *testing.T) {
-	ctx := context.Background()
-	tags, _ := types.MapValueFrom(ctx, types.StringType, map[string]string{"env": "staging"})
 	model := VPCModel{
 		Name:        types.StringValue("updated-vpc"),
 		Description: types.StringValue("Updated"),
-		Tags:        tags,
+		TagsAll:     types.MapNull(types.StringType),
 	}
 
-	var diags diag.Diagnostics
-	req := model.toUpdateRequest(ctx, &diags)
-
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
+	req := model.toUpdateRequest()
 
 	if *req.Name != "updated-vpc" {
 		t.Errorf("expected Name updated-vpc, got %s", *req.Name)
@@ -155,8 +142,8 @@ func TestVPCModelToUpdateRequest(t *testing.T) {
 	if *req.Description != "Updated" {
 		t.Errorf("expected Description 'Updated', got %s", *req.Description)
 	}
-	if req.Tags["env"] != "staging" {
-		t.Errorf("expected tag env=staging, got %v", req.Tags)
+	if req.Tags != nil {
+		t.Errorf("the builder must leave tags to Update, got %v", req.Tags)
 	}
 }
 
@@ -444,6 +431,7 @@ func TestVPCResource_TFSDKCreate(t *testing.T) {
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"is_default":   tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
 		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
@@ -526,6 +514,7 @@ func TestVPCResource_TFSDKRead(t *testing.T) {
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "172.16.0.0/12"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, true),
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
@@ -632,6 +621,7 @@ func TestVPCResource_TFSDKCreateAdoptsAfterTimeout(t *testing.T) {
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"is_default":   tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
 		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
@@ -712,6 +702,7 @@ func TestVPCResource_TFSDKCreateRefusedByOperation(t *testing.T) {
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"is_default":   tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
 		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
@@ -773,6 +764,7 @@ func TestVPCResource_TFSDKReadNotFound(t *testing.T) {
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
@@ -858,6 +850,7 @@ func TestVPCResource_TFSDKUpdate(t *testing.T) {
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(1)),
@@ -874,6 +867,7 @@ func TestVPCResource_TFSDKUpdate(t *testing.T) {
 		"tags": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{
 			"env": tftypes.NewValue(tftypes.String, "prod"),
 		}),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(1)),
@@ -952,6 +946,7 @@ func TestVPCResource_TFSDKDelete(t *testing.T) {
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
@@ -1011,6 +1006,7 @@ func TestVPCResource_TFSDKDeleteAlreadyGone(t *testing.T) {
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
@@ -1106,6 +1102,7 @@ func TestVPCResource_TFSDKCreateSync201(t *testing.T) {
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"is_default":   tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
 		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
@@ -1171,6 +1168,7 @@ func TestVPCResource_TFSDKCreateAPIError(t *testing.T) {
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"is_default":   tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
 		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
@@ -1224,6 +1222,7 @@ func TestVPCResource_TFSDKCreateBadResponseBody(t *testing.T) {
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"is_default":   tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
 		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
@@ -1286,6 +1285,7 @@ func TestVPCResource_TFSDKCreatePollingErrorState(t *testing.T) {
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"is_default":   tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
 		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
@@ -1339,6 +1339,7 @@ func TestVPCResource_TFSDKReadAPIError(t *testing.T) {
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
@@ -1393,6 +1394,7 @@ func TestVPCResource_TFSDKReadBadJSON(t *testing.T) {
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
@@ -1448,6 +1450,7 @@ func TestVPCResource_TFSDKUpdateAPIError(t *testing.T) {
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
@@ -1462,6 +1465,7 @@ func TestVPCResource_TFSDKUpdateAPIError(t *testing.T) {
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
@@ -1516,6 +1520,7 @@ func TestVPCResource_TFSDKUpdateBadJSON(t *testing.T) {
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
@@ -1530,6 +1535,7 @@ func TestVPCResource_TFSDKUpdateBadJSON(t *testing.T) {
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
@@ -1584,6 +1590,7 @@ func TestVPCResource_TFSDKDeleteAPIError(t *testing.T) {
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
@@ -1618,6 +1625,7 @@ func TestVPCResource_TFSDKImportState(t *testing.T) {
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, nil),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, nil),
 		"is_default":   tftypes.NewValue(tftypes.Bool, nil),
 		"subnet_count": tftypes.NewValue(tftypes.Number, nil),
@@ -1672,6 +1680,7 @@ func deleteStateForVPC(t *testing.T, r *vpcResource, id string) (context.Context
 		"description":  tftypes.NewValue(tftypes.String, nil),
 		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
 		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":       tftypes.NewValue(tftypes.String, "active"),
 		"is_default":   tftypes.NewValue(tftypes.Bool, false),
 		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),

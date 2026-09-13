@@ -23,6 +23,7 @@ type DNSZoneModel struct {
 	RecordCount types.Int64  `tfsdk:"record_count"`
 	NameServers types.List   `tfsdk:"name_servers"`
 	Tags        types.Map    `tfsdk:"tags"`
+	TagsAll     types.Map    `tfsdk:"tags_all"`
 	CreatedAt   types.String `tfsdk:"created_at"`
 	UpdatedAt   types.String `tfsdk:"updated_at"`
 }
@@ -75,7 +76,7 @@ type apiUpdateDNSZoneRequest struct {
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
-func (m *DNSZoneModel) toCreateRequest(ctx context.Context, diags *diag.Diagnostics) apiCreateDNSZoneRequest {
+func (m *DNSZoneModel) toCreateRequest() apiCreateDNSZoneRequest {
 	req := apiCreateDNSZoneRequest{
 		Name:  m.Name.ValueString(),
 		Email: m.Email.ValueString(),
@@ -86,20 +87,18 @@ func (m *DNSZoneModel) toCreateRequest(ctx context.Context, diags *diag.Diagnost
 	if !m.TTL.IsNull() && !m.TTL.IsUnknown() {
 		req.TTL = int(m.TTL.ValueInt64())
 	}
-	// Only send tags when the user set them. A null/unset tags attribute omits
-	// the field (omitempty) so a zone created without tags round-trips to null;
-	// an explicit empty map serializes to nothing (still no tags) and fromAPI
-	// preserves the empty map, so neither case drifts.
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		tags := make(map[string]string)
-		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		req.Tags = tags
-	}
+	// Tags are set by Create, which merges the provider's default_tags into
+	// them (tftags.ForCreate). An empty set omits the field (omitempty), so a
+	// zone created without tags keeps its wire shape.
 	return req
 }
 
-// toUpdateRequest converts the Terraform model to an API update request.
-func (m *DNSZoneModel) toUpdateRequest(ctx context.Context, diags *diag.Diagnostics) apiUpdateDNSZoneRequest {
+// toUpdateRequest converts the Terraform model to an API update request. Tags
+// are set by Update: always the full desired set (whole-set-replace, ADR-0093),
+// merged with the provider's default_tags and the keys it does not manage
+// (tftags.ForUpdate). A non-nil empty map serializes to `"tags":{}`, which
+// clears server-side.
+func (m *DNSZoneModel) toUpdateRequest() apiUpdateDNSZoneRequest {
 	req := apiUpdateDNSZoneRequest{}
 
 	email := m.Email.ValueString()
@@ -117,16 +116,6 @@ func (m *DNSZoneModel) toUpdateRequest(ctx context.Context, diags *diag.Diagnost
 		ttl := int(m.TTL.ValueInt64())
 		req.TTL = &ttl
 	}
-
-	// Always send the full desired tag set (whole-set-replace, ADR-0093).
-	// A non-nil empty map serializes to `"tags":{}` which clears server-side;
-	// a null/unset attribute is treated as "no tags", so it also clears. This
-	// mirrors how email/description are always sent, and keeps state == plan.
-	tags := make(map[string]string)
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-	}
-	req.Tags = tags
 
 	return req
 }
@@ -161,5 +150,13 @@ func (m *DNSZoneModel) fromAPI(ctx context.Context, zone *apiDNSZone, diags *dia
 
 	// Tags round-trip drift-free against a backend that omits the field when
 	// empty (ADR-0093).
-	m.Tags = tftags.FromAPI(ctx, zone.Tags, m.Tags, diags)
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, zone.customerTags(), m.Tags, diags)
+}
+
+// customerTags is the tag set the platform holds on the object, as Terraform
+// sees it: platform-reserved keys filtered out. The read-back and the fresh
+// read an update makes before it writes (tftags.Prior.WithCurrent) both use
+// it, so the two cannot disagree about what counts as a tag.
+func (a *apiDNSZone) customerTags() map[string]string {
+	return a.Tags
 }

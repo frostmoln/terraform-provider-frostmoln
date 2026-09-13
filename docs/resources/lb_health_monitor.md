@@ -7,6 +7,7 @@ description: |-
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — load_balancer_id, pool_id, type: the monitor's identity is its pool and check type; changing one is a different monitor.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_lb_health_monitor (Resource)
@@ -18,6 +19,8 @@ Manages the health monitor of a Frostmoln load balancer pool. A pool has at most
 **Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
 
 **Create-immutable** — `load_balancer_id`, `pool_id`, `type`: the monitor's identity is its pool and check type; changing one is a different monitor.
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -59,7 +62,7 @@ resource "frostmoln_lb_health_monitor" "backend" {
 - `expected_codes` (String) The HTTP status codes considered healthy (http/https monitors), e.g. "200" or "200-299".
 - `http_method` (String) The HTTP method used for the health check (http/https monitors).
 - `max_retries` (Number) The number of successful checks before a member is marked healthy.
-- `tags` (Map of String) Key-value tags for the health monitor. These are the monitor's own tags, separate from its pool's and the load balancer's.
+- `tags` (Map of String) Key-value tags for the health monitor. These are the monitor's own tags, separate from its pool's and the load balancer's. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeout` (Number) The time in seconds to wait for a health check response.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `url_path` (String) The HTTP path to probe (http/https monitors).
@@ -68,6 +71,7 @@ resource "frostmoln_lb_health_monitor" "backend" {
 
 - `created_at` (String) The creation timestamp.
 - `id` (String) The unique identifier of the health monitor.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `updated_at` (String) The last update timestamp.
 
 <a id="nestedblock--timeouts"></a>

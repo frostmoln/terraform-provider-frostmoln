@@ -40,6 +40,7 @@ func sgStateValWith(id string, deleteDefaultEgress bool) tftypes.Value {
 		"description":           tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":                tftypes.NewValue(tftypes.String, "vpc-abc"),
 		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, deleteDefaultEgress),
 		"is_default":            tftypes.NewValue(tftypes.Bool, false),
 		"created_at":            tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -56,30 +57,24 @@ func configuredSGResource(t *testing.T, c *client.Client) resource.Resource {
 
 // --- Model edge cases ---
 
-func TestModelToUpdateRequestWithTagsAndNullDescription(t *testing.T) {
-	ctx := context.Background()
-	diags := &diag.Diagnostics{}
-	tags, _ := types.MapValueFrom(ctx, types.StringType, map[string]string{"env": "prod"})
+func TestModelToUpdateRequestWithNullDescription(t *testing.T) {
 	m := SecurityGroupModel{
 		Name:        types.StringValue("sg"),
 		Description: types.StringNull(),
-		Tags:        tags,
+		TagsAll:     types.MapNull(types.StringType),
 	}
-	req := m.toUpdateRequest(ctx, diags)
+	req := m.toUpdateRequest()
 	if req.Name == nil || *req.Name != "sg" {
 		t.Error("expected name set")
 	}
 	if req.Description == nil || *req.Description != "" {
 		t.Error("expected null description to become empty string in update request")
 	}
-	if req.Tags["env"] != "prod" {
-		t.Error("expected tags in update request")
-	}
 }
 
 func TestModelFromAPIEmptyDescriptionPreservesEmpty(t *testing.T) {
 	ctx := context.Background()
-	m := SecurityGroupModel{Description: types.StringValue("prior")}
+	m := SecurityGroupModel{Description: types.StringValue("prior"), TagsAll: types.MapNull(types.StringType)}
 	m.fromAPI(ctx, &apiSecurityGroup{ID: "sg-1", Name: "n", CreatedAt: "t"}, &diag.Diagnostics{})
 	if m.Description.IsNull() {
 		t.Error("expected non-null empty description when prior was non-null")
@@ -110,7 +105,7 @@ func TestModelFromAPIDescriptionTriState(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			m := SecurityGroupModel{Description: tc.prior}
+			m := SecurityGroupModel{Description: tc.prior, TagsAll: types.MapNull(types.StringType)}
 			sg := &apiSecurityGroup{ID: "sg-1", Name: "n", CreatedAt: "t"}
 			if tc.echoed != nil {
 				sg.Description = *tc.echoed
@@ -167,6 +162,7 @@ func TestCreateAPIError(t *testing.T) {
 		"description":           tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":                tftypes.NewValue(tftypes.String, "vpc-abc"),
 		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
 		"created_at":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -197,6 +193,7 @@ func TestCreateBadResponseBody(t *testing.T) {
 		"description":           tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":                tftypes.NewValue(tftypes.String, "vpc-abc"),
 		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
 		"created_at":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -264,6 +261,7 @@ func TestUpdateAPIError(t *testing.T) {
 		"description":           tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":                tftypes.NewValue(tftypes.String, "vpc-abc"),
 		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, false),
 		"created_at":            tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -296,6 +294,7 @@ func TestUpdateBadResponseBody(t *testing.T) {
 		"description":           tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":                tftypes.NewValue(tftypes.String, "vpc-abc"),
 		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, false),
 		"created_at":            tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -341,6 +340,7 @@ func sgCreatePlanVal(deleteDefaultEgress any) tftypes.Value {
 		"description":           tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":                tftypes.NewValue(tftypes.String, "vpc-abc"),
 		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"is_default":            tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, deleteDefaultEgress),
 		"created_at":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),

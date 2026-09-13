@@ -20,11 +20,13 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 var (
 	_ resource.Resource                = &dnsZoneResource{}
 	_ resource.ResourceWithImportState = &dnsZoneResource{}
+	_ resource.ResourceWithModifyPlan  = &dnsZoneResource{}
 )
 
 type dnsZoneResource struct {
@@ -121,13 +123,14 @@ func (r *dnsZoneResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				},
 			},
 			"tags": schema.MapAttribute{
-				Description: "Key-value tags for the zone.",
+				Description: "Key-value tags for the zone." + tftags.TagsNote,
 				Optional:    true,
 				ElementType: types.StringType,
 				PlanModifiers: []planmodifier.Map{
 					mapplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"tags_all": tftags.TagsAllAttribute(),
 			"created_at": schema.StringAttribute{
 				Description: "The creation timestamp.",
 				Computed:    true,
@@ -169,7 +172,9 @@ func (r *dnsZoneResource) Create(ctx context.Context, req resource.CreateRequest
 
 	// DNS is served synchronously by the network service (Designate-backed,
 	// ADR-0073) — create returns the zone directly, no async operation.
-	createReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
+	defaults := r.client.DefaultTags()
+	createReq := plan.toCreateRequest()
+	createReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -179,6 +184,7 @@ func (r *dnsZoneResource) Create(ctx context.Context, req resource.CreateRequest
 		resp.Diagnostics.AddError("Failed to Create DNS Zone", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	var zone apiDNSZone
 	if err := json.Unmarshal(apiResp.Body, &zone); err != nil {
@@ -218,6 +224,7 @@ func (r *dnsZoneResource) Read(ctx context.Context, req resource.ReadRequest, re
 	}
 
 	state.fromAPI(ctx, &zone, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -238,7 +245,15 @@ func (r *dnsZoneResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	updateReq := plan.toUpdateRequest(ctx, &resp.Diagnostics)
+	defaults := r.client.DefaultTags()
+	updateReq := plan.toUpdateRequest()
+	current, err := r.currentTags(ctx, r.client.TenantPath(fmt.Sprintf("/dns/zones/%s", state.ID.ValueString())))
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	prior := tftags.PriorOf(ctx, state.Tags, state.TagsAll, req.Private, &resp.Diagnostics).WithCurrent(current)
+	updateReq.Tags, _ = tftags.ForUpdate(ctx, defaults, plan.Tags, prior, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -248,6 +263,7 @@ func (r *dnsZoneResource) Update(ctx context.Context, req resource.UpdateRequest
 		resp.Diagnostics.AddError("Failed to Update DNS Zone", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	var zone apiDNSZone
 	if err := json.Unmarshal(apiResp.Body, &zone); err != nil {
@@ -282,4 +298,27 @@ func (r *dnsZoneResource) Delete(ctx context.Context, req resource.DeleteRequest
 
 func (r *dnsZoneResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
+}
+
+// ModifyPlan predicts tags_all: unknown whenever the next write changes the
+// platform's tag set, including a change to the provider's default_tags.
+func (r *dnsZoneResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+}
+
+// currentTags reads the tags the platform holds right now, at memberPath. An update
+// derives the keys it keeps — the ones this configuration does not manage —
+// from this rather than from state, which is only as fresh as the last
+// refresh (tftags.Prior.WithCurrent).
+func (r *dnsZoneResource) currentTags(ctx context.Context, memberPath string) (map[string]string, error) {
+	apiResp, err := r.client.Get(ctx, memberPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := client.ParseResponse[apiDNSZone](apiResp)
+	if err != nil {
+		return nil, err
+	}
+	return obj.customerTags(), nil
 }

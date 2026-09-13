@@ -26,6 +26,7 @@ func TestHealthMonitorToCreateRequest(t *testing.T) {
 		HTTPMethod:    types.StringValue("GET"),
 		URLPath:       types.StringValue("/healthz"),
 		ExpectedCodes: types.StringValue("200-299"),
+		TagsAll:       types.MapNull(types.StringType),
 	}
 	req := m.toCreateRequest(context.Background(), &diag.Diagnostics{})
 	if req.Type != "http" || req.Delay != 5 || req.Timeout != 3 || req.MaxRetries != 3 {
@@ -45,6 +46,7 @@ func TestHealthMonitorToCreateRequestTCP(t *testing.T) {
 		HTTPMethod:    types.StringNull(),
 		URLPath:       types.StringNull(),
 		ExpectedCodes: types.StringNull(),
+		TagsAll:       types.MapNull(types.StringType),
 	}
 	req := m.toCreateRequest(context.Background(), &diag.Diagnostics{})
 	if req.HTTPMethod != "" || req.URLPath != "" || req.ExpectedCodes != "" {
@@ -60,8 +62,9 @@ func TestHealthMonitorToUpdateRequest(t *testing.T) {
 		HTTPMethod:    types.StringValue("HEAD"),
 		URLPath:       types.StringValue("/ping"),
 		ExpectedCodes: types.StringValue("200"),
+		TagsAll:       types.MapNull(types.StringType),
 	}
-	req := m.toUpdateRequest(context.Background(), types.MapNull(types.StringType), &diag.Diagnostics{})
+	req := m.toUpdateRequest()
 	if req.Delay == nil || *req.Delay != 7 {
 		t.Error("expected delay in update")
 	}
@@ -183,6 +186,7 @@ func sampleHMModel() HealthMonitorModel {
 		ExpectedCodes:  types.StringValue("200"),
 		CreatedAt:      types.StringValue("2025-01-01T00:00:00Z"),
 		UpdatedAt:      types.StringNull(),
+		TagsAll:        types.MapNull(types.StringType),
 	}
 }
 
@@ -220,6 +224,7 @@ func TestHealthMonitorCreate(t *testing.T) {
 		URLPath:        types.StringValue("/healthz"),
 		HTTPMethod:     types.StringValue("GET"),
 		ExpectedCodes:  types.StringValue("200"),
+		TagsAll:        types.MapNull(types.StringType),
 	})
 	resp := resource.CreateResponse{State: buildHMState(t, sampleHMModel())}
 	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &resp)
@@ -257,6 +262,7 @@ func TestHealthMonitorCreateAPIError(t *testing.T) {
 		URLPath:        types.StringNull(),
 		HTTPMethod:     types.StringNull(),
 		ExpectedCodes:  types.StringNull(),
+		TagsAll:        types.MapNull(types.StringType),
 	})
 	resp := resource.CreateResponse{State: buildHMState(t, sampleHMModel())}
 	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &resp)
@@ -332,6 +338,12 @@ func TestHealthMonitorUpdate(t *testing.T) {
 			})
 			return
 		}
+		// The update reads the current tags before it writes them; this
+		// object carries none, like the state.
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/load-balancers/lb-1/pools/pool-1/healthmonitor" {
+			_ = json.NewEncoder(w).Encode(apiHealthMonitor{ID: "hm-1", PoolID: "pool-1"})
+			return
+		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
@@ -354,6 +366,7 @@ func TestHealthMonitorUpdate(t *testing.T) {
 		ExpectedCodes:  types.StringValue("200"),
 		CreatedAt:      types.StringValue("2025-01-01T00:00:00Z"),
 		UpdatedAt:      types.StringNull(),
+		TagsAll:        types.MapNull(types.StringType),
 	})
 	resp := resource.UpdateResponse{State: state}
 	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &resp)

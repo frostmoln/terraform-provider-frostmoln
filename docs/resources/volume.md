@@ -9,6 +9,7 @@ description: |-
   Create-immutable — encrypted, volume_type: the platform has no in-place migration for it — re-typing, re-zoning or re-encrypting a volume means a new volume.
   Create-immutable — snapshot_id: a volume's origin is fixed at create.
   Create-immutable — zone: the platform pins the zone at create; there is no in-place migration between zones.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_volume (Resource)
@@ -24,6 +25,8 @@ Manages a block storage volume in the Frostmoln platform.
 **Create-immutable** — `snapshot_id`: a volume's origin is fixed at create.
 
 **Create-immutable** — `zone`: the platform pins the zone at create; there is no in-place migration between zones.
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -54,7 +57,7 @@ resource "frostmoln_volume" "data" {
 - `description` (String) A human-readable description of the volume.
 - `encrypted` (Boolean) Whether the volume is encrypted. Volume encryption is not available yet — setting this to true is rejected at apply time.
 - `snapshot_id` (String) The snapshot ID to create the volume from.
-- `tags` (Map of String) Key-value tags for the volume.
+- `tags` (Map of String) Key-value tags for the volume. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `volume_type` (String) The volume tier key (e.g. "ssd"). The set of selectable tiers is server-defined and may change without a provider release — read it from the frostmoln_volume_tiers data source (only tiers with status "offered" are accepted; a non-offered tier is rejected by the API). Defaults to the platform default tier when omitted.
 - `zone` (String) The availability zone for the volume.
@@ -67,6 +70,7 @@ resource "frostmoln_volume" "data" {
 - `id` (String) The unique identifier of the volume.
 - `iops` (Number) The provisioned IOPS of the volume.
 - `status` (String) The current status of the volume.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `throughput` (Number) The throughput of the volume in MB/s.
 
 <a id="nestedblock--timeouts"></a>

@@ -19,12 +19,14 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/writeonly"
 )
 
 var (
 	_ resource.Resource                = &launchTemplateResource{}
 	_ resource.ResourceWithImportState = &launchTemplateResource{}
+	_ resource.ResourceWithModifyPlan  = &launchTemplateResource{}
 )
 
 // NewResource returns a new launch template resource factory.
@@ -170,13 +172,14 @@ func (r *launchTemplateResource) Schema(_ context.Context, _ resource.SchemaRequ
 				},
 			},
 			"tags": schema.MapAttribute{
-				Description: "Key-value tags for the launch template.",
+				Description: "Key-value tags for the launch template." + tftags.TagsNote,
 				Optional:    true,
 				ElementType: types.StringType,
 				PlanModifiers: []planmodifier.Map{
 					mapplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"tags_all": tftags.TagsAllAttribute(),
 			"created_at": schema.StringAttribute{
 				Description: "The timestamp when the launch template was created.",
 				Computed:    true,
@@ -221,7 +224,9 @@ func (r *launchTemplateResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
+	defaults := r.client.DefaultTags()
 	apiReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
+	apiReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -234,6 +239,7 @@ func (r *launchTemplateResource) Create(ctx context.Context, req resource.Create
 		resp.Diagnostics.AddError("Failed to create launch template", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	lt, err := client.ParseResponse[apiLaunchTemplate](apiResp)
 	if err != nil {
@@ -273,6 +279,7 @@ func (r *launchTemplateResource) Read(ctx context.Context, req resource.ReadRequ
 	// untouched. See the note at the end of fromAPI for why the response's
 	// document is not decoded at all.
 	state.fromAPI(ctx, lt, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -292,7 +299,17 @@ func (r *launchTemplateResource) Update(ctx context.Context, req resource.Update
 
 	id := state.ID.ValueString()
 
+	defaults := r.client.DefaultTags()
 	updateReq := plan.toUpdateRequest(ctx, &state, &resp.Diagnostics)
+	current, err := r.currentTags(ctx, r.client.TenantPath("/launch-templates/"+id))
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	prior := tftags.PriorOf(ctx, state.Tags, state.TagsAll, req.Private, &resp.Diagnostics).WithCurrent(current)
+	if tags, changed := tftags.ForUpdate(ctx, defaults, plan.Tags, prior, &resp.Diagnostics); changed {
+		updateReq.Tags = tags
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -304,11 +321,12 @@ func (r *launchTemplateResource) Update(ctx context.Context, req resource.Update
 		updateReq.UserData = &v
 	}
 
-	_, err := r.client.Patch(ctx, r.client.TenantPath("/launch-templates/"+id), updateReq)
+	_, err = r.client.Patch(ctx, r.client.TenantPath("/launch-templates/"+id), updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to update launch template", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// Refresh state from API.
 	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/launch-templates/"+id), nil)
@@ -345,6 +363,7 @@ func (r *launchTemplateResource) Delete(ctx context.Context, req resource.Delete
 
 func (r *launchTemplateResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }
 
 // userDataWO is the write-only triple for the template's cloud-init document.
@@ -357,4 +376,26 @@ var userDataWO = writeonly.Attr{
 	Version: "user_data_wo_version",
 	Legacy:  "user_data",
 	Subject: "the launch template",
+}
+
+// ModifyPlan predicts tags_all: unknown whenever the next write changes the
+// platform's tag set, including a change to the provider's default_tags.
+func (r *launchTemplateResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+}
+
+// currentTags reads the tags the platform holds right now, at memberPath. An update
+// derives the keys it keeps — the ones this configuration does not manage —
+// from this rather than from state, which is only as fresh as the last
+// refresh (tftags.Prior.WithCurrent).
+func (r *launchTemplateResource) currentTags(ctx context.Context, memberPath string) (map[string]string, error) {
+	apiResp, err := r.client.Get(ctx, memberPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := client.ParseResponse[apiLaunchTemplate](apiResp)
+	if err != nil {
+		return nil, err
+	}
+	return obj.customerTags(), nil
 }

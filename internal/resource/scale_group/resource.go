@@ -19,12 +19,14 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
 	_ resource.Resource                = &scaleGroupResource{}
 	_ resource.ResourceWithImportState = &scaleGroupResource{}
+	_ resource.ResourceWithModifyPlan  = &scaleGroupResource{}
 )
 
 // NewResource returns a new scale group resource factory.
@@ -157,13 +159,14 @@ func (r *scaleGroupResource) Schema(_ context.Context, _ resource.SchemaRequest,
 				Default:     stringdefault.StaticString("oldest_first"),
 			},
 			"tags": schema.MapAttribute{
-				Description: "Key-value tags for the scale group.",
+				Description: "Key-value tags for the scale group." + tftags.TagsNote,
 				Optional:    true,
 				ElementType: types.StringType,
 				PlanModifiers: []planmodifier.Map{
 					mapplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"tags_all": tftags.TagsAllAttribute(),
 			"created_at": schema.StringAttribute{
 				Description: "The timestamp when the scale group was created.",
 				Computed:    true,
@@ -269,7 +272,9 @@ func (r *scaleGroupResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
+	defaults := r.client.DefaultTags()
 	apiReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
+	apiReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -279,6 +284,7 @@ func (r *scaleGroupResource) Create(ctx context.Context, req resource.CreateRequ
 		resp.Diagnostics.AddError("Failed to create scale group", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// Scale-group create routes through provisioning, which returns 202 + an
 	// Operation envelope (operationId only, NOT the scale group). Poll the
@@ -378,6 +384,7 @@ func (r *scaleGroupResource) Read(ctx context.Context, req resource.ReadRequest,
 	}
 
 	state.fromAPI(ctx, sg, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -392,16 +399,27 @@ func (r *scaleGroupResource) Update(ctx context.Context, req resource.UpdateRequ
 
 	id := state.ID.ValueString()
 
+	defaults := r.client.DefaultTags()
 	updateReq := plan.toUpdateRequest(ctx, &state, &resp.Diagnostics)
+	current, err := r.currentTags(ctx, r.client.TenantPath("/scale-groups/"+id))
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	prior := tftags.PriorOf(ctx, state.Tags, state.TagsAll, req.Private, &resp.Diagnostics).WithCurrent(current)
+	if tags, changed := tftags.ForUpdate(ctx, defaults, plan.Tags, prior, &resp.Diagnostics); changed {
+		updateReq.Tags = tags
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	_, err := r.client.Patch(ctx, r.client.TenantPath("/scale-groups/"+id), updateReq)
+	_, err = r.client.Patch(ctx, r.client.TenantPath("/scale-groups/"+id), updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to update scale group", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// Refresh state from API.
 	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/scale-groups/"+id), nil)
@@ -469,4 +487,27 @@ func (r *scaleGroupResource) Delete(ctx context.Context, req resource.DeleteRequ
 
 func (r *scaleGroupResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
+}
+
+// ModifyPlan predicts tags_all: unknown whenever the next write changes the
+// platform's tag set, including a change to the provider's default_tags.
+func (r *scaleGroupResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+}
+
+// currentTags reads the tags the platform holds right now, at memberPath. An update
+// derives the keys it keeps — the ones this configuration does not manage —
+// from this rather than from state, which is only as fresh as the last
+// refresh (tftags.Prior.WithCurrent).
+func (r *scaleGroupResource) currentTags(ctx context.Context, memberPath string) (map[string]string, error) {
+	apiResp, err := r.client.Get(ctx, memberPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := client.ParseResponse[apiScaleGroup](apiResp)
+	if err != nil {
+		return nil, err
+	}
+	return obj.customerTags(), nil
 }

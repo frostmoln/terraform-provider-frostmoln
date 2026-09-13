@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 func TestVolumeModel_toCreateRequest(t *testing.T) {
@@ -38,9 +39,14 @@ func TestVolumeModel_toCreateRequest(t *testing.T) {
 		SnapshotID:  types.StringNull(),
 		Encrypted:   types.BoolValue(true),
 		Tags:        tags,
+		TagsAll:     types.MapNull(types.StringType),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
+
+	// Tags are merged by Create (tftags.ForCreate); assemble the request as it does.
+
+	req.Metadata = tftags.ForCreate(ctx, tftags.Defaults{}, model.Tags, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %s", diags.Errors())
 	}
@@ -84,6 +90,7 @@ func TestVolumeModel_toCreateRequest_minimal(t *testing.T) {
 		SnapshotID:  types.StringNull(),
 		Encrypted:   types.BoolValue(false),
 		Tags:        types.MapNull(types.StringType),
+		TagsAll:     types.MapNull(types.StringType),
 	}
 
 	req := model.toCreateRequest(ctx, &diags)
@@ -127,7 +134,7 @@ func TestVolumeModel_fromAPI(t *testing.T) {
 
 	// description is Optional-only and preserved from plan/state on read: a
 	// user-set description (non-null) adopts the backend value.
-	model := &VolumeModel{Description: types.StringValue("test description")}
+	model := &VolumeModel{Description: types.StringValue("test description"), TagsAll: types.MapNull(types.StringType)}
 	model.fromAPI(ctx, apiVol, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %s", diags.Errors())
@@ -553,6 +560,7 @@ func TestVolumeResource_TFSDKCreate(t *testing.T) {
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, true),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"iops":        tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"throughput":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
@@ -644,6 +652,7 @@ func TestVolumeResource_TFSDKRead(t *testing.T) {
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(5000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(250)),
@@ -714,6 +723,7 @@ func TestVolumeResource_TFSDKReadNotFound(t *testing.T) {
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
@@ -808,6 +818,7 @@ func TestVolumeResource_TFSDKUpdate_PatchAndResize(t *testing.T) {
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, true),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
@@ -827,6 +838,7 @@ func TestVolumeResource_TFSDKUpdate_PatchAndResize(t *testing.T) {
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, true),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
@@ -918,6 +930,7 @@ func TestVolumeResource_TFSDKDelete(t *testing.T) {
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
@@ -1013,6 +1026,7 @@ func TestVolumeResource_TFSDKCreateAPIError(t *testing.T) {
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"iops":        tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"throughput":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
@@ -1071,6 +1085,7 @@ func TestVolumeResource_TFSDKCreateBadResponseBody(t *testing.T) {
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"iops":        tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"throughput":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
@@ -1139,6 +1154,7 @@ func TestVolumeResource_TFSDKCreatePollingErrorState(t *testing.T) {
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"iops":        tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"throughput":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
@@ -1210,6 +1226,7 @@ func TestVolumeResource_TFSDKCreateFinalReadError(t *testing.T) {
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"iops":        tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"throughput":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
@@ -1268,6 +1285,7 @@ func TestVolumeResource_TFSDKReadAPIError(t *testing.T) {
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
@@ -1327,6 +1345,7 @@ func TestVolumeResource_TFSDKReadBadJSON(t *testing.T) {
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
@@ -1387,6 +1406,7 @@ func TestVolumeResource_TFSDKUpdatePatchError(t *testing.T) {
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, true),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
@@ -1406,6 +1426,7 @@ func TestVolumeResource_TFSDKUpdatePatchError(t *testing.T) {
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, true),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
@@ -1467,6 +1488,7 @@ func TestVolumeResource_TFSDKUpdateResizeError(t *testing.T) {
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, true),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
@@ -1486,6 +1508,7 @@ func TestVolumeResource_TFSDKUpdateResizeError(t *testing.T) {
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, true),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
@@ -1548,6 +1571,7 @@ func TestVolumeResource_TFSDKUpdateReadError(t *testing.T) {
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, true),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(3000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(125)),
@@ -1605,6 +1629,7 @@ func TestVolumeResource_TFSDKDeleteNotFound(t *testing.T) {
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
@@ -1662,6 +1687,7 @@ func TestVolumeResource_TFSDKDeleteAPIError(t *testing.T) {
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, "available"),
 		"iops":        tftypes.NewValue(tftypes.Number, big.NewFloat(1000)),
 		"throughput":  tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
@@ -1700,6 +1726,7 @@ func TestVolumeResource_TFSDKImportState(t *testing.T) {
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, nil),
 		"iops":        tftypes.NewValue(tftypes.Number, nil),
 		"throughput":  tftypes.NewValue(tftypes.Number, nil),
@@ -1749,7 +1776,7 @@ func TestVolumeModelFromAPIFiltersReservedTags(t *testing.T) {
 				"frostmoln_type": "managed",
 			},
 		}
-		model := VolumeModel{Tags: types.MapNull(types.StringType)}
+		model := VolumeModel{Tags: types.MapNull(types.StringType), TagsAll: types.MapNull(types.StringType)}
 		model.fromAPI(ctx, vol, &diags)
 		if diags.HasError() {
 			t.Fatalf("unexpected diagnostics: %v", diags.Errors())
@@ -1770,7 +1797,7 @@ func TestVolumeModelFromAPIFiltersReservedTags(t *testing.T) {
 			Status:   "available",
 			Metadata: map[string]string{"customer-id": "c1", "project-id": "p1"},
 		}
-		model := VolumeModel{Tags: emptyTags}
+		model := VolumeModel{Tags: emptyTags, TagsAll: types.MapNull(types.StringType)}
 		model.fromAPI(ctx, vol, &diags)
 		if diags.HasError() {
 			t.Fatalf("unexpected diagnostics: %v", diags.Errors())
@@ -1801,7 +1828,7 @@ func TestVolumeModelFromAPIFiltersReservedTags(t *testing.T) {
 				"project-id":  "p1",
 			},
 		}
-		model := VolumeModel{Tags: priorTags}
+		model := VolumeModel{Tags: priorTags, TagsAll: types.MapNull(types.StringType)}
 		model.fromAPI(ctx, vol, &diags)
 		if diags.HasError() {
 			t.Fatalf("unexpected diagnostics: %v", diags.Errors())
@@ -1828,7 +1855,7 @@ func TestVolumeModelFromAPIPreservesNullDescription(t *testing.T) {
 		Status:      "available",
 		Description: "Created by provisioning for customer 94981d9c-8d35-4fa2-9704-2bc34cca0836",
 	}
-	model := &VolumeModel{Description: types.StringNull()}
+	model := &VolumeModel{Description: types.StringNull(), TagsAll: types.MapNull(types.StringType)}
 	model.fromAPI(ctx, apiVol, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
@@ -1856,6 +1883,7 @@ func volumeOrphanPlan(t *testing.T, schemaResp resource.SchemaResponse) tftypes.
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
 		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"iops":        tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"throughput":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),

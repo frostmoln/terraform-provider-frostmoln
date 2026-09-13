@@ -20,6 +20,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -158,13 +159,14 @@ func (r *securityGroupResource) Schema(_ context.Context, _ resource.SchemaReque
 				},
 			},
 			"tags": schema.MapAttribute{
-				Description: "Tags for the security group.",
+				Description: "Tags for the security group." + tftags.TagsNote,
 				Optional:    true,
 				ElementType: types.StringType,
 				PlanModifiers: []planmodifier.Map{
 					mapplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"tags_all": tftags.TagsAllAttribute(),
 			"is_default": schema.BoolAttribute{
 				Description: "Whether this is the default security group.",
 				Computed:    true,
@@ -231,7 +233,9 @@ func (r *securityGroupResource) Create(ctx context.Context, req resource.CreateR
 		return
 	}
 
+	defaults := r.client.DefaultTags()
 	createReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
+	createReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -241,6 +245,7 @@ func (r *securityGroupResource) Create(ctx context.Context, req resource.CreateR
 		resp.Diagnostics.AddError("Failed to Create Security Group", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// Security-group create routes through provisioning → 202 + an Operation
 	// envelope (operationId only). Poll the operation, then read by its resolved
@@ -375,7 +380,11 @@ func (r *securityGroupResource) adoptCreatedObject(ctx context.Context, plan Sec
 // flipped on (or off) for a group that already exists, the change is a
 // documented no-op — Create-time behaviour only, Update never touches rules.
 // A schema description cannot say that during a CI apply, so the plan does.
+//
+// It also predicts tags_all (tftags.PlanTagsAll).
 func (r *securityGroupResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+
 	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
 		return // create or destroy: nothing to warn about
 	}
@@ -495,6 +504,7 @@ func (r *securityGroupResource) Read(ctx context.Context, req resource.ReadReque
 	}
 
 	state.fromAPI(ctx, &sg, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -515,7 +525,15 @@ func (r *securityGroupResource) Update(ctx context.Context, req resource.UpdateR
 		return
 	}
 
-	updateReq := plan.toUpdateRequest(ctx, &resp.Diagnostics)
+	defaults := r.client.DefaultTags()
+	updateReq := plan.toUpdateRequest()
+	current, err := r.currentTags(ctx, r.client.TenantPath(fmt.Sprintf("/security-groups/%s", state.ID.ValueString())))
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	prior := tftags.PriorOf(ctx, state.Tags, state.TagsAll, req.Private, &resp.Diagnostics).WithCurrent(current)
+	updateReq.Tags, _ = tftags.ForUpdate(ctx, defaults, plan.Tags, prior, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -527,6 +545,7 @@ func (r *securityGroupResource) Update(ctx context.Context, req resource.UpdateR
 		resp.Diagnostics.AddError("Failed to Update Security Group", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	var sg apiSecurityGroup
 	if err := json.Unmarshal(apiResp.Body, &sg); err != nil {
@@ -591,4 +610,21 @@ func (r *securityGroupResource) Delete(ctx context.Context, req resource.DeleteR
 
 func (r *securityGroupResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
+}
+
+// currentTags reads the tags the platform holds right now, at memberPath. An update
+// derives the keys it keeps — the ones this configuration does not manage —
+// from this rather than from state, which is only as fresh as the last
+// refresh (tftags.Prior.WithCurrent).
+func (r *securityGroupResource) currentTags(ctx context.Context, memberPath string) (map[string]string, error) {
+	apiResp, err := r.client.Get(ctx, memberPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := client.ParseResponse[apiSecurityGroup](apiResp)
+	if err != nil {
+		return nil, err
+	}
+	return obj.customerTags(), nil
 }

@@ -51,6 +51,13 @@ func TestProviderSchema(t *testing.T) {
 			t.Errorf("expected provider schema to have attribute %q", expected)
 		}
 	}
+	blocks := make(map[string]bool)
+	for _, b := range resp.Provider.Block.BlockTypes {
+		blocks[b.TypeName] = true
+	}
+	if !blocks["default_tags"] {
+		t.Error("expected provider schema to have the default_tags block")
+	}
 }
 
 func TestProviderMetadata(t *testing.T) {
@@ -109,9 +116,15 @@ func providerConfigType() tftypes.Object {
 			"use_cli_config":  tftypes.Bool,
 			"cli_config_path": tftypes.String,
 			"cli_context":     tftypes.String,
+			"default_tags":    defaultTagsType,
 		},
 	}
 }
+
+// defaultTagsType is the provider's default_tags block.
+var defaultTagsType = tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+	"tags": tftypes.Map{ElementType: tftypes.String},
+}}
 
 // newProviderDynamicValue creates a DynamicValue for provider configuration
 // with only api_endpoint/api_key set (the CLI-config attributes null).
@@ -129,6 +142,8 @@ type providerConfigValues struct {
 	useCLIConfig  *bool
 	cliConfigPath *string
 	cliContext    *string
+	// defaultTags is the default_tags block value; nil is an absent block.
+	defaultTags *tftypes.Value
 }
 
 func newProviderConfig(t *testing.T, v providerConfigValues) *tfprotov6.DynamicValue {
@@ -153,7 +168,16 @@ func newProviderConfig(t *testing.T, v providerConfigValues) *tfprotov6.DynamicV
 		"use_cli_config":  boolVal(v.useCLIConfig),
 		"cli_config_path": strVal(v.cliConfigPath),
 		"cli_context":     strVal(v.cliContext),
+		"default_tags":    tftypes.NewValue(defaultTagsType, nil),
 	})
+	if v.defaultTags != nil {
+		attrs := map[string]tftypes.Value{}
+		if err := val.As(&attrs); err != nil {
+			t.Fatalf("provider config: %v", err)
+		}
+		attrs["default_tags"] = *v.defaultTags
+		val = tftypes.NewValue(typ, attrs)
+	}
 	dv, err := tfprotov6.NewDynamicValue(typ, val)
 	if err != nil {
 		t.Fatalf("failed to create DynamicValue: %v", err)

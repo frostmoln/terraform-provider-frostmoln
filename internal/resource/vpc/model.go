@@ -19,6 +19,7 @@ type VPCModel struct {
 	Description types.String `tfsdk:"description"`
 	CIDR        types.String `tfsdk:"cidr"`
 	Tags        types.Map    `tfsdk:"tags"`
+	TagsAll     types.Map    `tfsdk:"tags_all"`
 	Status      types.String `tfsdk:"status"`
 	IsDefault   types.Bool   `tfsdk:"is_default"`
 	SubnetCount types.Int64  `tfsdk:"subnet_count"`
@@ -83,7 +84,7 @@ type apiUpdateVPCRequest struct {
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
-func (m *VPCModel) toCreateRequest(ctx context.Context, diags *diag.Diagnostics) apiCreateVPCRequest {
+func (m *VPCModel) toCreateRequest() apiCreateVPCRequest {
 	req := apiCreateVPCRequest{
 		Name: m.Name.ValueString(),
 		CIDR: m.CIDR.ValueString(),
@@ -93,17 +94,15 @@ func (m *VPCModel) toCreateRequest(ctx context.Context, diags *diag.Diagnostics)
 		req.Description = m.Description.ValueString()
 	}
 
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		tags := make(map[string]string)
-		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		req.Tags = tags
-	}
-
+	// Tags are not set here: Create merges the provider's default_tags into
+	// them (tftags.ForCreate).
 	return req
 }
 
-// toUpdateRequest converts the Terraform model to an API update request.
-func (m *VPCModel) toUpdateRequest(ctx context.Context, diags *diag.Diagnostics) apiUpdateVPCRequest {
+// toUpdateRequest converts the Terraform model to an API update request. Tags
+// are not set here: Update merges them with the provider's default_tags and
+// the keys it does not manage (tftags.ForUpdate).
+func (m *VPCModel) toUpdateRequest() apiUpdateVPCRequest {
 	req := apiUpdateVPCRequest{}
 
 	if !m.Name.IsNull() && !m.Name.IsUnknown() {
@@ -118,8 +117,6 @@ func (m *VPCModel) toUpdateRequest(ctx context.Context, diags *diag.Diagnostics)
 		empty := ""
 		req.Description = &empty
 	}
-
-	req.Tags = tftags.ForUpdate(ctx, m.Tags, diags)
 
 	return req
 }
@@ -161,6 +158,14 @@ func (m *VPCModel) fromAPI(ctx context.Context, vpc *apiVPC, diags *diag.Diagnos
 	// Same treatment as volume/instance.
 	//
 	// Filtering runs first, so a read holding only platform-owned keys is "no
-	// tags" to tftags.FromAPI.
-	m.Tags = tftags.FromAPI(ctx, reservedmeta.FilterNetwork(vpc.Tags), m.Tags, diags)
+	// tags" to tftags.ReadBack.
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, vpc.customerTags(), m.Tags, diags)
+}
+
+// customerTags is the tag set the platform holds on the object, as Terraform
+// sees it: platform-reserved keys filtered out. The read-back and the fresh
+// read an update makes before it writes (tftags.Prior.WithCurrent) both use
+// it, so the two cannot disagree about what counts as a tag.
+func (a *apiVPC) customerTags() map[string]string {
+	return reservedmeta.FilterNetwork(a.Tags)
 }

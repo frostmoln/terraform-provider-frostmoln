@@ -7,6 +7,7 @@ description: |-
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — listener_id, load_balancer_id, protocol: the pool's identity is its listener, load balancer and protocol; changing one is a different pool.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_lb_pool (Resource)
@@ -18,6 +19,8 @@ Manages a backend pool on a Frostmoln load balancer.
 **Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
 
 **Create-immutable** — `listener_id`, `load_balancer_id`, `protocol`: the pool's identity is its listener, load balancer and protocol; changing one is a different pool.
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -66,13 +69,14 @@ resource "frostmoln_lb_pool" "backend" {
 - `listener_id` (String) The ID of the listener this pool is attached to. Changing this forces a new resource.
 - `proxy_protocol` (String) The PROXY protocol version sent to backend members: none (default), v1, or v2.
 - `session_persistence` (Attributes) Session persistence configuration for the pool. Omit for no persistence. (see [below for nested schema](#nestedatt--session_persistence))
-- `tags` (Map of String) Key-value tags for the pool. These are the pool's own tags, separate from the load balancer's.
+- `tags` (Map of String) Key-value tags for the pool. These are the pool's own tags, separate from the load balancer's. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
 
 - `created_at` (String) The creation timestamp.
 - `id` (String) The unique identifier of the pool.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `updated_at` (String) The last update timestamp.
 
 <a id="nestedatt--session_persistence"></a>

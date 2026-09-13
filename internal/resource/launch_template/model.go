@@ -24,6 +24,7 @@ type LaunchTemplateModel struct {
 	UserDataWOVer    types.String `tfsdk:"user_data_wo_version"`
 	Metadata         types.Map    `tfsdk:"metadata"`
 	Tags             types.Map    `tfsdk:"tags"`
+	TagsAll          types.Map    `tfsdk:"tags_all"`
 	CreatedAt        types.String `tfsdk:"created_at"`
 	UpdatedAt        types.String `tfsdk:"updated_at"`
 }
@@ -105,11 +106,8 @@ func (m *LaunchTemplateModel) toCreateRequest(ctx context.Context, diags *diag.D
 		req.Metadata = meta
 	}
 
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		tags := make(map[string]string)
-		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		req.Tags = tags
-	}
+	// Tags are set by Create, which merges the provider's default_tags into
+	// them (tftags.ForCreate).
 
 	return req
 }
@@ -172,9 +170,8 @@ func (m *LaunchTemplateModel) toUpdateRequest(ctx context.Context, state *Launch
 		}
 	}
 
-	if !m.Tags.Equal(state.Tags) {
-		req.Tags = tftags.ForUpdate(ctx, m.Tags, diags)
-	}
+	// Tags are set by Update, and only when the platform's tag set would
+	// change (tftags.ForUpdate).
 
 	return req
 }
@@ -233,7 +230,7 @@ func (m *LaunchTemplateModel) fromAPI(ctx context.Context, lt *apiLaunchTemplate
 		m.Metadata = types.MapNull(types.StringType)
 	}
 
-	m.Tags = tftags.FromAPI(ctx, lt.Tags, m.Tags, diags)
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, lt.customerTags(), m.Tags, diags)
 
 	// user_data is deliberately absent from this function, and userData is
 	// deliberately absent from apiLaunchTemplate above.
@@ -254,4 +251,12 @@ func (m *LaunchTemplateModel) fromAPI(ctx context.Context, lt *apiLaunchTemplate
 	// a separate change from the write-only work, and not a free one — user_data
 	// is Optional and not Computed, so writing an API-normalised value back over
 	// the configured one would make Terraform reject the apply.
+}
+
+// customerTags is the tag set the platform holds on the object, as Terraform
+// sees it: platform-reserved keys filtered out. The read-back and the fresh
+// read an update makes before it writes (tftags.Prior.WithCurrent) both use
+// it, so the two cannot disagree about what counts as a tag.
+func (a *apiLaunchTemplate) customerTags() map[string]string {
+	return a.Tags
 }

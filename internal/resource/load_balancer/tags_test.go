@@ -25,6 +25,7 @@ func tagTestLBModel() LoadBalancerModel {
 		VIPPortID: types.StringValue("port-1"), Status: types.StringValue("active"),
 		ProvisioningStatus: types.StringValue("ACTIVE"), OperatingStatus: types.StringValue("ONLINE"),
 		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"), UpdatedAt: types.StringNull(),
+		TagsAll: types.MapNull(types.StringType),
 	}
 }
 
@@ -79,6 +80,11 @@ func TestUpdateClearsTags(t *testing.T) {
 			var sent map[string]string
 
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// The update reads the current tags before it writes them.
+				if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/load-balancers/lb-1" {
+					_ = json.NewEncoder(w).Encode(tagTestLBWire(stored))
+					return
+				}
 				if r.Method != http.MethodPut || r.URL.Path != "/v1/tenants/t-1/load-balancers/lb-1" {
 					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 					w.WriteHeader(http.StatusNotFound)
@@ -181,6 +187,16 @@ func TestUpdateWithoutTagChangeSendsNoTags(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var put, hadTags bool
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// The update reads the current tags before it writes them: the
+				// state's, since nothing changed them.
+				if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/load-balancers/lb-1" {
+					cur := tagTestLBWire(nil)
+					if !tc.tags.IsNull() {
+						cur.Tags = map[string]string{"a": "b"}
+					}
+					_ = json.NewEncoder(w).Encode(cur)
+					return
+				}
 				if r.Method != http.MethodPut || r.URL.Path != "/v1/tenants/t-1/load-balancers/lb-1" {
 					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 					w.WriteHeader(http.StatusNotFound)
@@ -241,7 +257,9 @@ func TestReadFiltersPlatformTags(t *testing.T) {
 		want    map[string]string
 		wantNil bool
 	}{
-		{"customer and platform keys", map[string]string{"k": "v", "frostmoln_managed_by": "cluster"}, types.MapNull(types.StringType), map[string]string{"k": "v"}, false},
+		{"customer and platform keys", map[string]string{"k": "v", "frostmoln_managed_by": "cluster"}, types.MapValueMust(types.StringType, map[string]attr.Value{"k": types.StringValue("v")}), map[string]string{"k": "v"}, false},
+		// A key the configuration does not name lives in tags_all only.
+		{"customer key not configured", map[string]string{"k": "v", "frostmoln_managed_by": "cluster"}, types.MapNull(types.StringType), nil, true},
 		{"only platform keys, no tags configured", map[string]string{"frostmoln_managed_by": "cluster"}, types.MapNull(types.StringType), nil, true},
 		{"only platform keys, tags = {}", map[string]string{"frostmoln_managed_by": "cluster"}, empty, map[string]string{}, false},
 	} {
@@ -266,6 +284,16 @@ func TestReadFiltersPlatformTags(t *testing.T) {
 
 			var got LoadBalancerModel
 			resp.State.Get(context.Background(), &got)
+			// tags_all is the whole filtered read-back: the customer key, never the
+			// platform's.
+			if _, leaked := got.TagsAll.Elements()["frostmoln_managed_by"]; leaked {
+				t.Errorf("a platform-owned key reached tags_all: %v", got.TagsAll)
+			}
+			if _, has := tc.api["k"]; has {
+				if _, kept := got.TagsAll.Elements()["k"]; !kept {
+					t.Errorf("tags_all = %v, want the customer key k", got.TagsAll)
+				}
+			}
 			assertTags(t, got.Tags, tc.want, tc.wantNil)
 		})
 	}

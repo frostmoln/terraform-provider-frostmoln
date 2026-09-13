@@ -30,8 +30,10 @@ func TestPublicIPModelFromAPI_ReservedTagsNeverReachState(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
 
+	// Nothing configured the tags, so the read-back lands in tags_all only —
+	// which is where a reserved key must never appear.
 	got := map[string]string{}
-	diags.Append(m.Tags.ElementsAs(ctx, &got, false)...)
+	diags.Append(m.TagsAll.ElementsAs(ctx, &got, false)...)
 	if _, ok := got["frostmoln_type"]; ok {
 		t.Errorf("reserved key reached state: %v", got)
 	}
@@ -47,7 +49,7 @@ func TestPublicIPModelFromAPI_ReservedTagsNeverReachState(t *testing.T) {
 	if d.HasError() {
 		t.Fatalf("fixture: %v", d)
 	}
-	m2 := PublicIPModel{Tags: empty}
+	m2 := PublicIPModel{Tags: empty, TagsAll: types.MapNull(types.StringType)}
 	var diags2 diag.Diagnostics
 	m2.fromAPI(ctx, &apiPublicIP{ID: "fip-1", Tags: map[string]string{"frostmoln_type": "x"}}, &diags2)
 	if m2.Tags.IsNull() {

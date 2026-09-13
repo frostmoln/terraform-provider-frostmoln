@@ -20,12 +20,14 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
 	_ resource.Resource                = &poolResource{}
 	_ resource.ResourceWithImportState = &poolResource{}
+	_ resource.ResourceWithModifyPlan  = &poolResource{}
 )
 
 type poolResource struct {
@@ -163,10 +165,11 @@ func (r *poolResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				},
 			},
 			"tags": schema.MapAttribute{
-				Description: "Key-value tags for the pool. These are the pool's own tags, separate from the load balancer's.",
+				Description: "Key-value tags for the pool. These are the pool's own tags, separate from the load balancer's." + tftags.TagsNote,
 				ElementType: types.StringType,
 				Optional:    true,
 			},
+			"tags_all": tftags.TagsAllAttribute(),
 			"created_at": schema.StringAttribute{
 				Description: "The creation timestamp.",
 				Computed:    true,
@@ -212,7 +215,9 @@ func (r *poolResource) Create(ctx context.Context, req resource.CreateRequest, r
 	}
 
 	lbID := plan.LoadBalancerID.ValueString()
+	defaults := r.client.DefaultTags()
 	createReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
+	createReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -225,6 +230,7 @@ func (r *poolResource) Create(ctx context.Context, req resource.CreateRequest, r
 		resp.Diagnostics.AddError("Failed to Create Pool", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// Pool create routes through provisioning → 202 + an Operation envelope
 	// (operationId only). Poll the operation, then read by its resolved
@@ -350,6 +356,7 @@ func (r *poolResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	}
 
 	state.fromAPI(ctx, pool, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -365,7 +372,15 @@ func (r *poolResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	lbID := state.LoadBalancerID.ValueString()
 	poolID := state.ID.ValueString()
 	poolPath := r.client.TenantPath(fmt.Sprintf("/load-balancers/%s/pools/%s", lbID, poolID))
-	updateReq := plan.toUpdateRequest(ctx, state.Tags, &resp.Diagnostics)
+	defaults := r.client.DefaultTags()
+	updateReq := plan.toUpdateRequest()
+	current, err := r.currentTags(ctx, poolPath)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	prior := tftags.PriorOf(ctx, state.Tags, state.TagsAll, req.Private, &resp.Diagnostics).WithCurrent(current)
+	updateReq.setTags(tftags.ForUpdate(ctx, defaults, plan.Tags, prior, &resp.Diagnostics))
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -375,6 +390,7 @@ func (r *poolResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		resp.Diagnostics.AddError("Failed to Update Pool", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// Like create, a pool UPDATE routes through provisioning → 202 + an
 	// Operation envelope, never the updated pool. Parsing that envelope as a
@@ -477,4 +493,27 @@ func (r *poolResource) ImportState(ctx context.Context, req resource.ImportState
 
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("load_balancer_id"), parts[0])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[1])...)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
+}
+
+// ModifyPlan predicts tags_all: unknown whenever the next write changes the
+// platform's tag set, including a change to the provider's default_tags.
+func (r *poolResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+}
+
+// currentTags reads the tags the platform holds right now, at memberPath. An update
+// derives the keys it keeps — the ones this configuration does not manage —
+// from this rather than from state, which is only as fresh as the last
+// refresh (tftags.Prior.WithCurrent).
+func (r *poolResource) currentTags(ctx context.Context, memberPath string) (map[string]string, error) {
+	apiResp, err := r.client.Get(ctx, memberPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := client.ParseResponse[apiPool](apiResp)
+	if err != nil {
+		return nil, err
+	}
+	return obj.customerTags(), nil
 }

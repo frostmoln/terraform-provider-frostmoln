@@ -3,6 +3,7 @@ package load_balancer
 import (
 	"context"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -61,6 +62,8 @@ func (r *loadBalancerResource) priorSchemaV0(ctx context.Context) *schema.Schema
 	}
 	attrs["provider_type"] = attrs["type"]
 	delete(attrs, "type")
+	// tags_all did not exist at v0 either; the upgrader derives it.
+	delete(attrs, "tags_all")
 
 	prior := current.Schema
 	prior.Attributes = attrs
@@ -119,6 +122,18 @@ func (r *loadBalancerResource) UpgradeState(ctx context.Context) map[int64]resou
 					}
 				}
 
+				// tags_all is new since v0. v0's `tags` was read back verbatim
+				// (every non-reserved key the platform held), which is exactly
+				// what tags_all holds now, so it seeds it; an untagged v0 load
+				// balancer holds none. A refresh replaces it with the platform's
+				// set either way, and seeding it keeps a `plan -refresh=false`
+				// right after the upgrade from predicting a tag change that
+				// is not there.
+				tagsAll := old.Tags
+				if tagsAll.IsNull() || tagsAll.IsUnknown() {
+					tagsAll = types.MapValueMust(types.StringType, map[string]attr.Value{})
+				}
+
 				resp.Diagnostics.Append(resp.State.Set(ctx, LoadBalancerModel{
 					ID:                 old.ID,
 					Name:               old.Name,
@@ -132,6 +147,7 @@ func (r *loadBalancerResource) UpgradeState(ctx context.Context) map[int64]resou
 					Type:               types.StringValue(newType),
 					FlavorID:           old.FlavorID,
 					Tags:               old.Tags,
+					TagsAll:            tagsAll,
 					VIPPortID:          old.VIPPortID,
 					Status:             old.Status,
 					ProvisioningStatus: old.ProvisioningStatus,

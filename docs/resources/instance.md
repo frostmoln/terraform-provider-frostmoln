@@ -12,7 +12,7 @@ description: |-
   Create-immutable — user_data_wo_version: it versions the first-boot user data — bumping it re-creates the instance so the new document runs.
   Create-immutable — zone: the platform pins the zone at create; there is no in-place migration between zones.
   Not enacted state — console_password_wo: write-only: sent, never stored or read back — the console_password_wo_version companion carries change detection. user_data_wo: write-only: sent, never stored or read back — the user_data_wo_version companion carries change detection.
-  Observed, not enacted — private_ip: platform-assigned from the subnet at create. public_ip: platform-attached; an association made out of band is read back, not fought.
+  Observed, not enacted — private_ip: platform-assigned from the subnet at create. public_ip: platform-attached; an association made out of band is read back, not fought. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_instance (Resource)
@@ -35,7 +35,7 @@ Manages a compute instance in the Frostmoln platform.
 
 **Not enacted state** — `console_password_wo`: write-only: sent, never stored or read back — the `console_password_wo_version` companion carries change detection. `user_data_wo`: write-only: sent, never stored or read back — the `user_data_wo_version` companion carries change detection.
 
-**Observed, not enacted** — `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-attached; an association made out of band is read back, not fought.
+**Observed, not enacted** — `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-attached; an association made out of band is read back, not fought. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -152,7 +152,7 @@ resource "frostmoln_instance" "bootstrap" {
 - `security_groups` (Set of String) The security group IDs attached to the instance. On create, the platform requires at least one security group whenever `subnet_id` is set — a pinned port with no security groups is refused inside the create saga (`security_group_ids is required`), so with `subnet_id` set, set `security_groups` as well. On update, changing the set replaces the instance's security groups across all its ports in place, and setting it to [] or removing the attribute clears ALL security groups (the instance falls back to default-drop — typically no inbound access). Out-of-band changes (made via the portal, CLI, or another client) are detected as drift on refresh when you set `security_groups` in your configuration and every port shares the same set; if you leave the attribute unset, out-of-band changes are not tracked, and if ports hold differing sets the configured value is preserved with a warning (edit per port instead).
 - `ssh_key_names` (Set of String) The SSH key names to inject into the instance.
 - `subnet_id` (String) The subnet ID for the instance.
-- `tags` (Map of String) Key-value tags for the instance.
+- `tags` (Map of String) Key-value tags for the instance. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `user_data` (String, Sensitive) User data to provide to the instance at launch — typically a cloud-init document. The API does not return it, so the value you configure is preserved from state on refresh and a SHA256 hash is stored alongside it for change detection. The document is written to Terraform state in plaintext, so anything embedded in it — credentials, tokens, private keys — is readable by anyone who can read the state; `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide. Prefer `user_data_wo`, which carries the same document but is never written to state; the two are mutually exclusive.
 
@@ -175,6 +175,7 @@ resource "frostmoln_instance" "bootstrap" {
 - `private_ip` (String) The private IP address of the instance.
 - `public_ip` (String) The public IP address of the instance, if assigned.
 - `status` (String) The current status of the instance.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `user_data_hash` (String) SHA256 hash of the user data, used for change detection. Computed from the configured `user_data`, so it is null when the document is supplied through `user_data_wo` — there is no config value in state to hash, and `user_data_wo_version` is what carries change detection on that path.
 
 <a id="nestedblock--timeouts"></a>

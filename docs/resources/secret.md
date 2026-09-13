@@ -9,6 +9,7 @@ description: |-
   Create-immutable — name: the secret's name is its identity — unique per tenant.
   Create-only, change refused (not replaced) — content_type, max_versions, recovery_window_days: a delete is a soft delete and the name stays taken for the recovery window, so replacing would destroy the secret and then fail to re-create it under the same name — a change is warned about at plan and refused at apply instead.
   Not enacted state — secret_value: sensitive: sent, never read back — new versions are what a change creates. secret_value_wo: write-only: sent, never stored or read back — the secret_value_wo_version companion carries change detection.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_secret (Resource)
@@ -24,6 +25,8 @@ Manages a secret in the Frostmoln platform.
 **Create-only, change refused (not replaced)** — `content_type`, `max_versions`, `recovery_window_days`: a delete is a soft delete and the name stays taken for the recovery window, so replacing would destroy the secret and then fail to re-create it under the same name — a change is warned about at plan and refused at apply instead.
 
 **Not enacted state** — `secret_value`: sensitive: sent, never read back — new versions are what a change creates. `secret_value_wo`: write-only: sent, never stored or read back — the `secret_value_wo_version` companion carries change detection.
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -73,7 +76,7 @@ resource "frostmoln_secret" "api_token" {
 - `secret_value` (String, Sensitive) The secret value. Terraform persists every configured attribute, so this one is stored in state in plaintext no matter where the value came from — minting it out of band and passing it through a variable does not change that. Prefer `secret_value_wo`, which is never written to state. Exactly one of `secret_value` or `secret_value_wo` must be set, and the value must be at least one character: there is no clear-a-secret operation, so an empty value is refused at plan time when it is known then, refused at apply time when it is not, and rejected by current versions of the API. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide.
 - `secret_value_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) The secret value, as a [write-only argument](https://developer.hashicorp.com/terraform/language/resources/ephemeral/write-only): it reaches the provider on apply and is never written to the plan or to state. Requires Terraform 1.11 or later. Exactly one of `secret_value` or `secret_value_wo` must be set, and `secret_value_wo_version` is required whenever this one is. The value must be at least one character. Because the value is not stored, Terraform can detect no change to it in either direction: bump `secret_value_wo_version` to push a new value, and accept that a secret rotated outside Terraform is invisible to `plan` and will not be corrected.
 - `secret_value_wo_version` (String) Change tracker for `secret_value_wo`, required whenever that attribute is set. Any change to this value makes Terraform send the current `secret_value_wo` to the platform as a new secret version; leaving it alone leaves the stored secret untouched, however much the write-only value changes. Bumping it without changing the value still writes a new version, which counts against `max_versions`. Its content is arbitrary — a counter or a date is typical — and unlike the value it is stored in state, so do not derive it from the secret or from anything in it: a digest of the secret is printed verbatim in `terraform plan` output, and it is an offline confirmation oracle. `terraform import` leaves this unset, so the first apply against an imported secret writes a new version.
-- `tags` (Map of String) Tags for the secret.
+- `tags` (Map of String) Tags for the secret. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 
 ### Read-Only
 
@@ -81,6 +84,7 @@ resource "frostmoln_secret" "api_token" {
 - `current_version` (Number) The current version number of the secret.
 - `id` (String) The unique identifier of the secret.
 - `status` (String) The current status of the secret.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `updated_at` (String) The timestamp when the secret was last updated.
 
 ## Import

@@ -21,6 +21,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -28,6 +29,7 @@ var (
 	_ resource.Resource                   = &loadBalancerResource{}
 	_ resource.ResourceWithImportState    = &loadBalancerResource{}
 	_ resource.ResourceWithValidateConfig = &loadBalancerResource{}
+	_ resource.ResourceWithModifyPlan     = &loadBalancerResource{}
 	// Without this, a signature drift would silently drop the state upgrader,
 	// and every customer still on schema version 0 would hit a hard "Unable to
 	// Read Previously Saved State" error on their next plan.
@@ -192,13 +194,14 @@ func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 				},
 			},
 			"tags": schema.MapAttribute{
-				Description: "Key-value tags for the load balancer.",
+				Description: "Key-value tags for the load balancer." + tftags.TagsNote,
 				Optional:    true,
 				ElementType: types.StringType,
 				PlanModifiers: []planmodifier.Map{
 					mapplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"tags_all": tftags.TagsAllAttribute(),
 			"vip_port_id": schema.StringAttribute{
 				Description: "The port ID backing the load balancer VIP.",
 				Computed:    true,
@@ -302,7 +305,9 @@ func (r *loadBalancerResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
-	createReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
+	defaults := r.client.DefaultTags()
+	createReq := plan.toCreateRequest()
+	createReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -316,6 +321,7 @@ func (r *loadBalancerResource) Create(ctx context.Context, req resource.CreateRe
 		resp.Diagnostics.AddError("Failed to Create Load Balancer", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// the created-at floor for the discovery sweep
 	applyStarted := time.Now().UTC()
@@ -444,6 +450,7 @@ func (r *loadBalancerResource) Read(ctx context.Context, req resource.ReadReques
 	}
 
 	state.fromAPI(ctx, lb, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -461,7 +468,17 @@ func (r *loadBalancerResource) Update(ctx context.Context, req resource.UpdateRe
 	}
 
 	id := state.ID.ValueString()
-	updateReq := plan.toUpdateRequest(ctx, &state, &resp.Diagnostics)
+	defaults := r.client.DefaultTags()
+	updateReq := plan.toUpdateRequest()
+	current, err := r.currentTags(ctx, r.client.TenantPath(fmt.Sprintf("/load-balancers/%s", id)))
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	prior := tftags.PriorOf(ctx, state.Tags, state.TagsAll, req.Private, &resp.Diagnostics).WithCurrent(current)
+	if tags, changed := tftags.ForUpdate(ctx, defaults, plan.Tags, prior, &resp.Diagnostics); changed {
+		updateReq.Tags = &tags
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -472,6 +489,7 @@ func (r *loadBalancerResource) Update(ctx context.Context, req resource.UpdateRe
 		resp.Diagnostics.AddError("Failed to Update Load Balancer", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	lb, err := client.ParseResponse[apiLoadBalancer](apiResp)
 	if err != nil {
@@ -530,6 +548,7 @@ func (r *loadBalancerResource) Delete(ctx context.Context, req resource.DeleteRe
 
 func (r *loadBalancerResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }
 
 // getLoadBalancer fetches a load balancer by ID.
@@ -539,4 +558,26 @@ func (r *loadBalancerResource) getLoadBalancer(ctx context.Context, id string) (
 		return nil, err
 	}
 	return client.ParseResponse[apiLoadBalancer](apiResp)
+}
+
+// ModifyPlan predicts tags_all: unknown whenever the next write changes the
+// platform's tag set, including a change to the provider's default_tags.
+func (r *loadBalancerResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+}
+
+// currentTags reads the tags the platform holds right now, at memberPath. An update
+// derives the keys it keeps — the ones this configuration does not manage —
+// from this rather than from state, which is only as fresh as the last
+// refresh (tftags.Prior.WithCurrent).
+func (r *loadBalancerResource) currentTags(ctx context.Context, memberPath string) (map[string]string, error) {
+	apiResp, err := r.client.Get(ctx, memberPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := client.ParseResponse[apiLoadBalancer](apiResp)
+	if err != nil {
+		return nil, err
+	}
+	return obj.customerTags(), nil
 }

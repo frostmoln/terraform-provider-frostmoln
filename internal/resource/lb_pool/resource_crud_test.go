@@ -26,6 +26,7 @@ func TestPoolToCreateRequestNoPersistence(t *testing.T) {
 		LBAlgorithm:   types.StringValue("round_robin"),
 		ProxyProtocol: types.StringValue("v2"),
 		ListenerID:    types.StringValue("l-1"),
+		TagsAll:       types.MapNull(types.StringType),
 	}
 	req := m.toCreateRequest(context.Background(), &diag.Diagnostics{})
 	if req.Name != "p1" || req.Protocol != "http" || req.LBAlgorithm != "round_robin" {
@@ -53,6 +54,7 @@ func TestPoolToCreateRequestWithPersistence(t *testing.T) {
 			PersistenceTimeout:     types.Int64Value(60),
 			PersistenceGranularity: types.StringValue("255.255.255.0"),
 		},
+		TagsAll: types.MapNull(types.StringType),
 	}
 	req := m.toCreateRequest(context.Background(), &diag.Diagnostics{})
 	if req.SessionPersistence == nil {
@@ -70,8 +72,9 @@ func TestPoolToUpdateRequest(t *testing.T) {
 	m := PoolModel{
 		Name:        types.StringValue("renamed"),
 		LBAlgorithm: types.StringValue("least_connections"),
+		TagsAll:     types.MapNull(types.StringType),
 	}
-	req := m.toUpdateRequest(context.Background(), types.MapNull(types.StringType), &diag.Diagnostics{})
+	req := m.toUpdateRequest()
 	if req.Name == nil || *req.Name != "renamed" {
 		t.Error("expected name in update")
 	}
@@ -214,6 +217,7 @@ func samplePoolModel() PoolModel {
 		ProxyProtocol:  types.StringValue("none"),
 		CreatedAt:      types.StringValue("2025-01-01T00:00:00Z"),
 		UpdatedAt:      types.StringNull(),
+		TagsAll:        types.MapNull(types.StringType),
 	}
 }
 
@@ -248,6 +252,7 @@ func TestPoolCreate(t *testing.T) {
 		Protocol:       types.StringValue("http"),
 		LBAlgorithm:    types.StringValue("round_robin"),
 		ProxyProtocol:  types.StringValue("none"),
+		TagsAll:        types.MapNull(types.StringType),
 	})
 	resp := resource.CreateResponse{State: buildPoolState(t, samplePoolModel())}
 	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &resp)
@@ -279,6 +284,7 @@ func TestPoolCreateAPIError(t *testing.T) {
 		Protocol:       types.StringValue("http"),
 		LBAlgorithm:    types.StringValue("round_robin"),
 		ProxyProtocol:  types.StringValue("none"),
+		TagsAll:        types.MapNull(types.StringType),
 	})
 	resp := resource.CreateResponse{State: buildPoolState(t, samplePoolModel())}
 	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &resp)
@@ -354,6 +360,12 @@ func TestPoolUpdate(t *testing.T) {
 			})
 			return
 		}
+		// The update reads the current tags before it writes them; this
+		// object carries none, like the state.
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/load-balancers/lb-1/pools/pool-1" {
+			_ = json.NewEncoder(w).Encode(apiPool{ID: "pool-1", LoadBalancerID: "lb-1"})
+			return
+		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
@@ -373,6 +385,7 @@ func TestPoolUpdate(t *testing.T) {
 		ProxyProtocol:  types.StringValue("none"),
 		CreatedAt:      types.StringValue("2025-01-01T00:00:00Z"),
 		UpdatedAt:      types.StringNull(),
+		TagsAll:        types.MapNull(types.StringType),
 	})
 	resp := resource.UpdateResponse{State: state}
 	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &resp)

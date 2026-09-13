@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 func TestSecurityGroupModelFromAPI(t *testing.T) {
@@ -101,10 +102,13 @@ func TestSecurityGroupModelToCreateRequest(t *testing.T) {
 		Description: types.StringValue("My security group"),
 		VPCID:       types.StringValue("vpc-123"),
 		Tags:        tags,
+		TagsAll:     types.MapNull(types.StringType),
 	}
 
 	var diags diag.Diagnostics
 	req := model.toCreateRequest(ctx, &diags)
+	// Tags are merged by Create (tftags.ForCreate); assemble the request as it does.
+	req.Tags = tftags.ForCreate(ctx, tftags.Defaults{}, model.Tags, &diags)
 
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
@@ -125,21 +129,13 @@ func TestSecurityGroupModelToCreateRequest(t *testing.T) {
 }
 
 func TestSecurityGroupModelToUpdateRequest(t *testing.T) {
-	ctx := context.Background()
-	tags, _ := types.MapValueFrom(ctx, types.StringType, map[string]string{"env": "staging"})
-
 	model := SecurityGroupModel{
 		Name:        types.StringValue("updated-sg"),
 		Description: types.StringValue("Updated"),
-		Tags:        tags,
+		TagsAll:     types.MapNull(types.StringType),
 	}
 
-	var diags diag.Diagnostics
-	req := model.toUpdateRequest(ctx, &diags)
-
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
+	req := model.toUpdateRequest()
 
 	if *req.Name != "updated-sg" {
 		t.Errorf("expected Name updated-sg, got %s", *req.Name)
@@ -147,8 +143,9 @@ func TestSecurityGroupModelToUpdateRequest(t *testing.T) {
 	if *req.Description != "Updated" {
 		t.Errorf("expected Description 'Updated', got %s", *req.Description)
 	}
-	if req.Tags["env"] != "staging" {
-		t.Errorf("expected tag env=staging, got %v", req.Tags)
+	// Tags are Update's job (tftags.ForUpdate), covered by tags_test.go.
+	if req.Tags != nil {
+		t.Errorf("the builder must leave tags to Update, got %v", req.Tags)
 	}
 }
 
@@ -293,6 +290,7 @@ func sgObjectType() tftypes.Object {
 			"description":           tftypes.String,
 			"vpc_id":                tftypes.String,
 			"tags":                  tftypes.Map{ElementType: tftypes.String},
+			"tags_all":              tftypes.Map{ElementType: tftypes.String},
 			"is_default":            tftypes.Bool,
 			"delete_default_egress": tftypes.Bool,
 			"created_at":            tftypes.String,
@@ -405,6 +403,7 @@ func TestResourceCreate(t *testing.T) {
 		"description":           tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":                tftypes.NewValue(tftypes.String, "vpc-abc"),
 		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
 		"created_at":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -462,6 +461,7 @@ func TestResourceRead(t *testing.T) {
 		"description":           tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":                tftypes.NewValue(tftypes.String, nil),
 		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, false),
 		"created_at":            tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -506,6 +506,7 @@ func TestResourceReadNotFoundRemovesState(t *testing.T) {
 		"description":           tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":                tftypes.NewValue(tftypes.String, nil),
 		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, false),
 		"created_at":            tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -565,6 +566,7 @@ func TestResourceUpdate(t *testing.T) {
 		"description":           tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":                tftypes.NewValue(tftypes.String, nil),
 		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, false),
 		"created_at":            tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -577,6 +579,7 @@ func TestResourceUpdate(t *testing.T) {
 		"description":           tftypes.NewValue(tftypes.String, "updated desc"),
 		"vpc_id":                tftypes.NewValue(tftypes.String, nil),
 		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, false),
 		"created_at":            tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -632,6 +635,7 @@ func TestResourceDelete(t *testing.T) {
 		"description":           tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":                tftypes.NewValue(tftypes.String, nil),
 		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, false),
 		"created_at":            tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -670,6 +674,7 @@ func TestResourceDeleteAlreadyGone(t *testing.T) {
 		"description":           tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":                tftypes.NewValue(tftypes.String, nil),
 		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, false),
 		"created_at":            tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -704,6 +709,7 @@ func sgDeleteState(id string) tftypes.Value {
 		"description":           tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":                tftypes.NewValue(tftypes.String, nil),
 		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, false),
 		"created_at":            tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -842,6 +848,7 @@ func sgCreatePlanValue(t *testing.T, name string) tftypes.Value {
 		"description":           tftypes.NewValue(tftypes.String, nil),
 		"vpc_id":                tftypes.NewValue(tftypes.String, nil),
 		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"delete_default_egress": tftypes.NewValue(tftypes.Bool, false),
 		"is_default":            tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
 		"created_at":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),

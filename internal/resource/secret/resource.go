@@ -23,6 +23,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/writeonly"
 )
 
@@ -150,13 +151,14 @@ func (r *secretResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				},
 			},
 			"tags": schema.MapAttribute{
-				Description: "Tags for the secret.",
+				Description: "Tags for the secret." + tftags.TagsNote,
 				Optional:    true,
 				ElementType: types.StringType,
 				PlanModifiers: []planmodifier.Map{
 					mapplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"tags_all": tftags.TagsAllAttribute(),
 			"max_versions": schema.Int64Attribute{
 				Description: "The maximum number of versions to retain. Defaults to 10. Fixed when the secret " +
 					"is created: the API's update accepts only the value, description and tags, so changing " +
@@ -255,7 +257,9 @@ func (r *secretResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
+	defaults := r.client.DefaultTags()
 	apiReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
+	apiReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -270,6 +274,7 @@ func (r *secretResource) Create(ctx context.Context, req resource.CreateRequest,
 		resp.Diagnostics.AddError("Failed to create secret", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	s, err := client.ParseResponse[apiSecret](apiResp)
 	if err != nil {
@@ -305,6 +310,7 @@ func (r *secretResource) Read(ctx context.Context, req resource.ReadRequest, res
 	}
 
 	state.fromAPI(ctx, s, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -332,7 +338,17 @@ func (r *secretResource) Update(ctx context.Context, req resource.UpdateRequest,
 
 	id := state.ID.ValueString()
 
+	defaults := r.client.DefaultTags()
 	updateReq := plan.toUpdateRequest(ctx, &state, &resp.Diagnostics)
+	current, err := r.currentTags(ctx, r.client.TenantPath("/secrets/"+id))
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	prior := tftags.PriorOf(ctx, state.Tags, state.TagsAll, req.Private, &resp.Diagnostics).WithCurrent(current)
+	if tags, changed := tftags.ForUpdate(ctx, defaults, plan.Tags, prior, &resp.Diagnostics); changed {
+		updateReq.Tags = tags
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -347,11 +363,12 @@ func (r *secretResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	_, err := r.client.Put(ctx, r.client.TenantPath("/secrets/"+id), updateReq)
+	_, err = r.client.Put(ctx, r.client.TenantPath("/secrets/"+id), updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to update secret", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// Refresh state from API.
 	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/secrets/"+id), nil)
@@ -388,6 +405,7 @@ func (r *secretResource) Delete(ctx context.Context, req resource.DeleteRequest,
 
 func (r *secretResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }
 
 // createTimeAttr is one attribute the API fixes at create, with the values on
@@ -476,6 +494,8 @@ func warnCreateTimeRefusals(diags *diag.Diagnostics, refused []createTimeAttr) {
 }
 
 func (r *secretResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+
 	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
 		return // Create or destroy: nothing to compare.
 	}
@@ -512,4 +532,20 @@ var secretValueWO = writeonly.Attr{ // pragma: allowlist secret
 	Legacy:     "secret_value",
 	Subject:    "the secret",
 	ExactlyOne: true,
+}
+
+// currentTags reads the tags the platform holds right now, at memberPath. An update
+// derives the keys it keeps — the ones this configuration does not manage —
+// from this rather than from state, which is only as fresh as the last
+// refresh (tftags.Prior.WithCurrent).
+func (r *secretResource) currentTags(ctx context.Context, memberPath string) (map[string]string, error) {
+	apiResp, err := r.client.Get(ctx, memberPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := client.ParseResponse[apiSecret](apiResp)
+	if err != nil {
+		return nil, err
+	}
+	return obj.customerTags(), nil
 }

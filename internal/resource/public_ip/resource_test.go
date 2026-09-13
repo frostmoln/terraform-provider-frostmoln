@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // writeInstanceWithPort encodes the subset of the instance read response that
@@ -105,54 +106,20 @@ func TestPublicIPModelFromAPIMinimal(t *testing.T) {
 	}
 }
 
-func TestPublicIPModelToAllocateRequest(t *testing.T) {
-	ctx := context.Background()
-	tags, _ := types.MapValueFrom(ctx, types.StringType, map[string]string{"env": "prod"})
-
-	model := PublicIPModel{
-		Tags: tags,
-	}
-
-	var diags diag.Diagnostics
-	req := model.toAllocateRequest(ctx, &diags)
-
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
-
-	if req.Tags["env"] != "prod" {
-		t.Errorf("expected tag env=prod, got %v", req.Tags)
-	}
-}
-
-func TestPublicIPModelToAllocateRequestMinimal(t *testing.T) {
-	model := PublicIPModel{
-		Tags: types.MapNull(types.StringType),
-	}
-
-	var diags diag.Diagnostics
-	req := model.toAllocateRequest(context.Background(), &diags)
-
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
-
-	if req.Tags != nil {
-		t.Errorf("expected Tags nil, got %v", req.Tags)
-	}
-}
-
 // TestPublicIPAllocateRequestWireContract locks the allocate request to the
 // backend contract: region is not part of the wire body (ADR-0022), only tags.
 func TestPublicIPAllocateRequestWireContract(t *testing.T) {
 	ctx := context.Background()
 	tags, _ := types.MapValueFrom(ctx, types.StringType, map[string]string{"env": "prod"})
-	model := PublicIPModel{Tags: tags}
+	model := PublicIPModel{Tags: tags, TagsAll: types.MapNull(types.StringType)}
 
 	var diags diag.Diagnostics
-	req := model.toAllocateRequest(ctx, &diags)
+	req := apiAllocatePublicIPRequest{Tags: tftags.ForCreate(ctx, tftags.Defaults{}, model.Tags, &diags)}
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	if req.Tags["env"] != "prod" {
+		t.Errorf("expected tag env=prod, got %v", req.Tags)
 	}
 
 	raw, err := json.Marshal(req)
@@ -357,6 +324,7 @@ func fipObjectType() tftypes.Object {
 			"address":     tftypes.String,
 			"instance_id": tftypes.String,
 			"tags":        tftypes.Map{ElementType: tftypes.String},
+			"tags_all":    tftypes.Map{ElementType: tftypes.String},
 			"status":      tftypes.String,
 			"private_ip":  tftypes.String,
 			"created_at":  tftypes.String,
@@ -419,6 +387,7 @@ func fipGatewayBoundState(ack bool) tftypes.Value {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.10"),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, "in_use"),
 		"private_ip":               tftypes.NewValue(tftypes.String, nil),
 		"created_at":               tftypes.NewValue(tftypes.String, "2026-01-01T00:00:00Z"),
@@ -449,6 +418,7 @@ func fipStateWithAttachment(att tftypes.Value, ack bool) tftypes.Value {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.10"),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, "available"),
 		"private_ip":               tftypes.NewValue(tftypes.String, nil),
 		"created_at":               tftypes.NewValue(tftypes.String, "2026-01-01T00:00:00Z"),
@@ -564,6 +534,7 @@ func TestFIPResourceCreate(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"private_ip":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -646,6 +617,7 @@ func TestFIPResourceCreateWithAssociation(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"instance_id":              tftypes.NewValue(tftypes.String, "inst-123"),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"private_ip":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -708,6 +680,7 @@ func TestFIPResourceRead(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, "available"),
 		"private_ip":               tftypes.NewValue(tftypes.String, nil),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -763,6 +736,7 @@ func TestFIPResourceReadParsesWireContract(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.77"),
 		"instance_id":              tftypes.NewValue(tftypes.String, "inst-kept"),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, "active"),
 		"private_ip":               tftypes.NewValue(tftypes.String, "10.0.5.9"),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -811,6 +785,7 @@ func TestFIPResourceReadNotFoundRemovesState(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.99"),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, "available"),
 		"private_ip":               tftypes.NewValue(tftypes.String, nil),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -886,6 +861,7 @@ func TestFIPResourceUpdate(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
 		"instance_id":              tftypes.NewValue(tftypes.String, "inst-old"),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, "active"),
 		"private_ip":               tftypes.NewValue(tftypes.String, "10.0.1.5"),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -900,6 +876,7 @@ func TestFIPResourceUpdate(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
 		"instance_id":              tftypes.NewValue(tftypes.String, "inst-new"),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"private_ip":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -952,6 +929,7 @@ func TestFIPResourceDelete(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, "available"),
 		"private_ip":               tftypes.NewValue(tftypes.String, nil),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -991,6 +969,7 @@ func TestFIPResourceDeleteAlreadyGone(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.99"),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, "available"),
 		"private_ip":               tftypes.NewValue(tftypes.String, nil),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1035,6 +1014,7 @@ func TestFIPResourceCreateAPIError(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"private_ip":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1075,6 +1055,7 @@ func TestFIPResourceCreateBadResponseBody(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"private_ip":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1131,6 +1112,7 @@ func TestFIPResourceCreateAssociationError(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"instance_id":              tftypes.NewValue(tftypes.String, "inst-fail"),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"private_ip":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1185,6 +1167,7 @@ func TestFIPResourceCreateResolvePortError(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"instance_id":              tftypes.NewValue(tftypes.String, "inst-noport"),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"private_ip":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1251,6 +1234,7 @@ func TestFIPResourceCreateAssociationBadResponseThenReread(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"instance_id":              tftypes.NewValue(tftypes.String, "inst-789"),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"private_ip":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1321,6 +1305,7 @@ func TestFIPResourceCreateAssocRereadGetError(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"instance_id":              tftypes.NewValue(tftypes.String, "inst-fail"),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"private_ip":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1379,6 +1364,7 @@ func TestFIPResourceCreateAssocRereadBadJSON(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"instance_id":              tftypes.NewValue(tftypes.String, "inst-fail"),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"private_ip":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1417,6 +1403,7 @@ func TestFIPResourceReadAPIError(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, "available"),
 		"private_ip":               tftypes.NewValue(tftypes.String, nil),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1453,6 +1440,7 @@ func TestFIPResourceReadBadJSON(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, "available"),
 		"private_ip":               tftypes.NewValue(tftypes.String, nil),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1505,6 +1493,7 @@ func TestFIPResourceUpdateDisassociateOnly(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
 		"instance_id":              tftypes.NewValue(tftypes.String, "inst-old"),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, "active"),
 		"private_ip":               tftypes.NewValue(tftypes.String, "10.0.1.5"),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -1519,6 +1508,7 @@ func TestFIPResourceUpdateDisassociateOnly(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"private_ip":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -1558,15 +1548,21 @@ func TestFIPResourceUpdateTagsOnly(t *testing.T) {
 		CreatedAt: "2025-06-01T12:00:00Z",
 	}
 
+	// The address is untagged until the update: it reads the current tags
+	// before it writes them, so answering with the updated ones all along would
+	// make the write look redundant.
+	current := apiPublicIP{ID: fipResp.ID, Address: fipResp.Address, Status: fipResp.Status, CreatedAt: fipResp.CreatedAt}
+
 	var patchCalled bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method != http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-tags-1":
 			patchCalled = true
 			updateMethod = r.Method
+			current = fipResp
 			_ = json.NewEncoder(w).Encode(fipResp)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-123/public-ips/fip-tags-1":
-			_ = json.NewEncoder(w).Encode(fipResp)
+			_ = json.NewEncoder(w).Encode(current)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
@@ -1591,6 +1587,7 @@ func TestFIPResourceUpdateTagsOnly(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, "available"),
 		"private_ip":               tftypes.NewValue(tftypes.String, nil),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -1607,6 +1604,7 @@ func TestFIPResourceUpdateTagsOnly(t *testing.T) {
 		"tags": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{
 			"env": tftypes.NewValue(tftypes.String, "prod"),
 		}),
+		"tags_all":   tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":     tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"private_ip": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at": tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -1667,6 +1665,7 @@ func TestFIPResourceUpdateDisassociateError(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
 		"instance_id":              tftypes.NewValue(tftypes.String, "inst-old"),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, "active"),
 		"private_ip":               tftypes.NewValue(tftypes.String, "10.0.1.5"),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -1680,6 +1679,7 @@ func TestFIPResourceUpdateDisassociateError(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"private_ip":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -1733,6 +1733,7 @@ func TestFIPResourceUpdateAssociateError(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
 		"instance_id":              tftypes.NewValue(tftypes.String, "inst-old"),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, "active"),
 		"private_ip":               tftypes.NewValue(tftypes.String, "10.0.1.5"),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -1746,6 +1747,7 @@ func TestFIPResourceUpdateAssociateError(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
 		"instance_id":              tftypes.NewValue(tftypes.String, "inst-new"),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"private_ip":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -1791,6 +1793,7 @@ func TestFIPResourceUpdatePatchError(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, "available"),
 		"private_ip":               tftypes.NewValue(tftypes.String, nil),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -1806,6 +1809,7 @@ func TestFIPResourceUpdatePatchError(t *testing.T) {
 		"tags": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{
 			"env": tftypes.NewValue(tftypes.String, "prod"),
 		}),
+		"tags_all":   tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":     tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"private_ip": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at": tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -1852,6 +1856,7 @@ func TestFIPResourceUpdateReadError(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, "available"),
 		"private_ip":               tftypes.NewValue(tftypes.String, nil),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -1865,6 +1870,7 @@ func TestFIPResourceUpdateReadError(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"private_ip":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -1908,6 +1914,7 @@ func TestFIPResourceUpdateReadBadJSON(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, "available"),
 		"private_ip":               tftypes.NewValue(tftypes.String, nil),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -1921,6 +1928,7 @@ func TestFIPResourceUpdateReadBadJSON(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"private_ip":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -1960,6 +1968,7 @@ func TestFIPResourceDeleteAPIError(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, "available"),
 		"private_ip":               tftypes.NewValue(tftypes.String, nil),
 		"created_at":               tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1988,6 +1997,7 @@ func TestFIPResourceImportState(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, nil),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, nil),
 		"private_ip":               tftypes.NewValue(tftypes.String, nil),
 		"created_at":               tftypes.NewValue(tftypes.String, nil),
@@ -2114,6 +2124,7 @@ func TestPublicIPDestroyPlanWarnsWhenEgressBound(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.10"),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, "in_use"),
 		"private_ip":               tftypes.NewValue(tftypes.String, nil),
 		"created_at":               tftypes.NewValue(tftypes.String, "2026-01-01T00:00:00Z"),
@@ -2156,6 +2167,7 @@ func TestPublicIPDestroyPlanSilentWhenUnattached(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, "203.0.113.10"),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, "available"),
 		"private_ip":               tftypes.NewValue(tftypes.String, nil),
 		"created_at":               tftypes.NewValue(tftypes.String, "2026-01-01T00:00:00Z"),
@@ -2199,6 +2211,7 @@ func TestPublicIPModifyPlanRecomputesOnAssociationChange(t *testing.T) {
 			"address":                  tftypes.NewValue(tftypes.String, "203.0.113.10"),
 			"instance_id":              inst,
 			"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+			"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 			"status":                   tftypes.NewValue(tftypes.String, "in_use"),
 			"private_ip":               tftypes.NewValue(tftypes.String, "10.0.0.5"),
 			"created_at":               tftypes.NewValue(tftypes.String, "2026-01-01T00:00:00Z"),
@@ -2700,6 +2713,7 @@ func fipUpdateStateAndPlan(fipID, oldInstance, newInstance string) (tftypes.Valu
 			"address":                  tftypes.NewValue(tftypes.String, "203.0.113.50"),
 			"instance_id":              tftypes.NewValue(tftypes.String, instanceID),
 			"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+			"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 			"status":                   status,
 			"private_ip":               privateIP,
 			"created_at":               tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -2918,6 +2932,7 @@ func orphanFIPPlanVal() tftypes.Value {
 		"address":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"private_ip":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -3184,6 +3199,7 @@ func TestTimeoutsBlockCreateOverrideBoundsTheWaitAndStillAdopts(t *testing.T) {
 		"address":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"instance_id":              tftypes.NewValue(tftypes.String, nil),
 		"tags":                     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"private_ip":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),

@@ -100,6 +100,7 @@ func TestUpdateClearsTags(t *testing.T) {
 				SnapshotID: types.StringNull(), Encrypted: types.BoolValue(false), Status: types.StringValue("available"),
 				IOPS: types.Int64Value(0), Throughput: types.Int64Value(0), AttachedTo: types.StringNull(),
 				DevicePath: types.StringNull(), CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
+				TagsAll: types.MapNull(types.StringType),
 			}
 			stateModel := base
 			stateModel.Tags = types.MapValueMust(types.StringType, map[string]attr.Value{"a": types.StringValue("b")})

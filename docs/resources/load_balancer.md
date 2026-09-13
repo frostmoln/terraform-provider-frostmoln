@@ -13,7 +13,7 @@ description: |-
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — flavor_id, public_ip_id, scheme, subnet_id, type, vpc_id: the platform has no in-place migration for it — a change destroys and re-creates the load balancer.
-  Observed, not enacted — public_ip_address: platform-allocated when scheme is public and the configuration names no public_ip_id.
+  Observed, not enacted — public_ip_address: platform-allocated when scheme is public and the configuration names no public_ip_id. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_load_balancer (Resource)
@@ -38,7 +38,7 @@ It changes ORDER only: nothing is created and nothing is released. It does not a
 
 **Create-immutable** — `flavor_id`, `public_ip_id`, `scheme`, `subnet_id`, `type`, `vpc_id`: the platform has no in-place migration for it — a change destroys and re-creates the load balancer.
 
-**Observed, not enacted** — `public_ip_address`: platform-allocated when `scheme` is `public` and the configuration names no `public_ip_id`.
+**Observed, not enacted** — `public_ip_address`: platform-allocated when `scheme` is `public` and the configuration names no `public_ip_id`. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -112,7 +112,7 @@ resource "frostmoln_load_balancer" "public_web" {
 
 Attaching it makes this load balancer depend on the VPC's gateway, which Terraform cannot see — see the ordering note on this resource above.
 - `scheme` (String) Reachability scheme: internal (default, private VIP only) or public (a bring-your-own public IP is attached to the VIP for external reachability). When public, public_ip_id is required. There is no in-place change between schemes; changing this forces a new resource.
-- `tags` (Map of String) Key-value tags for the load balancer.
+- `tags` (Map of String) Key-value tags for the load balancer. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `type` (String) The load-balancer type: l7 (default) terminates HTTP/HTTPS and TLS and can insert headers; l4 serves TCP/UDP/SCTP only and preserves the client source IP. There is no in-place migration between types; changing this forces a new resource.
 - `vip_address` (String) The virtual IP address of the load balancer. If omitted, an address is allocated automatically. An explicitly-set VIP is effectively immutable: the backend does not support changing a VIP in place, so a changed vip_address in config is ignored on update. To move to a different VIP, taint the resource (terraform taint / -replace) to force a destroy and recreate.
@@ -125,6 +125,7 @@ Attaching it makes this load balancer depend on the VPC's gateway, which Terrafo
 - `provisioning_status` (String) The provisioning status of the load balancer.
 - `public_ip_address` (String) The address of the attached public IP (present only when scheme is public).
 - `status` (String) The overall status of the load balancer.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `updated_at` (String) The last update timestamp.
 - `vip_port_id` (String) The port ID backing the load balancer VIP.
 

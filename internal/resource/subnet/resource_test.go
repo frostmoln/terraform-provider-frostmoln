@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 func TestSubnetModelFromAPI(t *testing.T) {
@@ -129,10 +130,13 @@ func TestSubnetModelToCreateRequest(t *testing.T) {
 		GatewayIP:   types.StringValue("10.0.1.1"),
 		DNSServers:  dns,
 		Tags:        tags,
+		TagsAll:     types.MapNull(types.StringType),
 	}
 
 	var diags diag.Diagnostics
 	req := model.toCreateRequest(ctx, &diags)
+	// Tags are merged by Create (tftags.ForCreate); assemble the request as it does.
+	req.Tags = tftags.ForCreate(ctx, tftags.Defaults{}, model.Tags, &diags)
 
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
@@ -172,6 +176,7 @@ func TestSubnetCreateRequestDNSWireContract(t *testing.T) {
 		CIDR:       types.StringValue("10.0.1.0/24"),
 		VPCID:      types.StringValue("vpc-1"),
 		DNSServers: dns,
+		TagsAll:    types.MapNull(types.StringType),
 	}
 
 	var diags diag.Diagnostics
@@ -357,6 +362,7 @@ func subnetObjectType() tftypes.Object {
 			"gateway_ip":    tftypes.String,
 			"dns_servers":   tftypes.List{ElementType: tftypes.String},
 			"tags":          tftypes.Map{ElementType: tftypes.String},
+			"tags_all":      tftypes.Map{ElementType: tftypes.String},
 			"status":        tftypes.String,
 			"available_ips": tftypes.Number,
 			"created_at":    tftypes.String,
@@ -465,6 +471,7 @@ func TestSubnetResourceCreate(t *testing.T) {
 		"gateway_ip":    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"available_ips": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"created_at":    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -538,6 +545,7 @@ func TestSubnetResourceRead(t *testing.T) {
 		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
 		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":        tftypes.NewValue(tftypes.String, "active"),
 		"available_ips": tftypes.NewValue(tftypes.Number, 200),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -586,6 +594,7 @@ func TestSubnetResourceReadNotFoundRemovesState(t *testing.T) {
 		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
 		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":        tftypes.NewValue(tftypes.String, "active"),
 		"available_ips": tftypes.NewValue(tftypes.Number, 250),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -624,6 +633,11 @@ func TestSubnetUpdateSendsTheName(t *testing.T) {
 			})
 			return
 		}
+		// The update reads the current tags before it writes them.
+		if r.URL.Path == "/v1/tenants/t-123/subnets/subnet-upd-1" && r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(apiSubnet{ID: "subnet-upd-1"})
+			return
+		}
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
 	}))
@@ -648,6 +662,7 @@ func TestSubnetUpdateSendsTheName(t *testing.T) {
 			"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
 			"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 			"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+			"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 			"status":        tftypes.NewValue(tftypes.String, "available"),
 			"available_ips": tftypes.NewValue(tftypes.Number, 250),
 			"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -725,6 +740,7 @@ func TestSubnetResourceUpdate(t *testing.T) {
 		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
 		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":        tftypes.NewValue(tftypes.String, "active"),
 		"available_ips": tftypes.NewValue(tftypes.Number, 250),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -743,6 +759,7 @@ func TestSubnetResourceUpdate(t *testing.T) {
 		"tags": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{
 			"env": tftypes.NewValue(tftypes.String, "prod"),
 		}),
+		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":        tftypes.NewValue(tftypes.String, "active"),
 		"available_ips": tftypes.NewValue(tftypes.Number, 250),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
@@ -799,6 +816,7 @@ func TestSubnetResourceDelete(t *testing.T) {
 		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
 		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":        tftypes.NewValue(tftypes.String, "active"),
 		"available_ips": tftypes.NewValue(tftypes.Number, 250),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -841,6 +859,7 @@ func TestSubnetResourceDeleteAlreadyGone(t *testing.T) {
 		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
 		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":        tftypes.NewValue(tftypes.String, "active"),
 		"available_ips": tftypes.NewValue(tftypes.Number, 250),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -941,6 +960,7 @@ func subnetDeleteState(t *testing.T) tfsdk.State {
 		"gateway_ip":    tftypes.NewValue(tftypes.String, nil),
 		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":        tftypes.NewValue(tftypes.String, "active"),
 		"available_ips": tftypes.NewValue(tftypes.Number, 250),
 		"created_at":    tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
@@ -1017,6 +1037,7 @@ func TestSubnetResourceCreateAdoptsAfterTimeout(t *testing.T) {
 		"gateway_ip":    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"available_ips": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"created_at":    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1092,6 +1113,7 @@ func TestSubnetResourceCreateRefusedByOperation(t *testing.T) {
 		"gateway_ip":    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"dns_servers":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"status":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"available_ips": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"created_at":    tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -1145,8 +1167,10 @@ func TestSubnetModelFromAPI_ReservedTagsNeverReachState(t *testing.T) {
 			t.Fatalf("unexpected diagnostics: %v", diags)
 		}
 
+		// Nothing configured the tags, so the read-back lands in tags_all only —
+		// which is where a reserved key must never appear.
 		got := map[string]string{}
-		diags.Append(model.Tags.ElementsAs(ctx, &got, false)...)
+		diags.Append(model.TagsAll.ElementsAs(ctx, &got, false)...)
 		for _, k := range []string{"env", "customer-id", "frostmoln-type"} {
 			if _, ok := got[k]; !ok {
 				t.Errorf("customer tag %q was dropped: %v", k, got)
@@ -1168,7 +1192,7 @@ func TestSubnetModelFromAPI_ReservedTagsNeverReachState(t *testing.T) {
 		if d.HasError() {
 			t.Fatalf("fixture: %v", d)
 		}
-		model := SubnetModel{Tags: empty}
+		model := SubnetModel{Tags: empty, TagsAll: types.MapNull(types.StringType)}
 		var diags diag.Diagnostics
 		model.fromAPI(ctx, &apiSubnet{
 			ID:   "subnet-1",
@@ -1191,7 +1215,7 @@ func TestSubnetModelFromAPI_ReservedTagsNeverReachState(t *testing.T) {
 	// The mirror: a config that never mentioned tags must stay null, or every
 	// subnet without tags shows a permanent {} diff.
 	t.Run("only platform keys, config never mentioned tags", func(t *testing.T) {
-		model := SubnetModel{Tags: types.MapNull(types.StringType)}
+		model := SubnetModel{Tags: types.MapNull(types.StringType), TagsAll: types.MapNull(types.StringType)}
 		var diags diag.Diagnostics
 		model.fromAPI(ctx, &apiSubnet{
 			ID:   "subnet-1",

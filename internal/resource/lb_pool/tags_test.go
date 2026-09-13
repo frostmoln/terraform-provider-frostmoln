@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
@@ -91,6 +92,7 @@ func TestPoolCreateSendsTags(t *testing.T) {
 		LBAlgorithm:    types.StringValue("round_robin"),
 		ProxyProtocol:  types.StringValue("none"),
 		Tags:           mapValue(t, map[string]string{"env": "prod"}),
+		TagsAll:        types.MapNull(types.StringType),
 	})
 	resp := resource.CreateResponse{State: buildPoolState(t, samplePoolModel())}
 	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &resp)
@@ -192,10 +194,16 @@ func TestPoolUpdateSendsTagsAndSurvivesTheAsyncResponse(t *testing.T) {
 // tags survive, and every subsequent plan shows the same pending removal.
 func TestPoolUpdateClearsTagsWhenRemovedFromConfig(t *testing.T) {
 	var body tagBody
+	// The backend holds the tag until the update clears it; the update reads
+	// the current tags before it writes.
+	stored := map[string]string{"env": "prod"}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPut:
 			body.capture(r)
+			if body.clearSet {
+				stored = nil
+			}
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-1", Status: "pending"})
 		case r.URL.Path == "/v1/tenants/t-1/operations/op-1":
@@ -204,6 +212,7 @@ func TestPoolUpdateClearsTagsWhenRemovedFromConfig(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(apiPool{
 				ID: "pool-1", LoadBalancerID: "lb-1", Name: "pool", Protocol: "http",
 				LBAlgorithm: "round_robin", ProxyProtocol: "none", CreatedAt: "2025-01-01T00:00:00Z",
+				Tags: stored,
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -337,7 +346,9 @@ func TestPoolReadFiltersPlatformTags(t *testing.T) {
 		want    map[string]string
 		wantNil bool
 	}{
-		{"customer and platform keys", map[string]string{"k": "v", "frostmoln_managed_by": "cluster"}, types.MapNull(types.StringType), map[string]string{"k": "v"}, false},
+		{"customer and platform keys", map[string]string{"k": "v", "frostmoln_managed_by": "cluster"}, types.MapValueMust(types.StringType, map[string]attr.Value{"k": types.StringValue("v")}), map[string]string{"k": "v"}, false},
+		// A key the configuration does not name lives in tags_all only.
+		{"customer key not configured", map[string]string{"k": "v", "frostmoln_managed_by": "cluster"}, types.MapNull(types.StringType), nil, true},
 		{"only platform keys, no tags configured", map[string]string{"frostmoln_managed_by": "cluster"}, types.MapNull(types.StringType), nil, true},
 		{"only platform keys, tags = {}", map[string]string{"frostmoln_managed_by": "cluster"}, empty, map[string]string{}, false},
 	} {
@@ -363,6 +374,16 @@ func TestPoolReadFiltersPlatformTags(t *testing.T) {
 
 			var got PoolModel
 			resp.State.Get(context.Background(), &got)
+			// tags_all is the whole filtered read-back: the customer key, never the
+			// platform's.
+			if _, leaked := got.TagsAll.Elements()["frostmoln_managed_by"]; leaked {
+				t.Errorf("a platform-owned key reached tags_all: %v", got.TagsAll)
+			}
+			if _, has := tc.api["k"]; has {
+				if _, kept := got.TagsAll.Elements()["k"]; !kept {
+					t.Errorf("tags_all = %v, want the customer key k", got.TagsAll)
+				}
+			}
 			if tc.wantNil {
 				if !got.Tags.IsNull() {
 					t.Errorf("state tags = %v, want null", got.Tags)

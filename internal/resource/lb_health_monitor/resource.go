@@ -19,12 +19,14 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
 	_ resource.Resource                = &healthMonitorResource{}
 	_ resource.ResourceWithImportState = &healthMonitorResource{}
+	_ resource.ResourceWithModifyPlan  = &healthMonitorResource{}
 )
 
 type healthMonitorResource struct {
@@ -147,10 +149,11 @@ func (r *healthMonitorResource) Schema(_ context.Context, _ resource.SchemaReque
 				Optional:    true,
 			},
 			"tags": schema.MapAttribute{
-				Description: "Key-value tags for the health monitor. These are the monitor's own tags, separate from its pool's and the load balancer's.",
+				Description: "Key-value tags for the health monitor. These are the monitor's own tags, separate from its pool's and the load balancer's." + tftags.TagsNote,
 				ElementType: types.StringType,
 				Optional:    true,
 			},
+			"tags_all": tftags.TagsAllAttribute(),
 			"created_at": schema.StringAttribute{
 				Description: "The creation timestamp.",
 				Computed:    true,
@@ -202,7 +205,9 @@ func (r *healthMonitorResource) Create(ctx context.Context, req resource.CreateR
 
 	lbID := plan.LoadBalancerID.ValueString()
 	poolID := plan.PoolID.ValueString()
+	defaults := r.client.DefaultTags()
 	createReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
+	createReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -215,6 +220,7 @@ func (r *healthMonitorResource) Create(ctx context.Context, req resource.CreateR
 		resp.Diagnostics.AddError("Failed to Create Health Monitor", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// Health-monitor create routes through provisioning → 202 + an Operation
 	// envelope (operationId only). Poll the operation, then re-read the monitor
@@ -346,6 +352,7 @@ func (r *healthMonitorResource) Read(ctx context.Context, req resource.ReadReque
 	}
 
 	state.fromAPI(ctx, lbID, hm, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -360,7 +367,15 @@ func (r *healthMonitorResource) Update(ctx context.Context, req resource.UpdateR
 
 	lbID := state.LoadBalancerID.ValueString()
 	poolID := state.PoolID.ValueString()
-	updateReq := plan.toUpdateRequest(ctx, state.Tags, &resp.Diagnostics)
+	defaults := r.client.DefaultTags()
+	updateReq := plan.toUpdateRequest()
+	current, err := r.currentTags(ctx, r.monitorPath(lbID, poolID))
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	prior := tftags.PriorOf(ctx, state.Tags, state.TagsAll, req.Private, &resp.Diagnostics).WithCurrent(current)
+	updateReq.setTags(tftags.ForUpdate(ctx, defaults, plan.Tags, prior, &resp.Diagnostics))
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -370,6 +385,7 @@ func (r *healthMonitorResource) Update(ctx context.Context, req resource.UpdateR
 		resp.Diagnostics.AddError("Failed to Update Health Monitor", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// Like create, a health-monitor UPDATE routes through provisioning → 202 +
 	// an Operation envelope, never the updated monitor. Parsing that envelope as
@@ -471,4 +487,27 @@ func (r *healthMonitorResource) ImportState(ctx context.Context, req resource.Im
 
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("load_balancer_id"), parts[0])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("pool_id"), parts[1])...)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
+}
+
+// ModifyPlan predicts tags_all: unknown whenever the next write changes the
+// platform's tag set, including a change to the provider's default_tags.
+func (r *healthMonitorResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+}
+
+// currentTags reads the tags the platform holds right now, at memberPath. An update
+// derives the keys it keeps — the ones this configuration does not manage —
+// from this rather than from state, which is only as fresh as the last
+// refresh (tftags.Prior.WithCurrent).
+func (r *healthMonitorResource) currentTags(ctx context.Context, memberPath string) (map[string]string, error) {
+	apiResp, err := r.client.Get(ctx, memberPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := client.ParseResponse[apiHealthMonitor](apiResp)
+	if err != nil {
+		return nil, err
+	}
+	return obj.customerTags(), nil
 }

@@ -24,6 +24,7 @@ import (
 var (
 	_ resource.Resource                = &volumeResource{}
 	_ resource.ResourceWithImportState = &volumeResource{}
+	_ resource.ResourceWithModifyPlan  = &volumeResource{}
 )
 
 // NewResource returns a new volume resource factory.
@@ -134,10 +135,11 @@ func (r *volumeResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				},
 			},
 			"tags": schema.MapAttribute{
-				Description: "Key-value tags for the volume.",
+				Description: "Key-value tags for the volume." + tftags.TagsNote,
 				Optional:    true,
 				ElementType: types.StringType,
 			},
+			"tags_all": tftags.TagsAllAttribute(),
 			"status": schema.StringAttribute{
 				Description: "The current status of the volume.",
 				Computed:    true,
@@ -265,7 +267,9 @@ func (r *volumeResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
+	defaults := r.client.DefaultTags()
 	apiReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
+	apiReq.Metadata = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -275,6 +279,7 @@ func (r *volumeResource) Create(ctx context.Context, req resource.CreateRequest,
 		resp.Diagnostics.AddError("Failed to create volume", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// Volume create routes through provisioning, which returns 202 with an
 	// Operation envelope (operationId only, NOT the volume). Poll the operation to
@@ -379,6 +384,7 @@ func (r *volumeResource) Read(ctx context.Context, req resource.ReadRequest, res
 	}
 
 	state.fromAPI(ctx, vol, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -414,13 +420,23 @@ func (r *volumeResource) Update(ctx context.Context, req resource.UpdateRequest,
 		needsPatch = true
 	}
 
-	// Check if tags changed. A removed block or {} goes out as
-	// `"metadata": {}`, which clears them; see apiUpdateVolumeRequest.
-	if !plan.Tags.Equal(state.Tags) {
-		updateReq.Metadata = tftags.ForUpdate(ctx, plan.Tags, &resp.Diagnostics)
-		if resp.Diagnostics.HasError() {
-			return
-		}
+	// Tags: written only when the platform's set would change — this
+	// resource's tags, the provider's default_tags, or a drifted managed key.
+	// An emptied set goes out as `"metadata": {}`, which clears them; see
+	// apiUpdateVolumeRequest.
+	defaults := r.client.DefaultTags()
+	current, err := r.currentTags(ctx, r.client.TenantPath("/volumes/"+volumeID))
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	prior := tftags.PriorOf(ctx, state.Tags, state.TagsAll, req.Private, &resp.Diagnostics).WithCurrent(current)
+	tags, tagsChanged := tftags.ForUpdate(ctx, defaults, plan.Tags, prior, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if tagsChanged {
+		updateReq.Metadata = tags
 		needsPatch = true
 	}
 
@@ -431,6 +447,7 @@ func (r *volumeResource) Update(ctx context.Context, req resource.UpdateRequest,
 			return
 		}
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// Check if size_gb increased (resize).
 	if plan.SizeGB.ValueInt64() > state.SizeGB.ValueInt64() {
@@ -518,4 +535,27 @@ func (r *volumeResource) Delete(ctx context.Context, req resource.DeleteRequest,
 
 func (r *volumeResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
+}
+
+// ModifyPlan predicts tags_all: unknown whenever the next write changes the
+// platform's tag set, including a change to the provider's default_tags.
+func (r *volumeResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+}
+
+// currentTags reads the tags the platform holds right now, at memberPath. An update
+// derives the keys it keeps — the ones this configuration does not manage —
+// from this rather than from state, which is only as fresh as the last
+// refresh (tftags.Prior.WithCurrent).
+func (r *volumeResource) currentTags(ctx context.Context, memberPath string) (map[string]string, error) {
+	apiResp, err := r.client.Get(ctx, memberPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := client.ParseResponse[apiVolume](apiResp)
+	if err != nil {
+		return nil, err
+	}
+	return obj.customerTags(), nil
 }

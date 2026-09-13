@@ -23,6 +23,7 @@ type PoolModel struct {
 	ProxyProtocol      types.String             `tfsdk:"proxy_protocol"`
 	SessionPersistence *SessionPersistenceModel `tfsdk:"session_persistence"`
 	Tags               types.Map                `tfsdk:"tags"`
+	TagsAll            types.Map                `tfsdk:"tags_all"`
 	CreatedAt          types.String             `tfsdk:"created_at"`
 	UpdatedAt          types.String             `tfsdk:"updated_at"`
 
@@ -134,23 +135,15 @@ func (m *PoolModel) toCreateRequest(ctx context.Context, diags *diag.Diagnostics
 	if !m.ListenerID.IsNull() && !m.ListenerID.IsUnknown() {
 		req.ListenerID = m.ListenerID.ValueString()
 	}
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		tags := make(map[string]string)
-		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		req.Tags = tags
-	}
+	// Tags are set by Create, which merges the provider's default_tags into
+	// them (tftags.ForCreate).
 
 	return req
 }
 
-// toUpdateRequest converts the Terraform model to an API update request.
-//
-// prior is the tag set currently in state. Removing the `tags` block from the
-// config leaves the planned map NULL, which as a plain omission would mean
-// "leave the tags alone" — the resource would keep its tags forever and every
-// plan would show the same pending removal. So a null/empty plan over a
-// non-empty prior is sent as an explicit clearTags instead.
-func (m *PoolModel) toUpdateRequest(ctx context.Context, prior types.Map, diags *diag.Diagnostics) apiUpdatePoolRequest {
+// toUpdateRequest converts the Terraform model to an API update request. Tags
+// are set by Update (setTags).
+func (m *PoolModel) toUpdateRequest() apiUpdatePoolRequest {
 	req := apiUpdatePoolRequest{
 		SessionPersistence: m.toAPISessionPersistence(),
 	}
@@ -163,18 +156,6 @@ func (m *PoolModel) toUpdateRequest(ctx context.Context, prior types.Map, diags 
 		algo := m.LBAlgorithm.ValueString()
 		req.LBAlgorithm = &algo
 	}
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		tags := make(map[string]string)
-		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		if len(tags) > 0 {
-			req.Tags = tags
-		} else if len(prior.Elements()) > 0 {
-			req.ClearTags = true
-		}
-	} else if m.Tags.IsNull() && len(prior.Elements()) > 0 {
-		req.ClearTags = true
-	}
-
 	return req
 }
 
@@ -233,5 +214,28 @@ func (m *PoolModel) fromAPI(ctx context.Context, p *apiPool, diags *diag.Diagnos
 	// every customer write, so no config can converge on one). An untagged pool
 	// then reads back as null under a config with no `tags` block, and as {}
 	// under `tags = {}` — either way exactly what was configured.
-	m.Tags = tftags.FromAPI(ctx, reservedmeta.FilterNetwork(p.Tags), m.Tags, diags)
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, p.customerTags(), m.Tags, diags)
+}
+
+// setTags puts the desired tag set on an update (tftags.ForUpdate's result).
+//
+// A non-empty set is sent as `tags`. An empty one cannot be: the write is
+// forwarded to network over gRPC, where an empty map is indistinguishable from
+// an absent one, so emptying a set the platform still holds (changed) goes out
+// as the explicit clearTags flag. Never both — that is a 400.
+func (req *apiUpdatePoolRequest) setTags(tags map[string]string, changed bool) {
+	switch {
+	case len(tags) > 0:
+		req.Tags = tags
+	case changed:
+		req.ClearTags = true
+	}
+}
+
+// customerTags is the tag set the platform holds on the object, as Terraform
+// sees it: platform-reserved keys filtered out. The read-back and the fresh
+// read an update makes before it writes (tftags.Prior.WithCurrent) both use
+// it, so the two cannot disagree about what counts as a tag.
+func (a *apiPool) customerTags() map[string]string {
+	return reservedmeta.FilterNetwork(a.Tags)
 }

@@ -8,6 +8,7 @@ description: |-
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — cidr, dns_servers, gateway_ip, vpc_id: the network service has no in-place update for it — a change destroys and re-creates the subnet.
   Create-immutable — zone: the platform pins the zone at create; there is no in-place migration between zones.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_subnet (Resource)
@@ -21,6 +22,8 @@ Manages a subnet in the Frostmoln Cloud Platform.
 **Create-immutable** — `cidr`, `dns_servers`, `gateway_ip`, `vpc_id`: the network service has no in-place update for it — a change destroys and re-creates the subnet.
 
 **Create-immutable** — `zone`: the platform pins the zone at create; there is no in-place migration between zones.
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -56,7 +59,7 @@ resource "frostmoln_subnet" "example" {
 - `description` (String) A description of the subnet.
 - `dns_servers` (List of String) The DNS server addresses for the subnet. Defaults to the platform DNS servers.
 - `gateway_ip` (String) The gateway IP address for the subnet.
-- `tags` (Map of String) Tags for the subnet.
+- `tags` (Map of String) Tags for the subnet. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `zone` (String) The availability zone for the subnet.
 
@@ -66,6 +69,7 @@ resource "frostmoln_subnet" "example" {
 - `created_at` (String) The creation timestamp.
 - `id` (String) The unique identifier of the subnet.
 - `status` (String) The status of the subnet.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 
 <a id="nestedblock--timeouts"></a>
 ### Nested Schema for `timeouts`

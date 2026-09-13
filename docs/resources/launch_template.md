@@ -7,6 +7,7 @@ description: |-
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Not enacted state — user_data_wo: write-only: sent, never stored or read back — the user_data_wo_version companion carries change detection.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_launch_template (Resource)
@@ -18,6 +19,8 @@ Manages a launch template for compute instances in the Frostmoln platform.
 **Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
 
 **Not enacted state** — `user_data_wo`: write-only: sent, never stored or read back — the `user_data_wo_version` companion carries change detection.
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -110,7 +113,7 @@ resource "frostmoln_launch_template" "bootstrap" {
 - `metadata` (Map of String) Key-value metadata for the launch template.
 - `security_group_ids` (Set of String) The security group IDs to attach to instances launched from this template.
 - `ssh_key_ids` (Set of String) The SSH key IDs to inject into instances launched from this template.
-- `tags` (Map of String) Key-value tags for the launch template.
+- `tags` (Map of String) Key-value tags for the launch template. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `user_data` (String, Sensitive) User data to provide to instances at launch — typically a cloud-init document. The platform returns the stored document on every read, but the provider does not decode it, so the value you configure is preserved from state on refresh and a change made outside Terraform is not detected. The document is written to Terraform state in plaintext, so anything embedded in it — credentials, tokens, private keys — is readable by anyone who can read the state; `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide. Prefer `user_data_wo`, which carries the same document but is never written to state; the two are mutually exclusive.
 
     **Write the document as plain text — `file("cloud-init.yaml")`, not `base64encode(file(...))`.** Base64 is accepted by the API, but it must NOT be used when instances launched from this template also get SSH keys, a console password or `instance_access`. In those cases the platform merges its own cloud-config into the document, and the merge dispatches on the literal `#cloud-config` prefix: a base64 blob does not carry it, so the blob is treated as a shell script and combined alongside the platform's cloud-config instead of into it. The launch succeeds and nothing surfaces in Terraform, but the document never runs as cloud-config. Plain text is correct in both directions: a `#cloud-config` document is merged in place, and a `#!` script is combined as intended. See the example below.
@@ -123,4 +126,5 @@ resource "frostmoln_launch_template" "bootstrap" {
 
 - `created_at` (String) The timestamp when the launch template was created.
 - `id` (String) The unique identifier of the launch template.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `updated_at` (String) The timestamp when the launch template was last updated.

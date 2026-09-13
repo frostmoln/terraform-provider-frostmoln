@@ -130,6 +130,7 @@ var Declarations = map[string]Decl{
 			{Path: "region", Why: "the platform pins it at create; there is no in-place migration"},
 			{Path: "storage_class", Why: "the platform pins it at create; there is no in-place migration"},
 		},
+		Observes: []Field{tagsAllObserved},
 	},
 	"frostmoln_bucket_cors_configuration": {
 		ImmutableWhy: "the configuration document belongs to its bucket — the bucket IS the resource's identity",
@@ -170,6 +171,7 @@ var Declarations = map[string]Decl{
 		ImmutableWhy: "the zone's name is its identity — the zone IS the name",
 		Immutable:    fields("name"),
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "name_servers", Why: "platform-assigned when the zone is created; delegate to these"},
 			{Path: "serial", Why: "the platform bumps it on every record change, including changes made out of band"},
 		},
@@ -214,6 +216,7 @@ var Declarations = map[string]Decl{
 			{Path: "user_data_wo", Why: "write-only: sent, never stored or read back — the `user_data_wo_version` companion carries change detection"},
 		},
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
 			{Path: "public_ip", Why: "platform-attached; an association made out of band is read back, not fought"},
 		},
@@ -254,10 +257,12 @@ var Declarations = map[string]Decl{
 		EnactsExcept: []Field{
 			{Path: "user_data_wo", Why: "write-only: sent, never stored or read back — the `user_data_wo_version` companion carries change detection"},
 		},
+		Observes: []Field{tagsAllObserved},
 	},
 	"frostmoln_lb_health_monitor": {
 		ImmutableWhy: "the monitor's identity is its pool and check type; changing one is a different monitor",
 		Immutable:    fields("load_balancer_id", "pool_id", "type"),
+		Observes:     []Field{tagsAllObserved},
 	},
 	"frostmoln_lb_listener": {
 		ImmutableWhy: "the listener's identity is its load balancer, protocol and port; changing one is a different listener",
@@ -277,11 +282,13 @@ var Declarations = map[string]Decl{
 	"frostmoln_lb_pool": {
 		ImmutableWhy: "the pool's identity is its listener, load balancer and protocol; changing one is a different pool",
 		Immutable:    fields("listener_id", "load_balancer_id", "protocol"),
+		Observes:     []Field{tagsAllObserved},
 	},
 	"frostmoln_load_balancer": {
 		ImmutableWhy: "the platform has no in-place migration for it — a change destroys and re-creates the load balancer",
 		Immutable:    fields("flavor_id", "public_ip_id", "scheme", "subnet_id", "type", "vpc_id"),
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "public_ip_address", Why: "platform-allocated when `scheme` is `public` and the configuration names no `public_ip_id`"},
 		},
 	},
@@ -360,6 +367,7 @@ var Declarations = map[string]Decl{
 			{Path: "acknowledge_address_loss", Why: "an acknowledgement flag for a destroy that would drop the address — carried in state, not a platform setting the apply pushes"},
 		},
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "address", Why: "platform-assigned at allocation"},
 			{Path: "attachment.kind", Why: "the platform attaches addresses for load balancers, clusters and managed web servers under the customer — an attachment made out of band is read back, not fought"},
 			{Path: "attachment.resource_id", Why: "the platform attaches addresses for load balancers, clusters and managed web servers under the customer — an attachment made out of band is read back, not fought"},
@@ -388,6 +396,7 @@ var Declarations = map[string]Decl{
 	},
 	"frostmoln_scale_group": {
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "current_size", Why: "the autoscaler moves it continuously under the customer — `desired_capacity` is the intent, this is the truth"},
 		},
 	},
@@ -403,6 +412,7 @@ var Declarations = map[string]Decl{
 			{Path: "secret_value", Why: "sensitive: sent, never read back — new versions are what a change creates"},
 			{Path: "secret_value_wo", Why: "write-only: sent, never stored or read back — the `secret_value_wo_version` companion carries change detection"},
 		},
+		Observes: []Field{tagsAllObserved},
 	},
 	"frostmoln_security_group": {
 		ImmutableWhy: "the network API has no in-place update for it, so a change destroys and re-creates the group",
@@ -423,6 +433,7 @@ var Declarations = map[string]Decl{
 				Why:    "Readable as the computed `is_default`; no `default_*` resource exists to adopt it today",
 			},
 		},
+		Observes: []Field{tagsAllObserved},
 	},
 	"frostmoln_security_group_rule": {
 		EnactsNone:   true,
@@ -431,9 +442,9 @@ var Declarations = map[string]Decl{
 			"remote_cidr", "remote_group_id", "security_group_id"),
 	},
 	"frostmoln_snapshot": {
-		EnactsNone:   true,
-		ImmutableWhy: "a snapshot is immutable after create — changing any attribute destroys it and takes a new snapshot of the volume",
-		Immutable:    fields("description", "name", "tags", "volume_id"),
+		ImmutableWhy: "a snapshot's content is fixed when it is taken, and so are its name, description and source volume here — changing one destroys it and takes a new snapshot of the volume (its tags change in place)",
+		Immutable:    fields("description", "name", "volume_id"),
+		Observes:     []Field{tagsAllObserved},
 	},
 	"frostmoln_ssh_key": {
 		EnactsNone:   true,
@@ -449,6 +460,7 @@ var Declarations = map[string]Decl{
 			{Path: "vpc_id"},
 			{Path: "zone", Why: "the platform pins the zone at create; there is no in-place migration between zones"},
 		},
+		Observes: []Field{tagsAllObserved},
 	},
 	"frostmoln_valkey_instance": {
 		ImmutableWhy: "the platform has no in-place migration for it — a change re-creates the instance",
@@ -465,6 +477,7 @@ var Declarations = map[string]Decl{
 			{Path: "volume_type"},
 			{Path: "zone", Why: "the platform pins the zone at create; there is no in-place migration between zones"},
 		},
+		Observes: []Field{tagsAllObserved},
 	},
 	"frostmoln_volume_attachment": {
 		EnactsNone:   true,
@@ -481,6 +494,7 @@ var Declarations = map[string]Decl{
 				Why:    "Readable as the computed `is_default`; no `default_*` resource exists to adopt it today",
 			},
 		},
+		Observes: []Field{tagsAllObserved},
 	},
 	"frostmoln_vpc_route": {
 		EnactsNone:   true,
@@ -521,4 +535,13 @@ func fields(paths ...string) []Field {
 		out = append(out, Field{Path: p})
 	}
 	return out
+}
+
+// tagsAllObserved is the Observes label every taggable resource carries:
+// tags_all is where keys set outside the configuration land, and they are kept
+// rather than fought (internal/tftags).
+var tagsAllObserved = Field{
+	Path: "tags_all",
+	Why: "keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only " +
+		"here and are kept on every apply, never removed",
 }

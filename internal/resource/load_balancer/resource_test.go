@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -102,10 +103,13 @@ func TestLoadBalancerModelToCreateRequest(t *testing.T) {
 		FlavorID:    types.StringNull(),
 		VIPAddress:  types.StringNull(),
 		Tags:        tags,
+		TagsAll:     types.MapNull(types.StringType),
 	}
 
+	// Assembled as Create assembles it: the builder, then the merged tags.
 	var diags diag.Diagnostics
-	req := model.toCreateRequest(ctx, &diags)
+	req := model.toCreateRequest()
+	req.Tags = tftags.ForCreate(ctx, tftags.Defaults{}, model.Tags, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -152,6 +156,7 @@ func planValue(t *testing.T, schemaResp resource.SchemaResponse, ctx context.Con
 		"type":                tftypes.NewValue(tftypes.String, "l7"),
 		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":            tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"vip_port_id":         tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"status":              tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"provisioning_status": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -181,6 +186,7 @@ func schemeConfigValue(t *testing.T, schemaResp resource.SchemaResponse, ctx con
 		"type":                tftypes.NewValue(tftypes.String, nil),
 		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":            tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"vip_port_id":         tftypes.NewValue(tftypes.String, nil),
 		"status":              tftypes.NewValue(tftypes.String, nil),
 		"provisioning_status": tftypes.NewValue(tftypes.String, nil),
@@ -433,6 +439,7 @@ func TestLoadBalancerDeleteAsyncOperationPoll(t *testing.T) {
 		"type":                tftypes.NewValue(tftypes.String, "l7"),
 		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":            tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"vip_port_id":         tftypes.NewValue(tftypes.String, "port-1"),
 		"status":              tftypes.NewValue(tftypes.String, "active"),
 		"provisioning_status": tftypes.NewValue(tftypes.String, "ACTIVE"),
