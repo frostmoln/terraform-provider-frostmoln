@@ -462,6 +462,11 @@ var Declarations = map[string]Decl{
 		},
 		Observes: []Field{tagsAllObserved},
 	},
+	"frostmoln_tag_color": {
+		Immutable: []Field{
+			{Path: "organization_id", Why: "a colour rule belongs to one organization and the platform has no move between organizations — a change deletes the rule and creates it in the other organization"},
+		},
+	},
 	"frostmoln_valkey_instance": {
 		ImmutableWhy: "the platform has no in-place migration for it — a change re-creates the instance",
 		Immutable:    fields("subnet_id", "version", "vpc_id"),

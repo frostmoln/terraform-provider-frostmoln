@@ -84,6 +84,10 @@ var mustReplaceOnRealChange = map[string][]string{
 	"frostmoln_volume":                {"volume_type", "zone", "encrypted"},
 	"frostmoln_volume_attachment":     {"device_path"},
 	"frostmoln_webserver_domain":      {"tls_enabled", "is_default"},
+	// A colour rule lives in one organization and there is no move between
+	// organizations. key, value and color are NOT here: the API's PUT replaces
+	// all three, retargeting included, so they update in place.
+	"frostmoln_tag_color": {"organization_id"},
 }
 
 // TestOptionalComputedAttributesReplaceOnlyOnRealChange asserts, for every

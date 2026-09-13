@@ -57,6 +57,7 @@ import (
 	secretds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/secret"
 	securitygrouprulesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/security_group_rules"
 	subnetds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/subnet"
+	tagcolorsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/tag_colors"
 	valkeyinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/valkey_instance"
 	volumetiersds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/volume_tiers"
 	vpcds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/vpc"
@@ -118,6 +119,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/snapshot"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/ssh_key"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/subnet"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/tag_color"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/valkey_instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/volume"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/volume_attachment"
@@ -717,6 +719,8 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		webserver_domain.NewResource,
 		webserver_deployment.NewResource,
 		workload_identity_binding.NewResource,
+		// Organization-wide display settings: one tag colour rule per resource.
+		tag_color.NewResource,
 	}
 }
 
@@ -783,5 +787,8 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		kubernetesaddonversionsds.NewDataSource,
 		kubernetesclusteraddonsds.NewDataSource,
 		iampolicydocumentds.NewDataSource,
+		// Every colour rule of an organization, portal-made ones included, with
+		// the ids frostmoln_tag_color imports by.
+		tagcolorsds.NewDataSource,
 	}
 }
