@@ -118,7 +118,9 @@ func TestAccKubernetesCluster_full(t *testing.T) {
 				ImportStateVerify: true,
 				// updated_at moves under the test's feet (the kubernetes
 				// service Syncer and event consumers touch the row async).
-				ImportStateVerifyIgnore: []string{"updated_at"},
+				// addon_versions is configuration only: an import records no
+				// pins by design (the next apply sends every configured pin).
+				ImportStateVerifyIgnore: []string{"updated_at", "addon_versions"},
 			},
 			{
 				ResourceName:      poolResourceName,

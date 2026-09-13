@@ -24,7 +24,10 @@ type KubernetesClusterModel struct {
 	// type=LoadBalancer produces a per-Service load balancer instead, so there is no
 	// cluster-level ingress surface left to model. The backend rejects the retired
 	// create fields with a 400 and no longer returns the read-only ones.
-	Addons          types.Set             `tfsdk:"addons"`
+	Addons types.Set `tfsdk:"addons"`
+	// AddonVersions is CONFIGURATION ONLY: never filled from an API response, so it
+	// can never feed a response's pins back into a request (see changedPins).
+	AddonVersions   types.Map             `tfsdk:"addon_versions"`
 	InitialNodePool *InitialNodePoolModel `tfsdk:"initial_node_pool"`
 	Status          types.String          `tfsdk:"status"`
 	HAEnabled       types.Bool            `tfsdk:"ha_enabled"`
@@ -86,6 +89,17 @@ type apiKubernetesCluster struct {
 	Addons    []string `json:"addons"`
 	CreatedAt string   `json:"createdAt"`
 	UpdatedAt string   `json:"updatedAt,omitempty"`
+	// Notices ride a successful PUT .../addons. `pinnedVersions` is deliberately NOT
+	// decoded: it is the platform's full pin map, and a field that does not exist
+	// cannot be persisted or replayed into the next request's `versions` delta.
+	Notices []apiClusterNotice `json:"notices,omitempty"`
+}
+
+// apiClusterNotice is an advisory fact about a request that succeeded. `code` is an
+// open vocabulary.
+type apiClusterNotice struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 // apiNodePool is the API representation of a node pool (domain.NodePool).
@@ -280,9 +294,12 @@ func setToStringSlice(set types.Set) []string {
 // Remove names the keys being DROPPED. The endpoint refuses a selection short of the
 // cluster's current one unless they are named, so that a client working from a stale read
 // cannot delete; omitted (omitempty) when nothing is being removed.
+//
+// Versions is the pin DELTA (changedPins), omitted when nothing is re-pinned.
 type apiUpdateClusterAddonsRequest struct {
-	Addons []string `json:"addons"`
-	Remove []string `json:"remove,omitempty"`
+	Addons   []string          `json:"addons"`
+	Remove   []string          `json:"remove,omitempty"`
+	Versions map[string]string `json:"versions,omitempty"`
 }
 
 // removedAddons is state-minus-plan: the keys the practitioner's configuration no longer

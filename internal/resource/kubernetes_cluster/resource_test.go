@@ -550,6 +550,7 @@ func buildState(t *testing.T, model KubernetesClusterModel) tfsdk.State {
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 
 	state := tfsdk.State{Schema: schemaResp.Schema}
+	model.AddonVersions = typedPins(model.AddonVersions)
 	if diags := state.Set(context.Background(), &model); diags.HasError() {
 		t.Fatalf("failed to set state: %v", diags.Errors())
 	}
@@ -563,6 +564,7 @@ func buildPlan(t *testing.T, model KubernetesClusterModel) tfsdk.Plan {
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 
 	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	model.AddonVersions = typedPins(model.AddonVersions)
 	if diags := plan.Set(context.Background(), &model); diags.HasError() {
 		t.Fatalf("failed to set plan: %v", diags.Errors())
 	}

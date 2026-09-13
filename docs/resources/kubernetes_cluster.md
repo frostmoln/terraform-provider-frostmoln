@@ -8,6 +8,7 @@ description: |-
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — control_plane_tier, initial_node_pool.flavor_id, initial_node_pool.name, region, subnet_id, version, vpc_id: the platform has no in-place migration for it — a change destroys and re-creates the cluster.
   Create-immutable — public_ip_id: retained and deprecated: every new cluster's apiserver is a private VIP and the API refuses any value with a 400 — the attribute exists so a stale configuration is told so.
+  Not enacted state — addon_versions: a refresh reads a pin back only for an addon this attribute already names, and only when the platform can report pins (not while the cluster is still being created, on a legacy control plane, or during a platform deployment or outage, when the recorded value is kept); a pin set outside Terraform for any other addon is neither read into state nor sent.
   Observed, not enacted — endpoint: platform-issued once the apiserver is up. kubeconfig: platform-issued once the apiserver is up. load_balancer_id: the platform provisions the load balancer the cluster rides on.
 ---
 
@@ -23,12 +24,19 @@ Manages a managed Kubernetes cluster in the Frostmoln platform. The cluster owns
 
 **Create-immutable** — `public_ip_id`: retained and deprecated: every new cluster's apiserver is a private VIP and the API refuses any value with a 400 — the attribute exists so a stale configuration is told so.
 
+**Not enacted state** — `addon_versions`: a refresh reads a pin back only for an addon this attribute already names, and only when the platform can report pins (not while the cluster is still being created, on a legacy control plane, or during a platform deployment or outage, when the recorded value is kept); a pin set outside Terraform for any other addon is neither read into state nor sent.
+
 **Observed, not enacted** — `endpoint`: platform-issued once the apiserver is up. `kubeconfig`: platform-issued once the apiserver is up. `load_balancer_id`: the platform provisions the load balancer the cluster rides on.
 
 ## Example Usage
 
 ```terraform
 data "frostmoln_kubernetes_versions" "available" {}
+
+variable "external_secrets_version" {
+  description = "A version of external-secrets listed by the frostmoln_kubernetes_addon_versions data source."
+  type        = string
+}
 
 data "frostmoln_kubernetes_flavors" "available" {}
 
@@ -50,6 +58,13 @@ resource "frostmoln_kubernetes_cluster" "main" {
   # install the platform defaults; set an empty list ([]) to install none. See the
   # frostmoln_kubernetes_addons data source for available keys.
   addons = ["external-secrets"]
+
+  # Optional version pins, keyed by addon key; each key must be in addons. Use a
+  # version string from the frostmoln_kubernetes_addon_versions data source.
+  # Only a changed pin is sent; removing a key leaves the addon on its version.
+  addon_versions = {
+    "external-secrets" = var.external_secrets_version
+  }
 
   initial_node_pool = {
     flavor_id  = data.frostmoln_kubernetes_flavors.available.flavors[0].id
@@ -82,6 +97,7 @@ output "kubeconfig" {
 
 ### Optional
 
+- `addon_versions` (Map of String) Pins addons to published versions, keyed by addon key (at most 32). Every key must also be in addons, which must be set explicitly. List an addon's pinnable versions with the frostmoln_kubernetes_addon_versions data source and use one of those strings verbatim. Changing a pin is applied IN PLACE and reaches the cluster within the platform's addon reconciliation period. Only pins whose value differs from state are sent, so an addon not pinned here keeps whatever version it is pinned to, including a pin set outside Terraform. An addon being ADDED to addons without a pin gets its recommended version; an addon that is already selected keeps its current pin. After an import, or whenever state records no pins, every configured pin is sent. A refresh reads back the pin of each addon named here, so a configured pin moved outside Terraform is reported as drift and the next apply restores it; pins of addons not named here are never read into state. When the platform cannot report pins (for example during a platform deployment) the refresh keeps the recorded values and warns. Removing a key stops Terraform managing that pin — the addon stays on its current version, as there is no unpin. Read each addon's pinned and applied version with the frostmoln_kubernetes_cluster_addons data source.
 - `addons` (Set of String) The set of cluster-addon catalog keys for this cluster (see the frostmoln_kubernetes_addons data source for available keys). ADDING a key is applied IN PLACE to a running cluster and reaches it within the platform's addon reconciliation period rather than immediately. REMOVING a key is ALSO applied in place and DELETES the objects that addon installed; a cluster whose control plane predates the platform's ability to remove an addon is refused with an error saying so, and must be recreated to gain it. When you SET this attribute, note that it is refreshed from the API before every plan, so an addon added outside Terraform (the portal, the fm CLI) appears in state and will be REMOVED on the next apply, as ordinary configuration drift — terraform plan shows the removal before anything happens. Leaving the attribute unset keeps such an addon, since nothing in configuration asks for its removal. Removal leaves behind what the platform will not delete for you: the addon's namespace, any CustomResourceDefinition, StorageClass or CSIDriver it created, and anything you put in that namespace yourself. Leave it unset to apply the platform default addons (the frostmoln_kubernetes_addons data source reports which are defaulted); set it to an explicit empty set ([]) to select none. An addon's upstream container images are pulled from a public registry when its pods start rather than preloaded onto your nodes, so the addon needs your worker nodes to have outbound HTTPS to that registry; where an addon has such a prerequisite its catalog description states it (external-dns: registry.k8s.io, which redirects image downloads to cloud-hosted backing stores on other domains, so allowing that hostname alone is not enough if you filter egress by name). That reachability is a property of your own VPC at the moment of the pull, and every new node pulls again, so the platform does not validate it: applying a key your nodes cannot pull succeeds here and leaves the addon's pods in ImagePullBackOff. Nothing about the cluster itself depends on it.
 - `control_plane_tier` (String) The control-plane tier key (see the frostmoln_kubernetes_tiers data source for canonical keys). Defaults to the platform default tier.
 - `public_ip_id` (String, Deprecated) REMOVED. Any value is rejected by the API with a 400, on every account — remove this attribute from your configuration.

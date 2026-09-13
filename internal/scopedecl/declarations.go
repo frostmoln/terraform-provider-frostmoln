@@ -234,6 +234,9 @@ var Declarations = map[string]Decl{
 			{Path: "version"},
 			{Path: "vpc_id"},
 		},
+		EnactsExcept: []Field{
+			{Path: "addon_versions", Why: "a refresh reads a pin back only for an addon this attribute already names, and only when the platform can report pins (not while the cluster is still being created, on a legacy control plane, or during a platform deployment or outage, when the recorded value is kept); a pin set outside Terraform for any other addon is neither read into state nor sent"},
+		},
 		Observes: []Field{
 			{Path: "endpoint", Why: "platform-issued once the apiserver is up"},
 			{Path: "kubeconfig", Why: "platform-issued once the apiserver is up"},

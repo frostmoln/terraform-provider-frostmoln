@@ -38,7 +38,9 @@ import (
 	imageds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/image"
 	imagesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/images"
 	instanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/instance"
+	kubernetesaddonversionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/kubernetes_addon_versions"
 	kubernetesaddonsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/kubernetes_addons"
+	kubernetesclusteraddonsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/kubernetes_cluster_addons"
 	kubernetesflavorsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/kubernetes_flavors"
 	kubernetestiersds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/kubernetes_tiers"
 	kubernetesversionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/kubernetes_versions"
@@ -678,6 +680,8 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		kubernetestiersds.NewDataSource,
 		kubernetesflavorsds.NewDataSource,
 		kubernetesaddonsds.NewDataSource,
+		kubernetesaddonversionsds.NewDataSource,
+		kubernetesclusteraddonsds.NewDataSource,
 		iampolicydocumentds.NewDataSource,
 	}
 }

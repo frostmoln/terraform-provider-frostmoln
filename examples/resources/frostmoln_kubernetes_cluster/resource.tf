@@ -1,5 +1,10 @@
 data "frostmoln_kubernetes_versions" "available" {}
 
+variable "external_secrets_version" {
+  description = "A version of external-secrets listed by the frostmoln_kubernetes_addon_versions data source."
+  type        = string
+}
+
 data "frostmoln_kubernetes_flavors" "available" {}
 
 resource "frostmoln_kubernetes_cluster" "main" {
@@ -20,6 +25,13 @@ resource "frostmoln_kubernetes_cluster" "main" {
   # install the platform defaults; set an empty list ([]) to install none. See the
   # frostmoln_kubernetes_addons data source for available keys.
   addons = ["external-secrets"]
+
+  # Optional version pins, keyed by addon key; each key must be in addons. Use a
+  # version string from the frostmoln_kubernetes_addon_versions data source.
+  # Only a changed pin is sent; removing a key leaves the addon on its version.
+  addon_versions = {
+    "external-secrets" = var.external_secrets_version
+  }
 
   initial_node_pool = {
     flavor_id  = data.frostmoln_kubernetes_flavors.available.flavors[0].id

@@ -2,12 +2,15 @@ package kubernetes_cluster
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/mapvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -31,10 +34,11 @@ import (
 // 404. Every poll/read path below treats status "deleted" as gone (404 is
 // kept only as a fallback).
 const (
-	statusRunning = "running"
-	statusActive  = "active" // node-pool ready state (pools are never "running")
-	statusError   = "error"
-	statusDeleted = "deleted"
+	statusRunning  = "running"
+	statusActive   = "active" // node-pool ready state (pools are never "running")
+	statusError    = "error"
+	statusDeleted  = "deleted"
+	statusDeleting = "deleting" // teardown in progress: the cluster's addons can no longer change
 )
 
 const kubeconfigFetchAttempts = 3
@@ -118,6 +122,10 @@ func (r *kubernetesClusterResource) ModifyPlan(ctx context.Context, req resource
 	}
 	var plan KubernetesClusterModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	resp.Diagnostics.Append(r.checkConfiguredAddonVersions(ctx, req.Config, plan.AddonVersions)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -283,6 +291,31 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 					// background without an outage.
 				},
 			},
+			"addon_versions": schema.MapAttribute{
+				Description: "Pins addons to published versions, keyed by addon key (at most 32). Every key must " +
+					"also be in addons, which must be set explicitly. List an addon's pinnable versions with the " +
+					"frostmoln_kubernetes_addon_versions data source and use one of those strings verbatim. " +
+					"Changing a pin is applied IN PLACE and reaches the cluster within the platform's addon " +
+					"reconciliation period. Only pins whose value differs from state are sent, so an addon not " +
+					"pinned here keeps whatever version it is pinned to, including a pin set outside Terraform. " +
+					"An addon being ADDED to addons without a pin gets its recommended version; an addon that " +
+					"is already selected keeps its current pin. After an import, or whenever state records no " +
+					"pins, every configured pin is sent. A refresh reads back the pin of each addon named here, " +
+					"so a configured pin moved outside Terraform is reported as drift and the next apply " +
+					"restores it; pins of addons not named here are never read into state. When the platform " +
+					"cannot report pins (for example during a platform deployment) the refresh keeps the " +
+					"recorded values and warns. Removing a key stops Terraform managing that pin — the addon " +
+					"stays on its current version, as there is no unpin. Read each addon's pinned and applied " +
+					"version with the frostmoln_kubernetes_cluster_addons data source.",
+				Optional:    true,
+				ElementType: types.StringType,
+				Validators: []validator.Map{
+					mapvalidator.SizeAtMost(32),
+					mapvalidator.KeysAre(stringvalidator.RegexMatches(addonKeyRe,
+						"must be an addon catalog key: 1-64 lowercase letters, digits or hyphens")),
+					mapvalidator.ValueStringsAre(stringvalidator.LengthBetween(1, 128)),
+				},
+			},
 			"initial_node_pool": schema.SingleNestedAttribute{
 				Description: "The cluster's initial node pool, owned by this resource.",
 				Required:    true,
@@ -423,9 +456,10 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 			// active poll, update covers the scale polls, delete the
 			// delete-status poll. There is no 202 envelope on these routes
 			// (creates answer 201/204 and the waits are status polls), so
-			// the budgets bound only the waits. The addons PUT stays
-			// deliberately unpolluted (converged by a background
-			// reconciliation — see the no-poll note in Update) and the
+			// the budgets bound only the waits. The addons PUT is never
+			// status-polled (converged by a background reconciliation — see
+			// the no-poll note in Update); only its retryable 409 is bounded
+			// by the create/update budget. The
 			// kubeconfig fetch's retries stay paced by the provider-internal
 			// poll interval. A timeouts change is an in-place no-op on real
 			// infrastructure — verified by the Gate 2 smoke test
@@ -595,6 +629,18 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 	// The customer's timeouts block, with defaults identical to the values
 	// this resource has always hardcoded.
 	budgets := r.resolveBudgets(plan.Timeouts)
+	// ONE deadline for the whole create: the pin PUT's retries get only what the
+	// cluster and pool waits left, never a fresh budget of their own.
+	deadline := time.Now().Add(budgets.Create)
+
+	// Apply-time half of the addon_versions check (a value unknown at plan is known now).
+	resp.Diagnostics.Append(r.checkConfiguredAddonVersions(ctx, req.Config, plan.AddonVersions)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	// Captured before fromAPI overwrites plan.Addons with the response: the pin PUT
+	// below carries the CONFIGURED selection and the CONFIGURED pins, never a read.
+	configuredAddons, configuredPins := plan.Addons, plan.AddonVersions
 
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/kubernetes-clusters"), plan.toCreateRequest())
 	if err != nil {
@@ -613,6 +659,9 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 	// values must not be persisted.
 	plan.fromAPI(created)
 	plan.Kubeconfig = types.StringNull()
+	// Not applied until the pin PUT below succeeds: recording them now would let a
+	// failed create leave state claiming pins the platform never received.
+	plan.AddonVersions = types.MapNull(types.StringType)
 	plan.InitialNodePool.ID = types.StringNull()
 	plan.InitialNodePool.Status = types.StringNull()
 	if plan.InitialNodePool.Name.IsUnknown() {
@@ -649,6 +698,48 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 		resp.Diagnostics.AddError("Initial node pool failed to reach active state", err.Error())
 		return
 	}
+
+	// Create takes no versions, so pins go in a PUT once the cluster is running. The
+	// selection is exactly what create was asked for, so `remove` is never needed.
+	if pins := changedPins(types.MapNull(types.StringType), configuredPins); pins != nil {
+		//
+		// 🔴 A FAILURE HERE CANNOT BE A WARNING. Terraform taints any create that returns an
+		// error, and returning addon_versions null against a plan that holds the map is an
+		// "inconsistent result after apply". So the PUT retries everything that clears on
+		// its own (409 invalid_state, 500/503) until the create's one deadline, and the error
+		// that remains says what to do — untaint, then apply — never "re-applying is safe",
+		// which on a tainted cluster would be a replacement.
+		apiResp, err := r.putAddons(ctx, clusterID,
+			apiUpdateClusterAddonsRequest{Addons: setToStringSlice(configuredAddons), Versions: pins}, r.pinRetryDeadline(deadline), true)
+		// Untaint would not help when the cluster went away — and what the next apply does
+		// differs: Read drops a 404/`deleted` cluster, but keeps a `deleting` one in state.
+		if errors.Is(err, errClusterGone) {
+			resp.Diagnostics.AddError("Failed to pin the new cluster's addon versions",
+				"The cluster was created, but it was deleted before its addon version pins could be applied: "+
+					err.Error()+"\n\nThe cluster no longer exists, so untainting it does not help: the next "+
+					"refresh removes it from state, and the next apply creates a new cluster with these pins.")
+			return
+		}
+		if errors.Is(err, errClusterDeleting) {
+			resp.Diagnostics.AddError("Failed to pin the new cluster's addon versions",
+				"The cluster was created, but it is being deleted, so its addon version pins could not be applied: "+
+					err.Error()+"\n\nUntainting it does not help. The cluster stays in state while its teardown "+
+					"runs, so the next apply first DESTROYS it and then creates a new cluster with these pins. "+
+					"To skip that destroy, wait for the teardown to finish before applying: the refresh then "+
+					"removes the cluster from state.")
+			return
+		}
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to pin the new cluster's addon versions",
+				"The cluster was created and reached running, but its addon version pins were not applied: "+
+					err.Error()+"\n\nTerraform marks a resource whose create reported an error as tainted, so "+
+					"applying now would REPLACE this cluster. Run `terraform untaint` on this resource, then "+
+					"`terraform apply`: that sends the pins again without replacing the cluster.")
+			return
+		}
+		addNotices(&resp.Diagnostics, apiResp)
+	}
+	plan.AddonVersions = configuredPins
 
 	// Kubeconfig fetch is best-effort at the very end of a long apply: a
 	// persistent failure downgrades to a warning instead of failing the
@@ -713,6 +804,12 @@ func (r *kubernetesClusterResource) Read(ctx context.Context, req resource.ReadR
 	// prior state).
 	state.fromAPI(cluster)
 
+	// Pins are read back only for keys state already records (see refreshPins); no pins,
+	// no request.
+	if len(state.AddonVersions.Elements()) > 0 {
+		state.AddonVersions = r.refreshPins(ctx, id, state.AddonVersions, &resp.Diagnostics)
+	}
+
 	pool, err := r.findInitialNodePool(ctx, id)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to list the cluster's node pools", err.Error())
@@ -771,8 +868,9 @@ func (r *kubernetesClusterResource) Update(ctx context.Context, req resource.Upd
 
 	// The customer's timeouts block, with defaults identical to the values
 	// this resource has always hardcoded. The update's polls run on the
-	// update budget; the addons PUT below stays deliberately unpolluted.
+	// update budget; the addons PUT's retries run against the same deadline.
 	budgets := r.resolveBudgets(plan.Timeouts)
+	deadline := time.Now().Add(budgets.Update)
 
 	if !plan.Name.Equal(state.Name) {
 		name := plan.Name.ValueString()
@@ -811,15 +909,40 @@ func (r *kubernetesClusterResource) Update(ctx context.Context, req resource.Upd
 	// mattered before as a 400; it matters more now that the same request would succeed.
 	// Not reachable today (Optional+Computed with UseStateForUnknown cannot present a null
 	// plan against a non-null state), which is exactly why it is worth keeping.
-	if !plan.Addons.IsUnknown() && !plan.Addons.IsNull() && !plan.Addons.Equal(state.Addons) {
+	//
+	// PINS RIDE THE SAME PUT. `versions` is changedPins(state, plan): configured pins whose
+	// value changed, never a response's `pinnedVersions` and never a prior-state value.
+	// A pin-only change sends the configured selection unchanged (checkConfiguredAddonVersions
+	// guarantees `addons` is configured, so plan.Addons is the configuration, not a read).
+	//
+	// A 409 `invalid_state` is retried against the update deadline: the cluster is not
+	// running yet, or — only for a request that REMOVES an addon — the platform is still
+	// applying its selection or finishing an earlier removal. Between tries the cluster is
+	// re-read and an `error`/`deleting`/`deleted` cluster fails at once. A 5xx is NOT retried here: an
+	// update error taints nothing, and its message says re-applying is safe. Any failure
+	// leaves the prior state in place (the framework seeds Update's response with it), so
+	// the next apply re-sends the same delta.
+	resp.Diagnostics.Append(r.checkConfiguredAddonVersions(ctx, req.Config, plan.AddonVersions)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	addonsChanged := !plan.Addons.IsUnknown() && !plan.Addons.IsNull() && !plan.Addons.Equal(state.Addons)
+	// An addon this apply ADDS also carries its configured pin, even when state already
+	// records that value: a pin outlives an out-of-band removal of its addon in state, so
+	// without this a re-added addon would get the platform's recommended version instead.
+	pins := addedAddonPins(changedPins(state.AddonVersions, plan.AddonVersions), state.Addons, plan.Addons, plan.AddonVersions)
+	if addonsChanged || pins != nil {
 		body := apiUpdateClusterAddonsRequest{
-			Addons: setToStringSlice(plan.Addons),
-			Remove: removedAddons(state.Addons, plan.Addons),
+			Addons:   setToStringSlice(plan.Addons),
+			Remove:   removedAddons(state.Addons, plan.Addons),
+			Versions: pins,
 		}
-		if _, err := r.client.Put(ctx, r.clusterPath(id)+"/addons", body); err != nil {
-			resp.Diagnostics.AddError("Failed to change the cluster's addons", err.Error())
+		apiResp, err := r.putAddons(ctx, id, body, deadline, false)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to change the cluster's addons", addonsPutFailureDetail(err))
 			return
 		}
+		addNotices(&resp.Diagnostics, apiResp)
 		// NO pollCluster HERE, DELIBERATELY. The addon change does not move the
 		// cluster's status — it is converged by a background reconciliation, and the
 		// cluster stays `running` throughout — so polling for `running` would return

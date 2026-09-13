@@ -89,6 +89,7 @@ func TestProviderMetadata(t *testing.T) {
 		"frostmoln_image", "frostmoln_images", "frostmoln_flavor", "frostmoln_flavors",
 		"frostmoln_vpc", "frostmoln_subnet", "frostmoln_instance",
 		"frostmoln_kubernetes_versions", "frostmoln_kubernetes_tiers", "frostmoln_kubernetes_flavors",
+		"frostmoln_kubernetes_addon_versions", "frostmoln_kubernetes_cluster_addons",
 		"frostmoln_security_group_rules",
 	}
 	for _, name := range expectedDataSources {

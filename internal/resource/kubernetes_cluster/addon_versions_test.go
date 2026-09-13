@@ -1,0 +1,1099 @@
+package kubernetes_cluster
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+)
+
+// eso is the addon key most tests pin. A constant keeps the comparisons below free of
+// the `secrets"] != "` shape that detect-secrets reads as a credential.
+const eso = "external-secrets"
+
+// typedPins gives a zero-value (untyped) map the string element type, so the fixtures
+// that predate addon_versions keep building state without naming it.
+func typedPins(m types.Map) types.Map {
+	if m.ElementType(context.Background()) == nil {
+		return types.MapNull(types.StringType)
+	}
+	return m
+}
+
+func pinMap(kv ...string) types.Map {
+	elems := map[string]attr.Value{}
+	for i := 0; i+1 < len(kv); i += 2 {
+		elems[kv[i]] = types.StringValue(kv[i+1])
+	}
+	return types.MapValueMust(types.StringType, elems)
+}
+
+// putResponse is the PUT .../addons 200 body: the cluster plus the FULL recorded pin
+// map and notices, exactly the fields a buggy client would be tempted to replay.
+type putResponse struct {
+	apiKubernetesCluster
+	PinnedVersions map[string]string `json:"pinnedVersions,omitempty"`
+}
+
+// mock is a minimal kubernetes API for the addon paths, answered through the REAL client
+// (real status codes and error envelopes, never a stubbed error type).
+type mock struct {
+	t *testing.T
+	// putRespond answers the n-th PUT .../addons (1-based).
+	putRespond func(n int) (int, any)
+	// status, when set, is the cluster status given how many PUTs have been made.
+	status func(puts int) string
+	// addonsRespond, when set, answers GET .../addons.
+	addonsRespond func() (int, any)
+
+	// creatingGets, when > 0, makes the first creatingGets GETs of the cluster and of the
+	// initial pool report "creating", so the create's waits take real time.
+	creatingGets int
+	// httpTimeout, when > 0, sets the real HTTP client's Timeout (the provider's is 60s).
+	httpTimeout time.Duration
+
+	mu          sync.Mutex
+	putBodies   [][]byte
+	firstPutAt  time.Time
+	postBody    []byte
+	addonGets   int
+	clusterGets int
+	poolGets    int
+}
+
+func readBody(t *testing.T, r *http.Request) []byte {
+	t.Helper()
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Errorf("read body: %v", err)
+	}
+	return raw
+}
+
+func (m *mock) serve(w http.ResponseWriter, r *http.Request) {
+	t := m.t
+	const base = "/v1/tenants/t-1/kubernetes-clusters"
+	switch {
+	case r.Method == http.MethodPost && r.URL.Path == base:
+		raw := readBody(t, r)
+		m.mu.Lock()
+		m.postBody = raw
+		m.mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+		writeJSON(t, w, runningCluster())
+	case r.Method == http.MethodPut && r.URL.Path == base+"/c-1/addons":
+		raw := readBody(t, r)
+		m.mu.Lock()
+		m.putBodies = append(m.putBodies, raw)
+		n := len(m.putBodies)
+		if n == 1 {
+			m.firstPutAt = time.Now()
+		}
+		m.mu.Unlock()
+		status, body := m.putRespond(n)
+		if status == 0 {
+			// A transport failure: drop the connection without writing a response, so the
+			// real client sees an error that is not an APIError.
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				t.Errorf("response writer cannot hijack")
+				return
+			}
+			conn, _, err := hj.Hijack()
+			if err != nil {
+				t.Errorf("hijack: %v", err)
+				return
+			}
+			_ = conn.Close()
+			return
+		}
+		w.WriteHeader(status)
+		writeJSON(t, w, body)
+	case r.Method == http.MethodGet && r.URL.Path == base+"/c-1/addons" && m.addonsRespond != nil:
+		m.mu.Lock()
+		m.addonGets++
+		m.mu.Unlock()
+		status, body := m.addonsRespond()
+		w.WriteHeader(status)
+		writeJSON(t, w, body)
+	case r.Method == http.MethodGet && r.URL.Path == base+"/c-1":
+		c := runningCluster()
+		m.mu.Lock()
+		m.clusterGets++
+		gets, n := m.clusterGets, len(m.putBodies)
+		m.mu.Unlock()
+		if gets <= m.creatingGets {
+			c.Status = "creating"
+		}
+		if m.status != nil {
+			// An empty status stands for a FAILED read: the platform answers 500.
+			if c.Status = m.status(n); c.Status == "" {
+				w.WriteHeader(http.StatusInternalServerError)
+				writeJSON(t, w, map[string]any{"code": "internal_error", "message": "platform unreachable"})
+				return
+			}
+		}
+		writeJSON(t, w, c)
+	case r.Method == http.MethodGet && r.URL.Path == base+"/c-1/node-pools":
+		writeJSON(t, w, apiNodePoolList{NodePools: []apiNodePool{initialPool(statusActive)}})
+	case r.Method == http.MethodGet && r.URL.Path == base+"/c-1/node-pools/np-1":
+		m.mu.Lock()
+		m.poolGets++
+		gets := m.poolGets
+		m.mu.Unlock()
+		p := initialPool(statusActive)
+		if gets <= m.creatingGets {
+			p.Status = "creating"
+		}
+		writeJSON(t, w, p)
+	case r.Method == http.MethodGet && r.URL.Path == base+"/c-1/kubeconfig":
+		writeJSON(t, w, apiKubeconfig{Kubeconfig: "kubeconfig-yaml"})
+	case strings.HasSuffix(r.URL.Path, "/events"):
+		w.WriteHeader(http.StatusNotFound)
+	default:
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+func (m *mock) puts() [][]byte {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([][]byte(nil), m.putBodies...)
+}
+
+// start serves the mock and returns a resource wired to it; budget > 0 shrinks every
+// wait budget (the timeouts-block default) for tests that exhaust a deadline.
+func (m *mock) start(budget time.Duration) (*kubernetesClusterResource, func()) {
+	server := httptest.NewServer(http.HandlerFunc(m.serve))
+	hc := server.Client()
+	if m.httpTimeout > 0 {
+		hc = &http.Client{Timeout: m.httpTimeout, Transport: hc.Transport}
+	}
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(hc))
+	c.SetTenantIDForTest("t-1")
+	r := testResource(c)
+	if budget > 0 {
+		r.pollTimeout = budget
+	}
+	return r, server.Close
+}
+
+func runUpdate(t *testing.T, m *mock, stateM, planM KubernetesClusterModel) resource.UpdateResponse {
+	t.Helper()
+	r, stop := m.start(0)
+	defer stop()
+	state := buildState(t, stateM)
+	plan := buildPlan(t, planM)
+	resp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state, Config: tfsdk.Config(plan)}, &resp)
+	return resp
+}
+
+func pinnedCreatePlan() KubernetesClusterModel {
+	return KubernetesClusterModel{
+		Name: types.StringValue("test-cluster"), Version: types.StringUnknown(),
+		ControlPlaneTier: types.StringUnknown(), Region: types.StringUnknown(),
+		VPCID: types.StringValue("vpc-1"), SubnetID: types.StringValue("sn-1"),
+		PublicIPID:    types.StringNull(),
+		Addons:        addonSet(eso),
+		AddonVersions: pinMap(eso, "v2"),
+		InitialNodePool: &InitialNodePoolModel{
+			ID: types.StringUnknown(), Name: types.StringUnknown(),
+			FlavorID: types.StringValue("k8s.gp1.small"), NodeCount: types.Int64Value(2), Status: types.StringUnknown(),
+		},
+	}
+}
+
+func runCreate(t *testing.T, m *mock, budget time.Duration) resource.CreateResponse {
+	t.Helper()
+	r, stop := m.start(budget)
+	defer stop()
+	plan := buildPlan(t, pinnedCreatePlan())
+	resp := resource.CreateResponse{State: emptyState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan, Config: tfsdk.Config(plan)}, &resp)
+	return resp
+}
+
+func runRead(t *testing.T, m *mock, stateM KubernetesClusterModel) resource.ReadResponse {
+	t.Helper()
+	r, stop := m.start(0)
+	defer stop()
+	state := buildState(t, stateM)
+	resp := resource.ReadResponse{State: state}
+	r.Read(context.Background(), resource.ReadRequest{State: state}, &resp)
+	return resp
+}
+
+func okPut(pinned map[string]string, notices ...apiClusterNotice) func(int) (int, any) {
+	return func(int) (int, any) {
+		c := runningCluster()
+		c.Addons = []string{eso, "external-dns"}
+		c.Notices = notices
+		return http.StatusOK, putResponse{apiKubernetesCluster: c, PinnedVersions: pinned}
+	}
+}
+
+func apiErrorBody(status int, code, msg string) func(int) (int, any) {
+	return func(int) (int, any) { return status, map[string]any{"code": code, "message": msg} }
+}
+
+func sentVersions(t *testing.T, raw []byte) map[string]string {
+	t.Helper()
+	var body apiUpdateClusterAddonsRequest
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("decode PUT body %s: %v", raw, err)
+	}
+	return body.Versions
+}
+
+func pinsIn(t *testing.T, st tfsdk.State) map[string]string {
+	t.Helper()
+	var m KubernetesClusterModel
+	if diags := st.Get(context.Background(), &m); diags.HasError() {
+		t.Fatalf("state get: %v", diags.Errors())
+	}
+	if m.AddonVersions.IsNull() {
+		return nil
+	}
+	out := map[string]string{}
+	for k, v := range m.AddonVersions.Elements() {
+		out[k] = v.(types.String).ValueString()
+	}
+	return out
+}
+
+// --- Update: what the request carries (trap 2) ---
+
+// TRAP 2(a): an addon ADD with no addon_versions carries no `versions` key at all.
+func TestUpdate_AddonAddWithoutPinsSendsNoVersions(t *testing.T) {
+	m := &mock{t: t, putRespond: okPut(map[string]string{eso: "v1", "external-dns": "v3"})}
+	planM := stateModel()
+	planM.Addons = addonSet(eso, "external-dns")
+
+	resp := runUpdate(t, m, stateModel(), planM)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %v", resp.Diagnostics.Errors())
+	}
+	puts := m.puts()
+	if len(puts) != 1 {
+		t.Fatalf("expected 1 PUT, got %d", len(puts))
+	}
+	if bytes.Contains(puts[0], []byte(`"versions"`)) {
+		t.Errorf("an addon add without pins must not send versions, got %s", puts[0])
+	}
+}
+
+// TRAP 2(b): changing ONE pin sends exactly that key, and state keeps the configured
+// map — never the response's full pinnedVersions.
+func TestUpdate_ChangingOnePinSendsExactlyThatKey(t *testing.T) {
+	m := &mock{t: t, putRespond: okPut(map[string]string{eso: "v2", "external-dns": "v5", "cert-manager": "v9"})}
+	stateM := stateModel()
+	stateM.Addons = addonSet(eso, "external-dns")
+	stateM.AddonVersions = pinMap(eso, "v1", "external-dns", "v5")
+	planM := stateM
+	planM.AddonVersions = pinMap(eso, "v2", "external-dns", "v5")
+
+	resp := runUpdate(t, m, stateM, planM)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %v", resp.Diagnostics.Errors())
+	}
+	puts := m.puts()
+	if len(puts) != 1 {
+		t.Fatalf("expected 1 PUT, got %d", len(puts))
+	}
+	if got := sentVersions(t, puts[0]); len(got) != 1 || got[eso] != "v2" {
+		t.Errorf("versions = %v, want exactly {%s: v2}", got, eso)
+	}
+	if st := pinsIn(t, resp.State); len(st) != 2 || st[eso] != "v2" || st["external-dns"] != "v5" {
+		t.Errorf("state addon_versions = %v, want the configured map only (no cert-manager from pinnedVersions)", st)
+	}
+}
+
+// TRAP 2(c): state recorded a pin this configuration no longer declares (and somebody
+// moved it concurrently, as the response shows). The request must not name that key,
+// and the response's value for it must not reach state.
+func TestUpdate_UnconfiguredConcurrentPinNeverSent(t *testing.T) {
+	m := &mock{t: t, putRespond: okPut(map[string]string{eso: "v2", "external-dns": "v6-moved-by-someone-else"})}
+	stateM := stateModel()
+	stateM.Addons = addonSet(eso, "external-dns")
+	stateM.AddonVersions = pinMap(eso, "v1", "external-dns", "v5")
+	planM := stateM
+	planM.AddonVersions = pinMap(eso, "v2")
+
+	resp := runUpdate(t, m, stateM, planM)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %v", resp.Diagnostics.Errors())
+	}
+	got := sentVersions(t, m.puts()[0])
+	if _, sent := got["external-dns"]; sent || len(got) != 1 {
+		t.Errorf("versions = %v, must contain only the configured, changed key", got)
+	}
+	if st := pinsIn(t, resp.State); len(st) != 1 || st[eso] != "v2" {
+		t.Errorf("state addon_versions = %v, want {%s: v2}", st, eso)
+	}
+}
+
+// FIX 8: a state with no recorded pins (import, or an untainted create whose pin PUT
+// failed) sends EVERY configured pin.
+func TestUpdate_NullStatePinsSendsEveryConfiguredPin(t *testing.T) {
+	m := &mock{t: t, putRespond: okPut(nil)}
+	stateM := stateModel()
+	stateM.Addons = addonSet(eso, "external-dns")
+	stateM.AddonVersions = types.MapNull(types.StringType)
+	planM := stateM
+	planM.AddonVersions = pinMap(eso, "v2", "external-dns", "v5")
+
+	resp := runUpdate(t, m, stateM, planM)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %v", resp.Diagnostics.Errors())
+	}
+	if got := sentVersions(t, m.puts()[0]); len(got) != 2 || got[eso] != "v2" || got["external-dns"] != "v5" {
+		t.Errorf("versions = %v, want every configured pin", got)
+	}
+}
+
+// FIX 3: after a refresh read back a drifted pin, the apply sends the CONFIGURED value.
+func TestUpdate_DriftedStatePinSendsConfiguredValue(t *testing.T) {
+	m := &mock{t: t, putRespond: okPut(nil)}
+	stateM := stateModel()
+	stateM.AddonVersions = pinMap(eso, "v9-moved-outside-terraform")
+	planM := stateM
+	planM.AddonVersions = pinMap(eso, "v2")
+
+	resp := runUpdate(t, m, stateM, planM)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %v", resp.Diagnostics.Errors())
+	}
+	if got := sentVersions(t, m.puts()[0]); len(got) != 1 || got[eso] != "v2" {
+		t.Errorf("versions = %v, want the configured {%s: v2}", got, eso)
+	}
+	if st := pinsIn(t, resp.State); st[eso] != "v2" {
+		t.Errorf("state addon_versions = %v, want the plan value", st)
+	}
+}
+
+func TestChangedPins(t *testing.T) {
+	if got := changedPins(pinMap("a", "v1"), pinMap("a", "v1")); got != nil {
+		t.Errorf("unchanged pins = %v, want nil", got)
+	}
+	if got := changedPins(pinMap("a", "v1", "b", "v2"), pinMap("a", "v1")); got != nil {
+		t.Errorf("dropping a key must send nothing (no unpin), got %v", got)
+	}
+	if got := changedPins(types.MapNull(types.StringType), pinMap("a", "v1", "b", "v2")); len(got) != 2 {
+		t.Errorf("null state must send every configured pin, got %v", got)
+	}
+	if got := changedPins(pinMap("a", "v1"), types.MapNull(types.StringType)); got != nil {
+		t.Errorf("null plan = %v, want nil", got)
+	}
+}
+
+// --- Update: responses and failures ---
+
+// TRAP 3: notices are warnings in an open vocabulary — an unknown code is shown by its
+// message and never becomes an error.
+func TestUpdate_UnknownNoticeCodeIsWarning(t *testing.T) {
+	const msg = "Delete the leftover namespace yourself."
+	m := &mock{t: t, putRespond: okPut(nil, apiClusterNotice{Code: "a_code_from_the_future", Message: msg})}
+	planM := stateModel()
+	planM.Addons = addonSet(eso, "external-dns")
+
+	resp := runUpdate(t, m, stateModel(), planM)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("a notice must never be an error: %v", resp.Diagnostics.Errors())
+	}
+	found := false
+	for _, d := range resp.Diagnostics.Warnings() {
+		if d.Detail() == msg {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a warning carrying the notice message, got %v", resp.Diagnostics)
+	}
+}
+
+// FIX 6: a 2xx whose body cannot be parsed is an accepted change, not a failure.
+func TestUpdate_UnreadableSuccessBodyIsWarning(t *testing.T) {
+	m := &mock{t: t, putRespond: func(int) (int, any) { return http.StatusOK, "not a cluster" }}
+	planM := stateModel()
+	planM.Addons = addonSet(eso, "external-dns")
+
+	resp := runUpdate(t, m, stateModel(), planM)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("an accepted change must not error: %v", resp.Diagnostics.Errors())
+	}
+	if resp.Diagnostics.WarningsCount() == 0 {
+		t.Error("expected a 'notices could not be read' warning")
+	}
+}
+
+func TestUpdate_RetriesInvalidStateConflict(t *testing.T) {
+	m := &mock{t: t, putRespond: func(n int) (int, any) {
+		if n == 1 {
+			return apiErrorBody(http.StatusConflict, "invalid_state", "the cluster is updating")(n)
+		}
+		return okPut(nil)(n)
+	}}
+	planM := stateModel()
+	planM.Addons = addonSet(eso, "external-dns")
+
+	resp := runUpdate(t, m, stateModel(), planM)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %v", resp.Diagnostics.Errors())
+	}
+	if n := len(m.puts()); n != 2 {
+		t.Errorf("expected a retry after 409 invalid_state, got %d PUTs", n)
+	}
+}
+
+// FIX 2: a retryable 409 on a cluster that has gone to `error` stops at once.
+func TestUpdate_InvalidStateStopsAtOnceWhenClusterErrors(t *testing.T) {
+	m := &mock{
+		t:          t,
+		putRespond: apiErrorBody(http.StatusConflict, "invalid_state", "the cluster is error"),
+		status: func(puts int) string {
+			if puts > 0 {
+				return statusError
+			}
+			return statusRunning
+		},
+	}
+	planM := stateModel()
+	planM.Addons = addonSet(eso, "external-dns")
+
+	resp := runUpdate(t, m, stateModel(), planM)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error")
+	}
+	if n := len(m.puts()); n != 1 {
+		t.Errorf("expected no retry against an errored cluster, got %d PUTs", n)
+	}
+}
+
+// 409 `conflict` includes "the platform's records disagree", which never clears.
+func TestUpdate_ConflictCodeIsNotRetried(t *testing.T) {
+	m := &mock{t: t, putRespond: apiErrorBody(http.StatusConflict, "conflict", "records disagree")}
+	planM := stateModel()
+	planM.Addons = addonSet(eso, "external-dns")
+
+	resp := runUpdate(t, m, stateModel(), planM)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error")
+	}
+	if n := len(m.puts()); n != 1 {
+		t.Errorf("expected no retry on 409 conflict, got %d PUTs", n)
+	}
+}
+
+// PUT 503 in its production shape (kubernetes v5.6.0 cluster_addons.go: status 503, code
+// internal_error): the update fails fast with the server message and says re-applying is
+// safe. That prior state survives the failure is the FRAMEWORK's doing —
+// fwserver/server_updateresource.go seeds `updateResp.State = *req.PriorState` before
+// calling Update — so it is not asserted here, where the test seeds resp.State itself.
+func TestUpdate_Put503SaysReapplyIsSafe(t *testing.T) {
+	const serverMsg = "the addon selection was changed, but the version pin was not recorded by the platform release currently running; re-send the identical request"
+	m := &mock{t: t, putRespond: apiErrorBody(http.StatusServiceUnavailable, "internal_error", serverMsg)}
+	stateM := stateModel()
+	stateM.AddonVersions = pinMap(eso, "v1")
+	planM := stateM
+	planM.AddonVersions = pinMap(eso, "v2")
+
+	resp := runUpdate(t, m, stateM, planM)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error")
+	}
+	detail := resp.Diagnostics.Errors()[0].Detail()
+	if !strings.Contains(detail, serverMsg) || !strings.Contains(detail, "Re-applying is safe") {
+		t.Errorf("detail must carry the server message and say re-applying is safe, got %q", detail)
+	}
+	if n := len(m.puts()); n != 1 {
+		t.Errorf("the update path must not retry a 5xx, got %d PUTs", n)
+	}
+}
+
+// RE-CHECK 1: an addon removed out of band and re-added by the configuration sends its
+// configured pin, even though state still records the same value — otherwise the
+// platform installs the recommended version and only a second apply restores the pin.
+func TestUpdate_ReAddedAddonResendsItsPin(t *testing.T) {
+	m := &mock{t: t, putRespond: okPut(nil)}
+	stateM := stateModel()
+	stateM.Addons = addonSet()
+	stateM.AddonVersions = pinMap(eso, "v1")
+	planM := stateM
+	planM.Addons = addonSet(eso)
+
+	resp := runUpdate(t, m, stateM, planM)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %v", resp.Diagnostics.Errors())
+	}
+	puts := m.puts()
+	if len(puts) != 1 {
+		t.Fatalf("expected 1 PUT, got %d", len(puts))
+	}
+	if got := sentVersions(t, puts[0]); len(got) != 1 || got[eso] != "v1" {
+		t.Errorf("versions = %v, want the re-added addon's configured pin {%s: v1}", got, eso)
+	}
+}
+
+// RE-CHECK 1: an addon neither added nor re-pinned sends nothing — and neither does an
+// addon being added that the configuration does not pin.
+func TestUpdate_UnchangedPinsOnExistingAddonsSendNothing(t *testing.T) {
+	m := &mock{t: t, putRespond: okPut(nil)}
+	stateM := stateModel()
+	stateM.Addons = addonSet(eso, "external-dns")
+	stateM.AddonVersions = pinMap(eso, "v1", "external-dns", "v5")
+	planM := stateM
+	planM.Addons = addonSet(eso, "external-dns", "cert-manager")
+
+	resp := runUpdate(t, m, stateM, planM)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %v", resp.Diagnostics.Errors())
+	}
+	puts := m.puts()
+	if len(puts) != 1 {
+		t.Fatalf("expected 1 PUT, got %d", len(puts))
+	}
+	if bytes.Contains(puts[0], []byte(`"versions"`)) {
+		t.Errorf("no pin changed and no pinned addon was added, yet versions was sent: %s", puts[0])
+	}
+}
+
+// RE-CHECK 2: a cluster being torn down (`deleting`) stops the retry at once, on both paths.
+func TestPutAddons_DeletingClusterStopsAtOnce(t *testing.T) {
+	deleting := func(puts int) string {
+		if puts > 0 {
+			return statusDeleting
+		}
+		return statusRunning
+	}
+	t.Run("update", func(t *testing.T) {
+		m := &mock{t: t, putRespond: apiErrorBody(http.StatusConflict, "invalid_state", "the cluster is deleting"), status: deleting}
+		planM := stateModel()
+		planM.Addons = addonSet(eso, "external-dns")
+		if resp := runUpdate(t, m, stateModel(), planM); !resp.Diagnostics.HasError() {
+			t.Fatal("expected an error")
+		}
+		if n := len(m.puts()); n != 1 {
+			t.Errorf("expected no retry against a deleting cluster, got %d PUTs", n)
+		}
+	})
+	t.Run("create", func(t *testing.T) {
+		m := &mock{t: t, putRespond: apiErrorBody(http.StatusServiceUnavailable, "internal_error", "down"), status: deleting}
+		if resp := runCreate(t, m, time.Second); !resp.Diagnostics.HasError() {
+			t.Fatal("expected an error")
+		}
+		if n := len(m.puts()); n != 1 {
+			t.Errorf("expected no retry against a deleting cluster, got %d PUTs", n)
+		}
+	})
+}
+
+// RE-CHECK 3: on the create path a gateway blip (502/504) or a transport error is retried
+// rather than tainting a running cluster.
+func TestCreate_RetriesGatewayAndTransportBlips(t *testing.T) {
+	for name, first := range map[string]func(int) (int, any){
+		"502":             apiErrorBody(http.StatusBadGateway, "bad_gateway", "upstream connect error"),
+		"504":             apiErrorBody(http.StatusGatewayTimeout, "gateway_timeout", "upstream request timeout"),
+		"transport error": func(int) (int, any) { return 0, nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := &mock{t: t, putRespond: func(n int) (int, any) {
+				if n == 1 {
+					return first(n)
+				}
+				return okPut(nil)(n)
+			}}
+			resp := runCreate(t, m, 0)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("create failed: %v", resp.Diagnostics.Errors())
+			}
+			if n := len(m.puts()); n != 2 {
+				t.Errorf("expected the blip to be retried once, got %d PUTs", n)
+			}
+		})
+	}
+}
+
+// BATCH B: net/http's client Timeout surfaces as a *url.Error whose error Is
+// context.DeadlineExceeded. It is a slow-response blip, not a cancelled operation, so the
+// create path retries it instead of tainting the cluster. Real client, real timeout.
+func TestCreate_RetriesHTTPClientTimeout(t *testing.T) {
+	m := &mock{
+		t:           t,
+		httpTimeout: 100 * time.Millisecond,
+		putRespond: func(n int) (int, any) {
+			if n == 1 {
+				time.Sleep(400 * time.Millisecond) // outlives the client's Timeout
+			}
+			return okPut(nil)(n)
+		},
+	}
+	resp := runCreate(t, m, 0)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("a client timeout must be retried, not taint the create: %v", resp.Diagnostics.Errors())
+	}
+	if n := len(m.puts()); n != 2 {
+		t.Errorf("expected the timed-out PUT to be retried once, got %d PUTs", n)
+	}
+}
+
+// BATCH B: which errors without a usable response the create path retries — a transport
+// failure (*url.Error, client timeout included) yes; anything else (an expired session, a
+// failed credential refresh) no, because waiting will not clear it.
+func TestRetryableAddonsPut_ErrorsWithoutAResponse(t *testing.T) {
+	clientTimeout := fmt.Errorf("request failed: %w",
+		&url.Error{Op: "Put", URL: "https://api.example/addons", Err: context.DeadlineExceeded})
+	sessionExpired := fmt.Errorf("refreshing credentials: %w", errors.New("session expired"))
+
+	if !retryableAddonsPut(clientTimeout, true) {
+		t.Error("a client timeout (*url.Error) must be retried on the create path")
+	}
+	if retryableAddonsPut(clientTimeout, false) {
+		t.Error("the update path must not retry a transport error")
+	}
+	if retryableAddonsPut(sessionExpired, true) {
+		t.Error("an error that is not a transport failure must not be retried")
+	}
+}
+
+// RE-CHECK 3: a cancelled context is the caller stopping, never a blip to retry.
+func TestPutAddons_CancelledContextReturnsAtOnce(t *testing.T) {
+	m := &mock{t: t, putRespond: apiErrorBody(http.StatusServiceUnavailable, "internal_error", "down")}
+	r, stop := m.start(0)
+	defer stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	_, err := r.putAddons(ctx, "c-1", apiUpdateClusterAddonsRequest{Addons: []string{eso}}, time.Now().Add(time.Minute), true)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("a cancelled context must return at once, took %s", elapsed)
+	}
+	if n := len(m.puts()); n > 1 {
+		t.Errorf("a cancelled context must not be retried, got %d PUTs", n)
+	}
+}
+
+// --- Create: pins ride a PUT after the cluster is running (fix 1) ---
+
+func TestCreate_PinsAppliedAfterRunning(t *testing.T) {
+	m := &mock{t: t, putRespond: okPut(map[string]string{eso: "v2", "other": "v7"})}
+	resp := runCreate(t, m, 0)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("create failed: %v", resp.Diagnostics.Errors())
+	}
+	m.mu.Lock()
+	postBody := m.postBody
+	m.mu.Unlock()
+	if bytes.Contains(postBody, []byte(`"versions"`)) {
+		t.Errorf("create takes no versions, got %s", postBody)
+	}
+	puts := m.puts()
+	if len(puts) != 1 {
+		t.Fatalf("expected 1 PUT, got %d", len(puts))
+	}
+	var body apiUpdateClusterAddonsRequest
+	if err := json.Unmarshal(puts[0], &body); err != nil {
+		t.Fatalf("decode PUT: %v", err)
+	}
+	if len(body.Addons) != 1 || body.Addons[0] != eso || len(body.Versions) != 1 || body.Versions[eso] != "v2" {
+		t.Errorf("PUT body = %+v, want the configured addons and pins", body)
+	}
+	if st := pinsIn(t, resp.State); len(st) != 1 || st[eso] != "v2" {
+		t.Errorf("state addon_versions = %v, want the configured map only", st)
+	}
+}
+
+// FIX 1: a 503 on the create path is retried with the IDENTICAL body.
+func TestCreate_Retries503ThenSucceeds(t *testing.T) {
+	m := &mock{t: t, putRespond: func(n int) (int, any) {
+		if n == 1 {
+			return apiErrorBody(http.StatusServiceUnavailable, "internal_error", "deployment in progress")(n)
+		}
+		return okPut(nil)(n)
+	}}
+	resp := runCreate(t, m, 0)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("create failed: %v", resp.Diagnostics.Errors())
+	}
+	puts := m.puts()
+	if len(puts) != 2 {
+		t.Fatalf("expected the 503 to be retried once, got %d PUTs", len(puts))
+	}
+	if !bytes.Equal(puts[0], puts[1]) {
+		t.Errorf("the retry must re-send the identical body:\n%s\n%s", puts[0], puts[1])
+	}
+}
+
+// FIX 1: a pin PUT that never succeeds stops at the create's deadline and says untaint,
+// NOT "re-applying is safe" (a re-apply would replace the tainted cluster). State records
+// no pins, so the apply after untaint sends every configured pin.
+func TestCreate_PinPutFailsForGood(t *testing.T) {
+	for name, tc := range map[string]struct {
+		respond func(int) (int, any)
+		budget  time.Duration
+		minPuts int
+	}{
+		"always 503 until the deadline":           {apiErrorBody(http.StatusServiceUnavailable, "internal_error", "down"), time.Second, 2},
+		"always invalid_state until the deadline": {apiErrorBody(http.StatusConflict, "invalid_state", "not running"), time.Second, 2},
+		"a non-retryable 400":                     {apiErrorBody(http.StatusBadRequest, "invalid_input", "version not published"), 0, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := &mock{t: t, putRespond: tc.respond}
+			start := time.Now()
+			resp := runCreate(t, m, tc.budget)
+			if !resp.Diagnostics.HasError() {
+				t.Fatal("expected an error")
+			}
+			if elapsed := time.Since(start); elapsed > 10*time.Second {
+				t.Errorf("retries did not stop at the deadline: %s", elapsed)
+			}
+			if n := len(m.puts()); n < tc.minPuts {
+				t.Errorf("expected at least %d PUTs, got %d", tc.minPuts, n)
+			}
+			detail := resp.Diagnostics.Errors()[0].Detail()
+			if !strings.Contains(detail, "terraform untaint") {
+				t.Errorf("error must say to untaint, got %q", detail)
+			}
+			if strings.Contains(detail, "Re-applying is safe") {
+				t.Errorf("error must not say re-applying is safe on a tainted create, got %q", detail)
+			}
+			if st := pinsIn(t, resp.State); st != nil {
+				t.Errorf("state addon_versions = %v, want null (pins not applied)", st)
+			}
+		})
+	}
+}
+
+// FIX 1: between retries the cluster is re-read, and an errored cluster stops at once.
+func TestCreate_StopsAtOnceWhenClusterErrors(t *testing.T) {
+	m := &mock{
+		t:          t,
+		putRespond: apiErrorBody(http.StatusServiceUnavailable, "internal_error", "down"),
+		status: func(puts int) string {
+			if puts > 0 {
+				return statusError
+			}
+			return statusRunning
+		},
+	}
+	resp := runCreate(t, m, time.Second)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error")
+	}
+	if n := len(m.puts()); n != 1 {
+		t.Errorf("expected no retry against an errored cluster, got %d PUTs", n)
+	}
+}
+
+// FIX 6: create path, same rule.
+func TestCreate_UnreadableSuccessBodyIsWarning(t *testing.T) {
+	m := &mock{t: t, putRespond: func(int) (int, any) { return http.StatusOK, "not a cluster" }}
+	resp := runCreate(t, m, 0)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("an accepted change must not error: %v", resp.Diagnostics.Errors())
+	}
+	if resp.Diagnostics.WarningsCount() == 0 {
+		t.Error("expected a 'notices could not be read' warning")
+	}
+	if st := pinsIn(t, resp.State); st[eso] != "v2" {
+		t.Errorf("state addon_versions = %v, want the configured pins", st)
+	}
+}
+
+// RE-CHECK 4: when the cluster was deleted while the pins were being applied, untainting
+// cannot help, and the error must not tell the user to.
+func TestCreate_ClusterDeletedMeanwhileSaysUntaintWillNotHelp(t *testing.T) {
+	const (
+		goneText     = "the next refresh removes it from state"
+		deletingText = "the next apply first DESTROYS it"
+	)
+	for gone, want := range map[string]struct{ text, other string }{
+		statusDeleted:  {goneText, deletingText},
+		statusDeleting: {deletingText, goneText},
+	} {
+		t.Run(gone, func(t *testing.T) {
+			m := &mock{
+				t:          t,
+				putRespond: apiErrorBody(http.StatusServiceUnavailable, "internal_error", "down"),
+				status: func(puts int) string {
+					if puts > 0 {
+						return gone
+					}
+					return statusRunning
+				},
+			}
+			resp := runCreate(t, m, time.Second)
+			if !resp.Diagnostics.HasError() {
+				t.Fatal("expected an error")
+			}
+			detail := resp.Diagnostics.Errors()[0].Detail()
+			if !strings.Contains(strings.ToLower(detail), "untainting it does not help") {
+				t.Errorf("error must say untainting does not help, got %q", detail)
+			}
+			if !strings.Contains(detail, want.text) {
+				t.Errorf("a %s cluster needs its own wording %q, got %q", gone, want.text, detail)
+			}
+			if strings.Contains(detail, want.other) {
+				t.Errorf("a %s cluster must not get the other case's wording %q, got %q", gone, want.other, detail)
+			}
+			if strings.Contains(detail, "Run `terraform untaint`") {
+				t.Errorf("error must not tell the user to untaint a deleted cluster, got %q", detail)
+			}
+		})
+	}
+}
+
+// --- Read: pins read back for configured keys only (fix 3) ---
+
+func TestRead_RefreshesOnlyConfiguredPins(t *testing.T) {
+	m := &mock{t: t, addonsRespond: func() (int, any) {
+		return http.StatusOK, apiAddonPinList{Addons: []apiAddonPin{
+			{Key: eso, PinnedVersion: "v9-moved-outside-terraform"},
+			{Key: "external-dns", PinnedVersion: "v5-never-configured"},
+			{Key: "cert-manager", PinnedVersion: ""},
+		}}
+	}}
+	stateM := stateModel()
+	stateM.AddonVersions = pinMap(eso, "v1", "cert-manager", "v3")
+
+	resp := runRead(t, m, stateM)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("read failed: %v", resp.Diagnostics.Errors())
+	}
+	st := pinsIn(t, resp.State)
+	if st[eso] != "v9-moved-outside-terraform" {
+		t.Errorf("a drifted configured pin must be read back, got %v", st)
+	}
+	if _, added := st["external-dns"]; added {
+		t.Errorf("an unconfigured server pin must never enter state, got %v", st)
+	}
+	if st["cert-manager"] != "v3" {
+		t.Errorf("an empty pinnedVersion must leave the recorded value, got %v", st)
+	}
+}
+
+// DELTA c: any error on the subpath — including 404 and 500 — keeps the prior pins, never
+// fails the refresh, and never removes the resource from state.
+func TestRead_PinsUnavailableKeepsPriorWithoutError(t *testing.T) {
+	for _, status := range []int{
+		http.StatusBadRequest, http.StatusNotFound, http.StatusConflict,
+		http.StatusInternalServerError, http.StatusNotImplemented, http.StatusServiceUnavailable,
+	} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			m := &mock{t: t, addonsRespond: func() (int, any) {
+				return status, map[string]any{"code": "internal_error", "message": "no version data"}
+			}}
+			stateM := stateModel()
+			stateM.AddonVersions = pinMap(eso, "v1")
+
+			resp := runRead(t, m, stateM)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("status %d must not fail a refresh: %v", status, resp.Diagnostics.Errors())
+			}
+			if resp.State.Raw.IsNull() {
+				t.Fatalf("status %d on the addons subpath removed the cluster from state", status)
+			}
+			if st := pinsIn(t, resp.State); len(st) != 1 || st[eso] != "v1" {
+				t.Errorf("status %d: state addon_versions = %v, want the prior value", status, st)
+			}
+		})
+	}
+}
+
+// DELTA c: the read-back uses pinnedVersion only. appliedVersion lags while a change
+// converges; reading it would report drift on every refresh until convergence.
+func TestRead_AppliedVersionLagIsNotDrift(t *testing.T) {
+	m := &mock{t: t, addonsRespond: func() (int, any) {
+		return http.StatusOK, map[string]any{"addons": []map[string]string{
+			{"key": eso, "pinnedVersion": "v2", "appliedVersion": "v1-still-running", "state": "converging", "pinnedStatus": "current"},
+		}}
+	}}
+	stateM := stateModel()
+	stateM.AddonVersions = pinMap(eso, "v2")
+
+	resp := runRead(t, m, stateM)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("read failed: %v", resp.Diagnostics.Errors())
+	}
+	if st := pinsIn(t, resp.State); len(st) != 1 || st[eso] != "v2" {
+		t.Errorf("state addon_versions = %v, want the pinned v2 (appliedVersion must not be read)", st)
+	}
+}
+
+// DELTA b: a cluster read that FAILS between retries proves nothing — the loop continues.
+func TestPutAddons_FailedClusterReadKeepsRetrying(t *testing.T) {
+	failFirstReread := func(puts int) string {
+		if puts == 1 {
+			return "" // the mock answers 500
+		}
+		return statusRunning
+	}
+	retryThenOK := func(n int) (int, any) {
+		if n == 1 {
+			return apiErrorBody(http.StatusConflict, "invalid_state", "the cluster is updating")(n)
+		}
+		return okPut(nil)(n)
+	}
+	t.Run("update", func(t *testing.T) {
+		m := &mock{t: t, putRespond: retryThenOK, status: failFirstReread}
+		planM := stateModel()
+		planM.Addons = addonSet(eso, "external-dns")
+		if resp := runUpdate(t, m, stateModel(), planM); resp.Diagnostics.HasError() {
+			t.Fatalf("update failed: %v", resp.Diagnostics.Errors())
+		}
+		if n := len(m.puts()); n != 2 {
+			t.Errorf("expected the retry to continue past a failed cluster read, got %d PUTs", n)
+		}
+	})
+	t.Run("create", func(t *testing.T) {
+		m := &mock{t: t, putRespond: retryThenOK, status: failFirstReread}
+		if resp := runCreate(t, m, 0); resp.Diagnostics.HasError() {
+			t.Fatalf("create failed: %v", resp.Diagnostics.Errors())
+		}
+		if n := len(m.puts()); n != 2 {
+			t.Errorf("expected the retry to continue past a failed cluster read, got %d PUTs", n)
+		}
+	})
+}
+
+// DELTA a: the create's cluster and pool waits spend its whole budget, so the pin PUT
+// starts with the deadline already past. The floor still gives it room: 409 invalid_state
+// twice, then 200 — the pin lands, with no error (and so no taint).
+func TestCreate_SpentDeadlineStillLandsPins(t *testing.T) {
+	// Margins sized for a loaded -race CI runner, all ~100ms: each wait is ~3 intervals
+	// (300ms, under the 500ms budget), both together ~600ms (over it); the 200ms floor
+	// leaves ~one interval for the second 409 to come back before the third attempt.
+	const budget = 500 * time.Millisecond
+	m := &mock{
+		t:            t,
+		creatingGets: 3, // ~3 poll intervals per wait: each under the budget, both together over it
+		putRespond: func(n int) (int, any) {
+			if n <= 2 {
+				return apiErrorBody(http.StatusConflict, "invalid_state", "the cluster is updating")(n)
+			}
+			return okPut(nil)(n)
+		},
+	}
+	r, stop := m.start(budget)
+	defer stop()
+	r.pollInterval = 100 * time.Millisecond
+
+	plan := buildPlan(t, pinnedCreatePlan())
+	resp := resource.CreateResponse{State: emptyState(t)}
+	start := time.Now()
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan, Config: tfsdk.Config(plan)}, &resp)
+
+	m.mu.Lock()
+	firstPutAt := m.firstPutAt
+	m.mu.Unlock()
+	if firstPutAt.IsZero() || firstPutAt.Sub(start) < budget {
+		t.Fatalf("scenario invalid: the first PUT came %s after start, before the %s budget was spent (diagnostics: %v)",
+			firstPutAt.Sub(start), budget, resp.Diagnostics)
+	}
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("create failed: %v", resp.Diagnostics.Errors())
+	}
+	if n := len(m.puts()); n < 3 {
+		t.Errorf("expected the pin to land on the third attempt, got %d PUTs", n)
+	}
+	if st := pinsIn(t, resp.State); st[eso] != "v2" {
+		t.Errorf("state addon_versions = %v, want the configured pins", st)
+	}
+}
+
+// No pins recorded, no extra request.
+func TestRead_NoPinsNoAddonsRequest(t *testing.T) {
+	for name, pins := range map[string]types.Map{"null": types.MapNull(types.StringType), "empty": pinMap()} {
+		t.Run(name, func(t *testing.T) {
+			m := &mock{t: t, addonsRespond: func() (int, any) { return http.StatusOK, apiAddonPinList{} }}
+			stateM := stateModel()
+			stateM.AddonVersions = pins
+			if resp := runRead(t, m, stateM); resp.Diagnostics.HasError() {
+				t.Fatalf("read failed: %v", resp.Diagnostics.Errors())
+			}
+			if m.addonGets != 0 {
+				t.Errorf("expected no GET .../addons without pins, got %d", m.addonGets)
+			}
+		})
+	}
+}
+
+// --- Validation ---
+
+func TestCheckAddonVersions(t *testing.T) {
+	pins := pinMap("external-dns", "v1")
+	if d := checkAddonVersions(types.SetNull(types.StringType), pins); !d.HasError() {
+		t.Error("pins without configured addons must be refused")
+	}
+	if d := checkAddonVersions(addonSet(eso), pins); !d.HasError() {
+		t.Error("a pin for an unselected addon must be refused")
+	}
+	if d := checkAddonVersions(addonSet("external-dns"), pins); d.HasError() {
+		t.Errorf("valid pins refused: %v", d)
+	}
+	if d := checkAddonVersions(types.SetUnknown(types.StringType), pins); d.HasError() {
+		t.Error("unknown addons cannot be judged and must not be refused")
+	}
+	if d := checkAddonVersions(types.SetNull(types.StringType), types.MapNull(types.StringType)); d.HasError() {
+		t.Error("no pins, nothing to check")
+	}
+}
+
+// FIX 5: addon_versions keys follow the API's key grammar, at most 32 entries, and
+// values are 1-128 characters.
+func TestAddonVersionsValidators(t *testing.T) {
+	ctx := context.Background()
+	var sr resource.SchemaResponse
+	NewResource().Schema(ctx, resource.SchemaRequest{}, &sr)
+	vs := sr.Schema.Attributes["addon_versions"].(schema.MapAttribute).Validators
+
+	big := map[string]attr.Value{}
+	for i := 0; i < 33; i++ {
+		big[fmt.Sprintf("addon-%d", i)] = types.StringValue("v1")
+	}
+	for name, tc := range map[string]struct {
+		pins    types.Map
+		wantErr bool
+	}{
+		"valid":          {pinMap(eso, "v1"), false},
+		"dot-dot key":    {pinMap("..", "v1"), true},
+		"uppercase key":  {pinMap("External", "v1"), true},
+		"empty value":    {pinMap(eso, ""), true},
+		"value over 128": {pinMap(eso, strings.Repeat("v", 129)), true},
+		"33 entries":     {types.MapValueMust(types.StringType, big), true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var resp validator.MapResponse
+			for _, v := range vs {
+				v.ValidateMap(ctx, validator.MapRequest{Path: path.Root("addon_versions"), ConfigValue: tc.pins}, &resp)
+			}
+			if resp.Diagnostics.HasError() != tc.wantErr {
+				t.Errorf("error = %v, want %v: %v", resp.Diagnostics.HasError(), tc.wantErr, resp.Diagnostics)
+			}
+		})
+	}
+}
