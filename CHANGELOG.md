@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.63.0] - 2026-09-13
+
+### 🚀 Features
+
+- *(provider)* Frostmoln_tag_color resource and frostmoln_tag_colors data source (#535)
+
 ## [0.62.0] - 2026-09-13
 
 ### 🚀 Features
