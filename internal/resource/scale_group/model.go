@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -76,6 +77,11 @@ type apiCreateScaleGroupRequest struct {
 }
 
 // apiUpdateScaleGroupRequest is the API request to update a scale group.
+//
+// Tags carries no omitempty: provisioning forwards tags to compute whenever the
+// field is non-nil, and compute replaces on the same condition, so {} is how
+// they are cleared — and omitempty dropped exactly that map. nil still
+// serialises as null, which both read as "leave them alone".
 type apiUpdateScaleGroupRequest struct {
 	Name                   *string           `json:"name,omitempty"`
 	LaunchTemplateID       *string           `json:"launchTemplateId,omitempty"`
@@ -89,7 +95,7 @@ type apiUpdateScaleGroupRequest struct {
 	WarmupSeconds          *int              `json:"warmupSeconds,omitempty"`
 	CooldownSeconds        *int              `json:"cooldownSeconds,omitempty"`
 	TerminationPolicy      *string           `json:"terminationPolicy,omitempty"`
-	Tags                   map[string]string `json:"tags,omitempty"`
+	Tags                   map[string]string `json:"tags"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -217,13 +223,7 @@ func (m *ScaleGroupModel) toUpdateRequest(ctx context.Context, state *ScaleGroup
 	}
 
 	if !m.Tags.Equal(state.Tags) {
-		if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-			tags := make(map[string]string)
-			diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-			req.Tags = tags
-		} else {
-			req.Tags = map[string]string{}
-		}
+		req.Tags = tftags.ForUpdate(ctx, m.Tags, diags)
 	}
 
 	return req
@@ -307,16 +307,5 @@ func (m *ScaleGroupModel) fromAPI(ctx context.Context, sg *apiScaleGroup, diags 
 		m.LoadBalancerPoolIDs = types.SetNull(types.StringType)
 	}
 
-	// Tags
-	if len(sg.Tags) > 0 {
-		tagMap, d := types.MapValueFrom(ctx, types.StringType, sg.Tags)
-		diags.Append(d...)
-		m.Tags = tagMap
-	} else if !m.Tags.IsNull() {
-		tagMap, d := types.MapValueFrom(ctx, types.StringType, map[string]string{})
-		diags.Append(d...)
-		m.Tags = tagMap
-	} else {
-		m.Tags = types.MapNull(types.StringType)
-	}
+	m.Tags = tftags.FromAPI(ctx, sg.Tags, m.Tags, diags)
 }

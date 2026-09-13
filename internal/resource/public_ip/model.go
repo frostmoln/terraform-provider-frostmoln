@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -265,25 +266,10 @@ func (m *PublicIPModel) fromAPI(ctx context.Context, fip *apiPublicIP, diags *di
 	// cluster-owned pair, or frostmoln_enclave_key) -- offer-internal
 	// frostmoln_type resources are 404-hidden from this plane entirely.
 	// Same treatment as volume/instance.
-	userTags := reservedmeta.FilterNetwork(fip.Tags)
-	if len(userTags) > 0 {
-		tagsMap, d := types.MapValueFrom(ctx, types.StringType, userTags)
-		diags.Append(d...)
-		m.Tags = tagsMap
-	} else if !m.Tags.IsNull() {
-		// The model HAD tags and the filtered read has none -- either the
-		// customer cleared them, or every key the API returned is
-		// platform-owned. Either way the practitioner wrote `tags = {}`, and
-		// answering null there is a plan that never converges. The two
-		// branches here used to be identical (both null), which is the same
-		// bug the reserved-key filter above exists to fix, one case over.
-		// Matches volume/snapshot/instance.
-		tagsMap, d := types.MapValueFrom(ctx, types.StringType, map[string]string{})
-		diags.Append(d...)
-		m.Tags = tagsMap
-	} else {
-		m.Tags = types.MapNull(types.StringType)
-	}
+	//
+	// Filtering runs first, so a read holding only platform-owned keys is "no
+	// tags" to tftags.FromAPI.
+	m.Tags = tftags.FromAPI(ctx, reservedmeta.FilterNetwork(fip.Tags), m.Tags, diags)
 }
 
 // AttachmentObject renders the attachment as a Terraform object, always

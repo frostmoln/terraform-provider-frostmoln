@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -77,10 +78,17 @@ type apiCreateVolumeRequest struct {
 }
 
 // apiUpdateVolumeRequest is the API request to update a volume.
+//
+// Metadata carries no omitempty. storage acts on it whenever it is non-nil:
+// it drops any reserved key from the incoming map, re-stamps the volume's
+// existing reserved keys, and hands the result to Cinder, which applies volume
+// metadata as a REPLACE. So {} clears the customer's tags and leaves the
+// platform's in place — and omitempty dropped exactly that map. nil still
+// serialises as null, which storage reads as "leave them alone".
 type apiUpdateVolumeRequest struct {
 	Name        *string           `json:"name,omitempty"`
 	Description *string           `json:"description,omitempty"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	Metadata    map[string]string `json:"metadata"`
 }
 
 // apiResizeVolumeRequest is the API request to resize a volume.
@@ -178,17 +186,5 @@ func (m *VolumeModel) fromAPI(ctx context.Context, vol *apiVolume, diags *diag.D
 	// returns it unfiltered. It is NOT a customer tag — filter it out, otherwise
 	// a null/unset tags plan is overwritten on read-back ("inconsistent result
 	// after apply"). Shared with the instance filter via reservedmeta.
-	userTags := reservedmeta.FilterVolume(vol.Metadata)
-	if len(userTags) > 0 {
-		tagMap, d := types.MapValueFrom(ctx, types.StringType, userTags)
-		diags.Append(d...)
-		m.Tags = tagMap
-	} else if !m.Tags.IsNull() {
-		// If the model had tags set but API returned none, set empty map
-		tagMap, d := types.MapValueFrom(ctx, types.StringType, map[string]string{})
-		diags.Append(d...)
-		m.Tags = tagMap
-	} else {
-		m.Tags = types.MapNull(types.StringType)
-	}
+	m.Tags = tftags.FromAPI(ctx, reservedmeta.FilterVolume(vol.Metadata), m.Tags, diags)
 }

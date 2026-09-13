@@ -7,6 +7,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -227,14 +229,9 @@ func (m *PoolModel) fromAPI(ctx context.Context, p *apiPool, diags *diag.Diagnos
 		m.UpdatedAt = types.StringNull()
 	}
 
-	// An untagged pool reads back as null, not as an empty map — the same shape
-	// the load balancer resource uses, so a config with no `tags` block stays
-	// clean in plan instead of perpetually diffing null against {}.
-	if len(p.Tags) > 0 {
-		tagsMap, d := types.MapValueFrom(ctx, types.StringType, p.Tags)
-		diags.Append(d...)
-		m.Tags = tagsMap
-	} else {
-		m.Tags = types.MapNull(types.StringType)
-	}
+	// Platform-owned frostmoln_* keys are filtered first (network refuses them on
+	// every customer write, so no config can converge on one). An untagged pool
+	// then reads back as null under a config with no `tags` block, and as {}
+	// under `tags = {}` — either way exactly what was configured.
+	m.Tags = tftags.FromAPI(ctx, reservedmeta.FilterNetwork(p.Tags), m.Tags, diags)
 }

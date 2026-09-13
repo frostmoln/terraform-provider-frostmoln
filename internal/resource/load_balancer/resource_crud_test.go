@@ -28,7 +28,7 @@ func TestLoadBalancerToUpdateRequest(t *testing.T) {
 		Tags:        tags,
 	}
 	var diags diag.Diagnostics
-	req := m.toUpdateRequest(ctx, &diags)
+	req := m.toUpdateRequest(ctx, &LoadBalancerModel{Tags: types.MapNull(types.StringType)}, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diags: %v", diags)
 	}
@@ -38,7 +38,7 @@ func TestLoadBalancerToUpdateRequest(t *testing.T) {
 	if req.Description == nil || *req.Description != "new desc" {
 		t.Error("expected description in update")
 	}
-	if req.Tags["env"] != "prod" {
+	if req.Tags == nil || (*req.Tags)["env"] != "prod" {
 		t.Errorf("expected tag env=prod, got %v", req.Tags)
 	}
 }
@@ -51,7 +51,7 @@ func TestLoadBalancerToUpdateRequestNullDescription(t *testing.T) {
 		Tags:        types.MapNull(types.StringType),
 	}
 	var diags diag.Diagnostics
-	req := m.toUpdateRequest(ctx, &diags)
+	req := m.toUpdateRequest(ctx, &LoadBalancerModel{Tags: types.MapNull(types.StringType)}, &diags)
 	// null description maps to an explicit empty string (clear).
 	if req.Description == nil || *req.Description != "" {
 		t.Errorf("expected empty description for null, got %v", req.Description)

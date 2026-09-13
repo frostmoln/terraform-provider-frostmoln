@@ -238,7 +238,7 @@ func (d *instanceDataSource) Read(ctx context.Context, req datasource.ReadReques
 		state.SubnetID = types.StringNull()
 	}
 
-	// Filter platform-internal metadata (the frostmoln_ namespace) so the computed
+	// Filter platform-internal metadata (the frostmoln_/frostmoln- namespace) so the computed
 	// tags attribute exposes only customer tags, not tenant/billing/provenance keys.
 	userTags := reservedmeta.FilterInstance(inst.Metadata)
 	if len(userTags) > 0 {

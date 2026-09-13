@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -304,21 +305,10 @@ func (m *InstanceModel) fromAPI(ctx context.Context, inst *apiInstance, diags *d
 	// untouched and preserved from plan/state.
 
 	// Tags come from the user metadata map (the backend has no top-level `tags`).
-	// Platform-internal metadata (the frostmoln_ namespace) is injected by the backend
+	// Platform-internal metadata (the frostmoln_/frostmoln- namespace) is injected by the backend
 	// and is NOT a customer tag — filter it out, otherwise a null/unset tags plan is
 	// overwritten by system keys on read-back ("inconsistent result after apply").
-	userTags := reservedmeta.FilterInstance(inst.Metadata)
-	if len(userTags) > 0 {
-		tagMap, d := types.MapValueFrom(ctx, types.StringType, userTags)
-		diags.Append(d...)
-		m.Tags = tagMap
-	} else if !m.Tags.IsNull() {
-		tagMap, d := types.MapValueFrom(ctx, types.StringType, map[string]string{})
-		diags.Append(d...)
-		m.Tags = tagMap
-	} else {
-		m.Tags = types.MapNull(types.StringType)
-	}
+	m.Tags = tftags.FromAPI(ctx, reservedmeta.FilterInstance(inst.Metadata), m.Tags, diags)
 
 	// user_data, user_data_hash, console_password and instance_access are NOT set
 	// here because the API doesn't return them. They are preserved from the

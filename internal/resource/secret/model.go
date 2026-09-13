@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // SecretModel is the Terraform state model for a secret.
@@ -61,10 +63,15 @@ type apiCreateSecretRequest struct {
 // (gin does not reject unknown fields), so an apply reported success and
 // changed nothing. ModifyPlan now refuses those changes at plan time; sending
 // them as well would only put the lie back on the wire.
+//
+// Tags carries no omitempty: the service replaces a secret's tags whenever the
+// field is non-nil (`if req.Tags != nil`), so {} is how they are cleared, and
+// omitempty dropped exactly that map. nil still serialises as null, which the
+// service reads as "leave them alone".
 type apiUpdateSecretRequest struct {
 	Description *string           `json:"description,omitempty"`
 	SecretValue *string           `json:"secretValue,omitempty"`
-	Tags        map[string]string `json:"tags,omitempty"`
+	Tags        map[string]string `json:"tags"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -124,11 +131,7 @@ func (m *SecretModel) toUpdateRequest(ctx context.Context, state *SecretModel, d
 	}
 
 	if !m.Tags.Equal(state.Tags) {
-		if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-			tags := make(map[string]string)
-			diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-			req.Tags = tags
-		}
+		req.Tags = tftags.ForUpdate(ctx, m.Tags, diags)
 	}
 
 	return req
@@ -177,13 +180,6 @@ func (m *SecretModel) fromAPI(ctx context.Context, s *apiSecret, diags *diag.Dia
 		m.UpdatedAt = types.StringNull()
 	}
 
-	if len(s.Tags) > 0 {
-		tagsMap, d := types.MapValueFrom(ctx, types.StringType, s.Tags)
-		diags.Append(d...)
-		m.Tags = tagsMap
-	} else if m.Tags.IsNull() {
-		m.Tags = types.MapNull(types.StringType)
-	} else {
-		m.Tags = types.MapNull(types.StringType)
-	}
+	// The service answers an untagged secret with `"tags": {}`.
+	m.Tags = tftags.FromAPI(ctx, s.Tags, m.Tags, diags)
 }

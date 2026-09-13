@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
@@ -146,15 +147,10 @@ func (m *SecurityGroupModel) fromAPI(ctx context.Context, sg *apiSecurityGroup, 
 		m.VPCID = types.StringNull()
 	}
 
-	if len(sg.Tags) > 0 {
-		tagsMap, d := types.MapValueFrom(ctx, types.StringType, sg.Tags)
-		diags.Append(d...)
-		m.Tags = tagsMap
-	} else if m.Tags.IsNull() {
-		m.Tags = types.MapNull(types.StringType)
-	} else {
-		m.Tags = types.MapNull(types.StringType)
-	}
+	// Platform-owned frostmoln_* keys are filtered first: network refuses them on
+	// every customer write and carries them across every tag update
+	// (nlmeta.MergePlatformOwnedTags), so no config can converge on one.
+	m.Tags = tftags.FromAPI(ctx, reservedmeta.FilterNetwork(sg.Tags), m.Tags, diags)
 
 	// delete_default_egress is create-time behaviour the API knows nothing
 	// about, so state carries it. A group imported (or created before the

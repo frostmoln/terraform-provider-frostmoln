@@ -7,6 +7,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -81,10 +83,17 @@ type apiCreateLoadBalancerRequest struct {
 
 // apiUpdateLoadBalancerRequest is the API request to update a load balancer.
 // Only name, description, and tags are mutable.
+//
+// Tags is a *map so the key can be absent: network acts on tags whenever the
+// field is non-nil, replacing the customer's tags while keeping platform-owned
+// ones (nlmeta.MergePlatformOwnedTags). So {} is how they are cleared — a plain
+// map with omitempty dropped exactly that — while an update that does not
+// change tags must not send the key at all, or every rename would be a tag
+// write. Set only when the planned tags differ from state.
 type apiUpdateLoadBalancerRequest struct {
-	Name        *string           `json:"name,omitempty"`
-	Description *string           `json:"description,omitempty"`
-	Tags        map[string]string `json:"tags,omitempty"`
+	Name        *string            `json:"name,omitempty"`
+	Description *string            `json:"description,omitempty"`
+	Tags        *map[string]string `json:"tags,omitempty"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -122,8 +131,9 @@ func (m *LoadBalancerModel) toCreateRequest(ctx context.Context, diags *diag.Dia
 	return req
 }
 
-// toUpdateRequest converts the Terraform model to an API update request.
-func (m *LoadBalancerModel) toUpdateRequest(ctx context.Context, diags *diag.Diagnostics) apiUpdateLoadBalancerRequest {
+// toUpdateRequest converts the Terraform model to an API update request,
+// comparing with current state for the tags.
+func (m *LoadBalancerModel) toUpdateRequest(ctx context.Context, state *LoadBalancerModel, diags *diag.Diagnostics) apiUpdateLoadBalancerRequest {
 	req := apiUpdateLoadBalancerRequest{}
 
 	if !m.Name.IsNull() && !m.Name.IsUnknown() {
@@ -137,10 +147,9 @@ func (m *LoadBalancerModel) toUpdateRequest(ctx context.Context, diags *diag.Dia
 		empty := ""
 		req.Description = &empty
 	}
-	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-		tags := make(map[string]string)
-		diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-		req.Tags = tags
+	if !m.Tags.Equal(state.Tags) {
+		tags := tftags.ForUpdate(ctx, m.Tags, diags)
+		req.Tags = &tags
 	}
 
 	return req
@@ -235,11 +244,9 @@ func (m *LoadBalancerModel) fromAPI(ctx context.Context, lb *apiLoadBalancer, di
 		m.UpdatedAt = types.StringNull()
 	}
 
-	if len(lb.Tags) > 0 {
-		tagsMap, d := types.MapValueFrom(ctx, types.StringType, lb.Tags)
-		diags.Append(d...)
-		m.Tags = tagsMap
-	} else {
-		m.Tags = types.MapNull(types.StringType)
-	}
+	// Platform-owned frostmoln_* tags (e.g. the ADR-0115 cluster-owned pair) are
+	// refused on every customer write and carried across every update, so no
+	// config can converge on them; filter them before the empty/non-empty
+	// decision, as vpc/subnet/public_ip do.
+	m.Tags = tftags.FromAPI(ctx, reservedmeta.FilterNetwork(lb.Tags), m.Tags, diags)
 }

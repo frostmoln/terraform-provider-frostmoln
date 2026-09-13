@@ -14,10 +14,13 @@ import "strings"
 
 // IsReservedVolume reports whether a key is platform-owned for storage resources
 // (volumes, snapshots). Mirrors the backend isReservedVolumeMetadataKey
-// (storage/internal/service/impl/volume.go and the identical
-// provisioning/internal/activity/activities.go): the bare keys request-id,
-// customer-id, project-id plus the frostmoln_/frostmoln- prefixes.
+// (storage/internal/service/impl/volume.go): the bare keys request-id,
+// customer-id, project-id plus the frostmoln_/frostmoln- prefixes, matched
+// CASE-INSENSITIVELY — storage lower-cases the key first, so Customer-ID is as
+// reserved as customer-id (stripped from every write, re-stamped on every
+// replace) and no customer config can converge on it.
 func IsReservedVolume(k string) bool {
+	k = strings.ToLower(k)
 	switch k {
 	case "request-id", "customer-id", "project-id":
 		return true
@@ -26,16 +29,20 @@ func IsReservedVolume(k string) bool {
 }
 
 // IsReservedInstance reports whether a key is platform-owned for compute
-// resources (instances). Mirrors compute's ServiceReservedPrefixes
-// (compute/internal/service/impl/instance.go): only the frostmoln_ prefix.
-// Compute neither stamps nor reserves the bare *-id keys, so they are NOT
-// filtered here — doing so would drop a legal customer tag.
+// resources (instances). Mirrors compute's ServiceReservedMetadataPrefixes
+// (compute/internal/domain/instance.go): the frostmoln_ AND frostmoln-
+// prefixes, matched case-SENSITIVELY as compute does. Compute re-stamps both
+// across every metadata replace, so neither can be removed by a customer.
+// Compute neither stamps nor reserves the bare *-id keys, and it does not fold
+// case, so those are NOT filtered here — doing so would drop a legal customer
+// tag.
 func IsReservedInstance(k string) bool {
-	return strings.HasPrefix(k, "frostmoln_")
+	return strings.HasPrefix(k, "frostmoln_") || strings.HasPrefix(k, "frostmoln-")
 }
 
 // IsReservedNetwork reports whether a key is platform-owned for network
-// resources (VPCs, subnets, public IPs). Mirrors network's
+// resources (VPCs, subnets, public IPs, security groups, load balancers and
+// their pools and health monitors). Mirrors network's
 // nlmeta.ReservedTagPrefix: the frostmoln_ prefix and nothing else.
 //
 // Network does NOT reserve the bare *-id keys and does NOT reserve the

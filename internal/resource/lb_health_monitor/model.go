@@ -7,6 +7,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -189,13 +191,9 @@ func (m *HealthMonitorModel) fromAPI(ctx context.Context, lbID string, hm *apiHe
 		m.UpdatedAt = types.StringNull()
 	}
 
-	// An untagged monitor reads back as null, not as an empty map, so a config
-	// with no `tags` block does not diff forever.
-	if len(hm.Tags) > 0 {
-		tagsMap, d := types.MapValueFrom(ctx, types.StringType, hm.Tags)
-		diags.Append(d...)
-		m.Tags = tagsMap
-	} else {
-		m.Tags = types.MapNull(types.StringType)
-	}
+	// Platform-owned frostmoln_* keys are filtered first (network refuses them on
+	// every customer write, so no config can converge on one). An untagged
+	// monitor then reads back as null under a config with no `tags` block, and
+	// as {} under `tags = {}` — either way exactly what was configured.
+	m.Tags = tftags.FromAPI(ctx, reservedmeta.FilterNetwork(hm.Tags), m.Tags, diags)
 }

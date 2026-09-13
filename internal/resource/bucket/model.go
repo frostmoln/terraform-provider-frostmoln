@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // BucketModel is the Terraform state model for a bucket.
@@ -119,15 +121,10 @@ func (m *BucketModel) fromAPI(ctx context.Context, b *apiBucket) diag.Diagnostic
 	m.SizeBytes = types.Int64Value(b.TotalSize)
 	m.CreatedAt = types.StringValue(b.CreatedAt)
 
-	if b.Tags != nil {
-		tags, diags := types.MapValueFrom(ctx, types.StringType, b.Tags)
-		if diags.HasError() {
-			return diags
-		}
-		m.Tags = tags
-	} else if m.Tags.IsNull() {
-		m.Tags = types.MapNull(types.StringType)
-	}
+	// storage omits an empty tag map, so an absent `tags` is "no tags", never
+	// "unchanged": keeping the model's tags here hid an out-of-band removal.
+	var diags diag.Diagnostics
+	m.Tags = tftags.FromAPI(ctx, b.Tags, m.Tags, &diags)
 
-	return nil
+	return diags
 }

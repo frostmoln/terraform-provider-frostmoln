@@ -264,6 +264,92 @@ func TestHealthMonitorReadUntaggedIsNullNotEmpty(t *testing.T) {
 	}
 }
 
+// TestHealthMonitorReadEmptyTagsRoundTrips: `tags = {}` must read back as {},
+// not null. The backend omits an empty tag map, and fromAPI answered every
+// untagged read with null, so a config saying {} failed its apply with an
+// inconsistent result and could never converge.
+func TestHealthMonitorReadEmptyTagsRoundTrips(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(sampleAPIHM(nil))
+	}))
+	defer srv.Close()
+
+	r := &healthMonitorResource{client: tagClient(t, srv)}
+	model := sampleHMModel()
+	model.Tags = mapValue(t, map[string]string{})
+	state := buildHMState(t, model)
+	resp := resource.ReadResponse{State: state}
+	r.Read(context.Background(), resource.ReadRequest{State: state}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("read failed: %v", resp.Diagnostics.Errors())
+	}
+
+	var got HealthMonitorModel
+	resp.State.Get(context.Background(), &got)
+	if got.Tags.IsNull() || len(got.Tags.Elements()) != 0 {
+		t.Errorf("`tags = {}` read back as %#v, want an empty non-null map", got.Tags)
+	}
+}
+
+// TestHealthMonitorReadFiltersPlatformTags: platform-owned `frostmoln_*` tags must never reach state. network
+// refuses them on every customer write (nlmeta.IsReservedTagKey), so no config
+// can converge on one: copying it into state is a permanent diff. Filtering
+// runs before the empty/non-empty decision, so a read carrying only platform
+// keys is "no tags".
+func TestHealthMonitorReadFiltersPlatformTags(t *testing.T) {
+	empty := mapValue(t, map[string]string{})
+	for _, tc := range []struct {
+		name    string
+		api     map[string]string
+		prior   types.Map
+		want    map[string]string
+		wantNil bool
+	}{
+		{"customer and platform keys", map[string]string{"k": "v", "frostmoln_managed_by": "cluster"}, types.MapNull(types.StringType), map[string]string{"k": "v"}, false},
+		{"only platform keys, no tags configured", map[string]string{"frostmoln_managed_by": "cluster"}, types.MapNull(types.StringType), nil, true},
+		{"only platform keys, tags = {}", map[string]string{"frostmoln_managed_by": "cluster"}, empty, map[string]string{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(sampleAPIHM(tc.api))
+			}))
+			defer srv.Close()
+
+			r := &healthMonitorResource{client: tagClient(t, srv)}
+			model := sampleHMModel()
+			model.Tags = tc.prior
+			state := buildHMState(t, model)
+			resp := resource.ReadResponse{State: state}
+			r.Read(context.Background(), resource.ReadRequest{State: state}, &resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("read failed: %v", resp.Diagnostics.Errors())
+			}
+
+			var got HealthMonitorModel
+			resp.State.Get(context.Background(), &got)
+			if tc.wantNil {
+				if !got.Tags.IsNull() {
+					t.Errorf("state tags = %v, want null", got.Tags)
+				}
+				return
+			}
+			if got.Tags.IsNull() {
+				t.Fatalf("state tags = null, want %v", tc.want)
+			}
+			gotMap := map[string]string{}
+			got.Tags.ElementsAs(context.Background(), &gotMap, false)
+			if len(gotMap) != len(tc.want) {
+				t.Fatalf("state tags = %v, want %v", gotMap, tc.want)
+			}
+			for k, v := range tc.want {
+				if gotMap[k] != v {
+					t.Errorf("state tags[%q] = %q, want %q", k, gotMap[k], v)
+				}
+			}
+		})
+	}
+}
+
 // TestHealthMonitorSchemaHasTags pins the attribute itself.
 func TestHealthMonitorSchemaHasTags(t *testing.T) {
 	var schemaResp resource.SchemaResponse

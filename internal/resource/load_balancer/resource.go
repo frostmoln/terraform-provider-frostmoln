@@ -461,7 +461,7 @@ func (r *loadBalancerResource) Update(ctx context.Context, req resource.UpdateRe
 	}
 
 	id := state.ID.ValueString()
-	updateReq := plan.toUpdateRequest(ctx, &resp.Diagnostics)
+	updateReq := plan.toUpdateRequest(ctx, &state, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}

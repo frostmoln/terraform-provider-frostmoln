@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // LaunchTemplateModel is the Terraform state model for a launch template.
@@ -55,6 +57,11 @@ type apiCreateLaunchTemplateRequest struct {
 }
 
 // apiUpdateLaunchTemplateRequest is the API request to update a launch template.
+//
+// Tags carries no omitempty: compute replaces a template's tags whenever the
+// field is non-nil (`if req.Tags != nil`), so {} is how they are cleared, and
+// omitempty dropped exactly that map. nil still serialises as null, which
+// compute reads as "leave them alone".
 type apiUpdateLaunchTemplateRequest struct {
 	Name             *string           `json:"name,omitempty"`
 	FlavorID         *string           `json:"flavorId,omitempty"`
@@ -64,7 +71,7 @@ type apiUpdateLaunchTemplateRequest struct {
 	SecurityGroupIDs []string          `json:"securityGroupIds,omitempty"`
 	UserData         *string           `json:"userData,omitempty"`
 	Metadata         map[string]string `json:"metadata,omitempty"`
-	Tags             map[string]string `json:"tags,omitempty"`
+	Tags             map[string]string `json:"tags"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -166,13 +173,7 @@ func (m *LaunchTemplateModel) toUpdateRequest(ctx context.Context, state *Launch
 	}
 
 	if !m.Tags.Equal(state.Tags) {
-		if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
-			tags := make(map[string]string)
-			diags.Append(m.Tags.ElementsAs(ctx, &tags, false)...)
-			req.Tags = tags
-		} else {
-			req.Tags = map[string]string{}
-		}
+		req.Tags = tftags.ForUpdate(ctx, m.Tags, diags)
 	}
 
 	return req
@@ -232,18 +233,7 @@ func (m *LaunchTemplateModel) fromAPI(ctx context.Context, lt *apiLaunchTemplate
 		m.Metadata = types.MapNull(types.StringType)
 	}
 
-	// Tags
-	if len(lt.Tags) > 0 {
-		tagMap, d := types.MapValueFrom(ctx, types.StringType, lt.Tags)
-		diags.Append(d...)
-		m.Tags = tagMap
-	} else if !m.Tags.IsNull() {
-		tagMap, d := types.MapValueFrom(ctx, types.StringType, map[string]string{})
-		diags.Append(d...)
-		m.Tags = tagMap
-	} else {
-		m.Tags = types.MapNull(types.StringType)
-	}
+	m.Tags = tftags.FromAPI(ctx, lt.Tags, m.Tags, diags)
 
 	// user_data is deliberately absent from this function, and userData is
 	// deliberately absent from apiLaunchTemplate above.

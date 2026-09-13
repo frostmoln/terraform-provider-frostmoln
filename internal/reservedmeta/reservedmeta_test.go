@@ -23,6 +23,15 @@ func TestIsReservedVolume(t *testing.T) {
 		{"team", false},
 		{"request_id", false}, // underscore, not the bare hyphen key
 		{"", false},
+		// storage folds case before matching (isReservedVolumeMetadataKey,
+		// storage/internal/service/impl/volume.go), so a case variant is just as
+		// platform-owned: storage strips it from a write and re-stamps it on
+		// every replace, so no customer config can ever converge on it.
+		{"Customer-ID", true},
+		{"REQUEST-ID", true},
+		{"Project-Id", true},
+		{"FROSTMOLN_type", true},
+		{"Frostmoln-Managed", true},
 	}
 	for _, c := range cases {
 		if got := IsReservedVolume(c.key); got != c.want {
@@ -36,15 +45,24 @@ func TestIsReservedInstance(t *testing.T) {
 		key  string
 		want bool
 	}{
-		// only the frostmoln_ prefix is reserved on compute
+		// compute reserves BOTH separators
+		// (domain.ServiceReservedMetadataPrefixes,
+		// compute/internal/domain/instance.go) and re-stamps them across every
+		// metadata replace, so a frostmoln- key on an instance is as unremovable
+		// as a frostmoln_ one.
 		{"frostmoln_type", true},
 		{"frostmoln_id", true},
+		{"frostmoln-managed", true},
+		{"frostmoln-id", true},
 		// the bare *-id keys are NOT reserved on instances — compute neither
 		// stamps nor reserves them, so a customer may legally use them.
 		{"customer-id", false},
 		{"request-id", false},
 		{"project-id", false},
-		{"frostmoln-managed", false}, // hyphen prefix is volume-only
+		// compute matches the prefix case-SENSITIVELY, so these are legal
+		// customer tags there; filtering them would drop real tags.
+		{"FROSTMOLN_type", false},
+		{"Frostmoln-managed", false},
 		{"env", false},
 		{"", false},
 	}

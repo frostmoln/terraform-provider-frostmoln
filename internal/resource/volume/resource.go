@@ -17,6 +17,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -413,16 +414,13 @@ func (r *volumeResource) Update(ctx context.Context, req resource.UpdateRequest,
 		needsPatch = true
 	}
 
-	// Check if tags changed.
+	// Check if tags changed. A removed block or {} goes out as
+	// `"metadata": {}`, which clears them; see apiUpdateVolumeRequest.
 	if !plan.Tags.Equal(state.Tags) {
-		tags := make(map[string]string)
-		if !plan.Tags.IsNull() && !plan.Tags.IsUnknown() {
-			resp.Diagnostics.Append(plan.Tags.ElementsAs(ctx, &tags, false)...)
-			if resp.Diagnostics.HasError() {
-				return
-			}
+		updateReq.Metadata = tftags.ForUpdate(ctx, plan.Tags, &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
 		}
-		updateReq.Metadata = tags
 		needsPatch = true
 	}
 

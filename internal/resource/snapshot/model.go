@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -95,16 +96,5 @@ func (m *SnapshotModel) fromAPI(ctx context.Context, snap *apiSnapshot, diags *d
 	// stamps with reserved keys (bare *-id + frostmoln_*). They are NOT customer
 	// tags — filter them out (same storage set as volumes), otherwise a null/unset
 	// tags plan reads back the system keys ("inconsistent result after apply").
-	userTags := reservedmeta.FilterVolume(snap.Metadata)
-	if len(userTags) > 0 {
-		tagMap, d := types.MapValueFrom(ctx, types.StringType, userTags)
-		diags.Append(d...)
-		m.Tags = tagMap
-	} else if !m.Tags.IsNull() {
-		tagMap, d := types.MapValueFrom(ctx, types.StringType, map[string]string{})
-		diags.Append(d...)
-		m.Tags = tagMap
-	} else {
-		m.Tags = types.MapNull(types.StringType)
-	}
+	m.Tags = tftags.FromAPI(ctx, reservedmeta.FilterVolume(snap.Metadata), m.Tags, diags)
 }

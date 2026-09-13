@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // DNSZoneModel is the Terraform state model for a managed DNS zone.
@@ -158,21 +160,6 @@ func (m *DNSZoneModel) fromAPI(ctx context.Context, zone *apiDNSZone, diags *dia
 	m.NameServers = nsList
 
 	// Tags round-trip drift-free against a backend that omits the field when
-	// empty (ADR-0093). `tags` is Optional (not Computed), so the post-apply
-	// state must equal the configured value exactly — never flip null<->{}.
-	switch {
-	case len(zone.Tags) > 0:
-		tagsMap, d := types.MapValueFrom(ctx, types.StringType, zone.Tags)
-		diags.Append(d...)
-		m.Tags = tagsMap
-	case m.Tags.IsNull():
-		// Config never set tags; keep null so an unset attribute stays null.
-		m.Tags = types.MapNull(types.StringType)
-	default:
-		// Config set an explicit empty map; the backend omits empty tags on
-		// read, so preserve the empty map (not null) to avoid a spurious diff.
-		emptyMap, d := types.MapValueFrom(ctx, types.StringType, map[string]string{})
-		diags.Append(d...)
-		m.Tags = emptyMap
-	}
+	// empty (ADR-0093).
+	m.Tags = tftags.FromAPI(ctx, zone.Tags, m.Tags, diags)
 }
