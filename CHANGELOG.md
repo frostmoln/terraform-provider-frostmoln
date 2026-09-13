@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.64.0] - 2026-09-13
+
+### 🚀 Features
+
+- *(appgw)* [**breaking**] Route header values are sensitive and survive a names-only read (#537)
+
 ## [0.63.0] - 2026-09-13
 
 ### 🚀 Features
