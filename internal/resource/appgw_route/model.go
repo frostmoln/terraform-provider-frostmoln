@@ -3,8 +3,12 @@ package appgw_route
 
 import (
 	"context"
+	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -51,6 +55,14 @@ type apiRoute struct {
 	RequestHeadersSet    map[string]string `json:"requestHeadersSet,omitempty"`
 	RequestHeadersRemove []string          `json:"requestHeadersRemove,omitempty"`
 	ResponseHeadersSet   map[string]string `json:"responseHeadersSet,omitempty"`
+
+	// RequestHeadersSetNames / ResponseHeadersSetNames are the names-only
+	// shape. Header values are secrets, and once the platform stops returning
+	// them it reports only which headers a route sets. Both shapes decode here:
+	// a response carries the value maps (the older server) or the name lists,
+	// and headerMapFromAPI decides from whichever is present.
+	RequestHeadersSetNames  []string `json:"requestHeadersSetNames,omitempty"`
+	ResponseHeadersSetNames []string `json:"responseHeadersSetNames,omitempty"`
 
 	WafPolicyID string `json:"wafPolicyId,omitempty"`
 	Enabled     bool   `json:"enabled"`
@@ -102,6 +114,15 @@ func (m *RouteModel) toCreateRequest(ctx context.Context, diags *diag.Diagnostic
 	return req
 }
 
+// fromAPI copies the server's view of a route into m.
+//
+// 🔴 THE TWO HEADER MAPS ARE RECONCILED AGAINST m, NOT OVERWRITTEN FROM THE
+// RESPONSE. m holds the prior value on entry — prior state in Read, the plan in
+// Create — and headerMapFromAPI decides what survives. Overwriting them from a
+// server that returns only header NAMES writes null over the configured values:
+// Create then fails with "inconsistent result after apply", and every refresh
+// plans a REPLACEMENT of every header route, on every apply, forever. That is
+// why this provider has to ship before the platform stops returning values.
 func (m *RouteModel) fromAPI(ctx context.Context, rt *apiRoute, diags *diag.Diagnostics) {
 	m.ID = types.StringValue(rt.ID)
 	m.ListenerID = types.StringValue(rt.ListenerID)
@@ -116,14 +137,112 @@ func (m *RouteModel) fromAPI(ctx context.Context, rt *apiRoute, diags *diag.Diag
 	m.BackendPoolID = optionalString(rt.BackendPoolID)
 
 	m.RewritePathPrefix = optionalString(rt.RewritePathPrefix)
-	m.RequestHeadersSet = optionalMap(ctx, rt.RequestHeadersSet, diags)
+	var drift headerNameDrift
+	m.RequestHeadersSet, drift = headerMapFromAPI(ctx, m.RequestHeadersSet,
+		rt.RequestHeadersSet, rt.RequestHeadersSetNames, diags)
+	drift.warn(path.Root("request_headers_set"), diags)
 	m.RequestHeadersRemove = optionalList(ctx, rt.RequestHeadersRemove, diags)
-	m.ResponseHeadersSet = optionalMap(ctx, rt.ResponseHeadersSet, diags)
+	m.ResponseHeadersSet, drift = headerMapFromAPI(ctx, m.ResponseHeadersSet,
+		rt.ResponseHeadersSet, rt.ResponseHeadersSetNames, diags)
+	drift.warn(path.Root("response_headers_set"), diags)
 
 	m.WafPolicyID = types.StringValue(rt.WafPolicyID)
 	m.Enabled = types.BoolValue(rt.Enabled)
 	m.CreatedAt = types.StringValue(rt.CreatedAt)
 	m.UpdatedAt = types.StringValue(rt.UpdatedAt)
+}
+
+// headerMapFromAPI decides what state holds for one header map, given its prior
+// value and the server's response.
+//
+//   - The response carries VALUES (a server that still returns them): state
+//     takes them, exactly as it always has, so a value that differs on the
+//     server still shows as drift.
+//   - The response carries neither values nor names: the route sets no such
+//     headers, and state is null — the meaning an absent map has always had.
+//   - The response carries only NAMES: the values cannot be read back, so the
+//     prior value is kept for every name the server still reports and only the
+//     SET OF NAMES is reconciled. Routes are immutable — the API has no route
+//     update — so when the sets agree the prior values are the route's values,
+//     and the refresh is a no-op.
+//
+// When the name sets disagree (import, where the prior value is null; or a
+// platform-side change no API call can make), state must NOT equal the
+// configuration, or the plan would adopt a route whose values nobody has seen.
+// Each name the server reports without a prior value gets the empty string,
+// which no configuration can hold — ValidateConfig and the server both refuse an
+// empty header value — so the plan is guaranteed to show the replacement that
+// re-creates the route with the configured values.
+//
+// This depends on the platform emitting the names in the same release that
+// stops emitting the values. A server that emitted neither for a route that has
+// headers would read as "no headers" and plan a replacement — the same outcome
+// the provider before this change produced for every header route.
+func headerMapFromAPI(ctx context.Context, prior types.Map, values map[string]string, names []string, diags *diag.Diagnostics) (types.Map, headerNameDrift) {
+	if len(values) > 0 {
+		return optionalMap(ctx, values, diags), headerNameDrift{}
+	}
+	if len(names) == 0 {
+		return types.MapNull(types.StringType), headerNameDrift{}
+	}
+
+	kept := map[string]string{}
+	if !prior.IsNull() && !prior.IsUnknown() {
+		for name, el := range prior.Elements() {
+			if s, ok := el.(types.String); ok && !s.IsNull() && !s.IsUnknown() {
+				kept[name] = s.ValueString()
+			}
+		}
+	}
+
+	out := make(map[string]string, len(names))
+	var drift headerNameDrift
+	for _, name := range names {
+		if _, dup := out[name]; dup {
+			continue
+		}
+		if v, ok := kept[name]; ok {
+			out[name] = v
+			continue
+		}
+		out[name] = ""
+		drift.unrecoverable = append(drift.unrecoverable, name)
+	}
+	for name := range kept {
+		if _, ok := out[name]; !ok {
+			drift.gone = append(drift.gone, name)
+		}
+	}
+	sort.Strings(drift.unrecoverable)
+	sort.Strings(drift.gone)
+	return optionalMap(ctx, out, diags), drift
+}
+
+// headerNameDrift records how a names-only response differed from state. It
+// carries header NAMES only, which the API itself returns; a value never enters
+// it, because a value never enters a diagnostic.
+type headerNameDrift struct {
+	unrecoverable []string // reported by the server, no value in state
+	gone          []string // in state, no longer reported by the server
+}
+
+func (d headerNameDrift) warn(at path.Path, diags *diag.Diagnostics) {
+	if len(d.unrecoverable) == 0 && len(d.gone) == 0 {
+		return
+	}
+	var parts []string
+	if len(d.unrecoverable) > 0 {
+		parts = append(parts, "set on the route but with no value in state: "+strings.Join(d.unrecoverable, ", "))
+	}
+	if len(d.gone) > 0 {
+		parts = append(parts, "in state but no longer set on the route: "+strings.Join(d.gone, ", "))
+	}
+	diags.AddAttributeWarning(at, "Header Values Cannot Be Read Back",
+		fmt.Sprintf("The platform returns only the names of this route's headers, not their values, "+
+			"and the names do not match state (%s). The provider cannot recover a header value from the "+
+			"API, so the next plan REPLACES this route, re-creating it with the values in your "+
+			"configuration. After `terraform import` this is expected: an imported route with header "+
+			"values always plans one replacement.", strings.Join(parts, "; ")))
 }
 
 func str(s types.String) string {

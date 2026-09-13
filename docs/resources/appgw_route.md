@@ -7,6 +7,8 @@ description: |-
   Priority is explicit and lower wins. There is no implicit longest-prefix rule, because that would make one route's effect depend on another route's contents — adding a route would silently reorder the others while the plan showed no change. Leave priority unset and the server places the route last.
   The route API has no update operation, so every attribute forces a new resource.
   A route is authored, not live: it starts serving on the gateway's next configuration apply.
+  ~> Header values are secrets, and cannot be read back. request_headers_set and response_headers_set are sensitive: their values are redacted from plan output, though they are still stored in state. The platform is withdrawing header values from its read responses; once a route is read back with only its header NAMES, the provider keeps the values you configured from state and compares the names alone. A route cannot be edited, so its values cannot change without its names or its ID changing too.
+  For the same reason terraform import cannot recover header values once the platform returns only names. An imported route that sets headers then plans one REPLACEMENT, which re-creates it with the values from your configuration — the provider warns when this happens rather than adopting values nobody has seen. Hold the replacement off with lifecycle { ignore_changes = [request_headers_set, response_headers_set] } until you can take it.
   ~> Only on an http or https listener. A tcp listener has no routes at all — routing is host, path and header matching, which needs bytes the gateway does not parse at layer 4 — so it names its one pool with backend_pool_id instead, and a route pointed at one is refused.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Create-immutable — action, backend_pool_id, gateway_id, host, listener_id, name, path, path_match_type, priority, request_headers_remove, request_headers_set, response_headers_set, rewrite_path_prefix: the API has no update route for a route — the server registers POST, GET and DELETE and nothing else — so any change destroys and re-creates it.
@@ -21,6 +23,10 @@ Manages a route on an Application Gateway listener: a host and path match that f
 The route API has no update operation, so every attribute forces a new resource.
 
 A route is authored, not live: it starts serving on the gateway's next configuration apply.
+
+~> **Header values are secrets, and cannot be read back.** `request_headers_set` and `response_headers_set` are `sensitive`: their values are redacted from plan output, though they are still stored in state. The platform is withdrawing header values from its read responses; once a route is read back with only its header NAMES, the provider keeps the values you configured from state and compares the names alone. A route cannot be edited, so its values cannot change without its names or its ID changing too.
+
+For the same reason **`terraform import` cannot recover header values** once the platform returns only names. An imported route that sets headers then plans one REPLACEMENT, which re-creates it with the values from your configuration — the provider warns when this happens rather than adopting values nobody has seen. Hold the replacement off with `lifecycle { ignore_changes = [request_headers_set, response_headers_set] }` until you can take it.
 
 ~> **Only on an `http` or `https` listener.** A `tcp` listener has no routes at all — routing is host, path and header matching, which needs bytes the gateway does not parse at layer 4 — so it names its one pool with `backend_pool_id` instead, and a route pointed at one is refused.
 
@@ -85,8 +91,8 @@ resource "frostmoln_appgw_route" "spa" {
 - `path_match_type` (String) How `path` is matched: `prefix` (default), `exact` or `regex` (RE2).
 - `priority` (Number) Evaluation priority; **lower wins**. Omit to have the server place this route last, which is the safe default — a route given priority 0 by accident would take precedence over everything already configured.
 - `request_headers_remove` (List of String) Headers to strip from requests before forwarding. This is also how you remove a header: setting one to an empty string is refused. Names follow the same rule as `request_headers_set`.
-- `request_headers_set` (Map of String) Headers to set on requests forwarded to the backend. Names are HTTP tokens and additionally may not contain `#` or an apostrophe, which the gateway cannot render. Values must be non-empty, at most 1024 bytes, and free of control characters. Checked at plan time.
-- `response_headers_set` (Map of String) Headers to set on responses returned to the client. Same name and value rules as `request_headers_set`, checked at plan time.
+- `request_headers_set` (Map of String, Sensitive) Headers to set on requests forwarded to the backend. Names are HTTP tokens and additionally may not contain `#` or an apostrophe, which the gateway cannot render. Values must be non-empty, at most 1024 bytes, and free of control characters. Checked at plan time. Values are secrets — this is where an upstream credential usually lives — so the map is `sensitive`, and where the API returns only the header names the provider keeps the values from state and compares the names alone; `terraform import` cannot recover a value the API does not return. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide.
+- `response_headers_set` (Map of String, Sensitive) Headers to set on responses returned to the client. Same name and value rules as `request_headers_set`, checked at plan time, and handled the same way: `sensitive`, kept from state where the API returns only the header names, and not recoverable by `terraform import`. A response header is sent to every client that reaches the route, so it is no place for a credential. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide.
 - `rewrite_path_prefix` (String) Replace the matched path prefix with this before forwarding.
 
 ### Read-Only
@@ -96,3 +102,24 @@ resource "frostmoln_appgw_route" "spa" {
 - `id` (String) The unique identifier of the route.
 - `updated_at` (String) The last update timestamp.
 - `waf_policy_id` (String) The WAF policy applied to this route, if any — an `overlay`-scoped policy. Read-only here: attach one with `frostmoln_appgw_waf_policy_attachment`, which is where the attachment's lifecycle lives.
+
+## Import
+
+Import is supported using the following syntax:
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+# A route is imported by its gateway, its listener and its own id.
+terraform import frostmoln_appgw_route.api <gateway_id>/<listener_id>/<route_id>
+
+# WARNING: header VALUES may not be importable. They are secrets, and once the
+# platform returns only the header names, `request_headers_set` and
+# `response_headers_set` arrive with their names but without their values. A
+# route that sets headers then plans one REPLACE on the first apply after the
+# import, which re-creates it with the values in your configuration; the
+# provider warns when this happens. A route that sets no headers imports
+# cleanly. To hold the replace off, add
+# `lifecycle { ignore_changes = [request_headers_set, response_headers_set] }`
+# until you can take it.
+```

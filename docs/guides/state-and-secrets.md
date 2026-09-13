@@ -77,11 +77,20 @@ $ fm kubernetes cluster kubeconfig <cluster-id>
 | `frostmoln_launch_template` | `user_data` | `user_data_wo` |
 | `frostmoln_secret` | `secret_value` | `secret_value_wo` |
 | `frostmoln_appgw_certificate` | `private_key_pem` | `private_key_pem_wo` |
+| `frostmoln_appgw_route` | `request_headers_set`, `response_headers_set` | — |
 
-Every attribute in this table now has a write-only form. That does not make the
-legacy attribute obsolete — the write-only form needs Terraform 1.11 or later,
-and on `frostmoln_secret` it costs you drift detection. See [Write-only
-arguments](#write-only-arguments) for the trade-offs before switching.
+Every attribute in this table except the two route header maps has a write-only
+form. That does not make the legacy attribute obsolete — the write-only form
+needs Terraform 1.11 or later, and on `frostmoln_secret` it costs you drift
+detection. See [Write-only arguments](#write-only-arguments) for the trade-offs
+before switching.
+
+The route header maps are `sensitive` and stay in state: they are where an
+upstream credential usually lives, and a route cannot be updated in place, so
+the values in state are the ones every replacement re-sends. Once the platform
+returns only the header names on a read, the provider keeps the values from
+state and compares the names alone — which also means `terraform import` cannot
+recover them, and an imported route that sets headers plans one replacement.
 
 These are the attributes the provider marks `sensitive`. Every *other* value you
 configure is in state too — a DNS TXT record holding a verification token is as

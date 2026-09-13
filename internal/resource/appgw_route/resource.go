@@ -24,6 +24,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/appgwvalidate"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
@@ -59,6 +60,18 @@ func (r *routeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"unset and the server places the route last.\n\n" +
 			"The route API has no update operation, so every attribute forces a new resource.\n\n" +
 			"A route is authored, not live: it starts serving on the gateway's next configuration apply.\n\n" +
+			"~> **Header values are secrets, and cannot be read back.** `request_headers_set` and " +
+			"`response_headers_set` are `sensitive`: their values are redacted from plan output, though " +
+			"they are still stored in state. The platform is withdrawing header values from its read " +
+			"responses; once a route is read back with only its header NAMES, the provider keeps the " +
+			"values you configured from state and compares the names alone. A route cannot be edited, " +
+			"so its values cannot change without its names or its ID changing too.\n\n" +
+			"For the same reason **`terraform import` cannot recover header values** once the platform " +
+			"returns only names. An imported route that sets headers then plans one REPLACEMENT, which " +
+			"re-creates it with the values from your configuration — the provider warns when this " +
+			"happens rather than adopting values nobody has seen. Hold the replacement off with " +
+			"`lifecycle { ignore_changes = [request_headers_set, response_headers_set] }` until you can " +
+			"take it.\n\n" +
 			"~> **Only on an `http` or `https` listener.** A `tcp` listener has no routes at all — " +
 			"routing is host, path and header matching, which needs bytes the gateway does not " +
 			"parse at layer 4 — so it names its one pool with `backend_pool_id` instead, and a " +
@@ -132,8 +145,13 @@ func (r *routeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"request_headers_set": schema.MapAttribute{
 				Description: "Headers to set on requests forwarded to the backend. Names are " +
 					"HTTP tokens and additionally may not contain `#` or an apostrophe, " +
-					"which the gateway cannot render. Values must be non-empty, at most 1024 bytes, and free of control characters. Checked at plan time.",
+					"which the gateway cannot render. Values must be non-empty, at most 1024 bytes, and free of control characters. Checked at plan time. " +
+					"Values are secrets — this is where an upstream credential usually lives — so the map is " +
+					"`sensitive`, and where the API returns only the header names the provider keeps the " +
+					"values from state and compares the names alone; `terraform import` cannot recover a " +
+					"value the API does not return. " + docs.StateSecretNote,
 				Optional:      true,
+				Sensitive:     true,
 				ElementType:   types.StringType,
 				Validators:    []validator.Map{mapvalidator.SizeAtLeast(1)},
 				PlanModifiers: []planmodifier.Map{mapplanmodifier.RequiresReplace()},
@@ -152,8 +170,12 @@ func (r *routeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			},
 			"response_headers_set": schema.MapAttribute{
 				Description: "Headers to set on responses returned to the client. Same name " +
-					"and value rules as `request_headers_set`, checked at plan time.",
+					"and value rules as `request_headers_set`, checked at plan time, and handled the same " +
+					"way: `sensitive`, kept from state where the API returns only the header names, and not " +
+					"recoverable by `terraform import`. A response header is sent to every client that " +
+					"reaches the route, so it is no place for a credential. " + docs.StateSecretNote,
 				Optional:      true,
+				Sensitive:     true,
 				ElementType:   types.StringType,
 				Validators:    []validator.Map{mapvalidator.SizeAtLeast(1)},
 				PlanModifiers: []planmodifier.Map{mapplanmodifier.RequiresReplace()},
