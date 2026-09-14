@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.67.1] - 2026-09-14
+
+### 🐛 Bug Fixes
+
+- *(provider)* Send explicit clears for scale-group/launch-template lists; warmup default 300 (#551)
+
 ## [0.67.0] - 2026-09-14
 
 ### 🚀 Features
