@@ -467,6 +467,17 @@ var Declarations = map[string]Decl{
 			{Path: "organization_id", Why: "a colour rule belongs to one organization and the platform has no move between organizations — a change deletes the rule and creates it in the other organization"},
 		},
 	},
+	"frostmoln_tenant_default_tags": {
+		Defaults: []PlatformDefault{
+			{
+				Name:   "the tenant's default-tag set",
+				Policy: AdoptAsManaged,
+				Why: "Every tenant has exactly one set, empty until someone sets it in the portal, the fm CLI or here. " +
+					"This resource adopts it: creating it replaces whatever set the tenant has (the apply warns, naming " +
+					"the keys it replaced), every apply writes the whole set, and destroying it clears the set",
+			},
+		},
+	},
 	"frostmoln_valkey_instance": {
 		ImmutableWhy: "the platform has no in-place migration for it — a change re-creates the instance",
 		Immutable:    fields("subnet_id", "version", "vpc_id"),

@@ -58,6 +58,7 @@ import (
 	securitygrouprulesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/security_group_rules"
 	subnetds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/subnet"
 	tagcolorsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/tag_colors"
+	tenantdefaulttagsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/tenant_default_tags"
 	valkeyinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/valkey_instance"
 	volumetiersds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/volume_tiers"
 	vpcds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/vpc"
@@ -120,6 +121,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/ssh_key"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/subnet"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/tag_color"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/tenant_default_tags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/valkey_instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/volume"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/volume_attachment"
@@ -721,6 +723,9 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		workload_identity_binding.NewResource,
 		// Organization-wide display settings: one tag colour rule per resource.
 		tag_color.NewResource,
+		// A tenant's one default-tag set. Its `tags` is the SETTING, not tags on
+		// the resource itself, so it has no tags_all (default_tags_contract_test).
+		tenant_default_tags.NewResource,
 	}
 }
 
@@ -790,5 +795,6 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		// Every colour rule of an organization, portal-made ones included, with
 		// the ids frostmoln_tag_color imports by.
 		tagcolorsds.NewDataSource,
+		tenantdefaulttagsds.NewDataSource,
 	}
 }

@@ -1,6 +1,6 @@
-// Package tagsettingstest is an in-memory fake of the platform's tag colour
-// routes, for the frostmoln_tag_color resource and frostmoln_tag_colors data
-// source tests. It RECORDS every request (method, path, raw body) so a test can
+// Package tagsettingstest is an in-memory fake of the platform's tag-settings
+// routes — organization tag colour rules and tenant default tags — for the
+// frostmoln_tag_color(s) and frostmoln_tenant_default_tags tests. It RECORDS every request (method, path, raw body) so a test can
 // assert the exact wire shape — above all whether `value` went out as JSON
 // null or as "" — and it models the server's constraints rather than echoing
 // whatever it is sent:
@@ -15,7 +15,10 @@
 //     organization the caller is not a member of answers the nested 403;
 //   - the tenant route answers the owning organization's rules, with its id
 //     only when ReportOrganization is set (a platform predating the field
-//     omits it).
+//     omits it);
+//   - a tenant's default-tag set is replaced WHOLE by a PUT, a body without
+//     `tags` or with a null value is a 400 (identity's defaultTagsRequest), and
+//     a tenant the caller cannot reach answers the nested 403.
 package tagsettingstest
 
 import (
@@ -73,6 +76,9 @@ type Fake struct {
 	// NotRouted, when set, answers every tag-colour request with the
 	// api-gateway's nested unrouted-path 404.
 	NotRouted bool
+	// FailDefaultsGet answers GET /v1/tenants/{tid}/default-tags with a 503,
+	// leaving the PUT working — a read that fails while the write succeeds.
+	FailDefaultsGet bool
 	// DenyTenantRoute answers GET /v1/tenants/{tid}/tag-colors with identity's
 	// nested 403 — a key without organizations:read.
 	DenyTenantRoute bool
@@ -80,7 +86,8 @@ type Fake struct {
 	Server *httptest.Server
 
 	mu       sync.Mutex
-	orgs     map[string]map[string]*Rule // org -> rule id -> rule
+	orgs     map[string]map[string]*Rule  // org -> rule id -> rule
+	defaults map[string]map[string]string // tenant -> default tags
 	requests []Request
 	clock    int
 }
@@ -90,12 +97,14 @@ type Fake struct {
 func New(t *testing.T) *Fake {
 	t.Helper()
 	f := &Fake{
-		TenantID:           "11111111-1111-4111-8111-111111111111",
+		TenantID:           "1111abcd-1111-4111-8111-11111111abcd", // letters, so a case change is a real change
 		OrgID:              "2222abcd-2222-4222-8222-22222222abcd", // letters, so a case change is a real change
 		ReportOrganization: true,
 		orgs:               map[string]map[string]*Rule{},
+		defaults:           map[string]map[string]string{},
 	}
 	f.orgs[f.OrgID] = map[string]*Rule{}
+	f.defaults[f.TenantID] = map[string]string{}
 	f.Server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.Server.Close)
 	return f
@@ -108,6 +117,41 @@ func (f *Fake) AddOrg(orgID string) {
 	if f.orgs[orgID] == nil {
 		f.orgs[orgID] = map[string]*Rule{}
 	}
+}
+
+// AddTenant makes another tenant reachable, with an empty default-tag set.
+func (f *Fake) AddTenant(tenantID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.defaults[tenantID] == nil {
+		f.defaults[tenantID] = map[string]string{}
+	}
+}
+
+// SetDefaults replaces a tenant's default tags directly (as the portal would).
+func (f *Fake) SetDefaults(tenantID string, tags map[string]string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.defaults[tenantID] = copyTags(tags)
+}
+
+// Defaults returns a copy of a tenant's default tags (nil for an unknown tenant).
+func (f *Fake) Defaults(tenantID string) map[string]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.defaults[tenantID]
+	if !ok {
+		return nil
+	}
+	return copyTags(d)
+}
+
+func copyTags(m map[string]string) map[string]string {
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // Seed stores a rule directly (as the portal would) and returns its id.
@@ -294,6 +338,8 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			resp["organizationId"] = f.OrgID
 		}
 		writeJSON(w, http.StatusOK, resp)
+	case len(segs) == 4 && segs[0] == "v1" && segs[1] == "tenants" && segs[3] == "default-tags":
+		f.serveDefaults(w, r, segs[2], body)
 	case len(segs) >= 4 && segs[0] == "v1" && segs[1] == "organizations" && segs[3] == "tag-colors":
 		f.serveOrg(w, r, segs, body)
 	default:
@@ -386,6 +432,56 @@ func (f *Fake) serveOrg(w http.ResponseWriter, r *http.Request, segs []string, b
 		}
 		delete(rules, ruleID)
 		w.WriteHeader(http.StatusNoContent)
+	default:
+		nested(w, http.StatusNotFound, "PATH_NOT_ROUTED", "no route", nil)
+	}
+}
+
+// serveDefaults is GET/PUT /v1/tenants/{tid}/default-tags.
+func (f *Fake) serveDefaults(w http.ResponseWriter, r *http.Request, tenantID string, body []byte) {
+	if _, err := uuid.Parse(tenantID); err != nil {
+		nested(w, http.StatusBadRequest, "INVALID_INPUT", "invalid tenant ID", nil)
+		return
+	}
+	current, reachable := f.defaults[tenantID]
+	if !reachable {
+		nested(w, http.StatusForbidden, "PERMISSION_DENIED", "you do not have permission to perform this action on this tenant", nil)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		if f.FailDefaultsGet {
+			nested(w, http.StatusServiceUnavailable, "NOT_AVAILABLE", "tag settings are not available", nil)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"tags": copyTags(current)})
+	case http.MethodPut:
+		var req struct {
+			Tags json.RawMessage `json:"tags"`
+		}
+		if err := decodeStrict(body, &req); err != nil {
+			nested(w, http.StatusBadRequest, "INVALID_INPUT", "invalid request body: "+err.Error(), nil)
+			return
+		}
+		if len(req.Tags) == 0 {
+			nested(w, http.StatusBadRequest, "INVALID_INPUT", `"tags" is required`, nil)
+			return
+		}
+		var ptrs map[string]*string
+		if err := json.Unmarshal(req.Tags, &ptrs); err != nil {
+			nested(w, http.StatusBadRequest, "INVALID_INPUT", `"tags" must be an object of string values`, nil)
+			return
+		}
+		next := map[string]string{}
+		for k, v := range ptrs {
+			if v == nil {
+				nested(w, http.StatusBadRequest, "INVALID_INPUT", fmt.Sprintf("the value of %q is null", k), nil)
+				return
+			}
+			next[k] = *v
+		}
+		f.defaults[tenantID] = next
+		writeJSON(w, http.StatusOK, map[string]any{"tags": copyTags(next)})
 	default:
 		nested(w, http.StatusNotFound, "PATH_NOT_ROUTED", "no route", nil)
 	}

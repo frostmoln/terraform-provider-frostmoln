@@ -1,7 +1,8 @@
 // Package tagsettings is the provider's side of the platform's customer tag
 // settings: organization tag COLOUR rules (frostmoln_tag_color,
-// frostmoln_tag_colors) — the wire types, the request paths, and how a
-// tenant-scoped provider finds the organization that owns its tenant.
+// frostmoln_tag_colors) and tenant DEFAULT TAGS (frostmoln_tenant_default_tags,
+// defaulttags.go) — the wire types, the request paths, the plan-time checks,
+// and how a tenant-scoped provider finds the organization that owns its tenant.
 //
 // The server contract is identity's (api/openapi/identity-api.yaml,
 // internal/domain/tag_settings.go, internal/handler/http/tag_settings.go):
@@ -9,6 +10,7 @@
 //	GET/POST          /v1/organizations/{org}/tag-colors
 //	GET/PUT/DELETE    /v1/organizations/{org}/tag-colors/{ruleId}
 //	GET               /v1/tenants/{tid}/tag-colors   -> {organizationId, rules}
+//	GET/PUT           /v1/tenants/{tid}/default-tags -> {tags}
 package tagsettings
 
 import (

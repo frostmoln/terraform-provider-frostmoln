@@ -28,6 +28,18 @@ import (
 // (storage since v1.23.0), so it takes the defaults like everything else.
 var defaultTagsExclusions = map[string]string{}
 
+// tagsIsASetting lists resources whose `tags` attribute is NOT tags on the
+// resource itself but a tag SETTING it manages, each with the reason. They are
+// not taggable: they take no tags_all, run no default_tags matrix, and the
+// provider's default_tags never merge into them. Checked in both directions:
+// an entry must be a registered resource with `tags`, and must NOT carry
+// tags_all (which would mean it had become taggable after all).
+var tagsIsASetting = map[string]string{
+	"frostmoln_tenant_default_tags": "`tags` is the tenant's default-tag set — the tags the platform copies " +
+		"onto resources created in the tenant — not tags on a resource; merging the provider's default_tags " +
+		"into it would turn every provider default into a tenant-wide one",
+}
+
 // tagProfiles is every taggable resource's wire profile for the fake backend
 // (internal/tftags/tftagstest). A resource with `tags` and no profile fails the
 // gate, so a new taggable resource cannot ship without running the matrix.
@@ -53,6 +65,7 @@ func TestDefaultTagsContract(t *testing.T) {
 	}
 
 	taggable := map[string]bool{}
+	settings := map[string]bool{}
 	for _, newResource := range p.Resources(ctx) {
 		r := newResource()
 		var md resource.MetadataResponse
@@ -64,6 +77,14 @@ func TestDefaultTagsContract(t *testing.T) {
 		if _, hasTags := sr.Schema.Attributes["tags"]; !hasTags {
 			if _, ok := sr.Schema.Attributes["tags_all"]; ok {
 				t.Errorf("%s: has tags_all but no tags", typeName)
+			}
+			continue
+		}
+		if _, isSetting := tagsIsASetting[typeName]; isSetting {
+			settings[typeName] = true
+			if _, ok := sr.Schema.Attributes["tags_all"]; ok {
+				t.Errorf("%s: listed in tagsIsASetting but has tags_all — it is either taggable (remove the "+
+					"entry and give it a tagProfile) or a setting (remove tags_all)", typeName)
 			}
 			continue
 		}
@@ -96,6 +117,14 @@ func TestDefaultTagsContract(t *testing.T) {
 	for typeName := range tagProfiles {
 		if !taggable[typeName] {
 			t.Errorf("tagProfiles lists %s, which is not a registered resource with `tags`", typeName)
+		}
+	}
+	for typeName := range tagsIsASetting {
+		if !settings[typeName] {
+			t.Errorf("tagsIsASetting lists %s, which is not a registered resource with `tags`", typeName)
+		}
+		if _, both := tagProfiles[typeName]; both {
+			t.Errorf("%s is both profiled and listed as a setting", typeName)
 		}
 	}
 	for typeName := range defaultTagsExclusions {
