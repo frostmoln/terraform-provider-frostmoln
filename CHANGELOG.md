@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.67.0] - 2026-09-14
+
+### 🚀 Features
+
+- *(tenant_default_tags)* Apply_to_existing_on_change (#549)
+
 ## [0.66.0] - 2026-09-14
 
 ### 🚀 Features
