@@ -83,14 +83,19 @@ type apiCreateScaleGroupRequest struct {
 // field is non-nil, and compute replaces on the same condition, so {} is how
 // they are cleared — and omitempty dropped exactly that map. nil still
 // serialises as null, which both read as "leave them alone".
+//
+// The two list fields follow the same rule, no omitempty: provisioning
+// forwards a present list — empty included — into compute, which replaces on
+// non-nil; [] is how they are cleared, and omitempty dropped exactly that
+// slice. nil still serialises as null, which reads as "leave them alone".
 type apiUpdateScaleGroupRequest struct {
 	Name                   *string           `json:"name,omitempty"`
 	LaunchTemplateID       *string           `json:"launchTemplateId,omitempty"`
 	MinSize                *int              `json:"minSize,omitempty"`
 	MaxSize                *int              `json:"maxSize,omitempty"`
 	DesiredCapacity        *int              `json:"desiredCapacity,omitempty"`
-	SubnetIDs              []string          `json:"subnetIds,omitempty"`
-	LoadBalancerPoolIDs    []string          `json:"loadBalancerPoolIds,omitempty"`
+	SubnetIDs              []string          `json:"subnetIds"`
+	LoadBalancerPoolIDs    []string          `json:"loadBalancerPoolIds"`
 	HealthCheckType        *string           `json:"healthCheckType,omitempty"`
 	HealthCheckGracePeriod *int              `json:"healthCheckGracePeriod,omitempty"`
 	WarmupSeconds          *int              `json:"warmupSeconds,omitempty"`

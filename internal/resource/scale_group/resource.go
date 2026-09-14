@@ -141,10 +141,10 @@ func (r *scaleGroupResource) Schema(_ context.Context, _ resource.SchemaRequest,
 				Default:     int64default.StaticInt64(300),
 			},
 			"warmup_seconds": schema.Int64Attribute{
-				Description: "The number of seconds to wait for a new instance to warm up before it receives traffic.",
+				Description: "The number of seconds to wait for a new instance to warm up before it receives traffic. Zero is honored as sent; omit to use the server default.",
 				Optional:    true,
 				Computed:    true,
-				Default:     int64default.StaticInt64(0),
+				Default:     int64default.StaticInt64(300),
 			},
 			"cooldown_seconds": schema.Int64Attribute{
 				Description: "The number of seconds after a scaling activity completes before another can start.",

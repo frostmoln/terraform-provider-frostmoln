@@ -748,6 +748,209 @@ func TestUpdate(t *testing.T) {
 	}
 }
 
+// TestUpdateSendsFullDiff records the RAW body field-by-field: an update that
+// changes config fields must reach the wire under the names compute binds —
+// healthCheckGracePeriod, not healthCheckGrace (the name mismatch that dropped
+// every Terraform-created grace). This pins the wire NAMES; the omitempty fix
+// for lists has its own round-trip test below.
+func TestUpdateSendsFullDiff(t *testing.T) {
+	var rawBody map[string]json.RawMessage
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-1/scale-groups/asg-1":
+			_ = json.NewDecoder(r.Body).Decode(&rawBody)
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/scale-groups/asg-1":
+			out := sgJSON("active")
+			out.HealthCheckGracePeriod = 120
+			out.WarmupSeconds = 45
+			out.CooldownSeconds = 90
+			_ = json.NewEncoder(w).Encode(out)
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+
+	r := &scaleGroupResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+	state := buildSGState(t, fullSGModel(t))
+	planModel := fullSGModel(t)
+	planModel.HealthCheckGracePeriod = types.Int64Value(120)
+	planModel.WarmupSeconds = types.Int64Value(45)
+	planModel.CooldownSeconds = types.Int64Value(90)
+	planModel.TerminationPolicy = types.StringValue("newest_first")
+	planModel.HealthCheckType = types.StringValue("lb")
+	planModel.MinSize = types.Int64Value(2)
+	planModel.MaxSize = types.Int64Value(8)
+	plan := buildSGPlan(t, planModel)
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
+	}
+
+	for field, want := range map[string]string{
+		"minSize":                "2",
+		"maxSize":                "8",
+		"healthCheckType":        `"lb"`,
+		"healthCheckGracePeriod": "120",
+		"warmupSeconds":          "45",
+		"cooldownSeconds":        "90",
+		"terminationPolicy":      `"newest_first"`,
+	} {
+		raw, ok := rawBody[field]
+		if !ok {
+			t.Errorf("patch body missing %q — the field was silently dropped", field)
+			continue
+		}
+		if got := strings.TrimSpace(string(raw)); got != want {
+			t.Errorf("patch body %q = %s, want %s", field, got, want)
+		}
+	}
+}
+
+// TestUpdateRefreshDoesNotDecay pins the wire-truth read-back: the state an
+// update leaves behind must equal what the PLATFORM stored. Before the server
+// stored what was sent, a configured grace decayed 300→0 on first refresh and
+// the warmup default warreD 0↔300 forever — the state here must NOT decay,
+// and an explicit zero must read back as 0, not null.
+func TestUpdateRefreshDoesNotDecay(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-1/scale-groups/asg-1":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/scale-groups/asg-1":
+			// The row after the PATCH: the platform stored what was sent —
+			// grace/cooldown took the configured values, warmup took the
+			// caller's explicit 0.
+			out := sgJSON("active")
+			out.HealthCheckGracePeriod = 120
+			out.WarmupSeconds = 0
+			out.CooldownSeconds = 90
+			_ = json.NewEncoder(w).Encode(out)
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+
+	r := &scaleGroupResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+	stateModel := fullSGModel(t)
+	stateModel.WarmupSeconds = types.Int64Value(45)
+	state := buildSGState(t, stateModel)
+	planModel := fullSGModel(t)
+	planModel.HealthCheckGracePeriod = types.Int64Value(120)
+	// An explicit zero is a value the server now stores as sent — not a
+	// default, not a null.
+	planModel.WarmupSeconds = types.Int64Value(0)
+	planModel.CooldownSeconds = types.Int64Value(90)
+	plan := buildSGPlan(t, planModel)
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
+	}
+
+	var result ScaleGroupModel
+	if diags := updateResp.State.Get(context.Background(), &result); diags.HasError() {
+		t.Fatalf("failed to read result state: %v", diags.Errors())
+	}
+	if result.HealthCheckGracePeriod.ValueInt64() != 120 {
+		t.Errorf("grace decayed in state: %d, want 120 (the pre-fix read-back zeroed the configured value)", result.HealthCheckGracePeriod.ValueInt64())
+	}
+	if result.WarmupSeconds.IsNull() || result.WarmupSeconds.ValueInt64() != 0 {
+		t.Errorf("explicit warmup 0 must read back as 0, got %s (null would re-plan the default)", result.WarmupSeconds)
+	}
+	if result.CooldownSeconds.ValueInt64() != 90 {
+		t.Errorf("cooldown decayed in state: %d, want 90", result.CooldownSeconds.ValueInt64())
+	}
+}
+
+// TestUpdateClearsListsRoundTrip pins the #531 clear semantics end to end: a
+// cleared subnet/lb-pool set must LEAVE the process as an explicit [] (omitempty
+// dropped exactly that slice), and the refreshed state must carry the cleared
+// value a subsequent plan would accept.
+func TestUpdateClearsListsRoundTrip(t *testing.T) {
+	var rawBody map[string]json.RawMessage
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-1/scale-groups/asg-1":
+			_ = json.NewDecoder(r.Body).Decode(&rawBody)
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/scale-groups/asg-1":
+			out := sgJSON("active")
+			out.SubnetIDs = nil
+			out.LoadBalancerPoolIDs = nil
+			_ = json.NewEncoder(w).Encode(out)
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+
+	r := &scaleGroupResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 5 * time.Second}
+	// State carries SETS for both lists (lb pools non-empty in state but null
+	// in fullSGModel) so the plan's null is a REAL clear, not a null→null no-op.
+	stateModel := fullSGModel(t)
+	pools, _ := types.SetValueFrom(context.Background(), types.StringType, []string{"pool-1"})
+	stateModel.LoadBalancerPoolIDs = pools
+	state := buildSGState(t, stateModel)
+	planModel := fullSGModel(t)
+	planModel.SubnetIDs = types.SetNull(types.StringType)
+	planModel.LoadBalancerPoolIDs = types.SetNull(types.StringType)
+	plan := buildSGPlan(t, planModel)
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
+	}
+
+	raw, ok := rawBody["subnetIds"]
+	if !ok {
+		t.Error(`patch body missing "subnetIds" — omitempty dropped the clear`)
+	} else if strings.TrimSpace(string(raw)) != "[]" {
+		t.Errorf("patch body subnetIds = %s, want an explicit []", raw)
+	}
+	raw, ok = rawBody["loadBalancerPoolIds"]
+	if !ok {
+		t.Error(`patch body missing "loadBalancerPoolIds" — omitempty dropped the clear`)
+	} else if strings.TrimSpace(string(raw)) != "[]" {
+		t.Errorf("patch body loadBalancerPoolIds = %s, want an explicit []", raw)
+	}
+
+	var result ScaleGroupModel
+	if diags := updateResp.State.Get(context.Background(), &result); diags.HasError() {
+		t.Fatalf("failed to read result state: %v", diags.Errors())
+	}
+	if !result.SubnetIDs.IsNull() && len(result.SubnetIDs.Elements()) != 0 {
+		t.Errorf("subnet_ids must read back cleared, got %s", result.SubnetIDs)
+	}
+	if !result.LoadBalancerPoolIDs.IsNull() && len(result.LoadBalancerPoolIDs.Elements()) != 0 {
+		t.Errorf("load_balancer_pool_ids must read back cleared, got %s", result.LoadBalancerPoolIDs)
+	}
+}
+
 func TestUpdateAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

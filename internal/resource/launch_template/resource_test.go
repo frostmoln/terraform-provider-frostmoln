@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -739,6 +740,88 @@ func TestUpdateAPIError(t *testing.T) {
 	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state, Config: configFromPlan(t, plan)}, &updateResp)
 	if !updateResp.Diagnostics.HasError() {
 		t.Error("expected error on update API failure")
+	}
+}
+
+// TestUpdateClearsListsRoundTrip pins the #531 clear semantics for the three
+// list/map fields: a cleared sshKeyIds/securityGroupIds/metadata must LEAVE
+// the process explicit (omitempty dropped exactly those values), and compute
+// replaces on any non-nil — the refreshed read of the cleared template must
+// not resurrect the old membership.
+func TestUpdateClearsListsRoundTrip(t *testing.T) {
+	var rawBody map[string]json.RawMessage
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-1/launch-templates/lt-1":
+			_ = json.NewDecoder(r.Body).Decode(&rawBody)
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/launch-templates/lt-1":
+			// The row after the PATCH: the lists are empty server-side.
+			out := ltJSONWithUserData("#cloud-config")
+			out["sshKeyIds"] = []string{}
+			out["securityGroupIds"] = []string{}
+			out["metadata"] = map[string]string{}
+			_ = json.NewEncoder(w).Encode(out)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+
+	r := &launchTemplateResource{client: c}
+
+	// State carries the SETS; the plan clears all three.
+	stateModel := fullLTModel()
+	keys, _ := types.SetValueFrom(context.Background(), types.StringType, []string{"key-1"})
+	sgs, _ := types.SetValueFrom(context.Background(), types.StringType, []string{"sg-1"})
+	meta, _ := types.MapValueFrom(context.Background(), types.StringType, map[string]string{"k": "v"})
+	stateModel.SSHKeyIDs = keys
+	stateModel.SecurityGroupIDs = sgs
+	stateModel.Metadata = meta
+	state := buildLTState(t, stateModel)
+	planModel := fullLTModel()
+	planModel.SSHKeyIDs = types.SetNull(types.StringType)
+	planModel.SecurityGroupIDs = types.SetNull(types.StringType)
+	planModel.Metadata = types.MapNull(types.StringType)
+	plan := buildLTPlan(t, planModel)
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state, Config: configFromPlan(t, plan)}, &updateResp)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
+	}
+
+	for field, want := range map[string]string{
+		"sshKeyIds":        "[]",
+		"securityGroupIds": "[]",
+		"metadata":         "{}",
+	} {
+		raw, ok := rawBody[field]
+		if !ok {
+			t.Errorf(`patch body missing %q — omitempty dropped the clear`, field)
+			continue
+		}
+		if strings.TrimSpace(string(raw)) != want {
+			t.Errorf("patch body %q = %s, want an explicit %s", field, raw, want)
+		}
+	}
+
+	var result LaunchTemplateModel
+	if diags := updateResp.State.Get(context.Background(), &result); diags.HasError() {
+		t.Fatalf("failed to read result state: %v", diags.Errors())
+	}
+	if !result.SSHKeyIDs.IsNull() && len(result.SSHKeyIDs.Elements()) != 0 {
+		t.Errorf("ssh_key_ids must read back cleared, got %s", result.SSHKeyIDs)
+	}
+	if !result.SecurityGroupIDs.IsNull() && len(result.SecurityGroupIDs.Elements()) != 0 {
+		t.Errorf("security_group_ids must read back cleared, got %s", result.SecurityGroupIDs)
+	}
+	if !result.Metadata.IsNull() && len(result.Metadata.Elements()) != 0 {
+		t.Errorf("metadata must read back cleared, got %s", result.Metadata)
 	}
 }
 

@@ -63,15 +63,19 @@ type apiCreateLaunchTemplateRequest struct {
 // field is non-nil (`if req.Tags != nil`), so {} is how they are cleared, and
 // omitempty dropped exactly that map. nil still serialises as null, which
 // compute reads as "leave them alone".
+//
+// sshKeyIds/securityGroupIds/metadata follow the same rule — compute's
+// launch-template Update replaces all three on non-nil, so an explicit empty
+// is a clear; omitempty dropped exactly those values.
 type apiUpdateLaunchTemplateRequest struct {
 	Name             *string           `json:"name,omitempty"`
 	FlavorID         *string           `json:"flavorId,omitempty"`
 	ImageID          *string           `json:"imageId,omitempty"`
 	VPCID            *string           `json:"vpcId,omitempty"`
-	SSHKeyIDs        []string          `json:"sshKeyIds,omitempty"`
-	SecurityGroupIDs []string          `json:"securityGroupIds,omitempty"`
+	SSHKeyIDs        []string          `json:"sshKeyIds"`
+	SecurityGroupIDs []string          `json:"securityGroupIds"`
 	UserData         *string           `json:"userData,omitempty"`
-	Metadata         map[string]string `json:"metadata,omitempty"`
+	Metadata         map[string]string `json:"metadata"`
 	Tags             map[string]string `json:"tags"`
 }
 

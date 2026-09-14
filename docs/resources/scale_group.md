@@ -63,7 +63,7 @@ resource "frostmoln_scale_group" "web" {
 - `tags` (Map of String) Key-value tags for the scale group. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `termination_policy` (String) The policy for selecting instances to terminate during scale-in (e.g. "oldest_first", "newest_first").
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
-- `warmup_seconds` (Number) The number of seconds to wait for a new instance to warm up before it receives traffic.
+- `warmup_seconds` (Number) The number of seconds to wait for a new instance to warm up before it receives traffic. Zero is honored as sent; omit to use the server default.
 
 ### Read-Only
 
