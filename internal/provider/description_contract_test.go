@@ -156,13 +156,14 @@ var pinnedBehaviorSentences = map[string]map[string][]string{
 		},
 	},
 	"frostmoln_security_group": {
+		// 01a09b9a: network persists the description since v4.5.0, so the old
+		// "does not persist it yet" warning became false. What a reader needs now
+		// is the two limits, which the attributes' validators enforce.
+		"name": {
+			"234 characters",
+		},
 		"description": {
-			// 01a041f8-4738: network's neutron layer reserves the description
-			// field for its internal metadata blob and drops the customer
-			// value — the old copy ("A description of the security group.")
-			// implied persistence the platform does not have.
-			"does not persist it yet",
-			"reappears as a pending change",
+			"1024 characters",
 		},
 	},
 }

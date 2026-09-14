@@ -83,14 +83,14 @@ resource "frostmoln_security_group_rule" "web_egress_https" {
 
 ### Required
 
-- `name` (String) The name of the security group.
+- `name` (String) The name of the security group, 1 to 234 characters.
 
 ### Optional
 
 - `delete_default_egress` (Boolean) Delete the two allow-all egress rules the network service injects into every new group (one per address family, each with an EMPTY remote prefix) as part of creating it. Those defaults allow all outbound traffic, and declaring egress rules of your own does not narrow them — rules are additive. When this is true, Create deletes both right after the group exists, matched on direction and empty remote prefix, never on address family — a rule has no `ether_type`, so the IPv4 and IPv6 defaults are indistinguishable and both must go. A deletion failure is reported as a WARNING, never as a failed create: the group is live either way.
 
 This is create-time behaviour only. The value is carried in state so plans stay clean, changing it on an existing group does nothing, and Read never lists or manages rules. Defaults to `false` today; at provider v2 the default flips to `true`, announced by a deprecation notice in the v1 line ahead of the flip.
-- `description` (String) A description of the security group. The platform does not persist it yet: its storage layer reserves the description field for internal metadata, so the value reads back empty and a configured description reappears as a pending change on every plan until the platform persists it. Do not rely on this attribute for anything an audit trail would need.
+- `description` (String) A description of the security group, at most 1024 characters.
 - `tags` (Map of String) Tags for the security group. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `vpc_id` (String) The ID of the VPC this security group belongs to.

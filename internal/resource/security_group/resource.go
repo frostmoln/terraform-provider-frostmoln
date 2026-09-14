@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -15,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
@@ -137,19 +139,27 @@ func (r *securityGroupResource) Schema(_ context.Context, _ resource.SchemaReque
 				},
 			},
 			"name": schema.StringAttribute{
-				Description: "The name of the security group.",
+				// network caps a security-group name at 234 characters (255 minus the
+				// 21-character prefix it stores the name under), counted in runes by
+				// its request validator, so the check here counts UTF-8 characters
+				// too and is never stricter than the platform.
+				Description: "The name of the security group, 1 to 234 characters.",
 				Required:    true,
+				Validators: []validator.String{
+					stringvalidator.UTF8LengthBetween(1, 234),
+				},
 			},
 			"description": schema.StringAttribute{
-				// 01a041f8-4738: network's neutron layer reserves its description
-				// field for the sgMetadata blob (ADR-0111), so the customer value is
-				// dropped at create and reads back empty — the fromAPI tri-state in
-				// model.go exists precisely to survive that echo. The description
-				// says so honestly; the wording is pinned by
-				// TestAttributeDescriptionContract (pinnedBehaviorSentences). Flip
-				// this wording when the platform-side metadata table ships.
-				Description: "A description of the security group. The platform does not persist it yet: its storage layer reserves the description field for internal metadata, so the value reads back empty and a configured description reappears as a pending change on every plan until the platform persists it. Do not rely on this attribute for anything an audit trail would need.",
+				// Persisted by network since v4.5.0 (security-group metadata moved
+				// out of the storage layer's reserved description field, ADR-0111),
+				// capped at 1024 characters on create and update. model.go's
+				// fromAPI still maps an empty read-back to null or "" by what the
+				// configuration spelled, so `description = ""` round-trips.
+				Description: "A description of the security group, at most 1024 characters.",
 				Optional:    true,
+				Validators: []validator.String{
+					stringvalidator.UTF8LengthAtMost(1024),
+				},
 			},
 			"vpc_id": schema.StringAttribute{
 				Description: "The ID of the VPC this security group belongs to.",
