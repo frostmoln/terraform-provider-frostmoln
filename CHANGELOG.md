@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.65.0] - 2026-09-14
+
+### 🚀 Features
+
+- *(provider)* Frostmoln_tenant_default_tags resource and data source (#543)
+
 ## [0.64.1] - 2026-09-14
 
 ### 🐛 Bug Fixes
