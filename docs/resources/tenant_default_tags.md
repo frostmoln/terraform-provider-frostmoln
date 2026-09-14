@@ -4,7 +4,8 @@ page_title: "frostmoln_tenant_default_tags Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a tenant's default tags: the tags every taggable resource created in the tenant starts with, whoever creates it — the portal, the fm CLI, the API or Terraform. The platform copies them onto each resource when it is created; after that they are ordinary tags on the resource, no longer linked to this setting.
-  Only resources created afterwards. Changing the defaults never changes existing resources. A resource created shortly after a change may still receive the previous set: the services that create resources can take up to 30 seconds to see it. In one configuration, give the resources that must carry the defaults a depends_on on this resource, and allow for that delay.
+  Resources created afterwards. Changing the defaults does not change existing resources, unless apply_to_existing_on_change is set (below). A resource created shortly after a change may still receive the previous set: the services that create resources can take up to 30 seconds to see it. In one configuration, give the resources that must carry the defaults a depends_on on this resource, and allow for that delay.
+  Existing resources. With apply_to_existing_on_change = true, an apply that changes tags to a non-empty set also adds the new defaults to the resources the tenant already has, and waits for it (30 minutes by default; timeouts.create and timeouts.update change that). If the wait runs out while the platform is still working, the apply succeeds with a warning that the apply to existing resources is still running and continues in the background. If the platform cannot start it right now (it is unavailable), the apply also succeeds, with a warning; run fm tenant default-tags apply later, since a later terraform apply starts it again only when tags changes. If the platform refuses it (no permission, the tenant is not provisioned yet, or the defaults are not valid), the apply fails after saving the default tags, so a new resource is tainted and replaced by the next apply. It adds only the default keys a resource is missing: a key the resource already has keeps its value, so changing a default's value does not reach resources that already carry the key. Resources the platform manages (a managed security group, a load balancer or public IP a managed service owns, and their load-balancer children) and the resources inside a managed service are skipped, as is a resource the added tags would push over its tag limit; volumes the platform created together with an instance (its boot volume), instance snapshots and images are not included. Only resources that exist when the apply runs are stamped, so give the resources in the same configuration that must get the defaults a depends_on on this resource. Resources that could not be updated are reported as warnings. On a Terraform-managed resource a stamped key appears in tags_all, never in tags, and plans no diff — but provider versions before v0.62.0 remove it on the resource's next apply, so upgrade every configuration that manages resources in the tenant first.
   A resource's own tags win. The defaults are merged into the create request's own tags, and a key the request sets itself wins — including a key from the provider's default_tags, which the provider sends with every create. On a Terraform-managed resource the tenant's defaults appear in tags_all, never in tags, and are kept like any other key set outside Terraform.
   One set per tenant. Every tenant has exactly one set of default tags, empty until someone sets it. This resource owns the whole set: every apply writes exactly tags, so a key added in the portal is removed by the next apply, and destroying the resource clears the set. Manage it from one place: there is no locking, and the last write wins. Creating the resource replaces whatever set the tenant already has; the plan warns, naming the keys it will remove or change.
   Rules. A default is added to every kind of resource, so it has to be accepted by all of them — the same rules as the provider's default_tags, checked at plan time: at most 10 tags; keys of 1 to 64 bytes made of letters, digits and . _ : -, starting and ending with a letter or digit; values of at most 255 bytes made of letters, digits, spaces and + - . _ : / @ = (or empty). Keys the platform reserves are refused in any letter case: the prefixes frostmoln_, frostmoln-, os_, instance_ and nova_, and the keys request-id, customer-id, project-id, tenant-id, created-at, acl, storage-class, quota-bytes and cors-config.
@@ -13,6 +14,7 @@ description: |-
   Import. By tenant id, which must be the provider's tenant.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Not enacted state — apply_to_existing_on_change: a behaviour flag carried in state, not a platform setting the apply pushes: it decides whether an apply that changes tags also adds the new defaults to the tenant's existing resources, and a refresh keeps it as configured.
   Platform-invented default — the tenant's default-tag set: adopt-as-managed. Every tenant has exactly one set, empty until someone sets it in the portal, the fm CLI or here. This resource adopts it: creating it replaces whatever set the tenant has (the apply warns, naming the keys it replaced), every apply writes the whole set, and destroying it clears the set.
 ---
 
@@ -20,7 +22,9 @@ description: |-
 
 Manages a tenant's default tags: the tags every taggable resource created in the tenant starts with, whoever creates it — the portal, the `fm` CLI, the API or Terraform. The platform copies them onto each resource when it is created; after that they are ordinary tags on the resource, no longer linked to this setting.
 
-**Only resources created afterwards.** Changing the defaults never changes existing resources. A resource created shortly after a change may still receive the previous set: the services that create resources can take up to 30 seconds to see it. In one configuration, give the resources that must carry the defaults a `depends_on` on this resource, and allow for that delay.
+**Resources created afterwards.** Changing the defaults does not change existing resources, unless `apply_to_existing_on_change` is set (below). A resource created shortly after a change may still receive the previous set: the services that create resources can take up to 30 seconds to see it. In one configuration, give the resources that must carry the defaults a `depends_on` on this resource, and allow for that delay.
+
+**Existing resources.** With `apply_to_existing_on_change = true`, an apply that changes `tags` to a non-empty set also adds the new defaults to the resources the tenant already has, and waits for it (30 minutes by default; `timeouts.create` and `timeouts.update` change that). If the wait runs out while the platform is still working, the apply succeeds with a warning that the apply to existing resources is still running and continues in the background. If the platform cannot start it right now (it is unavailable), the apply also succeeds, with a warning; run `fm tenant default-tags apply` later, since a later `terraform apply` starts it again only when `tags` changes. If the platform refuses it (no permission, the tenant is not provisioned yet, or the defaults are not valid), the apply fails after saving the default tags, so a new resource is tainted and replaced by the next apply. It adds only the default keys a resource is missing: a key the resource already has keeps its value, so changing a default's value does not reach resources that already carry the key. Resources the platform manages (a managed security group, a load balancer or public IP a managed service owns, and their load-balancer children) and the resources inside a managed service are skipped, as is a resource the added tags would push over its tag limit; volumes the platform created together with an instance (its boot volume), instance snapshots and images are not included. Only resources that exist when the apply runs are stamped, so give the resources in the same configuration that must get the defaults a `depends_on` on this resource. Resources that could not be updated are reported as warnings. On a Terraform-managed resource a stamped key appears in `tags_all`, never in `tags`, and plans no diff — but provider versions before v0.62.0 remove it on the resource's next apply, so upgrade every configuration that manages resources in the tenant first.
 
 **A resource's own tags win.** The defaults are merged into the create request's own tags, and a key the request sets itself wins — including a key from the provider's `default_tags`, which the provider sends with every create. On a Terraform-managed resource the tenant's defaults appear in `tags_all`, never in `tags`, and are kept like any other key set outside Terraform.
 
@@ -38,6 +42,8 @@ Manages a tenant's default tags: the tags every taggable resource created in the
 
 **Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
 
+**Not enacted state** — `apply_to_existing_on_change`: a behaviour flag carried in state, not a platform setting the apply pushes: it decides whether an apply that changes `tags` also adds the new defaults to the tenant's existing resources, and a refresh keeps it as configured.
+
 **Platform-invented default** — the tenant's default-tag set: **adopt-as-managed**. Every tenant has exactly one set, empty until someone sets it in the portal, the fm CLI or here. This resource adopts it: creating it replaces whatever set the tenant has (the apply warns, naming the keys it replaced), every apply writes the whole set, and destroying it clears the set.
 
 ## Example Usage
@@ -45,17 +51,25 @@ Manages a tenant's default tags: the tags every taggable resource created in the
 ```terraform
 # Every taggable resource created in the provider's tenant from now on starts
 # with these tags — whoever creates it: the portal, the fm CLI, the API or
-# Terraform. Existing resources are not changed.
+# Terraform.
 resource "frostmoln_tenant_default_tags" "this" {
   tags = {
     environment = "production"
     cost-center = "eu-42"
   }
+
+  # Also add them to the resources the tenant already has, whenever `tags`
+  # changes: only the keys a resource is missing, never changing a value it
+  # already has. Resources the platform manages are skipped.
+  apply_to_existing_on_change = true
 }
 
 # The platform copies the defaults onto a resource when it is created, and can
 # take up to 30 seconds to see a change, so a resource that must carry them
-# depends on this resource. On it they show in tags_all, never in tags.
+# depends on this resource: it is then created after the defaults are set —
+# and after the apply to existing resources, which stamps only what exists
+# when it runs, so without depends_on a resource created alongside may get
+# neither. On it they show in tags_all, never in tags.
 resource "frostmoln_vpc" "main" {
   name = "main"
   cidr = "10.0.0.0/16"
@@ -78,10 +92,24 @@ output "vpc_tags" {
 
 - `tags` (Map of String) The complete set of default tags. Keys missing here are removed from the tenant's defaults on apply, and `{}` keeps the set empty. See the rules above.
 
+### Optional
+
+- `apply_to_existing_on_change` (Boolean) When true, an apply that changes `tags` to a non-empty set also adds the new defaults to the tenant's existing resources and waits for it (30 minutes by default, see `timeouts`): only the keys a resource is missing, never changing a value it already has. Setting or clearing this flag alone changes nothing and starts nothing, and destroying the resource never starts it. A run already in progress is waited for, then the apply starts once. Default `false`.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
+
 ### Read-Only
 
 - `id` (String) The tenant's id: a tenant has exactly one set of default tags.
 - `tenant_id` (String) The tenant whose default tags this manages: the provider's tenant (its `tenant_id`, else the credential's default), as for every other resource. If the provider is later pointed at another tenant, the plan replaces this resource — clearing the old tenant's defaults and setting the new tenant's — and warns, naming both.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the provider waits for the create operation to converge before giving up (e.g. "45m", "2h").
+- `delete` (String) How long the provider waits for the delete to complete before giving up (e.g. "30m").
+- `update` (String) How long the provider waits for an update (resize, in-place change) to converge before giving up (e.g. "30m").
 
 ## Import
 

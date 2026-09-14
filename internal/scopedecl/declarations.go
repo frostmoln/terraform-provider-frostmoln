@@ -468,6 +468,9 @@ var Declarations = map[string]Decl{
 		},
 	},
 	"frostmoln_tenant_default_tags": {
+		EnactsExcept: []Field{
+			{Path: "apply_to_existing_on_change", Why: "a behaviour flag carried in state, not a platform setting the apply pushes: it decides whether an apply that changes `tags` also adds the new defaults to the tenant's existing resources, and a refresh keeps it as configured"},
+		},
 		Defaults: []PlatformDefault{
 			{
 				Name:   "the tenant's default-tag set",

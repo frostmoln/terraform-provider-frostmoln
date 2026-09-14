@@ -557,6 +557,11 @@ type Operation struct {
 	Progress    int    `json:"progress"`
 	CreatedAt   string `json:"createdAt"`
 	CompletedAt string `json:"completedAt,omitempty"`
+	// Result is the completed operation's result, raw: its shape is the
+	// workflow's own (for a tenant default-tags apply, tagsettings.ApplyResult),
+	// and provisioning publishes only allow-listed keys of it. Absent while the
+	// operation runs, and for a workflow that returns nothing.
+	Result json.RawMessage `json:"result,omitempty"`
 }
 
 // GetOperation fetches an async provisioning operation by ID from the

@@ -41,7 +41,11 @@ func tags(kv map[string]tftypes.Value) tftypes.Value {
 
 func value(t *testing.T, id, tenant, tg tftypes.Value) tftypes.Value {
 	t.Helper()
-	return tftypes.NewValue(objType(t), map[string]tftypes.Value{"id": id, "tenant_id": tenant, "tags": tg})
+	return tftypes.NewValue(objType(t), map[string]tftypes.Value{
+		"id": id, "tenant_id": tenant, "tags": tg,
+		"apply_to_existing_on_change": tftypes.NewValue(tftypes.Bool, false),
+		"timeouts":                    tftypes.NewValue(objType(t).AttributeTypes["timeouts"], nil),
+	})
 }
 
 func dyn(t *testing.T, v tftypes.Value) *tfprotov6.DynamicValue {
@@ -139,5 +143,43 @@ func TestPlan_TagChangesUpdateInPlace(t *testing.T) {
 	resp := plan(t, prior, value(t, s(tenantA), s(tenantA), newTags), value(t, null, null, newTags))
 	if len(resp.RequiresReplace) != 0 {
 		t.Fatalf("a tag change must update in place, got replace on %v", resp.RequiresReplace)
+	}
+}
+
+// Flipping apply_to_existing_on_change alone is an in-place update of the flag
+// (never a replacement, which would clear the tenant's defaults), and leaving
+// it out of the configuration plans it as false.
+func TestPlan_ApplyToExistingFlag(t *testing.T) {
+	t.Parallel()
+	b := func(v any) tftypes.Value { return tftypes.NewValue(tftypes.Bool, v) }
+	withFlag := func(v tftypes.Value, flag tftypes.Value) tftypes.Value {
+		var attrs map[string]tftypes.Value
+		_ = v.As(&attrs)
+		attrs["apply_to_existing_on_change"] = flag
+		return tftypes.NewValue(objType(t), attrs)
+	}
+	tg := tags(map[string]tftypes.Value{"env": s("prod")})
+	prior := value(t, s(tenantA), s(tenantA), tg)
+
+	resp := plan(t, prior, withFlag(prior, b(true)), withFlag(value(t, null, null, tg), b(true)))
+	if len(resp.RequiresReplace) != 0 {
+		t.Fatalf("a flag-only change must not replace, got %v", resp.RequiresReplace)
+	}
+	planned, err := resp.PlannedState.Unmarshal(objType(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var attrs map[string]tftypes.Value
+	_ = planned.As(&attrs)
+	if !attrs["apply_to_existing_on_change"].Equal(b(true)) {
+		t.Errorf("planned flag = %v, want true", attrs["apply_to_existing_on_change"])
+	}
+
+	// Omitted from the configuration: its default, false.
+	resp = plan(t, tftypes.NewValue(objType(t), nil), withFlag(value(t, null, null, tg), b(nil)), withFlag(value(t, null, null, tg), b(nil)))
+	planned, _ = resp.PlannedState.Unmarshal(objType(t))
+	_ = planned.As(&attrs)
+	if !attrs["apply_to_existing_on_change"].Equal(b(false)) {
+		t.Errorf("an omitted flag plans %v, want false", attrs["apply_to_existing_on_change"])
 	}
 }

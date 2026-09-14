@@ -45,13 +45,47 @@ func tagsValue(m map[string]string) tftypes.Value {
 	return tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, elems)
 }
 
+// obj is a value of the resource with apply_to_existing_on_change at its
+// default, false.
 func obj(t *testing.T, id, tenant tftypes.Value, tags map[string]string) tftypes.Value {
 	t.Helper()
+	return objFlag(t, id, tenant, tags, flagOff)
+}
+
+var (
+	flagOn  = tftypes.NewValue(tftypes.Bool, true)
+	flagOff = tftypes.NewValue(tftypes.Bool, false)
+)
+
+func objFlag(t *testing.T, id, tenant tftypes.Value, tags map[string]string, applyToExisting tftypes.Value) tftypes.Value {
+	t.Helper()
 	return tftypes.NewValue(tdType(t), map[string]tftypes.Value{
-		"id":        id,
-		"tenant_id": tenant,
-		"tags":      tagsValue(tags),
+		"id":                          id,
+		"tenant_id":                   tenant,
+		"tags":                        tagsValue(tags),
+		"apply_to_existing_on_change": applyToExisting,
+		"timeouts":                    tftypes.NewValue(tdType(t).AttributeTypes["timeouts"], nil),
 	})
+}
+
+// objTimeouts is v with a timeouts block setting create and update ("" = unset).
+func objTimeouts(t *testing.T, v tftypes.Value, create, update string) tftypes.Value {
+	t.Helper()
+	blockType := tdType(t).AttributeTypes["timeouts"]
+	budget := func(s string) tftypes.Value {
+		if s == "" {
+			return tftypes.NewValue(tftypes.String, nil)
+		}
+		return str(s)
+	}
+	var attrs map[string]tftypes.Value
+	if err := v.As(&attrs); err != nil {
+		t.Fatal(err)
+	}
+	attrs["timeouts"] = tftypes.NewValue(blockType, map[string]tftypes.Value{
+		"create": budget(create), "update": budget(update), "delete": tftypes.NewValue(tftypes.String, nil),
+	})
+	return tftypes.NewValue(tdType(t), attrs)
 }
 
 func configured(t *testing.T, f *tagsettingstest.Fake) *tenantDefaultTagsResource {
@@ -348,7 +382,9 @@ func TestModifyPlan_CreateOverExistingDefaultsWarnsListingTheKeys(t *testing.T) 
 	// With the new set not known yet, every current key may be replaced.
 	unknownTags := tftypes.NewValue(tdType(t), map[string]tftypes.Value{
 		"id": unknown, "tenant_id": unknown,
-		"tags": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, tftypes.UnknownValue),
+		"tags":                        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, tftypes.UnknownValue),
+		"apply_to_existing_on_change": flagOff,
+		"timeouts":                    tftypes.NewValue(tdType(t).AttributeTypes["timeouts"], nil),
 	})
 	resp = modifyPlan(t, r, null, unknownTags, unknownTags)
 	if ws := resp.Diagnostics.Warnings(); len(ws) != 1 || !strings.Contains(ws[0].Detail(), `keep="same"`) {

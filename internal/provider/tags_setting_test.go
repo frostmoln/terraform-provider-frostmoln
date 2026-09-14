@@ -60,9 +60,11 @@ func TestTagsIsASettingNeverMergesProviderDefaultTags(t *testing.T) {
 	}
 	config := func(tags map[string]string) tftypes.Value {
 		return tftypes.NewValue(objType, map[string]tftypes.Value{
-			"id":        tftypes.NewValue(tftypes.String, nil),
-			"tenant_id": tftypes.NewValue(tftypes.String, nil),
-			"tags":      stringMap(tags),
+			"id":                          tftypes.NewValue(tftypes.String, nil),
+			"tenant_id":                   tftypes.NewValue(tftypes.String, nil),
+			"tags":                        stringMap(tags),
+			"apply_to_existing_on_change": tftypes.NewValue(tftypes.Bool, nil),
+			"timeouts":                    tftypes.NewValue(objType.AttributeTypes["timeouts"], nil),
 		})
 	}
 	const typeName = "frostmoln_tenant_default_tags"
@@ -80,6 +82,7 @@ func TestTagsIsASettingNeverMergesProviderDefaultTags(t *testing.T) {
 			_ = prior.As(&pa)
 			_ = cfg.As(&ca)
 			ca["id"], ca["tenant_id"] = pa["id"], pa["tenant_id"]
+			ca["apply_to_existing_on_change"] = pa["apply_to_existing_on_change"]
 			proposed = tftypes.NewValue(objType, ca)
 		}
 		pr, err := srv.PlanResourceChange(ctx, &tfprotov6.PlanResourceChangeRequest{

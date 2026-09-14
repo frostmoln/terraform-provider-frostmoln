@@ -18,7 +18,12 @@
 //     omits it);
 //   - a tenant's default-tag set is replaced WHOLE by a PUT, a body without
 //     `tags` or with a null value is a 400 (identity's defaultTagsRequest), and
-//     a tenant the caller cannot reach answers the nested 403.
+//     a tenant the caller cannot reach answers the nested 403;
+//   - provisioning's apply route runs ONE apply per tenant at a time: a POST
+//     while a run is in progress answers 409 APPLY_IN_PROGRESS naming it, and
+//     every run of a tenant has the same operation id (the workflow id is
+//     per tenant), which the operations route answers for the LATEST run. A run
+//     applies the defaults as they are when it STARTS.
 package tagsettingstest
 
 import (
@@ -83,6 +88,24 @@ type Fake struct {
 	// nested 403 — a key without organizations:read.
 	DenyTenantRoute bool
 
+	// ApplyOutcome is how the next apply run ENDS: "" or "completed" (with a
+	// result), or "failed". The platform has no other terminal status.
+	ApplyOutcome string
+	// ApplyFailures are the failed resources a completed run reports.
+	ApplyFailures []ApplyFailure
+	// ApplySkipped is how many resources a completed run skipped as platform-managed.
+	ApplySkipped int
+	// ApplyPolls is how many reads of a run's operation answer "running" before
+	// it ends (0: it has ended by the first read).
+	ApplyPolls int
+	// RefuseApply, when non-zero, answers every apply POST with this status and
+	// provisioning's body for it (503 SERVICE_UNAVAILABLE, 403 FORBIDDEN, 400
+	// TENANT_NOT_PROVISIONED, 422 INVALID_DEFAULT_TAGS), starting nothing.
+	RefuseApply int
+	// ForeignRestarts is how many times, when a run started elsewhere
+	// (StartForeignApply) ends, another client starts a new one at once.
+	ForeignRestarts int
+
 	Server *httptest.Server
 
 	mu       sync.Mutex
@@ -90,6 +113,38 @@ type Fake struct {
 	defaults map[string]map[string]string // tenant -> default tags
 	requests []Request
 	clock    int
+	applies  map[string]*applyRun // operation id -> the latest run
+}
+
+// ApplyFailure is one failed resource an apply run reports.
+type ApplyFailure struct {
+	ResourceType string `json:"resourceType"`
+	ResourceID   string `json:"resourceId"`
+	Reason       string `json:"reason"`
+	Message      string `json:"message"`
+}
+
+// applyRun is one apply run: running until pollsLeft reaches zero, then ended
+// as outcome.
+type applyRun struct {
+	foreign   bool
+	pollsLeft int
+	outcome   string
+	applied   map[string]string
+	failures  []ApplyFailure
+	skipped   int
+}
+
+// ApplyOperationID is the operation id of every apply run of a tenant.
+func ApplyOperationID(tenantID string) string { return "apply-default-tags-" + tenantID }
+
+// StartForeignApply starts an apply run as another client would: still
+// running for polls reads of its operation, then ending as outcome.
+func (f *Fake) StartForeignApply(tenantID string, polls int, outcome string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.applies[ApplyOperationID(tenantID)] = &applyRun{foreign: true, pollsLeft: polls, outcome: outcome,
+		applied: copyTags(f.defaults[tenantID])}
 }
 
 // New starts a fake whose tenant is owned by one organization, which reports
@@ -102,6 +157,7 @@ func New(t *testing.T) *Fake {
 		ReportOrganization: true,
 		orgs:               map[string]map[string]*Rule{},
 		defaults:           map[string]map[string]string{},
+		applies:            map[string]*applyRun{},
 	}
 	f.orgs[f.OrgID] = map[string]*Rule{}
 	f.defaults[f.TenantID] = map[string]string{}
@@ -340,6 +396,11 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, resp)
 	case len(segs) == 4 && segs[0] == "v1" && segs[1] == "tenants" && segs[3] == "default-tags":
 		f.serveDefaults(w, r, segs[2], body)
+	case len(segs) == 5 && segs[0] == "v1" && segs[1] == "tenants" && segs[3] == "default-tags" && segs[4] == "apply" &&
+		r.Method == http.MethodPost:
+		f.serveApply(w, segs[2])
+	case len(segs) == 5 && segs[0] == "v1" && segs[1] == "tenants" && segs[3] == "operations" && r.Method == http.MethodGet:
+		f.serveOperation(w, segs[2], segs[4])
 	case len(segs) >= 4 && segs[0] == "v1" && segs[1] == "organizations" && segs[3] == "tag-colors":
 		f.serveOrg(w, r, segs, body)
 	default:
@@ -485,4 +546,92 @@ func (f *Fake) serveDefaults(w http.ResponseWriter, r *http.Request, tenantID st
 	default:
 		nested(w, http.StatusNotFound, "PATH_NOT_ROUTED", "no route", nil)
 	}
+}
+
+// serveApply is POST /v1/tenants/{tid}/default-tags/apply (provisioning).
+func (f *Fake) serveApply(w http.ResponseWriter, tenantID string) {
+	if _, reachable := f.defaults[tenantID]; !reachable {
+		nested(w, http.StatusForbidden, "FORBIDDEN",
+			"you must be an owner or admin of the organization that owns this tenant to apply its default tags", nil)
+		return
+	}
+	if f.RefuseApply != 0 {
+		code := map[int]string{
+			http.StatusServiceUnavailable: "SERVICE_UNAVAILABLE", http.StatusForbidden: "FORBIDDEN",
+			http.StatusBadRequest: "TENANT_NOT_PROVISIONED", http.StatusUnprocessableEntity: "INVALID_DEFAULT_TAGS",
+		}[f.RefuseApply]
+		if code == "" {
+			code = "INTERNAL_ERROR"
+		}
+		nested(w, f.RefuseApply, code, "refused by the fake", nil)
+		return
+	}
+	id := ApplyOperationID(tenantID)
+	if run, ok := f.applies[id]; ok && run.pollsLeft > 0 {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": map[string]any{
+			"code": "APPLY_IN_PROGRESS", "message": "an apply of this tenant's default tags is already in progress",
+			"operationId": id,
+		}})
+		return
+	}
+	outcome := f.ApplyOutcome
+	if outcome == "" {
+		outcome = "completed"
+	}
+	f.applies[id] = &applyRun{
+		pollsLeft: f.ApplyPolls, outcome: outcome, applied: copyTags(f.defaults[tenantID]),
+		failures: append([]ApplyFailure(nil), f.ApplyFailures...), skipped: f.ApplySkipped,
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"operationId": id, "status": "pending", "resourceType": "tenant_default_tags", "createdAt": f.tick(),
+	})
+}
+
+// serveOperation is GET /v1/tenants/{tid}/operations/{id}, for apply runs.
+func (f *Fake) serveOperation(w http.ResponseWriter, tenantID, id string) {
+	run, ok := f.applies[id]
+	if !ok || id != ApplyOperationID(tenantID) {
+		nested(w, http.StatusNotFound, "NOT_FOUND", "operation not found", nil)
+		return
+	}
+	op := map[string]any{"operationId": id, "resourceType": "tenant_default_tags", "createdAt": f.tick()}
+	if run.pollsLeft > 0 {
+		run.pollsLeft--
+		op["status"], op["progress"], op["currentStep"] = "running", 40, "instance (8/14)"
+		writeJSON(w, http.StatusOK, op)
+		return
+	}
+	op["status"], op["progress"] = run.outcome, 100
+	if run.foreign && f.ForeignRestarts > 0 {
+		// The run this read reports has ended; another client starts the next.
+		f.ForeignRestarts--
+		f.applies[id] = &applyRun{foreign: true, pollsLeft: 1 << 20, outcome: "completed", applied: copyTags(f.defaults[tenantID])}
+	}
+	switch run.outcome {
+	case "completed":
+		failures := run.failures
+		if failures == nil {
+			failures = []ApplyFailure{}
+		}
+		skipped := make([]map[string]any, 0, run.skipped)
+		for i := 0; i < run.skipped; i++ {
+			skipped = append(skipped, map[string]any{"resourceType": "security_group",
+				"resourceId": fmt.Sprintf("sg-managed-%d", i), "reason": "platform_managed"})
+		}
+		updated := 3
+		op["result"] = map[string]any{
+			"appliedTags": run.applied,
+			"summary": map[string]int{"examined": updated + len(failures) + run.skipped, "updated": updated,
+				"unchanged": 0, "skipped": run.skipped, "failed": len(failures)},
+			"byType":            map[string]any{},
+			"failures":          failures,
+			"failuresTruncated": false,
+			"skipped":           skipped,
+			"skippedTruncated":  false,
+		}
+	case "failed":
+		op["error"] = "the tenant's default tags could not be read right now, so none were applied; run the apply again shortly"
+		op["errorCode"] = "Unavailable"
+	}
+	writeJSON(w, http.StatusOK, op)
 }

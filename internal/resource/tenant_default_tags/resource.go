@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -20,6 +21,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tagsettings"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
@@ -42,6 +44,12 @@ type TenantDefaultTagsModel struct {
 	ID       types.String `tfsdk:"id"`
 	TenantID types.String `tfsdk:"tenant_id"`
 	Tags     types.Map    `tfsdk:"tags"`
+	// ApplyToExistingOnChange is a provider-side behaviour flag, not a platform
+	// setting: it is carried in state and never read back from the platform.
+	ApplyToExistingOnChange types.Bool `tfsdk:"apply_to_existing_on_change"`
+	// Timeouts budgets the wait for the apply to existing resources: create and
+	// update; destroy never applies, so its budget is never consulted.
+	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
 func (r *tenantDefaultTagsResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -54,10 +62,31 @@ func (r *tenantDefaultTagsResource) Schema(_ context.Context, _ resource.SchemaR
 			"starts with, whoever creates it — the portal, the `fm` CLI, the API or Terraform. The platform copies " +
 			"them onto each resource when it is created; after that they are ordinary tags on the resource, no " +
 			"longer linked to this setting." +
-			"\n\n**Only resources created afterwards.** Changing the defaults never changes existing resources. A " +
-			"resource created shortly after a change may still receive the previous set: the services that create " +
-			"resources can take up to 30 seconds to see it. In one configuration, give the resources that must " +
-			"carry the defaults a `depends_on` on this resource, and allow for that delay." +
+			"\n\n**Resources created afterwards.** Changing the defaults does not change existing resources, unless " +
+			"`apply_to_existing_on_change` is set (below). A resource created shortly after a change may still " +
+			"receive the previous set: the services that create resources can take up to 30 seconds to see it. In " +
+			"one configuration, give the resources that must carry the defaults a `depends_on` on this resource, " +
+			"and allow for that delay." +
+			"\n\n**Existing resources.** With `apply_to_existing_on_change = true`, an apply that changes `tags` to " +
+			"a non-empty set also adds the new defaults to the resources the tenant already has, and waits for it " +
+			"(30 minutes by default; `timeouts.create` and `timeouts.update` change that). If the wait runs out while " +
+			"the platform is still working, the apply succeeds with a warning that the apply to existing resources " +
+			"is still running and continues in the background. If the platform cannot start it right now (it is " +
+			"unavailable), the apply also succeeds, with a warning; run `fm tenant default-tags apply` later, since " +
+			"a later `terraform apply` starts it again only when `tags` changes. If the platform refuses it (no " +
+			"permission, the tenant is not provisioned yet, or the defaults are not valid), the apply fails after " +
+			"saving the default tags, so a new resource is tainted and replaced by the next apply. It adds only the default keys a resource is missing: a key the resource already has " +
+			"keeps its value, so changing a default's value does not reach resources that already carry the key. " +
+			"Resources the platform manages (a managed security group, a load balancer or public IP a managed " +
+			"service owns, and their load-balancer children) and the resources inside a managed service are " +
+			"skipped, as is a resource the added tags would push over its tag limit; volumes the platform created " +
+			"together with an instance (its boot volume), instance snapshots and images are not included. Only " +
+			"resources that exist when the apply runs are stamped, so give the resources in the same configuration " +
+			"that must get the defaults a `depends_on` on this resource. Resources that could not be updated are " +
+			"reported as warnings. On a Terraform-managed resource " +
+			"a stamped key appears in " +
+			"`tags_all`, never in `tags`, and plans no diff — but provider versions before v0.62.0 remove it on the " +
+			"resource's next apply, so upgrade every configuration that manages resources in the tenant first." +
 			"\n\n**A resource's own tags win.** The defaults are merged into the create request's own tags, and a " +
 			"key the request sets itself wins — including a key from the provider's `default_tags`, which the " +
 			"provider sends with every create. On a Terraform-managed resource the tenant's defaults appear in " +
@@ -107,8 +136,37 @@ func (r *tenantDefaultTagsResource) Schema(_ context.Context, _ resource.SchemaR
 				Required:    true,
 				Validators:  []validator.Map{tagsettings.DefaultTagsValidator()},
 			},
+			"apply_to_existing_on_change": schema.BoolAttribute{
+				Description: "When true, an apply that changes `tags` to a non-empty set also adds the new defaults " +
+					"to the tenant's existing resources and waits for it (30 minutes by default, see `timeouts`): only " +
+					"the keys a resource is missing, never changing a value it already has. Setting or clearing this " +
+					"flag alone changes " +
+					"nothing and starts nothing, and destroying the resource never starts it. A run already in " +
+					"progress is waited for, then the apply starts once. Default `false`.",
+				Optional: true,
+				Computed: true,
+				Default:  booldefault.StaticBool(false),
+			},
+		},
+		Blocks: map[string]schema.Block{
+			// Budgets only the wait for the apply to existing resources. A
+			// timeouts change is an in-place no-op on the platform.
+			"timeouts": timeouts.Schema(),
 		},
 	}
+}
+
+// applyBudgets resolves the timeouts block onto the wait for the apply to
+// existing resources, defaulting each verb to applyWaitTimeout.
+func applyBudgets(m *timeouts.Model) timeouts.Budgets {
+	defaults := timeouts.Uniform(applyWaitTimeout)
+	budgets, err := m.Resolve(defaults)
+	if err != nil {
+		// Unreachable via HCL (the block validator refuses a bad duration at
+		// plan time); degrade to the default rather than fail a wait.
+		return defaults
+	}
+	return budgets
 }
 
 func (r *tenantDefaultTagsResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -320,7 +378,16 @@ func (r *tenantDefaultTagsResource) Create(ctx context.Context, req resource.Cre
 		resp.Diagnostics.AddError("Failed to record tenant default tags", err.Error())
 		return
 	}
+	// State FIRST: the defaults were written, whatever the apply below does. An
+	// apply that fails is an error raised after this, so the create is tainted
+	// with its state kept, and the replacement runs the apply again.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if plan.ApplyToExistingOnChange.ValueBool() && len(stored) > 0 {
+		r.applyToExisting(ctx, tenantID, applyBudgets(plan.Timeouts).Create, &resp.Diagnostics)
+	}
 }
 
 func (r *tenantDefaultTagsResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -343,6 +410,12 @@ func (r *tenantDefaultTagsResource) Read(ctx context.Context, req resource.ReadR
 		resp.Diagnostics.AddError("Failed to record tenant default tags", err.Error())
 		return
 	}
+	// The flag is the configuration's, never the platform's: a refresh keeps it.
+	// Null — after an import, or in state written by a provider that predates
+	// the attribute — is its default, so neither plans a flag-only update.
+	if state.ApplyToExistingOnChange.IsNull() || state.ApplyToExistingOnChange.IsUnknown() {
+		state.ApplyToExistingOnChange = types.BoolValue(false)
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -355,6 +428,16 @@ func (r *tenantDefaultTagsResource) Update(ctx context.Context, req resource.Upd
 	}
 	// tenant_id cannot differ from state here: a change replaces.
 	tenantID := r.tenantOf(&state)
+
+	// A plan that changes only apply_to_existing_on_change (D8) writes nothing
+	// and starts nothing: the platform already holds exactly these tags (the
+	// refresh read them), and the flag is not a platform setting.
+	if plan.Tags.Equal(state.Tags) {
+		plan.ID, plan.TenantID, plan.Tags = state.ID, state.TenantID, state.Tags
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		return
+	}
+
 	tags, err := desired(ctx, &plan)
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid default tags", err.Error())
@@ -369,11 +452,22 @@ func (r *tenantDefaultTagsResource) Update(ctx context.Context, req resource.Upd
 		resp.Diagnostics.AddError("Failed to record tenant default tags", err.Error())
 		return
 	}
+	// State first, as in Create: the new defaults are written whatever the apply
+	// below does. An update error taints nothing, so a failed apply is not
+	// retried by the next plan — the error says how to run it again.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if plan.ApplyToExistingOnChange.ValueBool() && len(stored) > 0 {
+		r.applyToExisting(ctx, tenantID, applyBudgets(plan.Timeouts).Update, &resp.Diagnostics)
+	}
 }
 
 // Delete clears the set: a tenant always has one, so "destroy" means "no
-// defaults", written as {"tags": {}}.
+// defaults", written as {"tags": {}}. It never applies anything to existing
+// resources, whatever apply_to_existing_on_change says: clearing the defaults
+// removes no tag from any resource.
 func (r *tenantDefaultTagsResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state TenantDefaultTagsModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -409,4 +503,5 @@ func (r *tenantDefaultTagsResource) ImportState(ctx context.Context, req resourc
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), tenantID)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("tenant_id"), tenantID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("apply_to_existing_on_change"), false)...)
 }
