@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.65.1] - 2026-09-14
+
+### 🐛 Bug Fixes
+
+- *(security_group)* Description is persisted; name and description lengths are checked at plan (#545)
+
 ## [0.65.0] - 2026-09-14
 
 ### 🚀 Features
