@@ -65,19 +65,10 @@ type mock struct {
 	// addonsRespond, when set, answers GET .../addons.
 	addonsRespond func() (int, any)
 
-	// creatingGets, when > 0, makes the first creatingGets GETs of the cluster and of the
-	// initial pool report "creating", so the create's waits take real time.
-	creatingGets int
-	// httpTimeout, when > 0, sets the real HTTP client's Timeout (the provider's is 60s).
-	httpTimeout time.Duration
-
-	mu          sync.Mutex
-	putBodies   [][]byte
-	firstPutAt  time.Time
-	postBody    []byte
-	addonGets   int
-	clusterGets int
-	poolGets    int
+	mu        sync.Mutex
+	putBodies [][]byte
+	postBody  []byte
+	addonGets int
 }
 
 func readBody(t *testing.T, r *http.Request) []byte {
@@ -105,27 +96,8 @@ func (m *mock) serve(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		m.putBodies = append(m.putBodies, raw)
 		n := len(m.putBodies)
-		if n == 1 {
-			m.firstPutAt = time.Now()
-		}
 		m.mu.Unlock()
 		status, body := m.putRespond(n)
-		if status == 0 {
-			// A transport failure: drop the connection without writing a response, so the
-			// real client sees an error that is not an APIError.
-			hj, ok := w.(http.Hijacker)
-			if !ok {
-				t.Errorf("response writer cannot hijack")
-				return
-			}
-			conn, _, err := hj.Hijack()
-			if err != nil {
-				t.Errorf("hijack: %v", err)
-				return
-			}
-			_ = conn.Close()
-			return
-		}
 		w.WriteHeader(status)
 		writeJSON(t, w, body)
 	case r.Method == http.MethodGet && r.URL.Path == base+"/c-1/addons" && m.addonsRespond != nil:
@@ -138,12 +110,8 @@ func (m *mock) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Path == base+"/c-1":
 		c := runningCluster()
 		m.mu.Lock()
-		m.clusterGets++
-		gets, n := m.clusterGets, len(m.putBodies)
+		n := len(m.putBodies)
 		m.mu.Unlock()
-		if gets <= m.creatingGets {
-			c.Status = "creating"
-		}
 		if m.status != nil {
 			// An empty status stands for a FAILED read: the platform answers 500.
 			if c.Status = m.status(n); c.Status == "" {
@@ -156,15 +124,7 @@ func (m *mock) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Path == base+"/c-1/node-pools":
 		writeJSON(t, w, apiNodePoolList{NodePools: []apiNodePool{initialPool(statusActive)}})
 	case r.Method == http.MethodGet && r.URL.Path == base+"/c-1/node-pools/np-1":
-		m.mu.Lock()
-		m.poolGets++
-		gets := m.poolGets
-		m.mu.Unlock()
-		p := initialPool(statusActive)
-		if gets <= m.creatingGets {
-			p.Status = "creating"
-		}
-		writeJSON(t, w, p)
+		writeJSON(t, w, initialPool(statusActive))
 	case r.Method == http.MethodGet && r.URL.Path == base+"/c-1/kubeconfig":
 		writeJSON(t, w, apiKubeconfig{Kubeconfig: "kubeconfig-yaml"})
 	case strings.HasSuffix(r.URL.Path, "/events"):
@@ -181,26 +141,17 @@ func (m *mock) puts() [][]byte {
 	return append([][]byte(nil), m.putBodies...)
 }
 
-// start serves the mock and returns a resource wired to it; budget > 0 shrinks every
-// wait budget (the timeouts-block default) for tests that exhaust a deadline.
-func (m *mock) start(budget time.Duration) (*kubernetesClusterResource, func()) {
+// start serves the mock and returns a resource wired to it.
+func (m *mock) start() (*kubernetesClusterResource, func()) {
 	server := httptest.NewServer(http.HandlerFunc(m.serve))
-	hc := server.Client()
-	if m.httpTimeout > 0 {
-		hc = &http.Client{Timeout: m.httpTimeout, Transport: hc.Transport}
-	}
-	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(hc))
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client()))
 	c.SetTenantIDForTest("t-1")
-	r := testResource(c)
-	if budget > 0 {
-		r.pollTimeout = budget
-	}
-	return r, server.Close
+	return testResource(c), server.Close
 }
 
 func runUpdate(t *testing.T, m *mock, stateM, planM KubernetesClusterModel) resource.UpdateResponse {
 	t.Helper()
-	r, stop := m.start(0)
+	r, stop := m.start()
 	defer stop()
 	state := buildState(t, stateM)
 	plan := buildPlan(t, planM)
@@ -224,9 +175,9 @@ func pinnedCreatePlan() KubernetesClusterModel {
 	}
 }
 
-func runCreate(t *testing.T, m *mock, budget time.Duration) resource.CreateResponse {
+func runCreate(t *testing.T, m *mock) resource.CreateResponse {
 	t.Helper()
-	r, stop := m.start(budget)
+	r, stop := m.start()
 	defer stop()
 	plan := buildPlan(t, pinnedCreatePlan())
 	resp := resource.CreateResponse{State: emptyState(t)}
@@ -236,7 +187,7 @@ func runCreate(t *testing.T, m *mock, budget time.Duration) resource.CreateRespo
 
 func runRead(t *testing.T, m *mock, stateM KubernetesClusterModel) resource.ReadResponse {
 	t.Helper()
-	r, stop := m.start(0)
+	r, stop := m.start()
 	defer stop()
 	state := buildState(t, stateM)
 	resp := resource.ReadResponse{State: state}
@@ -353,8 +304,7 @@ func TestUpdate_UnconfiguredConcurrentPinNeverSent(t *testing.T) {
 	}
 }
 
-// FIX 8: a state with no recorded pins (import, or an untainted create whose pin PUT
-// failed) sends EVERY configured pin.
+// FIX 8: a state with no recorded pins (an import) sends EVERY configured pin.
 func TestUpdate_NullStatePinsSendsEveryConfiguredPin(t *testing.T) {
 	m := &mock{t: t, putRespond: okPut(nil)}
 	stateM := stateModel()
@@ -578,114 +528,58 @@ func TestUpdate_UnchangedPinsOnExistingAddonsSendNothing(t *testing.T) {
 	}
 }
 
-// RE-CHECK 2: a cluster being torn down (`deleting`) stops the retry at once, on both paths.
+// RE-CHECK 2: a cluster being torn down (`deleting`) stops the retry at once.
 func TestPutAddons_DeletingClusterStopsAtOnce(t *testing.T) {
-	deleting := func(puts int) string {
-		if puts > 0 {
-			return statusDeleting
-		}
-		return statusRunning
-	}
-	t.Run("update", func(t *testing.T) {
-		m := &mock{t: t, putRespond: apiErrorBody(http.StatusConflict, "invalid_state", "the cluster is deleting"), status: deleting}
-		planM := stateModel()
-		planM.Addons = addonSet(eso, "external-dns")
-		if resp := runUpdate(t, m, stateModel(), planM); !resp.Diagnostics.HasError() {
-			t.Fatal("expected an error")
-		}
-		if n := len(m.puts()); n != 1 {
-			t.Errorf("expected no retry against a deleting cluster, got %d PUTs", n)
-		}
-	})
-	t.Run("create", func(t *testing.T) {
-		m := &mock{t: t, putRespond: apiErrorBody(http.StatusServiceUnavailable, "internal_error", "down"), status: deleting}
-		if resp := runCreate(t, m, time.Second); !resp.Diagnostics.HasError() {
-			t.Fatal("expected an error")
-		}
-		if n := len(m.puts()); n != 1 {
-			t.Errorf("expected no retry against a deleting cluster, got %d PUTs", n)
-		}
-	})
-}
-
-// RE-CHECK 3: on the create path a gateway blip (502/504) or a transport error is retried
-// rather than tainting a running cluster.
-func TestCreate_RetriesGatewayAndTransportBlips(t *testing.T) {
-	for name, first := range map[string]func(int) (int, any){
-		"502":             apiErrorBody(http.StatusBadGateway, "bad_gateway", "upstream connect error"),
-		"504":             apiErrorBody(http.StatusGatewayTimeout, "gateway_timeout", "upstream request timeout"),
-		"transport error": func(int) (int, any) { return 0, nil },
-	} {
-		t.Run(name, func(t *testing.T) {
-			m := &mock{t: t, putRespond: func(n int) (int, any) {
-				if n == 1 {
-					return first(n)
-				}
-				return okPut(nil)(n)
-			}}
-			resp := runCreate(t, m, 0)
-			if resp.Diagnostics.HasError() {
-				t.Fatalf("create failed: %v", resp.Diagnostics.Errors())
-			}
-			if n := len(m.puts()); n != 2 {
-				t.Errorf("expected the blip to be retried once, got %d PUTs", n)
-			}
-		})
-	}
-}
-
-// BATCH B: net/http's client Timeout surfaces as a *url.Error whose error Is
-// context.DeadlineExceeded. It is a slow-response blip, not a cancelled operation, so the
-// create path retries it instead of tainting the cluster. Real client, real timeout.
-func TestCreate_RetriesHTTPClientTimeout(t *testing.T) {
 	m := &mock{
-		t:           t,
-		httpTimeout: 100 * time.Millisecond,
-		putRespond: func(n int) (int, any) {
-			if n == 1 {
-				time.Sleep(400 * time.Millisecond) // outlives the client's Timeout
+		t:          t,
+		putRespond: apiErrorBody(http.StatusConflict, "invalid_state", "the cluster is deleting"),
+		status: func(puts int) string {
+			if puts > 0 {
+				return statusDeleting
 			}
-			return okPut(nil)(n)
+			return statusRunning
 		},
 	}
-	resp := runCreate(t, m, 0)
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("a client timeout must be retried, not taint the create: %v", resp.Diagnostics.Errors())
+	planM := stateModel()
+	planM.Addons = addonSet(eso, "external-dns")
+	if resp := runUpdate(t, m, stateModel(), planM); !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error")
 	}
-	if n := len(m.puts()); n != 2 {
-		t.Errorf("expected the timed-out PUT to be retried once, got %d PUTs", n)
-	}
-}
-
-// BATCH B: which errors without a usable response the create path retries — a transport
-// failure (*url.Error, client timeout included) yes; anything else (an expired session, a
-// failed credential refresh) no, because waiting will not clear it.
-func TestRetryableAddonsPut_ErrorsWithoutAResponse(t *testing.T) {
-	clientTimeout := fmt.Errorf("request failed: %w",
-		&url.Error{Op: "Put", URL: "https://api.example/addons", Err: context.DeadlineExceeded})
-	sessionExpired := fmt.Errorf("refreshing credentials: %w", errors.New("session expired"))
-
-	if !retryableAddonsPut(clientTimeout, true) {
-		t.Error("a client timeout (*url.Error) must be retried on the create path")
-	}
-	if retryableAddonsPut(clientTimeout, false) {
-		t.Error("the update path must not retry a transport error")
-	}
-	if retryableAddonsPut(sessionExpired, true) {
-		t.Error("an error that is not a transport failure must not be retried")
+	if n := len(m.puts()); n != 1 {
+		t.Errorf("expected no retry against a deleting cluster, got %d PUTs", n)
 	}
 }
 
-// RE-CHECK 3: a cancelled context is the caller stopping, never a blip to retry.
+// Only a 409 `invalid_state` clears on its own. A transport failure, a 5xx or any other
+// error fails the update at once: an update error taints nothing, so re-applying is safe.
+func TestRetryableAddonsPut_OnlyInvalidStateIsRetried(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"409 invalid_state": {&client.APIError{StatusCode: http.StatusConflict, Code: "invalid_state"}, true},
+		"409 conflict":      {&client.APIError{StatusCode: http.StatusConflict, Code: "conflict"}, false},
+		"503":               {&client.APIError{StatusCode: http.StatusServiceUnavailable, Code: "internal_error"}, false},
+		"client timeout": {fmt.Errorf("request failed: %w",
+			&url.Error{Op: "Put", URL: "https://api.example/addons", Err: context.DeadlineExceeded}), false},
+		"session expired": {fmt.Errorf("refreshing credentials: %w", errors.New("session expired")), false},
+	} {
+		if got := retryableAddonsPut(tc.err); got != tc.want {
+			t.Errorf("%s: retryable = %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+// RE-CHECK 3: a cancelled context is the caller stopping, never a conflict to retry.
 func TestPutAddons_CancelledContextReturnsAtOnce(t *testing.T) {
-	m := &mock{t: t, putRespond: apiErrorBody(http.StatusServiceUnavailable, "internal_error", "down")}
-	r, stop := m.start(0)
+	m := &mock{t: t, putRespond: apiErrorBody(http.StatusConflict, "invalid_state", "not running")}
+	r, stop := m.start()
 	defer stop()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	start := time.Now()
-	_, err := r.putAddons(ctx, "c-1", apiUpdateClusterAddonsRequest{Addons: []string{eso}}, time.Now().Add(time.Minute), true)
+	_, err := r.putAddons(ctx, "c-1", apiUpdateClusterAddonsRequest{Addons: []string{eso}}, time.Now().Add(time.Minute))
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("err = %v, want context.Canceled", err)
 	}
@@ -697,173 +591,47 @@ func TestPutAddons_CancelledContextReturnsAtOnce(t *testing.T) {
 	}
 }
 
-// --- Create: pins ride a PUT after the cluster is running (fix 1) ---
+// --- Create: pins ride the create request ---
 
-func TestCreate_PinsAppliedAfterRunning(t *testing.T) {
-	m := &mock{t: t, putRespond: okPut(map[string]string{eso: "v2", "other": "v7"})}
-	resp := runCreate(t, m, 0)
+// The configured pins reach the POST exactly as configured, and Create issues NO
+// PUT .../addons: the post-create pin PUT and its taint/untaint error paths are gone.
+func TestCreate_PinsRideTheCreateRequestAndNoAddonsPut(t *testing.T) {
+	m := &mock{t: t, putRespond: okPut(nil)}
+	resp := runCreate(t, m)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("create failed: %v", resp.Diagnostics.Errors())
 	}
 	m.mu.Lock()
 	postBody := m.postBody
 	m.mu.Unlock()
-	if bytes.Contains(postBody, []byte(`"versions"`)) {
-		t.Errorf("create takes no versions, got %s", postBody)
+	var body apiCreateClusterRequest
+	if err := json.Unmarshal(postBody, &body); err != nil {
+		t.Fatalf("decode POST body %s: %v", postBody, err)
 	}
-	puts := m.puts()
-	if len(puts) != 1 {
-		t.Fatalf("expected 1 PUT, got %d", len(puts))
+	if len(body.Versions) != 1 || body.Versions[eso] != "v2" {
+		t.Errorf("POST versions = %v, want exactly the configured {%s: v2}", body.Versions, eso)
 	}
-	var body apiUpdateClusterAddonsRequest
-	if err := json.Unmarshal(puts[0], &body); err != nil {
-		t.Fatalf("decode PUT: %v", err)
-	}
-	if len(body.Addons) != 1 || body.Addons[0] != eso || len(body.Versions) != 1 || body.Versions[eso] != "v2" {
-		t.Errorf("PUT body = %+v, want the configured addons and pins", body)
+	if n := len(m.puts()); n != 0 {
+		t.Errorf("create must not PUT .../addons, got %d PUTs", n)
 	}
 	if st := pinsIn(t, resp.State); len(st) != 1 || st[eso] != "v2" {
 		t.Errorf("state addon_versions = %v, want the configured map only", st)
 	}
 }
 
-// FIX 1: a 503 on the create path is retried with the IDENTICAL body.
-func TestCreate_Retries503ThenSucceeds(t *testing.T) {
-	m := &mock{t: t, putRespond: func(n int) (int, any) {
-		if n == 1 {
-			return apiErrorBody(http.StatusServiceUnavailable, "internal_error", "deployment in progress")(n)
-		}
-		return okPut(nil)(n)
-	}}
-	resp := runCreate(t, m, 0)
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("create failed: %v", resp.Diagnostics.Errors())
-	}
-	puts := m.puts()
-	if len(puts) != 2 {
-		t.Fatalf("expected the 503 to be retried once, got %d PUTs", len(puts))
-	}
-	if !bytes.Equal(puts[0], puts[1]) {
-		t.Errorf("the retry must re-send the identical body:\n%s\n%s", puts[0], puts[1])
-	}
-}
-
-// FIX 1: a pin PUT that never succeeds stops at the create's deadline and says untaint,
-// NOT "re-applying is safe" (a re-apply would replace the tainted cluster). State records
-// no pins, so the apply after untaint sends every configured pin.
-func TestCreate_PinPutFailsForGood(t *testing.T) {
-	for name, tc := range map[string]struct {
-		respond func(int) (int, any)
-		budget  time.Duration
-		minPuts int
-	}{
-		"always 503 until the deadline":           {apiErrorBody(http.StatusServiceUnavailable, "internal_error", "down"), time.Second, 2},
-		"always invalid_state until the deadline": {apiErrorBody(http.StatusConflict, "invalid_state", "not running"), time.Second, 2},
-		"a non-retryable 400":                     {apiErrorBody(http.StatusBadRequest, "invalid_input", "version not published"), 0, 1},
-	} {
-		t.Run(name, func(t *testing.T) {
-			m := &mock{t: t, putRespond: tc.respond}
-			start := time.Now()
-			resp := runCreate(t, m, tc.budget)
-			if !resp.Diagnostics.HasError() {
-				t.Fatal("expected an error")
-			}
-			if elapsed := time.Since(start); elapsed > 10*time.Second {
-				t.Errorf("retries did not stop at the deadline: %s", elapsed)
-			}
-			if n := len(m.puts()); n < tc.minPuts {
-				t.Errorf("expected at least %d PUTs, got %d", tc.minPuts, n)
-			}
-			detail := resp.Diagnostics.Errors()[0].Detail()
-			if !strings.Contains(detail, "terraform untaint") {
-				t.Errorf("error must say to untaint, got %q", detail)
-			}
-			if strings.Contains(detail, "Re-applying is safe") {
-				t.Errorf("error must not say re-applying is safe on a tainted create, got %q", detail)
-			}
-			if st := pinsIn(t, resp.State); st != nil {
-				t.Errorf("state addon_versions = %v, want null (pins not applied)", st)
-			}
-		})
-	}
-}
-
-// FIX 1: between retries the cluster is re-read, and an errored cluster stops at once.
-func TestCreate_StopsAtOnceWhenClusterErrors(t *testing.T) {
-	m := &mock{
-		t:          t,
-		putRespond: apiErrorBody(http.StatusServiceUnavailable, "internal_error", "down"),
-		status: func(puts int) string {
-			if puts > 0 {
-				return statusError
-			}
-			return statusRunning
-		},
-	}
-	resp := runCreate(t, m, time.Second)
+// A create whose cluster never reaches running fails (and is tainted), but its orphan-guard
+// state still records the pins: the create request that the platform accepted carried them.
+func TestCreate_FailedWaitKeepsTheSentPinsInState(t *testing.T) {
+	m := &mock{t: t, putRespond: okPut(nil), status: func(int) string { return statusError }}
+	resp := runCreate(t, m)
 	if !resp.Diagnostics.HasError() {
-		t.Fatal("expected an error")
+		t.Fatal("expected the create to fail on an errored cluster")
 	}
-	if n := len(m.puts()); n != 1 {
-		t.Errorf("expected no retry against an errored cluster, got %d PUTs", n)
+	if n := len(m.puts()); n != 0 {
+		t.Errorf("create must not PUT .../addons, got %d PUTs", n)
 	}
-}
-
-// FIX 6: create path, same rule.
-func TestCreate_UnreadableSuccessBodyIsWarning(t *testing.T) {
-	m := &mock{t: t, putRespond: func(int) (int, any) { return http.StatusOK, "not a cluster" }}
-	resp := runCreate(t, m, 0)
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("an accepted change must not error: %v", resp.Diagnostics.Errors())
-	}
-	if resp.Diagnostics.WarningsCount() == 0 {
-		t.Error("expected a 'notices could not be read' warning")
-	}
-	if st := pinsIn(t, resp.State); st[eso] != "v2" {
-		t.Errorf("state addon_versions = %v, want the configured pins", st)
-	}
-}
-
-// RE-CHECK 4: when the cluster was deleted while the pins were being applied, untainting
-// cannot help, and the error must not tell the user to.
-func TestCreate_ClusterDeletedMeanwhileSaysUntaintWillNotHelp(t *testing.T) {
-	const (
-		goneText     = "the next refresh removes it from state"
-		deletingText = "the next apply first DESTROYS it"
-	)
-	for gone, want := range map[string]struct{ text, other string }{
-		statusDeleted:  {goneText, deletingText},
-		statusDeleting: {deletingText, goneText},
-	} {
-		t.Run(gone, func(t *testing.T) {
-			m := &mock{
-				t:          t,
-				putRespond: apiErrorBody(http.StatusServiceUnavailable, "internal_error", "down"),
-				status: func(puts int) string {
-					if puts > 0 {
-						return gone
-					}
-					return statusRunning
-				},
-			}
-			resp := runCreate(t, m, time.Second)
-			if !resp.Diagnostics.HasError() {
-				t.Fatal("expected an error")
-			}
-			detail := resp.Diagnostics.Errors()[0].Detail()
-			if !strings.Contains(strings.ToLower(detail), "untainting it does not help") {
-				t.Errorf("error must say untainting does not help, got %q", detail)
-			}
-			if !strings.Contains(detail, want.text) {
-				t.Errorf("a %s cluster needs its own wording %q, got %q", gone, want.text, detail)
-			}
-			if strings.Contains(detail, want.other) {
-				t.Errorf("a %s cluster must not get the other case's wording %q, got %q", gone, want.other, detail)
-			}
-			if strings.Contains(detail, "Run `terraform untaint`") {
-				t.Errorf("error must not tell the user to untaint a deleted cluster, got %q", detail)
-			}
-		})
+	if st := pinsIn(t, resp.State); len(st) != 1 || st[eso] != "v2" {
+		t.Errorf("state addon_versions = %v, want the pins the create request carried", st)
 	}
 }
 
@@ -958,70 +726,14 @@ func TestPutAddons_FailedClusterReadKeepsRetrying(t *testing.T) {
 		}
 		return okPut(nil)(n)
 	}
-	t.Run("update", func(t *testing.T) {
-		m := &mock{t: t, putRespond: retryThenOK, status: failFirstReread}
-		planM := stateModel()
-		planM.Addons = addonSet(eso, "external-dns")
-		if resp := runUpdate(t, m, stateModel(), planM); resp.Diagnostics.HasError() {
-			t.Fatalf("update failed: %v", resp.Diagnostics.Errors())
-		}
-		if n := len(m.puts()); n != 2 {
-			t.Errorf("expected the retry to continue past a failed cluster read, got %d PUTs", n)
-		}
-	})
-	t.Run("create", func(t *testing.T) {
-		m := &mock{t: t, putRespond: retryThenOK, status: failFirstReread}
-		if resp := runCreate(t, m, 0); resp.Diagnostics.HasError() {
-			t.Fatalf("create failed: %v", resp.Diagnostics.Errors())
-		}
-		if n := len(m.puts()); n != 2 {
-			t.Errorf("expected the retry to continue past a failed cluster read, got %d PUTs", n)
-		}
-	})
-}
-
-// DELTA a: the create's cluster and pool waits spend its whole budget, so the pin PUT
-// starts with the deadline already past. The floor still gives it room: 409 invalid_state
-// twice, then 200 — the pin lands, with no error (and so no taint).
-func TestCreate_SpentDeadlineStillLandsPins(t *testing.T) {
-	// Margins sized for a loaded -race CI runner, all ~100ms: each wait is ~3 intervals
-	// (300ms, under the 500ms budget), both together ~600ms (over it); the 200ms floor
-	// leaves ~one interval for the second 409 to come back before the third attempt.
-	const budget = 500 * time.Millisecond
-	m := &mock{
-		t:            t,
-		creatingGets: 3, // ~3 poll intervals per wait: each under the budget, both together over it
-		putRespond: func(n int) (int, any) {
-			if n <= 2 {
-				return apiErrorBody(http.StatusConflict, "invalid_state", "the cluster is updating")(n)
-			}
-			return okPut(nil)(n)
-		},
+	m := &mock{t: t, putRespond: retryThenOK, status: failFirstReread}
+	planM := stateModel()
+	planM.Addons = addonSet(eso, "external-dns")
+	if resp := runUpdate(t, m, stateModel(), planM); resp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %v", resp.Diagnostics.Errors())
 	}
-	r, stop := m.start(budget)
-	defer stop()
-	r.pollInterval = 100 * time.Millisecond
-
-	plan := buildPlan(t, pinnedCreatePlan())
-	resp := resource.CreateResponse{State: emptyState(t)}
-	start := time.Now()
-	r.Create(context.Background(), resource.CreateRequest{Plan: plan, Config: tfsdk.Config(plan)}, &resp)
-
-	m.mu.Lock()
-	firstPutAt := m.firstPutAt
-	m.mu.Unlock()
-	if firstPutAt.IsZero() || firstPutAt.Sub(start) < budget {
-		t.Fatalf("scenario invalid: the first PUT came %s after start, before the %s budget was spent (diagnostics: %v)",
-			firstPutAt.Sub(start), budget, resp.Diagnostics)
-	}
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("create failed: %v", resp.Diagnostics.Errors())
-	}
-	if n := len(m.puts()); n < 3 {
-		t.Errorf("expected the pin to land on the third attempt, got %d PUTs", n)
-	}
-	if st := pinsIn(t, resp.State); st[eso] != "v2" {
-		t.Errorf("state addon_versions = %v, want the configured pins", st)
+	if n := len(m.puts()); n != 2 {
+		t.Errorf("expected the retry to continue past a failed cluster read, got %d PUTs", n)
 	}
 }
 

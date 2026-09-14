@@ -1,7 +1,7 @@
 data "frostmoln_kubernetes_versions" "available" {}
 
-variable "external_secrets_version" {
-  description = "A version of external-secrets listed by the frostmoln_kubernetes_addon_versions data source."
+variable "external_dns_version" {
+  description = "A version of external-dns listed by the frostmoln_kubernetes_addon_versions data source."
   type        = string
 }
 
@@ -24,13 +24,22 @@ resource "frostmoln_kubernetes_cluster" "main" {
   # removing one DELETES the objects that addon installed. Omit the attribute to
   # install the platform defaults; set an empty list ([]) to install none. See the
   # frostmoln_kubernetes_addons data source for available keys.
-  addons = ["external-secrets"]
+  #
+  # external-dns requires the tenant's DNS feature, and publishes nothing until you
+  # create its `frostmoln-dns` API-key Secret inside the cluster. Create that Secret
+  # outside Terraform (kubectl), with an API key carrying the narrowest scopes that
+  # allow DNS record changes (list the available scopes with the
+  # frostmoln_api_key_scopes data source). Creating it
+  # with Terraform instead puts the key in plain text in Terraform state, so
+  # protect the state backend accordingly.
+  addons = ["external-dns"]
 
   # Optional version pins, keyed by addon key; each key must be in addons. Use a
-  # version string from the frostmoln_kubernetes_addon_versions data source.
-  # Only a changed pin is sent; removing a key leaves the addon on its version.
+  # version string from the frostmoln_kubernetes_addon_versions data source. Pins
+  # set here at creation go in the create request; after that, only a changed pin
+  # is sent, and removing a key leaves the addon on its version.
   addon_versions = {
-    "external-secrets" = var.external_secrets_version
+    "external-dns" = var.external_dns_version
   }
 
   initial_node_pool = {

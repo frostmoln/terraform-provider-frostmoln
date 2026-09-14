@@ -136,15 +136,18 @@ type apiCreateNodePoolRequest struct {
 // serializes as `[]` (explicitly no addons). A plain []string with omitempty
 // could not express "send an empty array" — omitempty drops a len-0 slice.
 type apiCreateClusterRequest struct {
-	Name              string                   `json:"name"`
-	KubernetesVersion string                   `json:"kubernetesVersion,omitempty"`
-	ControlPlaneTier  string                   `json:"controlPlaneTier,omitempty"`
-	Region            string                   `json:"region,omitempty"`
-	VPCID             string                   `json:"vpcId"`
-	SubnetID          string                   `json:"subnetId"`
-	PublicIPID        string                   `json:"publicIpId,omitempty"`
-	Addons            *[]string                `json:"addons,omitempty"`
-	InitialNodePool   apiCreateNodePoolRequest `json:"initialNodePool"`
+	Name              string    `json:"name"`
+	KubernetesVersion string    `json:"kubernetesVersion,omitempty"`
+	ControlPlaneTier  string    `json:"controlPlaneTier,omitempty"`
+	Region            string    `json:"region,omitempty"`
+	VPCID             string    `json:"vpcId"`
+	SubnetID          string    `json:"subnetId"`
+	PublicIPID        string    `json:"publicIpId,omitempty"`
+	Addons            *[]string `json:"addons,omitempty"`
+	// Versions is the CONFIGURED addon_versions, omitted when unset or empty. The API
+	// takes it as a delta: a selected addon it does not name gets its recommended version.
+	Versions        map[string]string        `json:"versions,omitempty"`
+	InitialNodePool apiCreateNodePoolRequest `json:"initialNodePool"`
 }
 
 // apiUpdateClusterRequest is the API request to update a cluster (name only in v1).
@@ -200,6 +203,8 @@ func (m *KubernetesClusterModel) toCreateRequest() apiCreateClusterRequest {
 		addons := setToStringSlice(m.Addons)
 		req.Addons = &addons
 	}
+	// Every configured pin: create has no prior state, so the whole map is the delta.
+	req.Versions = changedPins(types.MapNull(types.StringType), m.AddonVersions)
 
 	pool := m.InitialNodePool
 	req.InitialNodePool = apiCreateNodePoolRequest{

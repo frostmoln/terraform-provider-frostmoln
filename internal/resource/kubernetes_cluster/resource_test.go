@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -213,6 +214,55 @@ func TestToCreateRequestRetiredKeysNeverSent(t *testing.T) {
 				if bytes.Contains(b, []byte(key)) {
 					t.Errorf("the retired key %s must never reach the wire, got %s", key, b)
 				}
+			}
+		})
+	}
+}
+
+// The create request carries `versions` exactly as addon_versions is configured, and
+// omits the key entirely when it is unset (null or unknown) or empty — an omitted
+// `versions` gives every selected addon its recommended version. Wire bytes, like
+// TestToCreateRequestRetiredKeysNeverSent, because omitempty is what decides it.
+func TestToCreateRequestVersionsSentAsConfigured(t *testing.T) {
+	model := func(pins types.Map) KubernetesClusterModel {
+		return KubernetesClusterModel{
+			Name:          types.StringValue("c"),
+			VPCID:         types.StringValue("vpc-1"),
+			SubnetID:      types.StringValue("sn-1"),
+			Addons:        stringSliceToSet([]string{"external-dns", "cert-manager"}),
+			AddonVersions: pins,
+			InitialNodePool: &InitialNodePoolModel{
+				FlavorID:  types.StringValue("k8s.gp1.small"),
+				NodeCount: types.Int64Value(1),
+			},
+		}
+	}
+
+	m := model(types.MapValueMust(types.StringType, map[string]attr.Value{
+		"external-dns": types.StringValue("v0.22.0-1"),
+		"cert-manager": types.StringValue("v1.19.1"),
+	}))
+	b, err := json.Marshal(m.toCreateRequest())
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !bytes.Contains(b, []byte(`"versions":{"cert-manager":"v1.19.1","external-dns":"v0.22.0-1"}`)) {
+		t.Errorf("expected the configured pins verbatim in versions, got %s", b)
+	}
+
+	for name, pins := range map[string]types.Map{
+		"null":    types.MapNull(types.StringType),
+		"unknown": types.MapUnknown(types.StringType),
+		"empty":   types.MapValueMust(types.StringType, map[string]attr.Value{}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := model(pins)
+			b, err := json.Marshal(m.toCreateRequest())
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if bytes.Contains(b, []byte(`"versions"`)) {
+				t.Errorf("an unset addon_versions must omit versions, got %s", b)
 			}
 		})
 	}

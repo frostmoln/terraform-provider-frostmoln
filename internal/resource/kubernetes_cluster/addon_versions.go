@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"regexp"
 	"time"
 
@@ -131,52 +130,17 @@ func (r *kubernetesClusterResource) checkConfiguredAddonVersions(ctx context.Con
 	return checkAddonVersions(configAddons, pins)
 }
 
-// retryableAddonsPut decides what putAddons re-sends.
-//
-// 409 `invalid_state`, on both paths: the cluster is not running yet, or — for a request
-// that REMOVES an addon — the platform is still applying its selection or finishing an
-// earlier removal. Both clear on their own. 409 `conflict` is never retried: it also
-// covers "the platform's records of this cluster disagree", which retrying cannot clear,
-// and only the prose tells the two apart.
-//
-// On the CREATE path only (retry5xx), also every blip that clears on its own: 500 and 503
-// keyed on the HTTP STATUS (the platform sends code `internal_error` for both — an
-// identical re-send is idempotent and succeeds once a deployment finishes), a gateway's
-// 502 and 504, and a TRANSPORT failure — a *url.Error, which includes the HTTP client's
-// own Timeout even though that error `Is` context.DeadlineExceeded: a slow response is a
-// blip, not a cancelled operation. Any OTHER error without a response (an expired
-// session, a failed credential refresh) will not clear by waiting and is not retried.
-// Whether the operation itself was cancelled is decided by putAddons from ctx.Err(), never
-// from the error chain. A create that gives up here taints a running cluster. The update
-// path fails fast on all of these — an update error taints nothing, and its message says
+// retryableAddonsPut decides what putAddons re-sends: only a 409 `invalid_state` — the
+// cluster is not running yet, or, for a request that REMOVES an addon, the platform is
+// still applying its selection or finishing an earlier removal. Both clear on their own.
+// 409 `conflict` is never retried: it also covers "the platform's records of this cluster
+// disagree", which retrying cannot clear, and only the prose tells the two apart. A 5xx or
+// a transport failure fails fast: an update error taints nothing, and its message says
 // re-applying is safe.
-func retryableAddonsPut(err error, retry5xx bool) bool {
+func retryableAddonsPut(err error) bool {
 	var apiErr *client.APIError
-	if !errors.As(err, &apiErr) {
-		var urlErr *url.Error
-		return retry5xx && errors.As(err, &urlErr)
-	}
-	if apiErr.StatusCode == http.StatusConflict && apiErr.Code == "invalid_state" {
-		return true
-	}
-	if !retry5xx {
-		return false
-	}
-	switch apiErr.StatusCode {
-	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-		return true
-	}
-	return false
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict && apiErr.Code == "invalid_state"
 }
-
-// errClusterGone and errClusterDeleting mark a pin PUT abandoned because the cluster went
-// away meanwhile, so Create can say that untainting it would not help — and what happens
-// instead, which differs: Read drops a 404/`deleted` cluster on the next refresh, but keeps
-// a `deleting` one in state until its teardown finishes.
-var (
-	errClusterGone     = errors.New("the cluster no longer exists")
-	errClusterDeleting = errors.New("the cluster is being deleted")
-)
 
 // putAddons sends PUT .../addons until it succeeds, fails for good, or the deadline
 // passes. The deadline is the caller's ONE deadline for the whole operation, not a fresh
@@ -186,7 +150,7 @@ var (
 // read between attempts exists only to stop at once on a cluster that went to `error`,
 // `deleting` or `deleted` (a 404 counts as deleted, as in pollCluster); nothing it returns may reach the
 // request. A read that FAILS (the platform unreachable) proves nothing, so it keeps retrying.
-func (r *kubernetesClusterResource) putAddons(ctx context.Context, id string, body apiUpdateClusterAddonsRequest, deadline time.Time, retry5xx bool) (*client.Response, error) {
+func (r *kubernetesClusterResource) putAddons(ctx context.Context, id string, body apiUpdateClusterAddonsRequest, deadline time.Time) (*client.Response, error) {
 	for {
 		apiResp, err := r.client.Put(ctx, r.clusterPath(id)+"/addons", body)
 		if err == nil {
@@ -196,7 +160,7 @@ func (r *kubernetesClusterResource) putAddons(ctx context.Context, id string, bo
 		if ctx.Err() != nil {
 			return nil, err
 		}
-		if !retryableAddonsPut(err, retry5xx) || !time.Now().Before(deadline) {
+		if !retryableAddonsPut(err) || !time.Now().Before(deadline) {
 			return nil, err
 		}
 		select {
@@ -206,38 +170,22 @@ func (r *kubernetesClusterResource) putAddons(ctx context.Context, id string, bo
 		}
 		current, getErr := r.getCluster(ctx, id)
 		if client.IsNotFound(getErr) {
-			return nil, fmt.Errorf("%w, so its addons cannot be changed: %w", errClusterGone, err)
+			return nil, fmt.Errorf("the cluster no longer exists, so its addons cannot be changed: %w", err)
 		}
 		if getErr != nil {
 			continue
 		}
 		switch current.Status {
-		case statusDeleted:
-			return nil, fmt.Errorf("%w, so its addons cannot be changed: %w", errClusterGone, err)
-		case statusDeleting:
-			return nil, fmt.Errorf("%w, so its addons cannot be changed: %w", errClusterDeleting, err)
-		case statusError:
+		case statusDeleted, statusDeleting, statusError:
 			return nil, fmt.Errorf("the cluster is %s, so its addons cannot be changed: %w", current.Status, err)
 		}
 	}
 }
 
-// pinRetryDeadline raises the create's one deadline to at least two poll intervals from
-// now. The cluster and pool waits run on the same budget, so a create whose waits used it
-// up would otherwise get exactly ONE pin attempt before its error taints a running cluster.
-// Create only: update's addons PUT runs before any of its waits, on a fresh deadline.
-func (r *kubernetesClusterResource) pinRetryDeadline(deadline time.Time) time.Time {
-	if floor := time.Now().Add(2 * r.getPollInterval()); deadline.Before(floor) {
-		return floor
-	}
-	return deadline
-}
-
-// addonsPutFailureDetail explains a failed PUT .../addons on the UPDATE path. A 500 or
-// 503 may mean the selection WAS applied (a 503 can mean the selection changed while the
-// version pin was not recorded, mid-deployment); re-sending the identical request is the
-// platform's own remedy, and an update error taints nothing, so re-applying is safe.
-// Never used on the create path, where a re-apply would replace the tainted cluster.
+// addonsPutFailureDetail explains a failed PUT .../addons. A 500 or 503 may mean the
+// selection WAS applied (a 503 can mean the selection changed while the version pin was
+// not recorded, mid-deployment); re-sending the identical request is the platform's own
+// remedy, and an update error taints nothing, so re-applying is safe.
 func addonsPutFailureDetail(err error) string {
 	detail := err.Error()
 	if apiErr, ok := err.(*client.APIError); ok && (apiErr.StatusCode == http.StatusInternalServerError || apiErr.StatusCode == http.StatusServiceUnavailable) {
