@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.66.0] - 2026-09-14
+
+### 🚀 Features
+
+- *(kubernetes_cluster)* Send addon_versions in the create request (merge only after kubernetes create-with-pin is deployed) (#547)
+
 ## [0.65.1] - 2026-09-14
 
 ### 🐛 Bug Fixes
