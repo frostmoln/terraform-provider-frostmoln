@@ -16,7 +16,10 @@ package appgw_waf_policy_attachment
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -129,6 +132,12 @@ func (r *attachmentResource) Schema(_ context.Context, _ resource.SchemaRequest,
 			"The policy is a separate resource with its own rules and version history. Destroying " +
 			"this attachment detaches the policy; it does not delete it, and the policy can be " +
 			"attached again.\n\n" +
+			"~> **A destroy detaches only the policy it recorded.** It names the `policy_id` in " +
+			"state — the one the plan shows — and the platform detaches only if that policy is " +
+			"still the one attached. If the attachment was changed outside Terraform since state " +
+			"was last refreshed — another policy attached there, or none — nothing is detached: " +
+			"the destroy succeeds, removes the resource from state, leaves whatever is attached " +
+			"in place, and says what it found in a warning.\n\n" +
 			"~> **Detaching the gateway policy changes every inheriting overlay.** An overlay whose " +
 			"`mode` is `inherit` resolves against the gateway policy; with no gateway policy there " +
 			"is nothing blocking to inherit, so those overlays fall back to detect and stop refusing " +
@@ -556,7 +565,29 @@ func (r *attachmentResource) Delete(ctx context.Context, req resource.DeleteRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	_, err := r.client.Delete(ctx, state.attachPath(r.client))
+	// 🔴 THE DETACH NAMES THE POLICY IN STATE. Without `?policyId=` the API
+	// clears WHATEVER is attached, so a destroy applied from a plan that has
+	// gone stale -- the attachment re-pointed out of band after the refresh, or
+	// a destroy run with -refresh=false -- would turn off inspection by a policy
+	// this configuration never managed and the plan never showed. The id in
+	// state is the one the plan displayed, so it is the one the server checks
+	// under the same lock as the clear. An id-less state has nothing to name,
+	// and an empty `policyId=` is a 400, so that alone detaches unconditionally.
+	var query url.Values
+	if id := state.PolicyID.ValueString(); id != "" {
+		query = url.Values{"policyId": {id}}
+	}
+	_, err := r.client.DeleteWithQuery(ctx, state.attachPath(r.client), query)
+	if attached, refused := policyNotAttached(err); refused {
+		// The attachment this resource managed is already gone: something else,
+		// or nothing, is attached there now. Nothing was detached, so there is
+		// nothing left to destroy and the destroy succeeds -- failing it would
+		// strand the resource, since every retry meets the same state. And NO
+		// retry without the condition: that is precisely the detach of a policy
+		// somebody else attached that the condition exists to prevent.
+		resp.Diagnostics.AddWarning("The WAF Policy Was Not Detached", notAttachedDetail(&state, attached))
+		return
+	}
 	if err != nil && !client.IsNotFound(err) {
 		resp.Diagnostics.AddError("Failed to Detach The WAF Policy", err.Error())
 		return
@@ -568,6 +599,65 @@ func (r *attachmentResource) Delete(ctx context.Context, req resource.DeleteRequ
 				"blocking mode from those overlays fall back to detect and stop refusing "+
 				"requests. The policies themselves are untouched.")
 	}
+}
+
+// codeWAFPolicyNotAttached is appgw's refusal of a conditional detach: the
+// policy named in `?policyId=` is not the one attached there now, or nothing
+// is, and nothing was detached.
+const codeWAFPolicyNotAttached = "WAF_POLICY_NOT_ATTACHED"
+
+// attachedNow is what a WAF_POLICY_NOT_ATTACHED refusal says is attached.
+type attachedNow struct {
+	// policyID is the attached policy; "" when nothing is attached or when the
+	// refusal did not say.
+	policyID string
+	// known is false when details.attachedPolicyId was absent or not a string
+	// or null -- the refusal still means "not detached", it just did not say
+	// what is there instead.
+	known bool
+}
+
+// policyNotAttached reports whether err is appgw refusing a conditional detach
+// because the named policy is not attached, and what the refusal says is.
+//
+// Exactly that code AT 409: every other conflict (a gateway being deleted, an
+// apply in flight) is a detach that did not happen for a reason the
+// practitioner has to see, so client.IsConflict would be the over-broad fix.
+func policyNotAttached(err error) (attachedNow, bool) {
+	var apiErr *client.APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusConflict ||
+		apiErr.Code != codeWAFPolicyNotAttached {
+		return attachedNow{}, false
+	}
+	v, present := apiErr.Details["attachedPolicyId"]
+	switch id := v.(type) {
+	case string:
+		return attachedNow{policyID: id, known: id != ""}, true
+	case nil:
+		return attachedNow{known: present}, true
+	default:
+		return attachedNow{}, true
+	}
+}
+
+// notAttachedDetail says what the destroy found in place of the attachment it
+// managed, and that it was left alone.
+func notAttachedDetail(m *AttachmentModel, now attachedNow) string {
+	var found string
+	switch {
+	case now.policyID != "":
+		found = fmt.Sprintf("WAF policy %s is attached to %s now, not %s.", now.policyID, m.describe(),
+			m.PolicyID.ValueString())
+	case now.known:
+		found = fmt.Sprintf("There is no WAF policy attached to %s now, so %s is not attached there.",
+			m.describe(), m.PolicyID.ValueString())
+	default:
+		found = fmt.Sprintf("%s is no longer the WAF policy attached to %s.", m.PolicyID.ValueString(),
+			m.describe())
+	}
+	return found + " The attachment this resource managed was changed outside this configuration, " +
+		"so the destroy detached nothing and removed the resource from state. Whatever is " +
+		"attached there now was left in place."
 }
 
 // ImportState takes the attachment POINT, because that is what this resource

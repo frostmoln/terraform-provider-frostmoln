@@ -78,6 +78,7 @@ const base = "/v1/tenants/t-1/application-gateways/agw-1"
 type seenRequest struct {
 	method string
 	path   string
+	query  string
 	body   map[string]any
 }
 
@@ -93,11 +94,16 @@ type seenRequest struct {
 //   - attach answers 202 WITH the policy and detach answers 204 with nothing.
 //     A fake that returned 204 to both would let a client asserting the wrong
 //     status pass here and fail in production.
+//
+// A third is the conditional detach: a DELETE naming `?policyId=` is refused
+// with 409 WAF_POLICY_NOT_ATTACHED unless that is the policy attached -- also
+// when nothing is. Without it every detach below would pass whatever id it
+// named, and the fake would agree with a client that detached the wrong thing.
 func api(t *testing.T, policy apiPolicy, attached string) (*client.Client, *[]seenRequest) {
 	t.Helper()
 	var seen []seenRequest
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
-		rec := seenRequest{method: r.Method, path: r.URL.Path}
+		rec := seenRequest{method: r.Method, path: r.URL.Path, query: r.URL.RawQuery}
 		_ = json.NewDecoder(r.Body).Decode(&rec.body)
 		if r.Method != http.MethodGet {
 			seen = append(seen, rec)
@@ -110,6 +116,10 @@ func api(t *testing.T, policy apiPolicy, attached string) (*client.Client, *[]se
 			// The gateway, listener or route, reporting what it carries.
 			_ = json.NewEncoder(w).Encode(apiAttachee{WAFPolicyID: attached})
 		case r.Method == http.MethodDelete:
+			if expected, named := r.URL.Query()["policyId"]; named && (len(expected) != 1 || expected[0] != attached) {
+				writeNotAttached(w, strings.Join(expected, ","), attached)
+				return
+			}
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			if _, ok := rec.body["policyId"].(string); !ok {
@@ -361,12 +371,19 @@ func TestDeletingTheGatewayAttachmentWarnsAboutInheritingOverlays(t *testing.T) 
 	}
 
 	// A LISTENER detach is local, and must not carry the same alarm -- a
-	// warning that fires every time is one nobody reads.
+	// warning that fires every time is one nobody reads. Its own fake, because
+	// the listener carries its own policy: the detach names it, and a fake
+	// reporting the gateway's would refuse that as not attached.
+	lc, _ := api(t, overlayPolicy(), "wp-ov")
+	lar := &attachmentResource{client: lc}
 	listener := model("wp-ov")
 	listener.ListenerID = types.StringValue("l-1")
 	listener.ID = types.StringValue("agw-1/l-1")
 	lResp := resource.DeleteResponse{State: stateOf(t, listener)}
-	ar.Delete(context.Background(), resource.DeleteRequest{State: stateOf(t, listener)}, &lResp)
+	lar.Delete(context.Background(), resource.DeleteRequest{State: stateOf(t, listener)}, &lResp)
+	if lResp.Diagnostics.HasError() {
+		t.Fatalf("delete: %v", lResp.Diagnostics.Errors())
+	}
 	if lResp.Diagnostics.WarningsCount() != 0 {
 		t.Errorf("detaching one listener's overlay warned about inheritance: %v",
 			lResp.Diagnostics.Warnings())

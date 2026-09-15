@@ -28,6 +28,10 @@ resource "frostmoln_appgw_waf_policy_attachment" "admin_route" {
 # Destroying the GATEWAY attachment changes every inheriting overlay: with no
 # gateway policy to resolve against, an overlay whose mode is "inherit" falls
 # back to detect and stops refusing anything.
+#
+# A destroy detaches only the policy_id recorded in state. If the attachment was
+# changed outside Terraform in the meantime (another policy attached, or none),
+# it detaches nothing, leaves what is there in place and warns.
 
 # What the ATTACHED POLICY resolves to, with "inherit" resolved.
 #

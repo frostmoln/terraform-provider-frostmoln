@@ -10,6 +10,7 @@ description: |-
   ~> A tcp listener cannot carry a policy, and neither can anything beneath it. The firewall inspects HTTP requests; a tcp listener forwards bytes and parses none, so attaching a policy to one is refused. Its traffic is filtered by the listener's own source-CIDR, geo, rate-limit and connection controls instead.
   Attaching is not authoring
   The policy is a separate resource with its own rules and version history. Destroying this attachment detaches the policy; it does not delete it, and the policy can be attached again.
+  ~> A destroy detaches only the policy it recorded. It names the policy_id in state — the one the plan shows — and the platform detaches only if that policy is still the one attached. If the attachment was changed outside Terraform since state was last refreshed — another policy attached there, or none — nothing is detached: the destroy succeeds, removes the resource from state, leaves whatever is attached in place, and says what it found in a warning.
   ~> Detaching the gateway policy changes every inheriting overlay. An overlay whose mode is inherit resolves against the gateway policy; with no gateway policy there is nothing blocking to inherit, so those overlays fall back to detect and stop refusing anything.
   ~> Attaching is not applying. The attachment reaches the appliance on the gateway's next configuration apply — see frostmoln_appgw_config_apply.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
@@ -32,6 +33,8 @@ The scope has to match the level and the provider checks it before sending: atta
 ## Attaching is not authoring
 
 The policy is a separate resource with its own rules and version history. Destroying this attachment detaches the policy; it does not delete it, and the policy can be attached again.
+
+~> **A destroy detaches only the policy it recorded.** It names the `policy_id` in state — the one the plan shows — and the platform detaches only if that policy is still the one attached. If the attachment was changed outside Terraform since state was last refreshed — another policy attached there, or none — nothing is detached: the destroy succeeds, removes the resource from state, leaves whatever is attached in place, and says what it found in a warning.
 
 ~> **Detaching the gateway policy changes every inheriting overlay.** An overlay whose `mode` is `inherit` resolves against the gateway policy; with no gateway policy there is nothing blocking to inherit, so those overlays fall back to detect and stop refusing anything.
 
@@ -76,6 +79,10 @@ resource "frostmoln_appgw_waf_policy_attachment" "admin_route" {
 # Destroying the GATEWAY attachment changes every inheriting overlay: with no
 # gateway policy to resolve against, an overlay whose mode is "inherit" falls
 # back to detect and stops refusing anything.
+#
+# A destroy detaches only the policy_id recorded in state. If the attachment was
+# changed outside Terraform in the meantime (another policy attached, or none),
+# it detaches nothing, leaves what is there in place and warns.
 
 # What the ATTACHED POLICY resolves to, with "inherit" resolved.
 #
