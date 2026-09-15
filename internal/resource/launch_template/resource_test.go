@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -822,6 +823,103 @@ func TestUpdateClearsListsRoundTrip(t *testing.T) {
 	}
 	if !result.Metadata.IsNull() && len(result.Metadata.Elements()) != 0 {
 		t.Errorf("metadata must read back cleared, got %s", result.Metadata)
+	}
+}
+
+// TestUpdateVPCChangeRoundTrip pins the vpc_id update contract end to end.
+// compute's UpdateLaunchTemplateRequest historically had no vpcId field and
+// answered 200 while dropping it — the silent 200-and-drop this test exists
+// to detect: the PATCH body must carry vpcId under the canonical spelling
+// (half one), and the refreshed state must hold the written VPC so the plan
+// does not re-propose an identical diff forever (half two; compute answers
+// the drop by serving the OLD vpc on the read-back). Clear-to-empty is not a
+// concept for a Required string — no omitempty work on this field.
+func TestUpdateVPCChangeRoundTrip(t *testing.T) {
+	var rawBody map[string]json.RawMessage
+	var calls []string // "patch" / "get", in arrival order
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/t-1/launch-templates/lt-1":
+			calls = append(calls, "patch")
+			_ = json.NewDecoder(r.Body).Decode(&rawBody)
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/launch-templates/lt-1":
+			calls = append(calls, "get")
+			// Post-fix stored row. Note this also answers the GET the tag
+			// layer makes BEFORE the patch, when the row would really still
+			// say vpc-1 — only tags are read from that call, so the
+			// distinction is invisible here; revisit if tag reading grows.
+			out := ltJSON()
+			out.VPCID = "vpc-new"
+			_ = json.NewEncoder(w).Encode(out)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+
+	r := &launchTemplateResource{client: c}
+
+	// State holds vpc-1; the plan moves the template to vpc-new.
+	state := buildLTState(t, fullLTModel())
+	planModel := fullLTModel()
+	planModel.VPCID = types.StringValue("vpc-new")
+	plan := buildLTPlan(t, planModel)
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state, Config: configFromPlan(t, plan)}, &updateResp)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
+	}
+
+	// Half one: the raw REQUEST BODY carries vpcId, spelled canonically.
+	raw, ok := rawBody["vpcId"]
+	if !ok {
+		t.Fatalf("patch body missing %q — compute would 200-and-drop the change", "vpcId")
+	}
+	var sent string
+	if err := json.Unmarshal(raw, &sent); err != nil {
+		t.Fatalf("patch body vpcId is not a JSON string: %v", err)
+	}
+	if sent != "vpc-new" {
+		t.Errorf("patch body vpcId = %q, want vpc-new", sent)
+	}
+
+	// Half two: the POST-UPDATE REFRESH state holds the written VPC.
+	var result LaunchTemplateModel
+	if diags := updateResp.State.Get(context.Background(), &result); diags.HasError() {
+		t.Fatalf("failed to read result state: %v", diags.Errors())
+	}
+	if result.VPCID.ValueString() != "vpc-new" {
+		t.Errorf("post-update state vpc_id = %q, want vpc-new — a dropped vpcId would resurface as an identical diff on every plan", result.VPCID.ValueString())
+	}
+
+	// And a full refresh keeps holding it: nothing decays between plans.
+	readResp := resource.ReadResponse{State: updateResp.State}
+	r.Read(context.Background(), resource.ReadRequest{State: updateResp.State}, &readResp)
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("refresh read failed: %v", readResp.Diagnostics.Errors())
+	}
+	var refreshed LaunchTemplateModel
+	if diags := readResp.State.Get(context.Background(), &refreshed); diags.HasError() {
+		t.Fatalf("failed to read refreshed state: %v", diags.Errors())
+	}
+	if refreshed.VPCID.ValueString() != "vpc-new" {
+		t.Errorf("refreshed state vpc_id = %q, want vpc-new (nothing may decay)", refreshed.VPCID.ValueString())
+	}
+	// The refresh must actually have reached the API, and Update's own
+	// read-back must sit between the PATCH and this test's read: without it,
+	// the "state holds vpc-new" assertions above pass on the unrefreshed plan
+	// (plan.VPCID happens to equal the fixture) while a server-side drop
+	// would only surface at the NEXT plan — fake success at apply time. The
+	// order is: currentTags GET, PATCH, Update read-back GET, refresh GET.
+	// Update this deliberately if Update grows another call.
+	if want := []string{"get", "patch", "get", "get"}; !reflect.DeepEqual(calls, want) {
+		t.Errorf("API call sequence = %v, want %v", calls, want)
 	}
 }
 
