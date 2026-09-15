@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.68.0] - 2026-09-15
+
+### 🚀 Features
+
+- *(appgw)* Destroying a WAF policy attachment never detaches a policy Terraform does not manage (#555)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.13.0 (#553)
+
 ## [0.67.1] - 2026-09-14
 
 ### 🐛 Bug Fixes
