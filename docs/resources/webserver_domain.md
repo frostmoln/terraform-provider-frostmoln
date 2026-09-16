@@ -5,7 +5,8 @@ subcategory: ""
 description: |-
   Manages a domain binding for a webserver instance in the Frostmoln platform. This resource is create/delete only — domains cannot be updated in place.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
-  Create-immutable — domain_name, instance_id, is_default, tls_enabled: the domain binding is identified by its name on its instance; changing one is a different binding.
+  Create-immutable — domain_name, instance_id, is_default: the domain binding is identified by its name on its instance; changing one is a different binding.
+  Create-immutable — tls_enabled: the binding row is stored but nothing consumes it — no vhost is rendered from it and no certificate path exists, so tls_enabled = true promises TLS the platform does not serve on create or on update; the provider refuses it at plan time (leaving or clearing the flag plans fine, and a change that plans re-creates the inert row).
 ---
 
 # frostmoln_webserver_domain (Resource)
@@ -14,7 +15,9 @@ Manages a domain binding for a webserver instance in the Frostmoln platform. Thi
 
 **Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
 
-**Create-immutable** — `domain_name`, `instance_id`, `is_default`, `tls_enabled`: the domain binding is identified by its name on its instance; changing one is a different binding.
+**Create-immutable** — `domain_name`, `instance_id`, `is_default`: the domain binding is identified by its name on its instance; changing one is a different binding.
+
+**Create-immutable** — `tls_enabled`: the binding row is stored but nothing consumes it — no vhost is rendered from it and no certificate path exists, so `tls_enabled = true` promises TLS the platform does not serve on create or on update; the provider refuses it at plan time (leaving or clearing the flag plans fine, and a change that plans re-creates the inert row).
 
 ## Example Usage
 
@@ -45,7 +48,7 @@ resource "frostmoln_webserver_domain" "www" {
 ### Optional
 
 - `is_default` (Boolean) Whether this is the default domain for the webserver instance.
-- `tls_enabled` (Boolean) Whether TLS is enabled for this domain.
+- `tls_enabled` (Boolean) Whether TLS is enabled for this domain. Setting `true` is refused at plan time: the binding is stored but never consumed — no vhost is rendered from it and no certificate path exists — so no TLS is provisioned on create or update. Serve HTTPS through an `frostmoln_application_gateway` meanwhile.
 
 ### Read-Only
 

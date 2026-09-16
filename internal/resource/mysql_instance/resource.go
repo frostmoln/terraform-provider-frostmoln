@@ -22,6 +22,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/unenacted"
 )
 
 var (
@@ -34,6 +35,30 @@ var (
 func NewResource() resource.Resource {
 	return &mysqlInstanceResource{}
 }
+
+// CLASS A (the 2026-09 convergence audit, finding A1): the database service
+// stores an instance's parameter_group_id and echoes it back, and nothing
+// applies it — the apply endpoint exists as route + handler but its
+// implementation is a stub that logs "parameter apply initiated" and returns
+// (database internal/service/impl/parameter.go:130-144), and zero
+// provisioning files touch ParameterGroup (the same grep hits 20 files inside
+// the database repo, so the check discriminates). A value set here survives
+// create and update untouched by the running server on every surface — API,
+// portal, fm, this provider. Refusing at plan (with a belt in
+// Create and Update, because a configuration value that resolves only at
+// apply slips past config validation) is the honest shape while the platform
+// has no working apply path; RequiresReplace would merely destroy a live
+// instance and re-create the same never-applied promise.
+const parameterGroupRefusalTitle = "parameter_group_id is stored, never applied"
+
+const parameterGroupRefusalDetail = parameterGroupRefusalTitle +
+	": a managed MySQL instance records the parameter group reference, and nothing in " +
+	"the platform applies it — the database service has no working parameter-apply workflow, so the " +
+	"group's values never reach the running server on create or on update. The same inert reference is " +
+	"reported by the portal and fm; Terraform refuses the attribute rather than report success for a " +
+	"change it does not make.\n\n" +
+	"Leave the attribute unset and manage parameter groups with the platform's parameter-group APIs " +
+	"until a working apply path ships."
 
 type mysqlInstanceResource struct {
 	client       *client.Client
@@ -316,8 +341,11 @@ func (r *mysqlInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				},
 			},
 			"parameter_group_id": schema.StringAttribute{
-				Description: "The ID of the parameter group to apply to the instance.",
+				Description: "The ID of the parameter group to reference on the instance. The platform stores the reference but never applies it — its parameter-apply endpoint is an unimplemented stub, so the group's values never reach the running server on create or on update. Setting it is refused at plan time, with the constraint and remedy in the refusal terraform prints; leave it unset until the platform ships a working apply path.",
 				Optional:    true,
+				Validators: []validator.String{
+					unenacted.String(parameterGroupRefusalTitle, parameterGroupRefusalDetail),
+				},
 			},
 			"status": schema.StringAttribute{
 				Description: "The current status of the MySQL instance.",
@@ -395,6 +423,17 @@ func (r *mysqlInstanceResource) Create(ctx context.Context, req resource.CreateR
 	var plan MysqlInstanceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Belt for the plan-time unenacted validator (see the constants above): a
+	// configuration value that resolves only at apply is still unknown when
+	// the plan is validated, and Create is the last honest word before this
+	// attribute would be POSTed. By apply every value is known.
+	if !plan.ParameterGroupID.IsNull() {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("parameter_group_id"), parameterGroupRefusalTitle, parameterGroupRefusalDetail,
+		)
 		return
 	}
 
@@ -587,6 +626,18 @@ func (r *mysqlInstanceResource) Update(ctx context.Context, req resource.UpdateR
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Belt for the plan-time unenacted validator (see the constants above): by
+	// apply every value is known, and the enforced-NULL plan value here is a
+	// legitimate legacy drain (an id stored by an older provider clears from
+	// the record on the PUT below). A non-null plan value at this point is the
+	// unknown-at-plan escape hatch, and the refusal names the same constraint.
+	if !plan.ParameterGroupID.IsNull() {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("parameter_group_id"), parameterGroupRefusalTitle, parameterGroupRefusalDetail,
+		)
 		return
 	}
 

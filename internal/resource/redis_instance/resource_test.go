@@ -788,13 +788,16 @@ func TestUpdate(t *testing.T) {
 		ID:      types.StringValue("redis-123"),
 		Name:    types.StringValue("updated-redis"),
 		Version: types.StringValue("7.2"),
-		// Same flavor as state — this test isolates the PUT (name/persistence/eviction); the
-		// flavor-change → /resize path is covered by TestUpdateFlavorResize.
+		// Same create-rendered settings and flavor as state — this test isolates the PUT's
+		// in-place update that the platform enacts (name). The create-rendered
+		// persistence/eviction settings are REFUSED on change (class A2; see
+		// TestUpdateRefuses...) and a flavor change goes to /resize (TestUpdateFlavorResize),
+		// so neither may appear in a working PUT.
 		FlavorID:        types.StringValue("cache.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
-		PersistenceMode: types.StringValue("aof"),
-		EvictionPolicy:  types.StringValue("allkeys-lru"),
+		PersistenceMode: types.StringValue("rdb"),
+		EvictionPolicy:  types.StringValue("noeviction"),
 		Status:          types.StringValue("running"),
 		CreatedAt:       types.StringValue("2025-01-01T00:00:00Z"),
 	})
@@ -810,11 +813,287 @@ func TestUpdate(t *testing.T) {
 		t.Error("expected name in update request")
 	}
 	// flavor changes go via POST /resize (a Nova resize), never the PUT, so it is absent from the body.
-	if updatedBody.PersistenceMode == nil || *updatedBody.PersistenceMode != "aof" {
-		t.Error("expected persistenceMode in update request")
+	if updatedBody.PersistenceMode != nil || updatedBody.EvictionPolicy != nil {
+		t.Error("create-rendered settings must never appear in an update request (class A2 refusal)")
 	}
-	if updatedBody.EvictionPolicy == nil || *updatedBody.EvictionPolicy != "allkeys-lru" {
-		t.Error("expected evictionPolicy in update request")
+}
+
+// Class A2 (2026-09 convergence audit): a persistence_mode / eviction_policy
+// change must never reach the API on an update — the PUT would validate,
+// store and echo it while the running Redis keeps its previous behaviour
+// (only the create render enacts the values). The refusal is the plan
+// warning's apply-time arm; no request of any kind may fire.
+func TestUpdateRefusesEvictionPolicyChange(t *testing.T) {
+	requested := atomic.Bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested.Store(true)
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client()))
+	c.SetTenantIDForTest("t-1")
+
+	r := &redisInstanceResource{
+		client:       c,
+		pollInterval: 10 * time.Millisecond,
+		pollTimeout:  5 * time.Second,
+	}
+
+	state := buildRedisInstanceState(t, RedisInstanceModel{
+		ID:              types.StringValue("redis-123"),
+		Name:            types.StringValue("r"),
+		Version:         types.StringValue("7.2"),
+		FlavorID:        types.StringValue("cache.small"),
+		VPCID:           types.StringValue("vpc-1"),
+		SubnetID:        types.StringValue("sn-1"),
+		PersistenceMode: types.StringValue("rdb"),
+		EvictionPolicy:  types.StringValue("noeviction"),
+		Status:          types.StringValue("running"),
+		CreatedAt:       types.StringValue("2025-01-01T00:00:00Z"),
+	})
+
+	plan := buildRedisInstancePlan(t, RedisInstanceModel{
+		ID:              types.StringValue("redis-123"),
+		Name:            types.StringValue("r"),
+		Version:         types.StringValue("7.2"),
+		FlavorID:        types.StringValue("cache.small"),
+		VPCID:           types.StringValue("vpc-1"),
+		SubnetID:        types.StringValue("sn-1"),
+		PersistenceMode: types.StringValue("rdb"),
+		EvictionPolicy:  types.StringValue("allkeys-lru"),
+		Status:          types.StringValue("running"),
+		CreatedAt:       types.StringValue("2025-01-01T00:00:00Z"),
+	})
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+
+	if !updateResp.Diagnostics.HasError() {
+		t.Fatal("expected the eviction_policy change to be refused")
+	}
+	err := updateResp.Diagnostics.Errors()[0]
+	if got, want := err.Summary(), "eviction_policy cannot be changed on a running Redis instance"; got != want {
+		t.Errorf("expected summary %q, got %q", want, got)
+	}
+	for _, want := range []string{"noeviction", "allkeys-lru", "replace the instance", "create render", "this instance has"} {
+		if !strings.Contains(err.Detail(), want) {
+			t.Errorf("expected the diagnostic to name %q, got %q", want, err.Detail())
+		}
+	}
+	if requested.Load() {
+		t.Error("the refusal must fire before any API request")
+	}
+}
+
+func TestUpdateRefusesPersistenceModeChange(t *testing.T) {
+	requested := atomic.Bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		requested.Store(true)
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client()))
+	c.SetTenantIDForTest("t-1")
+
+	r := &redisInstanceResource{
+		client:       c,
+		pollInterval: 10 * time.Millisecond,
+		pollTimeout:  5 * time.Second,
+	}
+
+	state := buildRedisInstanceState(t, RedisInstanceModel{
+		ID:              types.StringValue("redis-123"),
+		Name:            types.StringValue("r"),
+		Version:         types.StringValue("7.2"),
+		FlavorID:        types.StringValue("cache.small"),
+		VPCID:           types.StringValue("vpc-1"),
+		SubnetID:        types.StringValue("sn-1"),
+		PersistenceMode: types.StringValue("rdb"),
+		EvictionPolicy:  types.StringValue("noeviction"),
+		Status:          types.StringValue("running"),
+		CreatedAt:       types.StringValue("2025-01-01T00:00:00Z"),
+	})
+
+	plan := buildRedisInstancePlan(t, RedisInstanceModel{
+		ID:              types.StringValue("redis-123"),
+		Name:            types.StringValue("r"),
+		Version:         types.StringValue("7.2"),
+		FlavorID:        types.StringValue("cache.small"),
+		VPCID:           types.StringValue("vpc-1"),
+		SubnetID:        types.StringValue("sn-1"),
+		PersistenceMode: types.StringValue("none"),
+		EvictionPolicy:  types.StringValue("noeviction"),
+		Status:          types.StringValue("running"),
+		CreatedAt:       types.StringValue("2025-01-01T00:00:00Z"),
+	})
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+
+	if !updateResp.Diagnostics.HasError() {
+		t.Fatal("expected the persistence_mode change to be refused")
+	}
+	if got, want := updateResp.Diagnostics.Errors()[0].Summary(), "persistence_mode cannot be changed on a running Redis instance"; got != want {
+		t.Errorf("expected summary %q, got %q", want, got)
+	}
+	if requested.Load() {
+		t.Error("the refusal must fire before any API request")
+	}
+}
+
+// The refusal sits ahead of the resize arms: a plan that both resizes and
+// changes a create-rendered setting must refuse WHOLE — half-landing (the
+// resize through, the stored-but-never-rendered config change through with
+// it) would be the worst of both lies.
+func TestUpdateRefusesResizePlusConfigChange(t *testing.T) {
+	requested := atomic.Bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested.Store(true)
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client()))
+	c.SetTenantIDForTest("t-1")
+
+	r := &redisInstanceResource{
+		client:       c,
+		pollInterval: 10 * time.Millisecond,
+		pollTimeout:  5 * time.Second,
+	}
+
+	state := buildRedisInstanceState(t, RedisInstanceModel{
+		ID:              types.StringValue("redis-123"),
+		Name:            types.StringValue("r"),
+		Version:         types.StringValue("7.2"),
+		FlavorID:        types.StringValue("cache.small"),
+		StorageGB:       types.Int64Value(20),
+		VPCID:           types.StringValue("vpc-1"),
+		SubnetID:        types.StringValue("sn-1"),
+		PersistenceMode: types.StringValue("rdb"),
+		EvictionPolicy:  types.StringValue("noeviction"),
+		Status:          types.StringValue("running"),
+		CreatedAt:       types.StringValue("2025-01-01T00:00:00Z"),
+	})
+
+	plan := buildRedisInstancePlan(t, RedisInstanceModel{
+		ID:              types.StringValue("redis-123"),
+		Name:            types.StringValue("r"),
+		Version:         types.StringValue("7.2"),
+		FlavorID:        types.StringValue("cache.small"),
+		StorageGB:       types.Int64Value(40),
+		VPCID:           types.StringValue("vpc-1"),
+		SubnetID:        types.StringValue("sn-1"),
+		PersistenceMode: types.StringValue("aof"),
+		EvictionPolicy:  types.StringValue("noeviction"),
+		Status:          types.StringValue("running"),
+		CreatedAt:       types.StringValue("2025-01-01T00:00:00Z"),
+	})
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+
+	if !updateResp.Diagnostics.HasError() {
+		t.Fatal("expected the resize-plus-config-change plan to be refused")
+	}
+	if got, want := updateResp.Diagnostics.Errors()[0].Summary(), "persistence_mode cannot be changed on a running Redis instance"; got != want {
+		t.Errorf("expected summary %q, got %q", want, got)
+	}
+	if requested.Load() {
+		t.Error("the refusal must fire before any API request, including the resize")
+	}
+}
+
+// TestModifyPlanWarnsCreateRenderedChange drives the plan-time half of the
+// class A2 refusal: a WARNING (never an error — an error while planning
+// aborts `terraform destroy`), naming the constraint, on the update plan only.
+func TestModifyPlanWarnsCreateRenderedChange(t *testing.T) {
+	state := buildRedisInstanceState(t, RedisInstanceModel{
+		ID:              types.StringValue("redis-123"),
+		Name:            types.StringValue("r"),
+		Version:         types.StringValue("7.2"),
+		FlavorID:        types.StringValue("cache.small"),
+		VPCID:           types.StringValue("vpc-1"),
+		SubnetID:        types.StringValue("sn-1"),
+		PersistenceMode: types.StringValue("rdb"),
+		EvictionPolicy:  types.StringValue("noeviction"),
+		Status:          types.StringValue("running"),
+		CreatedAt:       types.StringValue("2025-01-01T00:00:00Z"),
+	})
+
+	plan := buildRedisInstancePlan(t, RedisInstanceModel{
+		ID:       types.StringValue("redis-123"),
+		Name:     types.StringValue("r"),
+		Version:  types.StringValue("7.2"),
+		FlavorID: types.StringValue("cache.small"),
+		VPCID:    types.StringValue("vpc-1"),
+		SubnetID: types.StringValue("sn-1"),
+		// persistence_mode unchanged; one changed attribute is one warning.
+		PersistenceMode: types.StringValue("rdb"),
+		EvictionPolicy:  types.StringValue("allkeys-lru"),
+		Status:          types.StringValue("running"),
+		CreatedAt:       types.StringValue("2025-01-01T00:00:00Z"),
+	})
+
+	r := &redisInstanceResource{}
+	resp := resource.ModifyPlanResponse{}
+	r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{State: state, Plan: plan}, &resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("the plan-time half must stay a WARNING, got errors: %v", resp.Diagnostics.Errors())
+	}
+	warnings := resp.Diagnostics.Warnings()
+	if len(warnings) != 1 {
+		t.Fatalf("expected exactly one warning, got %d: %v", len(warnings), warnings)
+	}
+	if got, want := warnings[0].Summary(), "eviction_policy cannot be changed on a running Redis instance"; got != want {
+		t.Errorf("expected warning summary %q, got %q", want, got)
+	}
+	if !strings.Contains(warnings[0].Detail(), "This apply will fail; a destroy is unaffected.") {
+		t.Errorf("expected the warning to say the apply fails, got %q", warnings[0].Detail())
+	}
+}
+
+// Create (no prior state: the values ARE rendered) and destroy (no plan: a
+// refusal there would block `terraform destroy`) must carry no diagnostics.
+func TestModifyPlanCreateAndDestroyStayClean(t *testing.T) {
+	ctx := context.Background()
+	r := &redisInstanceResource{}
+
+	var schemaResp resource.SchemaResponse
+	NewResource().Schema(ctx, resource.SchemaRequest{}, &schemaResp)
+	schemaType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	emptyPlan := tfsdk.Plan{Schema: schemaResp.Schema, Raw: tftypes.NewValue(schemaType, nil)}
+	emptyState := tfsdk.State{Schema: schemaResp.Schema, Raw: tftypes.NewValue(schemaType, nil)}
+
+	createModel := RedisInstanceModel{
+		ID:              types.StringValue("redis-123"),
+		Name:            types.StringValue("new"),
+		Version:         types.StringValue("7.2"),
+		FlavorID:        types.StringValue("cache.small"),
+		VPCID:           types.StringValue("vpc-1"),
+		SubnetID:        types.StringValue("sn-1"),
+		PersistenceMode: types.StringValue("rdb"),
+		EvictionPolicy:  types.StringValue("allkeys-lru"),
+		Status:          types.StringValue("running"),
+		CreatedAt:       types.StringValue("2025-01-01T00:00:00Z"),
+	}
+	resp := resource.ModifyPlanResponse{}
+	r.ModifyPlan(ctx, resource.ModifyPlanRequest{State: emptyState, Plan: buildRedisInstancePlan(t, createModel)}, &resp)
+	if len(resp.Diagnostics.Warnings()) != 0 || resp.Diagnostics.HasError() {
+		t.Errorf("expected a clean plan on create, got %v", resp.Diagnostics)
+	}
+
+	populated := buildRedisInstanceState(t, createModel)
+	resp = resource.ModifyPlanResponse{}
+	r.ModifyPlan(ctx, resource.ModifyPlanRequest{State: populated, Plan: emptyPlan}, &resp)
+	if len(resp.Diagnostics.Warnings()) != 0 || resp.Diagnostics.HasError() {
+		t.Errorf("expected a clean plan on destroy, got %v", resp.Diagnostics)
 	}
 }
 

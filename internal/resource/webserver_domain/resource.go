@@ -6,15 +6,18 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/unenacted"
 )
 
 var _ resource.Resource = &webserverDomainResource{}
@@ -23,6 +26,32 @@ var _ resource.Resource = &webserverDomainResource{}
 func NewResource() resource.Resource {
 	return &webserverDomainResource{}
 }
+
+// CLASS A (the 2026-09 convergence audit, finding A3): a domain binding row
+// is written and read back, and nothing consumes it. The webserver service's
+// Add validates and inserts; its Remove deletes; the config renderer emits
+// index/client_max_body_size/gzip/security headers/error_page/SPA fallback
+// and no server_name directive of any kind (webserver never sends it down
+// the gRPC create), and no certificate workflow reaches a domain binding —
+// so tls_enabled = true records a row that provisions neither TLS nor
+// anything else. The row itself stays create/delete-only (honest for as
+// long as its consumers exist); the TLS PROMISE is what gets the refusal —
+// `true` promises HTTPS the platform does not serve on create or update
+// alike (the same gap the portal and fm mirror). With the ADR-0091 config
+// pipeline now existing (ApplyTypeConfig → config_version → in-guest
+// agent), the honest platform fix is genuinely reachable; until it ships,
+// the provider refuses to record the promise.
+const tlsEnabledRefusalTitle = "tls_enabled does not provision TLS"
+
+const tlsEnabledRefusalDetail = tlsEnabledRefusalTitle +
+	": the webserver platform stores a domain binding row and never consumes it — no vhost is " +
+	"rendered from the binding and no certificate path exists, so no tls setting on this resource " +
+	"makes the site serve HTTPS over the bound domain on create or on update. The portal and fm " +
+	"create the same inert rows; Terraform refuses the promise rather than report TLS that " +
+	"does not exist.\n\n" +
+	"Omit tls_enabled (or set false, which matches what the platform actually serves). Serve HTTPS " +
+	"through an `frostmoln_application_gateway` meanwhile, and wait for the platform's domain/TLS " +
+	"enact path."
 
 // webserverDomainResource is synchronous end to end — Create is a direct POST
 // that returns the binding, Delete is a synchronous 204 — so it carries no
@@ -96,12 +125,15 @@ func (r *webserverDomainResource) Schema(_ context.Context, _ resource.SchemaReq
 				},
 			},
 			"tls_enabled": schema.BoolAttribute{
-				Description: "Whether TLS is enabled for this domain.",
+				Description: "Whether TLS is enabled for this domain. Setting `true` is refused at plan time: the binding is stored but never consumed — no vhost is rendered from it and no certificate path exists — so no TLS is provisioned on create or update. Serve HTTPS through an `frostmoln_application_gateway` meanwhile.",
 				Optional:    true,
 				Computed:    true,
 				PlanModifiers: []planmodifier.Bool{
 					boolplanmodifier.UseStateForUnknown(),
 					boolplanmodifier.RequiresReplace(),
+				},
+				Validators: []validator.Bool{
+					unenacted.BoolTrue(tlsEnabledRefusalTitle, tlsEnabledRefusalDetail),
 				},
 			},
 			"is_default": schema.BoolAttribute{
@@ -151,6 +183,17 @@ func (r *webserverDomainResource) Create(ctx context.Context, req resource.Creat
 	var plan webserverDomainModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Belt for the plan-time unenacted validator (see the constants above): a
+	// configuration value that resolves only at apply is still unknown when
+	// the plan is validated, and Create is the last honest word before the
+	// promise would be POSTed. By apply every value is known.
+	if plan.TLSEnabled.ValueBool() {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("tls_enabled"), tlsEnabledRefusalTitle, tlsEnabledRefusalDetail,
+		)
 		return
 	}
 

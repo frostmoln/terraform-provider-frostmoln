@@ -312,6 +312,9 @@ var Declarations = map[string]Decl{
 	"frostmoln_mysql_instance": {
 		ImmutableWhy: "the platform has no in-place migration for it — a change re-creates the instance",
 		Immutable:    fields("ha_enabled", "subnet_id", "version", "vpc_id"),
+		ImmutableWithoutReplace: []Field{
+			{Path: "parameter_group_id", Why: "the platform stores the parameter group reference but its parameter-apply is an unimplemented stub — the values never reach the running server on create or on update, so any value is refused outright at plan and apply instead of recorded as intent that is not enacted"},
+		},
 		Observes: []Field{
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
 			{Path: "public_ip", Why: "platform-assigned where the offer exposes one"},
@@ -349,6 +352,9 @@ var Declarations = map[string]Decl{
 	"frostmoln_postgres_instance": {
 		ImmutableWhy: "the platform has no in-place migration for it — a change re-creates the instance",
 		Immutable:    fields("ha_enabled", "subnet_id", "version", "vpc_id"),
+		ImmutableWithoutReplace: []Field{
+			{Path: "parameter_group_id", Why: "the platform stores the parameter group reference but its parameter-apply is an unimplemented stub — the values never reach the running server on create or on update, so any value is refused outright at plan and apply instead of recorded as intent that is not enacted"},
+		},
 		Observes: []Field{
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
 			{Path: "public_ip", Why: "platform-assigned where the offer exposes one"},
@@ -382,6 +388,10 @@ var Declarations = map[string]Decl{
 	"frostmoln_redis_instance": {
 		ImmutableWhy: "the platform has no in-place migration for it — a change re-creates the instance",
 		Immutable:    fields("subnet_id", "version", "vpc_id"),
+		ImmutableWithoutReplace: []Field{
+			{Path: "eviction_policy", Why: "the value reaches the running server only in the create render and no workflow re-renders it — a change is validated, stored and echoed while the running server keeps its previous behaviour, so it is warned about at plan and refused at apply; replace the instance to change it"},
+			{Path: "persistence_mode", Why: "the value reaches the running server only in the create render and no workflow re-renders it — a change is validated, stored and echoed while the running server keeps its previous behaviour, so it is warned about at plan and refused at apply; replace the instance to change it"},
+		},
 		Observes: []Field{
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
 		},
@@ -484,6 +494,10 @@ var Declarations = map[string]Decl{
 	"frostmoln_valkey_instance": {
 		ImmutableWhy: "the platform has no in-place migration for it — a change re-creates the instance",
 		Immutable:    fields("subnet_id", "version", "vpc_id"),
+		ImmutableWithoutReplace: []Field{
+			{Path: "eviction_policy", Why: "the value reaches the running server only in the create render and no workflow re-renders it — a change is validated, stored and echoed while the running server keeps its previous behaviour, so it is warned about at plan and refused at apply; replace the instance to change it"},
+			{Path: "persistence_mode", Why: "the value reaches the running server only in the create render and no workflow re-renders it — a change is validated, stored and echoed while the running server keeps its previous behaviour, so it is warned about at plan and refused at apply; replace the instance to change it"},
+		},
 		Observes: []Field{
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
 		},
@@ -531,7 +545,12 @@ var Declarations = map[string]Decl{
 	"frostmoln_webserver_domain": {
 		EnactsNone:   true,
 		ImmutableWhy: "the domain binding is identified by its name on its instance; changing one is a different binding",
-		Immutable:    fields("domain_name", "instance_id", "is_default", "tls_enabled"),
+		Immutable: []Field{
+			{Path: "domain_name"},
+			{Path: "instance_id"},
+			{Path: "is_default"},
+			{Path: "tls_enabled", Why: "the binding row is stored but nothing consumes it — no vhost is rendered from it and no certificate path exists, so `tls_enabled = true` promises TLS the platform does not serve on create or on update; the provider refuses it at plan time (leaving or clearing the flag plans fine, and a change that plans re-creates the inert row)"},
+		},
 	},
 	"frostmoln_webserver_deployment": {
 		ImmutableWhy: "the deployment belongs to its instance",

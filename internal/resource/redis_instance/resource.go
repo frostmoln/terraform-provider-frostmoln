@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -20,6 +21,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
@@ -27,6 +29,7 @@ import (
 var (
 	_ resource.Resource                = &redisInstanceResource{}
 	_ resource.ResourceWithImportState = &redisInstanceResource{}
+	_ resource.ResourceWithModifyPlan  = &redisInstanceResource{}
 )
 
 // NewResource returns a new redis_instance resource factory.
@@ -196,16 +199,30 @@ func (r *redisInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 				},
 			},
 			"persistence_mode": schema.StringAttribute{
-				Description: "The persistence mode for the Redis instance (\"rdb\", \"aof\", or \"none\"). Defaults to \"rdb\".",
+				Description: "The persistence mode for the Redis instance (\"rdb\", \"aof\", or \"none\"). Defaults to \"rdb\". Rendered into the instance at creation only — changing it later is refused, because no platform workflow re-renders a running instance (replace the instance to change it).",
 				Optional:    true,
 				Computed:    true,
-				Default:     stringdefault.StaticString("rdb"),
+				// NOT a schema Default: TransformDefaults substitutes a default
+				// whenever the CONFIG value is null, irrespective of prior
+				// state — an instance whose render used a non-default mode and
+				// whose HCL later omits the line would plan the default against
+				// the state value and hit the refusal below, mis-attributed to
+				// "the configuration requests rdb". The modifier pins the
+				// state value (what the create render actually installed) and
+				// only plans the default for a null state (a fresh create).
+				// See internal/planmod and the frostmoln_secret precedent.
+				PlanModifiers: []planmodifier.String{
+					planmod.StringUseStateOrDefault("rdb"),
+				},
 			},
 			"eviction_policy": schema.StringAttribute{
-				Description: "The eviction policy for the Redis instance (e.g. \"noeviction\", \"allkeys-lru\"). Defaults to \"noeviction\".",
+				Description: "The eviction policy for the Redis instance (e.g. \"noeviction\", \"allkeys-lru\"). Defaults to \"noeviction\", rendered into the instance at creation only — changing it later is refused, because no platform workflow re-renders a running instance (replace the instance to change it).",
 				Optional:    true,
 				Computed:    true,
-				Default:     stringdefault.StaticString("noeviction"),
+				// Same reason as persistence_mode above.
+				PlanModifiers: []planmodifier.String{
+					planmod.StringUseStateOrDefault("noeviction"),
+				},
 			},
 			// backup_enabled and backup_retention_days are ALWAYS echoed by the cache backend
 			// (enabled is a plain bool; retention is a NOT-NULL column unconditionally defaulted
@@ -560,6 +577,17 @@ func (r *redisInstanceResource) Update(ctx context.Context, req resource.UpdateR
 		return
 	}
 
+	// Create-rendered cache settings (class A2 of the 2026-09 convergence
+	// audit): the create render (cloud-init, provisioning's CreateCacheVM) is
+	// the only path a persistence/eviction value ever takes — the PUT below
+	// validates, stores and echoes it while the running Redis keeps its
+	// previous behaviour. Warned about at plan; refused HERE, before any
+	// request, rather than applied as a change it does not make.
+	if refused := refusedCacheConfigChanges(plan, state); len(refused) > 0 {
+		addCacheConfigRefusals(&resp.Diagnostics, refused)
+		return
+	}
+
 	id := state.ID.ValueString()
 
 	budgets := r.resolveBudgets(plan.Timeouts)
@@ -681,4 +709,99 @@ func (r *redisInstanceResource) Delete(ctx context.Context, req resource.DeleteR
 
 func (r *redisInstanceResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// cacheConfigAttr is one setting the platform renders into a Redis instance
+// only at creation, with the values on both sides so the diagnostic can say
+// what is held and what was requested.
+type cacheConfigAttr struct{ name, current, requested string }
+
+// refusedCacheConfigChanges lists the create-rendered settings a plan
+// changes (class A2 of the 2026-09 convergence audit).
+//
+// The cache service's PUT answers: it validates via IsValidPersistenceMode /
+// IsValidEvictionPolicy, assigns onto the instance row and returns — with no
+// provisioning dispatch on that path, and CreateCache is a documented no-op
+// after the create render (cache_activities.go:745-748), so the values reach
+// the running Redis ONLY through the create render. Applying the change
+// would store and echo it honestly — and change nothing on the server.
+// Refusing is the honest answer while the platform has no config-update
+// path. A flavor/flavor resize does NOT re-render either (resize_cache has
+// no in-guest reconfigure step) — a resize does not launder the refusal
+// away, and a resize combined with a config change is refused whole.
+func refusedCacheConfigChanges(plan, state RedisInstanceModel) []cacheConfigAttr {
+	var refused []cacheConfigAttr
+	if !plan.PersistenceMode.IsUnknown() && !plan.PersistenceMode.Equal(state.PersistenceMode) {
+		refused = append(refused, cacheConfigAttr{
+			"persistence_mode",
+			state.PersistenceMode.ValueString(),
+			plan.PersistenceMode.ValueString(),
+		})
+	}
+	if !plan.EvictionPolicy.IsUnknown() && !plan.EvictionPolicy.Equal(state.EvictionPolicy) {
+		refused = append(refused, cacheConfigAttr{
+			"eviction_policy",
+			state.EvictionPolicy.ValueString(),
+			plan.EvictionPolicy.ValueString(),
+		})
+	}
+	return refused
+}
+
+// cacheConfigRefusalDetail carries the remedy. Recreating is the one shape
+// that works — the values are honoured in the create render — and it is
+// named deliberately rather than left to inference.
+const cacheConfigRefusalDetail = "The Frostmoln cache platform renders a managed Redis instance's " +
+	"configuration only at creation: these settings reach the running server in the create render, " +
+	"and no workflow re-renders it later. A change of %[1]s is validated, stored and echoed back " +
+	"while the running server keeps its current behaviour — this instance has %[1]s = %[2]q and the " +
+	"configuration requests %[3]q.\n\n" +
+	"To hold a different %[1]s, replace the instance deliberately (destroy and re-create): the new " +
+	"instance is rendered with the requested value. The change is refused rather than applied until " +
+	"the platform gains a config-update path."
+
+func addCacheConfigRefusals(diags *diag.Diagnostics, refused []cacheConfigAttr) {
+	for _, a := range refused {
+		diags.AddAttributeError(
+			path.Root(a.name),
+			a.name+" cannot be changed on a running Redis instance",
+			fmt.Sprintf(cacheConfigRefusalDetail, a.name, a.current, a.requested),
+		)
+	}
+}
+
+// warnCacheConfigRefusals is the plan-time half of addCacheConfigRefusals. It
+// must stay a WARNING: an error raised while planning also aborts `terraform
+// destroy`, because the destroy plan's refresh phase computes an ordinary
+// (non-null) plan and runs ModifyPlan against it. The refusal itself is in
+// Update, which a destroy never reaches. See internal/planmod for the same
+// reasoning on the shared modifiers.
+func warnCacheConfigRefusals(diags *diag.Diagnostics, refused []cacheConfigAttr) {
+	for _, a := range refused {
+		diags.AddAttributeWarning(
+			path.Root(a.name),
+			a.name+" cannot be changed on a running Redis instance",
+			fmt.Sprintf(cacheConfigRefusalDetail, a.name, a.current, a.requested)+
+				"\n\nThis apply will fail; a destroy is unaffected.",
+		)
+	}
+}
+
+// ModifyPlan surfaces the create-rendered settings a plan would change, as a
+// WARNING; Update refuses them. Create (no prior state) and destroy (no
+// plan) skip comparison entirely — on create the values ARE rendered, and a
+// destroy must stay unblocked (see warnCacheConfigRefusals above).
+func (r *redisInstanceResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return // Create or destroy: nothing to compare.
+	}
+
+	var plan, state RedisInstanceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	warnCacheConfigRefusals(&resp.Diagnostics, refusedCacheConfigChanges(plan, state))
 }

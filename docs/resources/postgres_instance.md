@@ -7,6 +7,7 @@ description: |-
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — ha_enabled, subnet_id, version, vpc_id: the platform has no in-place migration for it — a change re-creates the instance.
+  Create-only, change refused (not replaced) — parameter_group_id: the platform stores the parameter group reference but its parameter-apply is an unimplemented stub — the values never reach the running server on create or on update, so any value is refused outright at plan and apply instead of recorded as intent that is not enacted.
   Observed, not enacted — private_ip: platform-assigned from the subnet at create. public_ip: platform-assigned where the offer exposes one.
 ---
 
@@ -19,6 +20,8 @@ Manages a managed PostgreSQL database instance in the Frostmoln platform.
 **Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
 
 **Create-immutable** — `ha_enabled`, `subnet_id`, `version`, `vpc_id`: the platform has no in-place migration for it — a change re-creates the instance.
+
+**Create-only, change refused (not replaced)** — `parameter_group_id`: the platform stores the parameter group reference but its parameter-apply is an unimplemented stub — the values never reach the running server on create or on update, so any value is refused outright at plan and apply instead of recorded as intent that is not enacted.
 
 **Observed, not enacted** — `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-assigned where the offer exposes one.
 
@@ -70,7 +73,7 @@ output "postgres_endpoint" {
 - `backup_retention_days` (Number) Number of days to retain backups. Minimum 35 (backups are immutably object-locked for 35 days); maximum 90. Defaults to 35 server-side.
 - `backup_schedule` (String) Cron expression for the backup schedule. Defaults to "0 2 * * *" server-side.
 - `ha_enabled` (Boolean) Whether high availability is enabled with a standby replica.
-- `parameter_group_id` (String) The ID of the parameter group to apply to the instance.
+- `parameter_group_id` (String) The ID of the parameter group to reference on the instance. The platform stores the reference but never applies it — its parameter-apply endpoint is an unimplemented stub, so the group's values never reach the running server on create or on update. Setting it is refused at plan time, with the constraint and remedy in the refusal terraform prints; leave it unset until the platform ships a working apply path.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only

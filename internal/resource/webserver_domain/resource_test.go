@@ -149,8 +149,11 @@ func TestCreate(t *testing.T) {
 			if body.DomainName != "example.com" {
 				t.Errorf("expected domainName example.com, got %s", body.DomainName)
 			}
-			if body.TLSEnabled == nil || !*body.TLSEnabled {
-				t.Error("expected tlsEnabled true in request")
+			// tls_enabled = false matches what the platform actually serves (a
+			// non-TLS site); `true` is refused at plan validation and again by
+			// the Create belt (TestCreateRefusesTLSTrue, class A3).
+			if body.TLSEnabled == nil || *body.TLSEnabled {
+				t.Error("expected tlsEnabled pointer false in request (explicit false, honoured as stored-and-echoed)")
 			}
 			// The Add endpoint is synchronous and returns the created binding directly.
 			w.WriteHeader(http.StatusCreated)
@@ -170,7 +173,9 @@ func TestCreate(t *testing.T) {
 	plan := buildDomainPlan(t, webserverDomainModel{
 		InstanceID: types.StringValue("inst-1"),
 		DomainName: types.StringValue("example.com"),
-		TLSEnabled: types.BoolValue(true),
+		// false is the honest value today; `true` is refused at plan
+		// validation and again by the Create belt (TestCreateRefusesTLSTrue).
+		TLSEnabled: types.BoolValue(false),
 		IsDefault:  types.BoolValue(false),
 	})
 
@@ -187,8 +192,10 @@ func TestCreate(t *testing.T) {
 	if result.DomainName.ValueString() != "example.com" {
 		t.Errorf("expected domain example.com, got %s", result.DomainName.ValueString())
 	}
-	if !result.TLSEnabled.ValueBool() {
-		t.Error("expected tls_enabled true")
+	// The echo is stored-and-echoed truth (the API's row said whatever it
+	// says; nothing TLS-related is provisioned either way).
+	if result.TLSEnabled.ValueBool() != domainJSON().TLSEnabled {
+		t.Error("expected the binding read-back to mirror the platform's echo")
 	}
 }
 
@@ -242,7 +249,7 @@ func TestCreateAPIError(t *testing.T) {
 	plan := buildDomainPlan(t, webserverDomainModel{
 		InstanceID: types.StringValue("inst-1"),
 		DomainName: types.StringValue("example.com"),
-		TLSEnabled: types.BoolValue(true),
+		TLSEnabled: types.BoolValue(false),
 		IsDefault:  types.BoolValue(false),
 	})
 
@@ -363,7 +370,7 @@ func TestCreateBadResponseBody(t *testing.T) {
 	plan := buildDomainPlan(t, webserverDomainModel{
 		InstanceID: types.StringValue("inst-1"),
 		DomainName: types.StringValue("example.com"),
-		TLSEnabled: types.BoolValue(true),
+		TLSEnabled: types.BoolValue(false),
 		IsDefault:  types.BoolValue(false),
 	})
 

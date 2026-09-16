@@ -122,11 +122,15 @@ func (m *ValkeyInstanceModel) toUpdateRequest(state *ValkeyInstanceModel) apiUpd
 		v := m.Name.ValueString()
 		req.Name = &v
 	}
-	if !m.PersistenceMode.Equal(state.PersistenceMode) {
+	// Both guards carry IsUnknown (mirroring the Backup* pattern): an
+	// unknown plan value must never serialize as &"" — the Update belt runs
+	// ahead of this and refuses known changes; this keeps the wire writer's
+	// predicate identical to the belt's.
+	if !m.PersistenceMode.IsUnknown() && !m.PersistenceMode.Equal(state.PersistenceMode) {
 		v := m.PersistenceMode.ValueString()
 		req.PersistenceMode = &v
 	}
-	if !m.EvictionPolicy.Equal(state.EvictionPolicy) {
+	if !m.EvictionPolicy.IsUnknown() && !m.EvictionPolicy.Equal(state.EvictionPolicy) {
 		v := m.EvictionPolicy.ValueString()
 		req.EvictionPolicy = &v
 	}

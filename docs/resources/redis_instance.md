@@ -7,6 +7,7 @@ description: |-
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — subnet_id, version, vpc_id: the platform has no in-place migration for it — a change re-creates the instance.
+  Create-only, change refused (not replaced) — eviction_policy, persistence_mode: the value reaches the running server only in the create render and no workflow re-renders it — a change is validated, stored and echoed while the running server keeps its previous behaviour, so it is warned about at plan and refused at apply; replace the instance to change it.
   Observed, not enacted — private_ip: platform-assigned from the subnet at create.
 ---
 
@@ -19,6 +20,8 @@ Manages a managed Redis instance in the Frostmoln platform.
 **Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
 
 **Create-immutable** — `subnet_id`, `version`, `vpc_id`: the platform has no in-place migration for it — a change re-creates the instance.
+
+**Create-only, change refused (not replaced)** — `eviction_policy`, `persistence_mode`: the value reaches the running server only in the create render and no workflow re-renders it — a change is validated, stored and echoed while the running server keeps its previous behaviour, so it is warned about at plan and refused at apply; replace the instance to change it.
 
 **Observed, not enacted** — `private_ip`: platform-assigned from the subnet at create.
 
@@ -58,8 +61,8 @@ resource "frostmoln_redis_instance" "cache" {
 - `backup_enabled` (Boolean) Whether automated backups are enabled. Requires a persistence_mode other than "none".
 - `backup_retention_days` (Number) Number of days to retain backups. Minimum 35 (backups are immutably object-locked for 35 days); maximum 90. Defaults to 35 server-side.
 - `backup_schedule` (String) Cron expression for the backup schedule. Defaults to "0 2 * * *".
-- `eviction_policy` (String) The eviction policy for the Redis instance (e.g. "noeviction", "allkeys-lru"). Defaults to "noeviction".
-- `persistence_mode` (String) The persistence mode for the Redis instance ("rdb", "aof", or "none"). Defaults to "rdb".
+- `eviction_policy` (String) The eviction policy for the Redis instance (e.g. "noeviction", "allkeys-lru"). Defaults to "noeviction", rendered into the instance at creation only — changing it later is refused, because no platform workflow re-renders a running instance (replace the instance to change it).
+- `persistence_mode` (String) The persistence mode for the Redis instance ("rdb", "aof", or "none"). Defaults to "rdb". Rendered into the instance at creation only — changing it later is refused, because no platform workflow re-renders a running instance (replace the instance to change it).
 - `storage_gb` (Number) The storage size in gigabytes (defaults to 10 if unset). Can only be increased (grow-only); volumes cannot be shrunk.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
