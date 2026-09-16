@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.69.0] - 2026-09-16
+
+### 🚀 Features
+
+- *(instance)* Refuse subnet_id-without-security_groups at plan time (#563)
+
 ## [0.68.1] - 2026-09-16
 
 ### 🐛 Bug Fixes
