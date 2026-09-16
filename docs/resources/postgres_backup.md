@@ -37,7 +37,7 @@ resource "frostmoln_postgres_backup" "pre_upgrade" {
 ### Optional
 
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
-- `type` (String) The type of backup: "full" or "incremental". Defaults to "full".
+- `type` (String) The type of backup. Only "full" is supported (every backup is a full dump). Defaults to "full".
 
 ### Read-Only
 

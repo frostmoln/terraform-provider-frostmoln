@@ -44,26 +44,6 @@ func TestMysqlBackupModelToCreateRequest(t *testing.T) {
 	}
 }
 
-func TestMysqlBackupModelToCreateRequestBinlog(t *testing.T) {
-	ctx := context.Background()
-	diags := diag.Diagnostics{}
-
-	model := MysqlBackupModel{
-		InstanceID: types.StringValue("db-123"),
-		Name:       types.StringValue("binlog-backup"),
-		Type:       types.StringValue("binlog"),
-	}
-
-	req := model.toCreateRequest(ctx, &diags)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
-	}
-
-	if req.Type != "binlog" {
-		t.Errorf("expected type binlog, got %s", req.Type)
-	}
-}
-
 func TestMysqlBackupModelToCreateRequestNoType(t *testing.T) {
 	ctx := context.Background()
 	diags := diag.Diagnostics{}

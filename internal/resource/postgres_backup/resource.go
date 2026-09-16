@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
@@ -104,9 +106,12 @@ func (r *postgresBackupResource) Schema(_ context.Context, _ resource.SchemaRequ
 				},
 			},
 			"type": schema.StringAttribute{
-				Description: "The type of backup: \"full\" or \"incremental\". Defaults to \"full\".",
+				Description: "The type of backup. Only \"full\" is supported (every backup is a full dump). Defaults to \"full\".",
 				Optional:    true,
 				Computed:    true,
+				Validators: []validator.String{
+					stringvalidator.OneOf("full"),
+				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 					stringplanmodifier.RequiresReplace(),

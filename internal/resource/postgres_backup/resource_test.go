@@ -40,23 +40,6 @@ func TestPostgresBackupModelToCreateRequest(t *testing.T) {
 	}
 }
 
-func TestPostgresBackupModelToCreateRequestWithType(t *testing.T) {
-	ctx := context.Background()
-	diags := diag.Diagnostics{}
-
-	model := PostgresBackupModel{
-		Name: types.StringValue("nightly"),
-		Type: types.StringValue("incremental"),
-	}
-	req := model.toCreateRequest(ctx, &diags)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
-	}
-	if req.Type != "incremental" {
-		t.Errorf("expected type incremental, got %s", req.Type)
-	}
-}
-
 func TestPostgresBackupModelFromAPI(t *testing.T) {
 	ctx := context.Background()
 	diags := diag.Diagnostics{}
