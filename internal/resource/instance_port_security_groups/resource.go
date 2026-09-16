@@ -5,7 +5,6 @@ package instance_port_security_groups
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -240,12 +239,21 @@ func (r *instancePortSecurityGroupsResource) Delete(ctx context.Context, _ resou
 }
 
 func (r *instancePortSecurityGroupsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	parts := strings.SplitN(req.ID, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		resp.Diagnostics.AddError(
-			"Invalid import ID",
-			fmt.Sprintf("Expected import ID in the form {instance_id}/{port_id}, got %q.", req.ID),
-		)
+	// Import ID format: {instance_id}/{port_id}.
+	//
+	// Both halves are URL path segments: the instance id addresses
+	// GET /instances/{id}/security-groups, and the port id is interpolated
+	// into PUT /instances/{id}/ports/{portId}/security-groups on every
+	// Create/Update (on Read the port id is matched in the response body's
+	// port list instead). The client assembles paths with path.Join, which
+	// cleans dot segments that url.PathEscape leaves intact — an id whose
+	// either half is "."/".." could repoint requests at a different API
+	// object. ParseImportID refuses the dot segments (and the extra segments
+	// a lenient split would fold into the port id) at the import boundary,
+	// rather than leaving a poisoned value to fail the body match implicitly.
+	parts, err := client.ParseImportID(req.ID, "instance_id", "port_id")
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Import ID", err.Error())
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("instance_id"), parts[0])...)

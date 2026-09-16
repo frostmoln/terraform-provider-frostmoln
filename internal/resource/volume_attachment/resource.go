@@ -364,6 +364,18 @@ func (r *volumeAttachmentResource) Delete(ctx context.Context, req resource.Dele
 }
 
 func (r *volumeAttachmentResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// Import ID format: {volume_id}/{instance_id}.
+	//
+	// client.ParseImportID is deliberately not used: the instance id is
+	// never a URL segment — it rides the attach request BODY (the detach
+	// body carries only the force flag) and is matched in the Read response
+	// body — so composite-id segment semantics only half apply. But the
+	// volume id is still a URL path segment, and the client assembles paths
+	// with path.Join, which cleans dot segments that url.PathEscape leaves
+	// intact — an id whose volume half is ".." would repoint requests at a
+	// different API object. Reject the dot segments (and an embedded slash
+	// in the tail, which a lenient SplitN would silently fold into the
+	// instance id) here, the trust boundary where a fresh id enters state.
 	parts := strings.SplitN(req.ID, "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		resp.Diagnostics.AddError(
@@ -371,6 +383,15 @@ func (r *volumeAttachmentResource) ImportState(ctx context.Context, req resource
 			fmt.Sprintf("Expected import ID in the format {volume_id}/{instance_id}, got: %s", req.ID),
 		)
 		return
+	}
+	for _, p := range parts {
+		if p == "." || p == ".." || strings.Contains(p, "/") {
+			resp.Diagnostics.AddError(
+				"Invalid Import ID",
+				fmt.Sprintf("%q is not a valid volume or instance ID: path segments like %q are not allowed.", req.ID, p),
+			)
+			return
+		}
 	}
 
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -440,12 +439,9 @@ func (r *memberResource) Delete(ctx context.Context, req resource.DeleteRequest,
 
 func (r *memberResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	// Import ID format: {load_balancer_id}/{pool_id}/{member_id}
-	parts := strings.SplitN(req.ID, "/", 3)
-	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
-		resp.Diagnostics.AddError(
-			"Invalid Import ID",
-			fmt.Sprintf("Expected import ID format: {load_balancer_id}/{pool_id}/{member_id}, got: %s", req.ID),
-		)
+	parts, err := client.ParseImportID(req.ID, "load_balancer_id", "pool_id", "member_id")
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Import ID", err.Error())
 		return
 	}
 

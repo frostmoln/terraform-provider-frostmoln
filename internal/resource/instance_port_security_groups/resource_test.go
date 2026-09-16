@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
@@ -240,4 +244,78 @@ func TestTFSDKRead_DriftUpdatesSet(t *testing.T) {
 	if len(sgs) != 1 || sgs[0] != "sg-9" {
 		t.Errorf("expected drift to surface security_groups [sg-9], got %v", sgs)
 	}
+}
+
+// TestImportState pins the composite-id import: both halves are URL path
+// segments (the instance id on the GET, the port id on the
+// PUT /instances/{id}/ports/{portId}/security-groups that Create and Update
+// issue; on Read the port id is matched in the response body instead). A dot
+// segment must be refused explicitly here — the client's path.Join would
+// clean a ".." into a different API object, and the old behaviour only
+// failed a poisoned port id implicitly (findPort never matched).
+func TestImportState(t *testing.T) {
+	r := NewResource().(resource.ResourceWithImportState)
+	schemaResp := getSchema(t)
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	newResp := func() *resource.ImportStateResponse {
+		attrs := map[string]tftypes.Value{}
+		for name, at := range tfType.(tftypes.Object).AttributeTypes {
+			attrs[name] = tftypes.NewValue(at, nil)
+		}
+		return &resource.ImportStateResponse{
+			State: tfsdk.State{Schema: schemaResp.Schema, Raw: tftypes.NewValue(tfType, attrs)},
+		}
+	}
+
+	resp := newResp()
+	r.ImportState(ctx, resource.ImportStateRequest{ID: "inst-1/port-1"}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("import failed: %v", resp.Diagnostics.Errors())
+	}
+	var instanceID, portID types.String
+	resp.State.GetAttribute(ctx, path.Root("instance_id"), &instanceID)
+	resp.State.GetAttribute(ctx, path.Root("port_id"), &portID)
+	if instanceID.ValueString() != "inst-1" || portID.ValueString() != "port-1" {
+		t.Errorf("expected inst-1/port-1, got %s/%s", instanceID.ValueString(), portID.ValueString())
+	}
+
+	// Count refusals have their own diagnostic; dot-segment refusals (which
+	// survive the count check only for in-range segment counts) must name the
+	// path-collapsing danger.
+	for _, tc := range []struct {
+		id           string
+		wantCollapse bool
+	}{
+		{id: "port-1"},
+		{id: ""},
+		{id: "inst-1/"},
+		{id: "/port-1"},
+		{id: "../.."},
+		{id: "inst-1/port-1/extra"},
+		{id: "inst-1/..", wantCollapse: true},
+		{id: "../port-1", wantCollapse: true},
+		{id: "./port-1", wantCollapse: true},
+		{id: "inst-1/.", wantCollapse: true},
+	} {
+		resp := newResp()
+		r.ImportState(ctx, resource.ImportStateRequest{ID: tc.id}, resp)
+		if !resp.Diagnostics.HasError() {
+			t.Errorf("expected error for malformed import ID %q", tc.id)
+		}
+		if tc.wantCollapse && !importDetailContains(resp.Diagnostics, "collapses") {
+			t.Errorf("import ID %q: diagnostic must name the path-collapsing danger, got %v", tc.id, resp.Diagnostics)
+		}
+	}
+}
+
+// importDetailContains reports whether any diagnostic detail carries want.
+func importDetailContains(d diag.Diagnostics, want string) bool {
+	for _, e := range d.Errors() {
+		if strings.Contains(e.Detail(), want) {
+			return true
+		}
+	}
+	return false
 }

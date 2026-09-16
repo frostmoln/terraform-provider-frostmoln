@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -256,9 +258,39 @@ func TestImportState_Invalid(t *testing.T) {
 	r := &iamPolicyAttachmentResource{}
 	s := attSchema(t)
 	tfType := s.Type().TerraformType(context.Background())
-	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: s, Raw: attState(tfType, "", "", "", "")}}
-	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "not-composite"}, resp)
-	if !resp.Diagnostics.HasError() {
-		t.Fatal("expected an error for a malformed import id")
+
+	// Dot-segments survive url.PathEscape and would be collapsed by the
+	// client's path.Join — the policy id is a URL path segment (the attachee
+	// type/id ride the query). Refusal must be explicit at the boundary.
+	for _, id := range []string{
+		"not-composite",
+		"pol-1/api_key/",
+		"../api_key/ak-1",
+		"pol-1/./ak-1",
+		"pol-1/workload_identity/..",
+		"pol-1/api_key/.",
+		"pol-1/bogus_type/ak-1",
+		"pol-1/api_key/ak-1/extra",
+	} {
+		resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: s, Raw: attState(tfType, "", "", "", "")}}
+		r.ImportState(context.Background(), resource.ImportStateRequest{ID: id}, resp)
+		if !resp.Diagnostics.HasError() {
+			t.Fatalf("expected an error for malformed import id %q", id)
+		}
+		if strings.Contains(id, "..") || strings.Contains(id, "./") {
+			if !importDetailContains(resp.Diagnostics, "path segments") {
+				t.Fatalf("import id %q: diagnostic must name the path-segment danger, got %v", id, resp.Diagnostics)
+			}
+		}
 	}
+}
+
+// importDetailContains reports whether any diagnostic detail carries want.
+func importDetailContains(d diag.Diagnostics, want string) bool {
+	for _, e := range d.Errors() {
+		if strings.Contains(e.Detail(), want) {
+			return true
+		}
+	}
+	return false
 }

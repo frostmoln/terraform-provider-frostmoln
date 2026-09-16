@@ -127,13 +127,28 @@ func TestPoolImportMalformed(t *testing.T) {
 	schemaResp := importSchema(t, r)
 	ctx := context.Background()
 
-	for _, bad := range []string{"only", "lb-7/", "/pool", ""} {
+	for _, bad := range []string{"only", "lb-7/", "/pool", "", "lb-7/..", "./pool-9", "../..", "lb-7/pool-9/extra", "lb-7/."} {
 		resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: schemaResp.Schema, Raw: emptyPool(ctx, schemaResp)}}
 		r.ImportState(ctx, resource.ImportStateRequest{ID: bad}, resp)
 		if !resp.Diagnostics.HasError() {
 			t.Errorf("expected error for malformed import ID %q", bad)
 		}
+		if strings.Contains(bad, "..") || strings.HasPrefix(bad, "./") {
+			if !importDetailContains(resp.Diagnostics, "collapses") {
+				t.Errorf("import ID %q: diagnostic must name the path-collapsing danger, got %v", bad, resp.Diagnostics)
+			}
+		}
 	}
+}
+
+// importDetailContains reports whether any diagnostic detail carries want.
+func importDetailContains(d diag.Diagnostics, want string) bool {
+	for _, e := range d.Errors() {
+		if strings.Contains(e.Detail(), want) {
+			return true
+		}
+	}
+	return false
 }
 
 func importSchema(t *testing.T, r resource.Resource) resource.SchemaResponse {

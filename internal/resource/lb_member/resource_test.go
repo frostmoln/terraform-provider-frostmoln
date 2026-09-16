@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
@@ -75,13 +76,45 @@ func TestMemberImportMalformed(t *testing.T) {
 	schemaResp := importSchema(t, r)
 	ctx := context.Background()
 
-	for _, bad := range []string{"lb-1/pool-2", "lb-1", "", "lb-1//mem-3", "lb-1/pool-2/"} {
+	// Count refusals have their own diagnostic; dot-segment refusals (which
+	// survive the count check only when segments are in range) must name the
+	// path-collapsing danger.
+	for _, tc := range []struct {
+		id           string
+		wantCollapse bool
+	}{
+		{id: "lb-1/pool-2"},
+		{id: "lb-1"},
+		{id: ""},
+		{id: "lb-1//mem-3"},
+		{id: "lb-1/pool-2/"},
+		{id: "lb-1/pool-2/../.."},
+		{id: "./mem-3"},
+		{id: "../.."},
+		{id: "lb-1/pool-2/mem-3/extra"},
+		{id: "lb-1/pool-2/..", wantCollapse: true},
+		{id: "lb-1/./mem-3", wantCollapse: true},
+		{id: "lb-1/../mem-3", wantCollapse: true},
+	} {
 		resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: schemaResp.Schema, Raw: emptyMember(ctx, schemaResp)}}
-		r.ImportState(ctx, resource.ImportStateRequest{ID: bad}, resp)
+		r.ImportState(ctx, resource.ImportStateRequest{ID: tc.id}, resp)
 		if !resp.Diagnostics.HasError() {
-			t.Errorf("expected error for malformed import ID %q", bad)
+			t.Errorf("expected error for malformed import ID %q", tc.id)
+		}
+		if tc.wantCollapse && !importDetailContains(resp.Diagnostics, "collapses") {
+			t.Errorf("import ID %q: diagnostic must name the path-collapsing danger, got %v", tc.id, resp.Diagnostics)
 		}
 	}
+}
+
+// importDetailContains reports whether any diagnostic detail carries want.
+func importDetailContains(d diag.Diagnostics, want string) bool {
+	for _, e := range d.Errors() {
+		if strings.Contains(e.Detail(), want) {
+			return true
+		}
+	}
+	return false
 }
 
 func importSchema(t *testing.T, r resource.Resource) resource.SchemaResponse {

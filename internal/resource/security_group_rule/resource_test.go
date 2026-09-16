@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -765,29 +766,51 @@ func TestRuleImportStateInvalidID(t *testing.T) {
 	r := NewResource()
 	s := sgrSchema(t)
 
-	// Initialize state with null values so SetAttribute works.
-	initVal := tftypes.NewValue(sgrObjectType(), map[string]tftypes.Value{
-		"id":                tftypes.NewValue(tftypes.String, nil),
-		"security_group_id": tftypes.NewValue(tftypes.String, nil),
-		"direction":         tftypes.NewValue(tftypes.String, nil),
-		"protocol":          tftypes.NewValue(tftypes.String, nil),
-		"port_range_min":    tftypes.NewValue(tftypes.Number, nil),
-		"port_range_max":    tftypes.NewValue(tftypes.Number, nil),
-		"remote_cidr":       tftypes.NewValue(tftypes.String, nil),
-		"remote_group_id":   tftypes.NewValue(tftypes.String, nil),
-		"description":       tftypes.NewValue(tftypes.String, nil),
-		"timeouts":          tftypes.NewValue(sgrObjectType().AttributeTypes["timeouts"], nil),
-	})
+	// Dot-segments survive url.PathEscape (unreserved) and would be cleaned by
+	// the client's path.Join: DELETE /security-groups/{sg}/rules/.. addresses
+	// the PARENT SECURITY GROUP. The old import only failed a poisoned id
+	// incidentally (the Read's rule match-by-id never matched); the refusal
+	// must be explicit at the boundary.
+	for _, id := range []string{"no-slash", "sg-abc/", "sg-abc/..", "../..", "./rule-xyz", "sg-abc/rule-xyz/extra", "sg-abc/."} {
+		// Initialize state with null values so SetAttribute works.
+		initVal := tftypes.NewValue(sgrObjectType(), map[string]tftypes.Value{
+			"id":                tftypes.NewValue(tftypes.String, nil),
+			"security_group_id": tftypes.NewValue(tftypes.String, nil),
+			"direction":         tftypes.NewValue(tftypes.String, nil),
+			"protocol":          tftypes.NewValue(tftypes.String, nil),
+			"port_range_min":    tftypes.NewValue(tftypes.Number, nil),
+			"port_range_max":    tftypes.NewValue(tftypes.Number, nil),
+			"remote_cidr":       tftypes.NewValue(tftypes.String, nil),
+			"remote_group_id":   tftypes.NewValue(tftypes.String, nil),
+			"description":       tftypes.NewValue(tftypes.String, nil),
+			"timeouts":          tftypes.NewValue(sgrObjectType().AttributeTypes["timeouts"], nil),
+		})
 
-	resp := &resource.ImportStateResponse{
-		State: tfsdk.State{Schema: s, Raw: initVal},
+		resp := &resource.ImportStateResponse{
+			State: tfsdk.State{Schema: s, Raw: initVal},
+		}
+
+		r.(resource.ResourceWithImportState).ImportState(context.Background(), resource.ImportStateRequest{ID: id}, resp)
+
+		if !resp.Diagnostics.HasError() {
+			t.Errorf("expected error for invalid import ID %q", id)
+		}
+		if strings.Contains(id, "..") || strings.HasPrefix(id, "./") {
+			if !importDetailContains(resp.Diagnostics, "collapses") {
+				t.Errorf("import ID %q: diagnostic must name the path-collapsing danger, got %v", id, resp.Diagnostics)
+			}
+		}
 	}
+}
 
-	r.(resource.ResourceWithImportState).ImportState(context.Background(), resource.ImportStateRequest{ID: "no-slash"}, resp)
-
-	if !resp.Diagnostics.HasError() {
-		t.Error("expected error for invalid import ID format")
+// importDetailContains reports whether any diagnostic detail carries want.
+func importDetailContains(d diag.Diagnostics, want string) bool {
+	for _, e := range d.Errors() {
+		if strings.Contains(e.Detail(), want) {
+			return true
+		}
 	}
+	return false
 }
 
 // sgrCreatePlanValue builds a create-plan tuple for a tcp/443 ingress rule

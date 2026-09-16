@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -794,12 +795,30 @@ func TestImportState(t *testing.T) {
 		wantErr    bool
 		wantPIP    string
 		wantInstID string
+		wantMsg    string
 	}{
 		{name: "valid", importID: "pip-1/inst-1", wantPIP: "pip-1", wantInstID: "inst-1"},
 		{name: "no separator", importID: "pip-1", wantErr: true},
 		{name: "empty public ip", importID: "/inst-1", wantErr: true},
 		{name: "empty instance", importID: "pip-1/", wantErr: true},
 		{name: "empty", importID: "", wantErr: true},
+		{
+			// Both halves can reach a URL path, so dot segments are refused
+			// with a diagnostic naming the path-collapsing danger.
+			name:     "dot segment as instance id",
+			importID: "pip-1/..",
+			wantErr:  true,
+			wantMsg:  "collapses",
+		},
+		{name: "dot segment as pip id", importID: "../inst-1", wantErr: true, wantMsg: "collapses"},
+		{name: "lone dot as instance id", importID: "pip-1/.", wantErr: true, wantMsg: "collapses"},
+		{
+			// An extra segment is refused by the exact segment count, not the
+			// dot arm — no collapse wording required.
+			name:     "extra segment folded into instance id",
+			importID: "pip-1/inst-1/extra",
+			wantErr:  true,
+		},
 	}
 
 	for _, tc := range cases {
@@ -824,6 +843,9 @@ func TestImportState(t *testing.T) {
 				if !resp.Diagnostics.HasError() {
 					t.Fatalf("expected import id %q to be rejected", tc.importID)
 				}
+				if tc.wantMsg != "" && !importDetailContains(resp.Diagnostics, tc.wantMsg) {
+					t.Fatalf("import id %q: diagnostic must name the danger (%q), got %v", tc.importID, tc.wantMsg, resp.Diagnostics)
+				}
 				return
 			}
 			if resp.Diagnostics.HasError() {
@@ -843,6 +865,16 @@ func TestImportState(t *testing.T) {
 			}
 		})
 	}
+}
+
+// importDetailContains reports whether any diagnostic detail carries want.
+func importDetailContains(d diag.Diagnostics, want string) bool {
+	for _, e := range d.Errors() {
+		if strings.Contains(e.Detail(), want) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestConfigure_RejectsUnexpectedProviderData(t *testing.T) {

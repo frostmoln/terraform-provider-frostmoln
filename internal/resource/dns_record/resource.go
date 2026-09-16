@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -263,12 +262,9 @@ func (r *dnsRecordResource) Delete(ctx context.Context, req resource.DeleteReque
 
 func (r *dnsRecordResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	// Import ID format: {zone_id}/{record_id}
-	parts := strings.SplitN(req.ID, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		resp.Diagnostics.AddError(
-			"Invalid Import ID",
-			fmt.Sprintf("Expected import ID format: {zone_id}/{record_id}, got: %s", req.ID),
-		)
+	parts, err := client.ParseImportID(req.ID, "zone_id", "record_id")
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Import ID", err.Error())
 		return
 	}
 

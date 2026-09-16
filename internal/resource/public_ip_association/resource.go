@@ -692,12 +692,18 @@ func (r *publicIPAssociationResource) Delete(ctx context.Context, req resource.D
 }
 
 func (r *publicIPAssociationResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	parts := strings.SplitN(req.ID, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		resp.Diagnostics.AddError(
-			"Invalid Import ID",
-			fmt.Sprintf("Expected import ID in the format {public_ip_id}/{instance_id}, got: %s", req.ID),
-		)
+	// Import ID format: {public_ip_id}/{instance_id}.
+	//
+	// Both halves can reach a URL path: the pip id addresses
+	// /public-ips/{id} directly, and the instance id is interpolated when
+	// Read resolves the port via GET /instances/{id}. The client assembles
+	// paths with path.Join, which cleans dot segments that url.PathEscape
+	// leaves intact, so refuse "."/".." (and the extra segments a lenient
+	// split would fold into the instance id) at the import boundary.
+	// (The associate action itself carries only the port id in its body.)
+	parts, err := client.ParseImportID(req.ID, "public_ip_id", "instance_id")
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Import ID", err.Error())
 		return
 	}
 

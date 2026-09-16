@@ -5,10 +5,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
@@ -118,4 +123,61 @@ func TestDNSRecordResourceCRUD(t *testing.T) {
 	if _, err := c.Delete(ctx, c.TenantPath("/dns/zones/zone-1/records/rec-1")); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
+}
+
+// TestDNSRecordImportState pins the composite-id import: both halves ride the
+// request path (GET/DELETE /dns/zones/{zone}/records/{record}), so a dot
+// segment must be refused at the boundary — path.Join would clean a ".."
+// into the PARENT ZONE, turning this resource's Delete into a zone delete.
+func TestDNSRecordImportState(t *testing.T) {
+	r := NewResource().(resource.ResourceWithImportState)
+	var schemaResp resource.SchemaResponse
+	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	newResp := func() *resource.ImportStateResponse {
+		attrs := map[string]tftypes.Value{}
+		for name, at := range tfType.(tftypes.Object).AttributeTypes {
+			attrs[name] = tftypes.NewValue(at, nil)
+		}
+		return &resource.ImportStateResponse{
+			State: tfsdk.State{Schema: schemaResp.Schema, Raw: tftypes.NewValue(tfType, attrs)},
+		}
+	}
+
+	resp := newResp()
+	r.ImportState(ctx, resource.ImportStateRequest{ID: "zone-1/rec-2"}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("import failed: %v", resp.Diagnostics.Errors())
+	}
+	var zoneID, id types.String
+	resp.State.GetAttribute(ctx, path.Root("zone_id"), &zoneID)
+	resp.State.GetAttribute(ctx, path.Root("id"), &id)
+	if zoneID.ValueString() != "zone-1" || id.ValueString() != "rec-2" {
+		t.Errorf("expected zone-1/rec-2, got %s/%s", zoneID.ValueString(), id.ValueString())
+	}
+
+	for _, bad := range []string{"rec-2", "", "zone-1/", "/rec-2", "zone-1/..", "../rec-2", "./rec-2", "../..", "zone-1/rec-2/extra", "zone-1/."} {
+		resp := newResp()
+		r.ImportState(ctx, resource.ImportStateRequest{ID: bad}, resp)
+		if !resp.Diagnostics.HasError() {
+			t.Errorf("expected error for malformed import ID %q", bad)
+		}
+		if strings.Contains(bad, "..") || strings.HasPrefix(bad, "./") {
+			if !importDetailContains(resp.Diagnostics, "collapses") {
+				t.Errorf("import ID %q: diagnostic must name the path-collapsing danger, got %v", bad, resp.Diagnostics)
+			}
+		}
+	}
+}
+
+// importDetailContains reports whether any diagnostic detail carries want.
+func importDetailContains(d diag.Diagnostics, want string) bool {
+	for _, e := range d.Errors() {
+		if strings.Contains(e.Detail(), want) {
+			return true
+		}
+	}
+	return false
 }

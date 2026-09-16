@@ -257,10 +257,26 @@ func (r *iamPolicyAttachmentResource) ImportState(ctx context.Context, req resou
 	parts := strings.Split(req.ID, "/")
 	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
 		resp.Diagnostics.AddError(
-			"Invalid import ID",
+			"Invalid Import ID",
 			fmt.Sprintf("expected \"policy_id/attachee_type/attachee_id\", got %q", req.ID),
 		)
 		return
+	}
+	// Dot-segments survive url.PathEscape (unreserved) and would be cleaned by
+	// the client's path.Join: the policy id is a URL path segment (the
+	// attachee type/id ride the DELETE query and the Read filter, the Create
+	// request body), so an id like ".." could repoint requests at a different
+	// API object. Refuse them at the import boundary rather than leaving the
+	// poisoned value to a later 404. (No slash check beyond the exact count:
+	// strings.Split is already exact, a folded tail fails the len check.)
+	for _, p := range parts {
+		if p == "." || p == ".." {
+			resp.Diagnostics.AddError(
+				"Invalid Import ID",
+				fmt.Sprintf("%q is not a valid policy id, attachee type or attachee id: path segments like %q are not allowed.", req.ID, p),
+			)
+			return
+		}
 	}
 	// Re-validate the attachee type here: the schema's OneOf validator runs on
 	// config, not on import-set state, so without this a bogus type would only
@@ -269,7 +285,7 @@ func (r *iamPolicyAttachmentResource) ImportState(ctx context.Context, req resou
 	case attacheeAPIKey, attacheeWorkloadIdentity, attacheeGroup:
 	default:
 		resp.Diagnostics.AddError(
-			"Invalid import ID",
+			"Invalid Import ID",
 			fmt.Sprintf("attachee_type must be one of %q, %q, %q; got %q", attacheeAPIKey, attacheeWorkloadIdentity, attacheeGroup, parts[1]),
 		)
 		return

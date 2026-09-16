@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -650,6 +651,7 @@ func TestVolumeAttachment_TFSDKImportState(t *testing.T) {
 		wantErr  bool
 		wantVol  string
 		wantInst string
+		wantMsg  string
 	}{
 		{
 			name:     "valid composite ID",
@@ -672,6 +674,32 @@ func TestVolumeAttachment_TFSDKImportState(t *testing.T) {
 			id:      "vol-123/",
 			wantErr: true,
 		},
+		{
+			// Dot-segments survive url.PathEscape and would be collapsed by the
+			// client's path.Join — the volume id is a URL path segment.
+			name:    "dot segment as instance id",
+			id:      "vol-imp-1/..",
+			wantErr: true,
+			wantMsg: "path segments",
+		},
+		{
+			name:    "dot segment as volume id",
+			id:      "../inst-456",
+			wantErr: true,
+			wantMsg: "path segments",
+		},
+		{
+			name:    "lone dot as instance id",
+			id:      "vol-imp-1/.",
+			wantErr: true,
+			wantMsg: "path segments",
+		},
+		{
+			name:    "extra segment folded into instance id",
+			id:      "vol-imp-1/inst-imp-1/extra",
+			wantErr: true,
+			wantMsg: "path segments",
+		},
 	}
 
 	for _, tt := range tests {
@@ -693,6 +721,9 @@ func TestVolumeAttachment_TFSDKImportState(t *testing.T) {
 			if tt.wantErr {
 				if !importResp.Diagnostics.HasError() {
 					t.Error("expected error for invalid import ID")
+				}
+				if tt.wantMsg != "" && !importDetailContains(importResp.Diagnostics, tt.wantMsg) {
+					t.Errorf("import ID %q: diagnostic must name the danger (%q), got %v", tt.id, tt.wantMsg, importResp.Diagnostics)
 				}
 				return
 			}
@@ -1517,4 +1548,14 @@ func TestDeleteUnwatchable202IsClassifiedUnknown(t *testing.T) {
 	if !strings.Contains(resp.Diagnostics.Errors()[0].Summary(), "Outcome Is Unknown") {
 		t.Errorf("unwatchable detach must be classified unknown, got summary %q", resp.Diagnostics.Errors()[0].Summary())
 	}
+}
+
+// importDetailContains reports whether any diagnostic detail carries want.
+func importDetailContains(d diag.Diagnostics, want string) bool {
+	for _, e := range d.Errors() {
+		if strings.Contains(e.Detail(), want) {
+			return true
+		}
+	}
+	return false
 }

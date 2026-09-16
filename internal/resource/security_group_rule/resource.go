@@ -507,12 +507,15 @@ func (r *securityGroupRuleResource) Delete(ctx context.Context, req resource.Del
 
 func (r *securityGroupRuleResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	// Import ID format: {security_group_id}/{rule_id}
-	parts := strings.SplitN(req.ID, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		resp.Diagnostics.AddError(
-			"Invalid Import ID",
-			fmt.Sprintf("Expected import ID format: {security_group_id}/{rule_id}, got: %s", req.ID),
-		)
+	//
+	// ParseImportID is the explicit dot-segment refusal, not a formality: both
+	// halves of this id ride the request path (the delete addresses
+	// DELETE /security-groups/{sg}/rules/{rule}), where path.Join would clean
+	// a ".." into the parent security group. The Read's rule match-by-id used
+	// to fail a poisoned id only incidentally; refuse it at the boundary.
+	parts, err := client.ParseImportID(req.ID, "security_group_id", "rule_id")
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Import ID", err.Error())
 		return
 	}
 

@@ -3,7 +3,6 @@ package lb_health_monitor
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -476,12 +475,9 @@ func (r *healthMonitorResource) Delete(ctx context.Context, req resource.DeleteR
 
 func (r *healthMonitorResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	// Import ID format: {load_balancer_id}/{pool_id}
-	parts := strings.SplitN(req.ID, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		resp.Diagnostics.AddError(
-			"Invalid Import ID",
-			fmt.Sprintf("Expected import ID format: {load_balancer_id}/{pool_id}, got: %s", req.ID),
-		)
+	parts, err := client.ParseImportID(req.ID, "load_balancer_id", "pool_id")
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Import ID", err.Error())
 		return
 	}
 
