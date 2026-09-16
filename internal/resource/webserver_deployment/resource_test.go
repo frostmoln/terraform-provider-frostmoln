@@ -13,7 +13,9 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
@@ -249,15 +251,18 @@ func TestRunDeployFlow(t *testing.T) {
 	c.SetTenantIDForTest("t-1")
 	r := newTestDeploymentResource(c, server.Client())
 
-	deployID, status, err := r.runDeploy(context.Background(), "inst-1", archive, sum, r.getPollTimeout())
+	outcome, err := r.runDeploy(context.Background(), "inst-1", archive, sum, r.getPollTimeout())
 	if err != nil {
 		t.Fatalf("runDeploy: %v", err)
 	}
-	if deployID != "dep-1" {
-		t.Errorf("deployID = %s, want dep-1", deployID)
+	if outcome.DeployID != "dep-1" {
+		t.Errorf("deployID = %s, want dep-1", outcome.DeployID)
 	}
-	if status != "succeeded" {
-		t.Errorf("status = %s, want succeeded", status)
+	if outcome.Status != "succeeded" {
+		t.Errorf("status = %s, want succeeded", outcome.Status)
+	}
+	if outcome.Unresolved {
+		t.Error("a succeeded deploy must not be unresolved")
 	}
 	if !uploadHit {
 		t.Error("upload endpoint was never called")
@@ -309,11 +314,277 @@ func TestRunDeployFailed(t *testing.T) {
 	c.SetTenantIDForTest("t-1")
 	r := newTestDeploymentResource(c, server.Client())
 
-	_, _, err := r.runDeploy(context.Background(), "inst-1", archive, "abc", r.getPollTimeout())
+	outcome, err := r.runDeploy(context.Background(), "inst-1", archive, "abc", r.getPollTimeout())
 	if err == nil {
 		t.Fatal("expected an error for a failed deploy")
 	}
+	if outcome.Unresolved {
+		t.Error("an agent-reported failed deploy is a definite outcome, not unresolved")
+	}
+	if outcome.DeployID == "" {
+		t.Error("a failed deploy must still carry its deploy id for observability")
+	}
 	if !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Errorf("error should carry the agent message, got: %v", err)
+	}
+}
+
+// --- create-timeout orphan contract (adopt-and-track) ---
+
+// buildDeploymentPlan creates a tfsdk.Plan pre-populated with a deployment.
+func buildDeploymentPlan(t *testing.T, model WebserverDeploymentModel) tfsdk.Plan {
+	t.Helper()
+	r := NewResource()
+	var schemaResp resource.SchemaResponse
+	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
+
+	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	if diags := plan.Set(context.Background(), &model); diags.HasError() {
+		t.Fatalf("failed to set plan: %v", diags.Errors())
+	}
+	return plan
+}
+
+func emptyDeploymentState(t *testing.T) tfsdk.State {
+	t.Helper()
+	r := NewResource()
+	var schemaResp resource.SchemaResponse
+	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
+
+	stateVal := tftypes.NewValue(schemaResp.Schema.Type().TerraformType(context.Background()), nil)
+	return tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal}
+}
+
+func writeTempArchive(t *testing.T, bytes []byte) (path, sum string) {
+	t.Helper()
+	dir := t.TempDir()
+	path = filepath.Join(dir, "site.tar.gz")
+	if err := os.WriteFile(path, bytes, 0o600); err != nil {
+		t.Fatalf("write archive: %v", err)
+	}
+	return path, sha256Hex(bytes)
+}
+
+// TestRunDeployWaitTimeoutIsUnresolved: start accepted, the agent never reaches
+// a terminal status inside the budget → the UNKNOWN arm, carrying the deploy id.
+func TestRunDeployWaitTimeoutIsUnresolved(t *testing.T) {
+	archive, sum := writeTempArchive(t, []byte("unresolved flow"))
+
+	var serverURL string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		p := req.URL.Path
+		switch {
+		case req.Method == http.MethodPost && strings.HasSuffix(p, "/deploys") && !strings.HasSuffix(p, "/start"):
+			_ = json.NewEncoder(w).Encode(apiCreateDeployResponse{
+				DeployID: "dep-u", UploadURL: serverURL + "/upload",
+				UploadFields: map[string]string{"key": "staging/dep-u"}, Status: "pending_upload",
+			})
+		case p == "/upload":
+			w.WriteHeader(http.StatusNoContent)
+		case strings.HasSuffix(p, "/start"):
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(apiDeploy{ID: "dep-u", Status: "deploying"})
+		case strings.HasSuffix(p, "/deploys/dep-u"):
+			_ = json.NewEncoder(w).Encode(apiDeploy{ID: "dep-u", Status: "deploying"})
+		case strings.HasSuffix(p, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	serverURL = server.URL
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := newTestDeploymentResource(c, server.Client())
+	r.pollTimeout = 150 * time.Millisecond
+
+	outcome, err := r.runDeploy(context.Background(), "inst-1", archive, sum, r.getPollTimeout())
+	if err == nil {
+		t.Fatal("a wait that never resolves must error")
+	}
+	if !outcome.Unresolved {
+		t.Error("a mid-deploy wait timeout is the unresolved arm — the deploy may still land")
+	}
+	if outcome.DeployID != "dep-u" {
+		t.Errorf("unresolved outcome must carry the deploy id, got %q", outcome.DeployID)
+	}
+}
+
+// TestRunDeployUploadFailureIsDefinite: the deploy record exists (observability
+// handle) but the flow ended definitively — nothing was published.
+func TestRunDeployUploadFailureIsDefinite(t *testing.T) {
+	archive, sum := writeTempArchive(t, []byte("upload-fail flow"))
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		p := req.URL.Path
+		switch {
+		case req.Method == http.MethodPost && strings.HasSuffix(p, "/deploys") && !strings.HasSuffix(p, "/start"):
+			_ = json.NewEncoder(w).Encode(apiCreateDeployResponse{
+				DeployID: "dep-f", UploadURL: "http://127.0.0.1:1/upload",
+				UploadFields: map[string]string{"key": "staging/dep-f"}, Status: "pending_upload",
+			})
+		case strings.HasSuffix(p, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", req.Method, p)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := newTestDeploymentResource(c, &http.Client{Timeout: 2 * time.Second})
+
+	outcome, err := r.runDeploy(context.Background(), "inst-1", archive, sum, r.getPollTimeout())
+	if err == nil {
+		t.Fatal("a rejected upload must error")
+	}
+	if outcome.Unresolved {
+		t.Error("a rejected upload is definite — nothing was started, a fresh deploy is safe")
+	}
+	if outcome.DeployID != "dep-f" {
+		t.Errorf("the deploy record exists after create, so the id must ride along, got %q", outcome.DeployID)
+	}
+}
+
+// TestCreateWaitTimeoutAdoptsAndTracks: the full Create path on the unresolved
+// arm — the deploy is adopted into state (deploy id + honest status read)
+// BEFORE the error, so the tracked row survives the failed apply.
+func TestCreateWaitTimeoutAdoptsAndTracks(t *testing.T) {
+	archive, sum := writeTempArchive(t, []byte("adopt deploy"))
+	var serverURL string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		p := req.URL.Path
+		switch {
+		case req.Method == http.MethodPost && strings.HasSuffix(p, "/deploys") && !strings.HasSuffix(p, "/start"):
+			_ = json.NewEncoder(w).Encode(apiCreateDeployResponse{
+				DeployID: "dep-9", UploadURL: serverURL + "/upload",
+				UploadFields: map[string]string{"key": "staging/dep-9"}, Status: "pending_upload",
+			})
+		case p == "/upload":
+			w.WriteHeader(http.StatusNoContent)
+		case strings.HasSuffix(p, "/start"):
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(apiDeploy{ID: "dep-9", Status: "deploying"})
+		case strings.HasSuffix(p, "/deploys/dep-9"):
+			// Deploying through the wait AND through the adoption's honest
+			// read — the deploy simply has not finished when the provider
+			// stopped looking, which is exactly the unresolved arm.
+			_ = json.NewEncoder(w).Encode(apiDeploy{ID: "dep-9", Status: "deploying"})
+		case strings.HasSuffix(p, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", req.Method, p)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	serverURL = server.URL
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := newTestDeploymentResource(c, server.Client())
+	r.pollTimeout = 100 * time.Millisecond
+
+	plan := buildDeploymentPlan(t, WebserverDeploymentModel{
+		InstanceID:    types.StringValue("inst-1"),
+		SourceArchive: types.StringValue(archive),
+	})
+	createResp := resource.CreateResponse{State: emptyDeploymentState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("an unobserved deploy outcome must error")
+	}
+	named := false
+	for _, e := range createResp.Diagnostics.Errors() {
+		if strings.Contains(e.Summary(), "Tracked In State") && strings.Contains(e.Detail(), "dep-9") {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("the adoption error must name the tracked deploy, got: %v", createResp.Diagnostics.Errors())
+	}
+	var result WebserverDeploymentModel
+	if diags := createResp.State.Get(context.Background(), &result); diags.HasError() {
+		t.Fatalf("the adopted state row must be readable: %v", diags.Errors())
+	}
+	if result.DeployID.ValueString() != "dep-9" {
+		t.Errorf("tracked deploy_id = %q, want dep-9", result.DeployID.ValueString())
+	}
+	if result.SourceHash.ValueString() != sum {
+		t.Errorf("tracked source_hash = %q, want %q", result.SourceHash.ValueString(), sum)
+	}
+	if result.Status.ValueString() != "deploying" {
+		t.Errorf("the honest read settles status = %q, want deploying (the platform's last word)", result.Status.ValueString())
+	}
+}
+
+// TestCreateAgentReportedFailureKeepsRetry: an agent-reported failed deploy is
+// a definite platform decision — error, no state, and the next apply redeploys.
+func TestCreateAgentReportedFailureKeepsRetry(t *testing.T) {
+	archive, _ := writeTempArchive(t, []byte("definite fail"))
+	var serverURL string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		p := req.URL.Path
+		switch {
+		case req.Method == http.MethodPost && strings.HasSuffix(p, "/deploys") && !strings.HasSuffix(p, "/start"):
+			_ = json.NewEncoder(w).Encode(apiCreateDeployResponse{
+				DeployID: "dep-8", UploadURL: serverURL + "/upload",
+				UploadFields: map[string]string{"key": "staging/dep-8"}, Status: "pending_upload",
+			})
+		case p == "/upload":
+			w.WriteHeader(http.StatusNoContent)
+		case strings.HasSuffix(p, "/start"):
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(apiDeploy{ID: "dep-8", Status: "deploying"})
+		case strings.HasSuffix(p, "/deploys/dep-8"):
+			_ = json.NewEncoder(w).Encode(apiDeploy{ID: "dep-8", Status: "failed", ErrorMessage: "checksum mismatch"})
+		case strings.HasSuffix(p, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", req.Method, p)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	serverURL = server.URL
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := newTestDeploymentResource(c, server.Client())
+
+	plan := buildDeploymentPlan(t, WebserverDeploymentModel{
+		InstanceID:    types.StringValue("inst-1"),
+		SourceArchive: types.StringValue(archive),
+	})
+	createResp := resource.CreateResponse{State: emptyDeploymentState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("an agent-reported failed deploy must error")
+	}
+	named := false
+	for _, e := range createResp.Diagnostics.Errors() {
+		if strings.Contains(e.Detail(), "dep-8") {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("the failure must name the deploy record, got: %v", createResp.Diagnostics.Errors())
+	}
+	if !createResp.State.Raw.IsNull() {
+		t.Error("a definitely failed deploy stays untracked so the next apply redeploys")
 	}
 }

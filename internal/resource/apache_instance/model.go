@@ -281,3 +281,20 @@ func (m *ApacheInstanceModel) fromAPI(ctx context.Context, inst *apiWebserverIns
 		m.SecurityGroupID = types.StringNull()
 	}
 }
+
+// apiInstanceRef is the slice of the family listing's item shape that the
+// create-timeout orphan sweep (internal/orphan) matches on: identity, the
+// type discriminator that keeps a same-named sibling type out of the sweep,
+// and the created-at stamp the apply floor is compared against.
+type apiInstanceRef struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// apiWebserverInstanceList is the GET /webservers listing response (both
+// webserver types; the sweep filters server-side items by type client-side).
+type apiWebserverInstanceList struct {
+	Instances []apiInstanceRef `json:"instances"`
+}

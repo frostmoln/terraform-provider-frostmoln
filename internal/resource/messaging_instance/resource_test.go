@@ -1092,3 +1092,194 @@ func TestUpdateFlavorChangeRejected(t *testing.T) {
 		t.Error("expected error rejecting a flavor_id change")
 	}
 }
+
+// --- create-timeout orphan contract (adopt-as-tracked) ---
+
+// TestCreateWaitTimeoutAdopts: the create 202's operation never completes inside
+// the provider's wait, but the instance exists — the sweep adopts exactly the
+// instance this apply produced (name + created-after-apply-start + type), and
+// the post-adoption read-persist writes a tracked state row.
+func TestCreateWaitTimeoutAdopts(t *testing.T) {
+	listed := false
+	now := time.Now().UTC().Format(time.RFC3339)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case r.Method == http.MethodPost && p == "/v1/tenants/t-1/messaging":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-1"})
+		case p == "/v1/tenants/t-1/operations/op-1" && !listed:
+			// Running forever: the wait gives up, the classification reads the
+			// operation again (still not terminal → UNKNOWN arm → the sweep).
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-1", Status: "running"})
+		case p == "/v1/tenants/t-1/messaging":
+			listed = true
+			_ = json.NewEncoder(w).Encode(apiMessagingInstanceList{Instances: []apiInstanceRef{
+				// A same-named KAFKA sibling must never be adopted — the plan's
+				// type keeps it out of the sweep even though everything else
+				// (name, freshness) matches.
+				{ID: "kafka-fresh", Name: "test-broker", Type: "kafka", CreatedAt: now},
+				{ID: "mq-fresh", Name: "test-broker", Type: "lavinmq", CreatedAt: now},
+				// An older same-name same-type instance predates this apply.
+				{ID: "mq-stale", Name: "test-broker", Type: "lavinmq", CreatedAt: "2020-01-01T00:00:00Z"},
+			}})
+		case p == "/v1/tenants/t-1/messaging/mq-fresh":
+			// The adoption's honest read: the platform's row, running.
+			_ = json.NewEncoder(w).Encode(apiMessagingInstance{
+				ID: "mq-fresh", Name: "test-broker", Type: "lavinmq", TypeVersion: "2.3",
+				FlavorID: "mq.gp1.small", VPCID: "vpc-1", SubnetID: "sn-1",
+				PersistenceMode: "persistent", Status: "running",
+				PrivateIP: "10.0.1.5", Port: 5672, AMQPSPort: 5671, ManagementPort: 15672,
+				CreatedAt: now,
+			})
+		case strings.HasSuffix(p, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, p)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &messagingInstanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 300 * time.Millisecond}
+
+	plan := buildMessagingInstancePlan(t, MessagingInstanceModel{
+		Name:            types.StringValue("test-broker"),
+		Type:            types.StringValue("lavinmq"),
+		Version:         types.StringValue("2.3"),
+		FlavorID:        types.StringValue("mq.gp1.small"),
+		VPCID:           types.StringValue("vpc-1"),
+		SubnetID:        types.StringValue("sn-1"),
+		PersistenceMode: types.StringValue("persistent"),
+	})
+	createResp := resource.CreateResponse{State: emptyMessagingInstanceState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("an adopted create must carry the adoption warning, not an error: %v", createResp.Diagnostics.Errors())
+	}
+	if len(createResp.Diagnostics.Warnings()) == 0 {
+		t.Fatal("the adoption must be visible as a warning")
+	}
+
+	var result MessagingInstanceModel
+	if diags := createResp.State.Get(context.Background(), &result); diags.HasError() {
+		t.Fatalf("read back adopted state: %v", diags.Errors())
+	}
+	if result.ID.ValueString() != "mq-fresh" {
+		t.Errorf("adopted id = %q, want mq-fresh (the apply's own instance)", result.ID.ValueString())
+	}
+	if result.Status.ValueString() != "running" {
+		t.Errorf("adopted status = %q, want running (the honest read)", result.Status.ValueString())
+	}
+}
+
+// TestCreateOperationRefused: a terminal-FAILED operation is the platform's own
+// no — nothing was created, the refused arm says so, and re-applying is safe.
+func TestCreateOperationRefused(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case r.Method == http.MethodPost && p == "/v1/tenants/t-1/messaging":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-2"})
+		case p == "/v1/tenants/t-1/operations/op-2":
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-2", Status: "failed", Error: "flavor not available in zone"})
+		case strings.HasSuffix(p, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, p)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &messagingInstanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 300 * time.Millisecond}
+
+	plan := buildMessagingInstancePlan(t, MessagingInstanceModel{
+		Name:            types.StringValue("test-broker"),
+		Type:            types.StringValue("lavinmq"),
+		Version:         types.StringValue("2.3"),
+		FlavorID:        types.StringValue("mq.gp1.small"),
+		VPCID:           types.StringValue("vpc-1"),
+		SubnetID:        types.StringValue("sn-1"),
+		PersistenceMode: types.StringValue("persistent"),
+	})
+	createResp := resource.CreateResponse{State: emptyMessagingInstanceState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("a refused create must error, naming the platform's reason")
+	}
+	found := false
+	for _, e := range createResp.Diagnostics.Errors() {
+		if strings.Contains(e.Summary(), "Refused By The Platform") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected the refused-arm diagnostic, got: %v", createResp.Diagnostics.Errors())
+	}
+	if !createResp.State.Raw.IsNull() {
+		t.Error("a refused create must not record state")
+	}
+}
+
+// TestCreateWaitTimeoutVerifiedAbsent: the sweep found nothing matching this
+// apply — the verified-absence arm: an error, no state, re-apply is safe.
+func TestCreateWaitTimeoutVerifiedAbsent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case r.Method == http.MethodPost && p == "/v1/tenants/t-1/messaging":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-3"})
+		case p == "/v1/tenants/t-1/operations/op-3":
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-3", Status: "running"})
+		case p == "/v1/tenants/t-1/messaging":
+			_ = json.NewEncoder(w).Encode(apiMessagingInstanceList{})
+		case strings.HasSuffix(p, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, p)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &messagingInstanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 300 * time.Millisecond}
+
+	plan := buildMessagingInstancePlan(t, MessagingInstanceModel{
+		Name:            types.StringValue("test-broker"),
+		Type:            types.StringValue("lavinmq"),
+		Version:         types.StringValue("2.3"),
+		FlavorID:        types.StringValue("mq.gp1.small"),
+		VPCID:           types.StringValue("vpc-1"),
+		SubnetID:        types.StringValue("sn-1"),
+		PersistenceMode: types.StringValue("persistent"),
+	})
+	createResp := resource.CreateResponse{State: emptyMessagingInstanceState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("verified absence must error")
+	}
+	found := false
+	for _, e := range createResp.Diagnostics.Errors() {
+		if strings.Contains(e.Summary(), "Verified Absent") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected the verified-absent diagnostic, got: %v", createResp.Diagnostics.Errors())
+	}
+	if !createResp.State.Raw.IsNull() {
+		t.Error("verified absence must not record state")
+	}
+}

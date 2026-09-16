@@ -155,3 +155,19 @@ func (m *MessagingInstanceModel) fromAPI(_ context.Context, inst *apiMessagingIn
 		m.UpdatedAt = types.StringNull()
 	}
 }
+
+// apiInstanceRef is the slice of the family listing's item shape that the
+// create-timeout orphan sweep (internal/orphan) matches on: identity, the
+// type discriminator that keeps a same-named sibling type out of the sweep,
+// and the created-at stamp the apply floor is compared against.
+type apiInstanceRef struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// apiMessagingInstanceList is the GET /messaging listing response.
+type apiMessagingInstanceList struct {
+	Instances []apiInstanceRef `json:"instances"`
+}

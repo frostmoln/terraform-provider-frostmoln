@@ -1065,3 +1065,247 @@ func TestUpdateStorageResizeOperationRefusedSurfaces(t *testing.T) {
 		t.Errorf("expected the workflow's prose, got: %s", err.Error())
 	}
 }
+
+// --- create-timeout orphan contract (adopt-as-tracked) ---
+
+// TestCreateWaitTimeoutAdopts: the create 202's operation never completes inside
+// the provider's wait, but the instance exists — the sweep adopts exactly the
+// instance this apply produced (name + created-after-apply-start + type), and
+// the post-adoption read-persist writes a tracked state row.
+func TestCreateWaitTimeoutAdopts(t *testing.T) {
+	listed := false
+	now := time.Now().UTC().Format(time.RFC3339)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case r.Method == http.MethodPost && p == "/v1/tenants/t-1/caches":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-1"})
+		case p == "/v1/tenants/t-1/operations/op-1" && !listed:
+			// Running forever: the wait gives up, the classification reads the
+			// operation again (still not terminal → UNKNOWN arm → the sweep).
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-1", Status: "running"})
+		case p == "/v1/tenants/t-1/caches":
+			listed = true
+			_ = json.NewEncoder(w).Encode(apiRedisInstanceList{Instances: []apiInstanceRef{
+				{ID: "redis-fresh", Name: "test-redis", Type: "redis", CreatedAt: now},
+				// A same-named VALKEY sibling must never be adopted.
+				{ID: "valkey-fresh", Name: "test-redis", Type: "valkey", CreatedAt: now},
+				// An older same-name instance predates this apply.
+				{ID: "redis-stale", Name: "test-redis", Type: "redis", CreatedAt: "2020-01-01T00:00:00Z"},
+			}})
+		case p == "/v1/tenants/t-1/caches/redis-fresh":
+			// The adoption's honest read: the platform's row, running.
+			_ = json.NewEncoder(w).Encode(apiRedisInstance{
+				ID: "redis-fresh", Name: "test-redis", TypeVersion: "7.2",
+				FlavorID: "cache.small", VPCID: "vpc-1", SubnetID: "sn-1",
+				Status: "running", Port: 6379, CreatedAt: now,
+			})
+		case strings.HasSuffix(p, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, p)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &redisInstanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 300 * time.Millisecond}
+
+	plan := buildRedisInstancePlan(t, RedisInstanceModel{
+		Name:     types.StringValue("test-redis"),
+		Version:  types.StringValue("7.2"),
+		FlavorID: types.StringValue("cache.small"),
+		VPCID:    types.StringValue("vpc-1"),
+		SubnetID: types.StringValue("sn-1"),
+	})
+	createResp := resource.CreateResponse{State: emptyRedisInstanceState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("an adopted create must carry the adoption warning, not an error: %v", createResp.Diagnostics.Errors())
+	}
+	if len(createResp.Diagnostics.Warnings()) == 0 {
+		t.Fatal("the adoption must be visible as a warning")
+	}
+
+	var result RedisInstanceModel
+	if diags := createResp.State.Get(context.Background(), &result); diags.HasError() {
+		t.Fatalf("read back adopted state: %v", diags.Errors())
+	}
+	if result.ID.ValueString() != "redis-fresh" {
+		t.Errorf("adopted id = %q, want redis-fresh (the apply's own instance)", result.ID.ValueString())
+	}
+	if result.Status.ValueString() != "running" {
+		t.Errorf("adopted status = %q, want running (the honest read)", result.Status.ValueString())
+	}
+}
+
+// TestCreateOperationRefused: a terminal-FAILED operation is the platform's own
+// no — nothing was created, the refused arm says so, and re-applying is safe.
+func TestCreateOperationRefused(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case r.Method == http.MethodPost && p == "/v1/tenants/t-1/caches":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-2"})
+		case p == "/v1/tenants/t-1/operations/op-2":
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-2", Status: "failed", Error: "flavor not available in zone"})
+		case strings.HasSuffix(p, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, p)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &redisInstanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 300 * time.Millisecond}
+
+	plan := buildRedisInstancePlan(t, RedisInstanceModel{
+		Name:     types.StringValue("test-redis"),
+		Version:  types.StringValue("7.2"),
+		FlavorID: types.StringValue("cache.small"),
+		VPCID:    types.StringValue("vpc-1"),
+		SubnetID: types.StringValue("sn-1"),
+	})
+	createResp := resource.CreateResponse{State: emptyRedisInstanceState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("a refused create must error, naming the platform's reason")
+	}
+	found := false
+	for _, e := range createResp.Diagnostics.Errors() {
+		if strings.Contains(e.Summary(), "Refused By The Platform") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected the refused-arm diagnostic, got: %v", createResp.Diagnostics.Errors())
+	}
+	if !createResp.State.Raw.IsNull() {
+		t.Error("a refused create must not record state")
+	}
+}
+
+// TestCreateWaitTimeoutVerifiedAbsent: the sweep found nothing matching this
+// apply — the verified-absence arm: an error, no state, re-apply is safe.
+func TestCreateWaitTimeoutVerifiedAbsent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case r.Method == http.MethodPost && p == "/v1/tenants/t-1/caches":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-3"})
+		case p == "/v1/tenants/t-1/operations/op-3":
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-3", Status: "running"})
+		case p == "/v1/tenants/t-1/caches":
+			_ = json.NewEncoder(w).Encode(apiRedisInstanceList{})
+		case strings.HasSuffix(p, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, p)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &redisInstanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 300 * time.Millisecond}
+
+	plan := buildRedisInstancePlan(t, RedisInstanceModel{
+		Name:     types.StringValue("test-redis"),
+		Version:  types.StringValue("7.2"),
+		FlavorID: types.StringValue("cache.small"),
+		VPCID:    types.StringValue("vpc-1"),
+		SubnetID: types.StringValue("sn-1"),
+	})
+	createResp := resource.CreateResponse{State: emptyRedisInstanceState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("verified absence must error")
+	}
+	found := false
+	for _, e := range createResp.Diagnostics.Errors() {
+		if strings.Contains(e.Summary(), "Verified Absent") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected the verified-absent diagnostic, got: %v", createResp.Diagnostics.Errors())
+	}
+	if !createResp.State.Raw.IsNull() {
+		t.Error("verified absence must not record state")
+	}
+}
+
+// TestCreateWaitTimeoutTypelessRowNotAdopted: the type discriminator fails
+// CLOSED — a listing row whose type is empty is never adopted, even when name
+// and floor match (adopting the wrong object outranks adopting none).
+func TestCreateWaitTimeoutTypelessRowNotAdopted(t *testing.T) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	var sawList atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case r.Method == http.MethodPost && p == "/v1/tenants/t-1/caches":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-4"})
+		case p == "/v1/tenants/t-1/operations/op-4":
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-4", Status: "running"})
+		case p == "/v1/tenants/t-1/caches":
+			sawList.Store(true)
+			// Only a type-less same-name row: must NOT be adopted.
+			_ = json.NewEncoder(w).Encode(apiRedisInstanceList{Instances: []apiInstanceRef{
+				{ID: "redis-ghost", Name: "test-redis", Type: "", CreatedAt: now},
+			}})
+		case strings.HasSuffix(p, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, p)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &redisInstanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 300 * time.Millisecond}
+
+	plan := buildRedisInstancePlan(t, RedisInstanceModel{
+		Name:     types.StringValue("test-redis"),
+		Version:  types.StringValue("7.2"),
+		FlavorID: types.StringValue("cache.small"),
+		VPCID:    types.StringValue("vpc-1"),
+		SubnetID: types.StringValue("sn-1"),
+	})
+	createResp := resource.CreateResponse{State: emptyRedisInstanceState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+
+	if !sawList.Load() {
+		t.Fatal("the sweep never listed the family")
+	}
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("a type-less candidate must not be adopted — the sweep must refuse")
+	}
+	found := false
+	for _, e := range createResp.Diagnostics.Errors() {
+		if strings.Contains(e.Summary(), "Verified Absent") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected verified absence, got: %v", createResp.Diagnostics.Errors())
+	}
+	if !createResp.State.Raw.IsNull() {
+		t.Error("a refused adoption must not record state")
+	}
+}

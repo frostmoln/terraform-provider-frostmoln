@@ -2,6 +2,7 @@ package valkey_instance
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -12,8 +13,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
@@ -259,6 +262,13 @@ func (r *valkeyInstanceResource) Create(ctx context.Context, req resource.Create
 	// this resource has always hardcoded.
 	budgets := r.resolveBudgets(plan.Timeouts)
 
+	// The created-at floor and subject for the discovery sweep (below): the
+	// instance this apply produces must have been created by THIS apply, and
+	// the refused arm names what the platform said no to.
+	applyStarted := time.Now().UTC()
+	floor := applyStarted.Add(-time.Minute)
+	subject := fmt.Sprintf("the Valkey instance %q", plan.Name.ValueString())
+
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/caches"), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create Valkey instance", err.Error())
@@ -270,6 +280,10 @@ func (r *valkeyInstanceResource) Create(ctx context.Context, req resource.Create
 	// instance ID from whichever shape we got, then run the existing
 	// poll-to-running + state refresh below against that ID.
 	var instID string
+	// adopted records that instID came from the discovery sweep, not the
+	// operation: the follow-up read then owes the sweep's contract extra
+	// diligence (identity verify, and never un-tracking the found object).
+	adopted := false
 	if apiResp.IsAccepted() {
 		op, err := client.ParseResponse[client.Operation](apiResp)
 		if err != nil {
@@ -278,17 +292,36 @@ func (r *valkeyInstanceResource) Create(ctx context.Context, req resource.Create
 		}
 		done, err := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Create)
 		if err != nil {
-			resp.Diagnostics.AddError("Valkey instance creation failed", err.Error())
-			return
-		}
-		instID = done.ResourceID
-		if instID == "" {
-			resp.Diagnostics.AddError(
-				"Valkey instance operation returned no resource ID",
-				"The create operation completed but returned no resource ID. The instance may "+
-					"exist in the backend without being tracked in Terraform state.",
-			)
-			return
+			if ctx.Err() != nil {
+				// The practitioner cancelled this apply — do not spend the
+				// classification or the sweep on a dead context, and do not
+				// mislabel a cancellation as an unresolvable fate.
+				resp.Diagnostics.AddError("Valkey instance creation failed", err.Error())
+				return
+			}
+			if r.client.ClassifyOperationFailure(ctx, op.OperationID) == client.OperationRefused {
+				orphan.AddCreateRefused(&resp.Diagnostics, "Valkey Instance", subject, err)
+				return
+			}
+			// UNKNOWN: the saga may still land. The sweep decides honestly.
+			instID = r.adoptCreatedInstance(ctx, plan, floor, err, resp)
+			adopted = instID != ""
+			if !adopted {
+				return
+			}
+		} else {
+			instID = done.ResourceID
+			if instID == "" {
+				// The operation COMPLETED without its resourceId (degraded
+				// provisioning). The instance exists; the sweep resolves it
+				// by name.
+				instID = r.adoptCreatedInstance(ctx, plan, floor,
+					fmt.Errorf("the create operation completed but returned no resource ID"), resp)
+				adopted = instID != ""
+				if !adopted {
+					return
+				}
+			}
 		}
 
 		// Persist state immediately so the ID is tracked, even if the
@@ -297,12 +330,34 @@ func (r *valkeyInstanceResource) Create(ctx context.Context, req resource.Create
 		// freshly-created instance.
 		readResp, err := r.client.Get(ctx, r.client.TenantPath("/caches/"+instID), nil)
 		if err != nil {
+			if adopted {
+				// The sweep FOUND the instance — a failed follow-up read must
+				// not un-track it. Write the minimal tracked row (the id is
+				// what destroy and refresh need) and say why.
+				plan.ID = types.StringValue(instID)
+				resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+				resp.Diagnostics.AddError("Adopted Valkey Instance Could Not Be Read",
+					fmt.Sprintf("The discovery sweep adopted instance %s, but the follow-up read failed: %s. "+
+						"The instance is tracked in state; refresh once the platform responds.", instID, err.Error()))
+				return
+			}
 			resp.Diagnostics.AddError("Failed to read Valkey instance after creation", err.Error())
 			return
 		}
 		inst, err := client.ParseResponse[apiValkeyInstance](readResp)
 		if err != nil {
 			resp.Diagnostics.AddError("Failed to parse Valkey instance response", err.Error())
+			return
+		}
+		if adopted && (inst.Name != plan.Name.ValueString() || (inst.Type != "" && inst.Type != "valkey")) {
+			// The sweep is name+floor matched, but the honest read is the last
+			// word: anything read outside this apply's name/type family is not
+			// this apply's instance (adopting the wrong object outranks
+			// adopting none — and this row would be destroyable).
+			resp.Diagnostics.AddError("Adopted Object Does Not Match This Apply",
+				fmt.Sprintf("The discovery sweep matched instance %s for name %q, but the platform's read "+
+					"returned name %q type %q. Nothing was recorded in state; identify the instance with "+
+					"`fm cache instance list` and `terraform import` it if it is yours.", instID, plan.Name.ValueString(), inst.Name, inst.Type))
 			return
 		}
 		plan.fromAPI(ctx, inst, &resp.Diagnostics)
@@ -371,6 +426,46 @@ func (r *valkeyInstanceResource) Create(ctx context.Context, req resource.Create
 
 	plan.fromAPI(ctx, finalInst, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// adoptCreatedInstance is the create-timeout arm of the orphan contract
+// (internal/orphan) for this resource family: the wait gave up while the saga
+// may still be running, or completed without its resourceId, and the family
+// listing resolves the instance this apply produced — matched on name, created
+// after this apply started, and of this apply's type so a same-named sibling
+// type can never be adopted by mistake. Found means adopt (the caller's
+// read-and-persist path is the honest read); absent means the sweep verified
+// the absence, so re-applying is safe; unreadable names the platform's last
+// word plus the list path. Never `terraform state rm` — it is the one action
+// that re-orphans a live, billing instance. Returns the adopted id, empty when
+// the diagnostic already says everything (the caller must return).
+func (r *valkeyInstanceResource) adoptCreatedInstance(ctx context.Context, plan ValkeyInstanceModel, floor time.Time, waitErr error, resp *resource.CreateResponse) string {
+	return orphan.AdoptCreateOnTimeout(ctx, &resp.Diagnostics, orphan.CreateParams{
+		ResourceName: "Valkey Instance",
+		FMList:       "`fm cache instance list`",
+		WaitErr:      waitErr,
+		Resolve: func(ctx context.Context) (string, error) {
+			apiResp, err := r.client.Get(ctx, r.client.TenantPath("/caches"), nil)
+			if err != nil {
+				return "", err
+			}
+			var list apiValkeyInstanceList
+			if err := json.Unmarshal(apiResp.Body, &list); err != nil {
+				return "", err
+			}
+			candidates := make([]orphan.Candidate, 0, len(list.Instances))
+			for _, it := range list.Instances {
+				// Fail closed on the discriminator: a row with no type (or a
+				// sibling-family row) is never adopted — adopting the wrong
+				// object outranks adopting none.
+				if it.Type != "valkey" {
+					continue
+				}
+				candidates = append(candidates, orphan.Candidate{ID: it.ID, Name: it.Name, CreatedAt: it.CreatedAt})
+			}
+			return orphan.PickCreated(candidates, plan.Name.ValueString(), floor)
+		},
+	})
 }
 
 func (r *valkeyInstanceResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {

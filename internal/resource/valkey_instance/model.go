@@ -172,3 +172,19 @@ func (m *ValkeyInstanceModel) fromAPI(_ context.Context, inst *apiValkeyInstance
 		m.UpdatedAt = types.StringNull()
 	}
 }
+
+// apiInstanceRef is the slice of the family listing's item shape that the
+// create-timeout orphan sweep (internal/orphan) matches on: identity, the
+// type discriminator that keeps a same-named sibling type out of the sweep,
+// and the created-at stamp the apply floor is compared against.
+type apiInstanceRef struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// apiValkeyInstanceList is the GET /caches listing response.
+type apiValkeyInstanceList struct {
+	Instances []apiInstanceRef `json:"instances"`
+}

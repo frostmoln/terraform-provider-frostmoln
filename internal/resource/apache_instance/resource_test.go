@@ -1673,3 +1673,175 @@ func TestUpdateStorageResizeOperationRefusedSurfaces(t *testing.T) {
 		t.Errorf("expected the workflow's prose, got: %s", err.Error())
 	}
 }
+
+// --- create orphan-contract tests (internal/orphan), mirroring the redis
+// reference tests: wait failure → refused vs UNKNOWN arm → sweep adoption. ---
+
+// TestCreateWaitTimeoutAdopts: the create 202's operation never completes inside
+// the provider's wait, but the instance exists — the sweep adopts exactly the
+// instance this apply produced (name + created-after-apply-start + type), and
+// the post-adoption read-persist writes a tracked state row. The /webservers
+// family lists apache AND nginx, so the type filter is load-bearing here.
+func TestCreateWaitTimeoutAdopts(t *testing.T) {
+	listed := false
+	now := time.Now().UTC().Format(time.RFC3339)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case r.Method == http.MethodPost && p == "/v1/tenants/t-1/webservers":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-1"})
+		case p == "/v1/tenants/t-1/operations/op-1" && !listed:
+			// Running forever: the wait gives up, the classification reads the
+			// operation again (still not terminal → UNKNOWN arm → the sweep).
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-1", Status: "running"})
+		case p == "/v1/tenants/t-1/webservers":
+			listed = true
+			_ = json.NewEncoder(w).Encode(apiWebserverInstanceList{Instances: []apiInstanceRef{
+				{ID: "apache-fresh", Name: "test-apache", Type: "apache", CreatedAt: now},
+				// A same-named NGINX sibling must never be adopted.
+				{ID: "nginx-fresh", Name: "test-apache", Type: "nginx", CreatedAt: now},
+				// An older same-name instance predates this apply.
+				{ID: "apache-stale", Name: "test-apache", Type: "apache", CreatedAt: "2020-01-01T00:00:00Z"},
+			}})
+		case p == "/v1/tenants/t-1/webservers/apache-fresh":
+			// The adoption's honest read: the platform's row, running.
+			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
+				ID: "apache-fresh", Name: "test-apache", Type: "apache", TypeVersion: "2.4",
+				FlavorID: "web.gp1.small", StorageGB: 20, VPCID: "vpc-1", SubnetID: "sn-1",
+				TLSEnabled: true, TypeConfig: map[string]string{"ServerTokens": "Prod"},
+				Status: "running", Port: 443, CreatedAt: now, TenantID: "t-1",
+			})
+		case strings.HasSuffix(p, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, p)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &apacheInstanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 300 * time.Millisecond}
+
+	model := baseApacheModel()
+	model.Name = types.StringValue("test-apache")
+	plan := buildApacheInstancePlan(t, model)
+	createResp := resource.CreateResponse{State: emptyApacheInstanceState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("an adopted create must carry the adoption warning, not an error: %v", createResp.Diagnostics.Errors())
+	}
+	if len(createResp.Diagnostics.Warnings()) == 0 {
+		t.Fatal("the adoption must be visible as a warning")
+	}
+
+	var result ApacheInstanceModel
+	if diags := createResp.State.Get(context.Background(), &result); diags.HasError() {
+		t.Fatalf("read back adopted state: %v", diags.Errors())
+	}
+	if result.ID.ValueString() != "apache-fresh" {
+		t.Errorf("adopted id = %q, want apache-fresh (the apply's own instance)", result.ID.ValueString())
+	}
+	if result.Status.ValueString() != "running" {
+		t.Errorf("adopted status = %q, want running (the honest read)", result.Status.ValueString())
+	}
+}
+
+// TestCreateOperationRefused: a terminal-FAILED operation is the platform's own
+// no — nothing was created, the refused arm says so, and re-applying is safe.
+func TestCreateOperationRefused(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case r.Method == http.MethodPost && p == "/v1/tenants/t-1/webservers":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-2"})
+		case p == "/v1/tenants/t-1/operations/op-2":
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-2", Status: "failed", Error: "flavor not available in zone"})
+		case strings.HasSuffix(p, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, p)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &apacheInstanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 300 * time.Millisecond}
+
+	model := baseApacheModel()
+	model.Name = types.StringValue("test-apache")
+	plan := buildApacheInstancePlan(t, model)
+	createResp := resource.CreateResponse{State: emptyApacheInstanceState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("a refused create must error, naming the platform's reason")
+	}
+	found := false
+	for _, e := range createResp.Diagnostics.Errors() {
+		if strings.Contains(e.Summary(), "Refused By The Platform") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected the refused-arm diagnostic, got: %v", createResp.Diagnostics.Errors())
+	}
+	if !createResp.State.Raw.IsNull() {
+		t.Error("a refused create must not record state")
+	}
+}
+
+// TestCreateWaitTimeoutVerifiedAbsent: the sweep found nothing matching this
+// apply — the verified-absence arm: an error, no state, re-apply is safe.
+func TestCreateWaitTimeoutVerifiedAbsent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case r.Method == http.MethodPost && p == "/v1/tenants/t-1/webservers":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-3"})
+		case p == "/v1/tenants/t-1/operations/op-3":
+			_ = json.NewEncoder(w).Encode(client.Operation{OperationID: "op-3", Status: "running"})
+		case p == "/v1/tenants/t-1/webservers":
+			_ = json.NewEncoder(w).Encode(apiWebserverInstanceList{})
+		case strings.HasSuffix(p, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, p)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &apacheInstanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: 300 * time.Millisecond}
+
+	model := baseApacheModel()
+	model.Name = types.StringValue("test-apache")
+	plan := buildApacheInstancePlan(t, model)
+	createResp := resource.CreateResponse{State: emptyApacheInstanceState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("verified absence must error")
+	}
+	found := false
+	for _, e := range createResp.Diagnostics.Errors() {
+		if strings.Contains(e.Summary(), "Verified Absent") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected the verified-absent diagnostic, got: %v", createResp.Diagnostics.Errors())
+	}
+	if !createResp.State.Raw.IsNull() {
+		t.Error("verified absence must not record state")
+	}
+}
