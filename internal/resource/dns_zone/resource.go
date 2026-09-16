@@ -276,6 +276,25 @@ func (r *dnsZoneResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
+	// Restore the plan-pinned computed values: the PUT response is not
+	// assertable against the plan, and overwriting the pin made core reject
+	// every apply with "inconsistent result after apply" (audit B1) after the
+	// zone had already changed server-side. Two halves of the same failure:
+	// the response's derived metadata (recordCount, the delegation NS set) is
+	// populated only by GET/list server-side and goes 0/omitted whenever the
+	// record backend is degraded mid-update — the paired network-service fix
+	// populates the update response too, but stays best-effort by design; and
+	// the response's status/serial are snapshots of a zone the platform moves
+	// independently (a record mutation flips it PENDING for tens of seconds;
+	// Designate bumps the SOA serial outside this update), so a concurrent
+	// record write between plan and apply would clobber the pinned value with
+	// a transition nobody asked for. GET remains the authoritative read: the
+	// next refresh reconciles anything that genuinely changed.
+	plan.RecordCount = state.RecordCount
+	plan.NameServers = state.NameServers
+	plan.Status = state.Status
+	plan.Serial = state.Serial
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
