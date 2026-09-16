@@ -3,12 +3,12 @@
 page_title: "frostmoln_tag_colors Data Source - Frostmoln"
 subcategory: ""
 description: |-
-  Lists the tag colour rules of an organization — the rules frostmoln_tag_color manages, including ones created in the portal, with their ids for import. With organization_id omitted it lists the rules of the organization that owns the provider's tenant, which any member of that organization can read. Rules are ordered by key, the key-only rule first, then by value. An API key needs organizations:read.
+  Lists the tag colour rules of an organization — the rules frostmoln_tag_color manages, including ones created in the portal, with their ids for import. With organization_id omitted it lists the rules of the organization that owns the provider's tenant, which any member of that organization can read. Rules are ordered by key, the key-only rule first, then by value. An API key needs organizations:read, and reaches only the organization that owns the provider's tenant: an organization_id naming another organization is refused.
 ---
 
 # frostmoln_tag_colors (Data Source)
 
-Lists the tag colour rules of an organization — the rules `frostmoln_tag_color` manages, including ones created in the portal, with their ids for import. With `organization_id` omitted it lists the rules of the organization that owns the provider's tenant, which any member of that organization can read. Rules are ordered by key, the key-only rule first, then by value. An API key needs `organizations:read`.
+Lists the tag colour rules of an organization — the rules `frostmoln_tag_color` manages, including ones created in the portal, with their ids for import. With `organization_id` omitted it lists the rules of the organization that owns the provider's tenant, which any member of that organization can read. Rules are ordered by key, the key-only rule first, then by value. An API key needs `organizations:read`, and reaches only the organization that owns the provider's tenant: an `organization_id` naming another organization is refused.
 
 ## Example Usage
 

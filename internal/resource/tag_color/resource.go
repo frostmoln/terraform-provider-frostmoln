@@ -60,7 +60,8 @@ func (r *tagColorResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"the plan warns, naming both — and changing it deletes the rule and creates it in the other organization." +
 			"\n\n**Permissions.** Creating, changing and deleting a rule needs an admin or owner role in the " +
 			"organization; reading one needs any active membership. An API key needs `organizations:write` and " +
-			"`organizations:read`." +
+			"`organizations:read`, and reaches only the organization that owns the provider's tenant: an " +
+			"`organization_id` naming another organization is refused." +
 			"\n\n**Import.** By `<organization_id>/<rule_id>`, or by `<rule_id>` alone for a rule of the " +
 			"organization that owns the provider's tenant. The `frostmoln_tag_colors` data source lists the rules " +
 			"with their ids." +
