@@ -4,8 +4,11 @@ package appgw_waf_exclusion
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"regexp"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -81,6 +84,68 @@ type apiDraftResponse struct {
 
 type exclusionResource struct {
 	client *client.Client
+
+	// putRetryInterval and putRetryTimeout default the retry of the ONE
+	// retryable draft-write refusal (wafPutRetry* below). Same injection seam
+	// as the sibling appgw_waf_rule (and appgw_config_apply before it): fields,
+	// never package variables, so a test can shrink the budget instead of
+	// sitting out the real 30s ceiling.
+	putRetryInterval time.Duration
+	putRetryTimeout  time.Duration
+}
+
+// wafPutRetryInterval and wafPutRetryTimeout bound the retry of the one
+// retryable draft-write 409, WAF_RULE_ID_CONTENDED (appgw
+// internal/domain/errors.go:217-221: "It is RETRYABLE contention, not a
+// customer mistake"). Short, like vpc_route's route-write retry: the
+// contention comes from a concurrent Terraform apply writing the same policy's
+// draft — Terraform runs up to ten resources at once (the provider's own
+// comment in appgw_config_apply) — and the other write either lands within
+// seconds or has failed; waiting minutes is not a better answer than a clear
+// error naming the exact racing writer.
+const (
+	wafPutRetryInterval = 2 * time.Second
+	wafPutRetryTimeout  = 30 * time.Second
+)
+
+func (r *exclusionResource) getPutRetryInterval() time.Duration {
+	if r.putRetryInterval > 0 {
+		return r.putRetryInterval
+	}
+	return wafPutRetryInterval
+}
+
+func (r *exclusionResource) getPutRetryTimeout() time.Duration {
+	if r.putRetryTimeout > 0 {
+		return r.putRetryTimeout
+	}
+	return wafPutRetryTimeout
+}
+
+// isRetryableExclusionPutConflict reports whether a draft-write 409 is the one
+// the appgw server documents as retryable: WAF_RULE_ID_CONTENDED, the id-
+// allocation collision inside a policy's draft when two writers race the same
+// put. The exclusion write shares the draft's id space, so it collides the
+// same way a rule write does.
+//
+// Codes, never the bare status — and specifically NOT client.IsConflict: the
+// same put can 409 PERMANENTLY, and retrying a permanent 409 would spin until
+// the ceiling and then surface the same error late. That blanket-IsConflict
+// shape is exactly what appgw_config_apply's isTransientApplyConflict and
+// vpc_route's predicate reject; both name it.
+//
+// The code string is REPORT-TRUSTED, not locally re-verifiable: the appgw
+// repository is unavailable in this environment (audit caveat); the
+// server-side definition was verified 2026-08-29 (errors.go:217-221). If the
+// server ever names a distinct exclusion-contention code, that 409 surfaces
+// rather than retries — the fail-safe direction: a retry that does not fire
+// degrades to today's hard failure, never to a lie.
+func isRetryableExclusionPutConflict(err error) bool {
+	var apiErr *client.APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusConflict {
+		return false
+	}
+	return apiErr.Code == "WAF_RULE_ID_CONTENDED"
 }
 
 // NewResource returns a new WAF exclusion resource factory.
@@ -248,8 +313,20 @@ func (r *exclusionResource) put(ctx context.Context, m *ExclusionModel) error {
 		v := int(m.Ordinal.ValueInt64())
 		body.Ordinal = &v
 	}
-	apiResp, err := r.client.Put(ctx, fmt.Sprintf("%s/exclusions/%s",
-		r.policyPath(m.GatewayID.ValueString(), m.PolicyID.ValueString()), m.RuleKey.ValueString()), body)
+	apiResp, err := r.client.PutWithConflictRetry(ctx, fmt.Sprintf("%s/exclusions/%s",
+		r.policyPath(m.GatewayID.ValueString(), m.PolicyID.ValueString()), m.RuleKey.ValueString()), body,
+		isRetryableExclusionPutConflict,
+		r.getPutRetryInterval(), r.getPutRetryTimeout())
+	if err != nil && isRetryableExclusionPutConflict(err) {
+		// The predicate error surviving the loop IS budget exhaustion: the
+		// contention never cleared. Frame it like the kubernetes scale
+		// diagnostic does — what was retried, for how long, and what to do.
+		return fmt.Errorf("the WAF exclusion write was refused with id-allocation contention that did not "+
+			"clear after Terraform retried for %s. Another writer kept racing this policy's draft "+
+			"(a second apply of this policy's rules, the portal, or the CLI — Terraform applies up "+
+			"to ten resources at once). Serialize the competing writers and re-run: %w",
+			r.getPutRetryTimeout(), err)
+	}
 	if err != nil {
 		return err
 	}

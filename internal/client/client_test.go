@@ -706,6 +706,100 @@ func TestPostWithConflictRetry(t *testing.T) {
 	})
 }
 
+// TestPutWithConflictRetry mirrors TestPostWithConflictRetry with the appgw WAF
+// draft's wire shapes: the retryable 409 is WAF_RULE_ID_CONTENDED, and the
+// permanent one is the SAME PATH's other 409 (e.g. a duplicate ordinal) — the
+// reason the predicate is a parameter rather than a blanket IsConflict.
+func TestPutWithConflictRetry(t *testing.T) {
+	retryableCode := map[string]string{"code": "WAF_RULE_ID_CONTENDED", "message": "another write to this draft holds the id; it is RETRYABLE contention, not a customer mistake"}
+	permanentCode := map[string]string{"code": "conflict", "message": "an ordinal already used by another rule in this policy"}
+	isWAFIDContention := func(err error) bool {
+		apiErr, ok := err.(*APIError)
+		return ok && apiErr.StatusCode == http.StatusConflict && apiErr.Code == "WAF_RULE_ID_CONTENDED"
+	}
+
+	t.Run("retries the contended id 409 then succeeds", func(t *testing.T) {
+		var calls atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if calls.Add(1) == 1 {
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(retryableCode)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		c := NewClient(server.URL, "test-key")
+		resp, err := c.PutWithConflictRetry(context.Background(), "/v1/x", map[string]int{"ordinal": 3}, isWAFIDContention, 2*time.Millisecond, 200*time.Millisecond)
+		if err != nil {
+			t.Fatalf("expected success after retry, got %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200, got %d", resp.StatusCode)
+		}
+		if got := calls.Load(); got < 2 {
+			t.Errorf("expected >1 attempt, got %d", got)
+		}
+	})
+
+	t.Run("surfaces a permanent 409 immediately without retrying", func(t *testing.T) {
+		var calls atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			calls.Add(1)
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(permanentCode)
+		}))
+		defer server.Close()
+
+		c := NewClient(server.URL, "test-key")
+		// A generous timeout: if the predicate wrongly retried the permanent
+		// 409, this budget would allow ~100 attempts before returning.
+		_, err := c.PutWithConflictRetry(context.Background(), "/v1/x", nil, isWAFIDContention, 2*time.Millisecond, 200*time.Millisecond)
+		if !IsConflict(err) {
+			t.Fatalf("expected the permanent 409 to surface, got %v", err)
+		}
+		if got := calls.Load(); got != 1 {
+			t.Errorf("permanent 409 must not retry: expected exactly 1 attempt, got %d", got)
+		}
+	})
+
+	t.Run("surfaces the last 409 when the contention never clears", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(retryableCode)
+		}))
+		defer server.Close()
+
+		c := NewClient(server.URL, "test-key")
+		_, err := c.PutWithConflictRetry(context.Background(), "/v1/x", nil, isWAFIDContention, 2*time.Millisecond, 20*time.Millisecond)
+		if !isWAFIDContention(err) {
+			t.Fatalf("expected the persistent contention 409 to surface, got %v", err)
+		}
+	})
+
+	t.Run("returns ctx error on cancellation mid-backoff", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(retryableCode)
+		}))
+		defer server.Close()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		// Cancel while the loop is parked in its 2s backoff after the first 409:
+		// 100ms clears the (sub-ms) first round-trip but lands well inside the
+		// sleep, so ctx.Done — not the deadline — is what returns.
+		timer := time.AfterFunc(100*time.Millisecond, cancel)
+		defer timer.Stop()
+
+		c := NewClient(server.URL, "test-key")
+		_, err := c.PutWithConflictRetry(ctx, "/v1/x", nil, isWAFIDContention, 2*time.Second, 10*time.Second)
+		if err != context.Canceled {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+	})
+}
+
 func TestParseResponse(t *testing.T) {
 	type testType struct {
 		Name string `json:"name"`

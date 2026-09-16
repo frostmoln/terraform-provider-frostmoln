@@ -3,9 +3,11 @@ package appgw_waf_policy_publication
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -798,5 +800,157 @@ func TestAnUnchangedPublicationPlansNoChange(t *testing.T) {
 	}
 	if !out.EffectiveMode.IsNull() {
 		t.Fatalf("effective_mode = %v, want the null the refresh recorded", out.EffectiveMode)
+	}
+}
+
+// --- The refused-publish re-gate (S2: WAF_DRAFT_CHANGED) ---
+
+// TestPublishRegatesTheDraftChangedRace: the server's refusal on this path is
+// "try again" (appgw errors.go:223-230), and the only honest "again" is a
+// fresh dry-run over the current draft — a bare re-POST would 409 forever.
+// When the racing writer has settled, the second gate lands.
+func TestPublishRegatesTheDraftChangedRace(t *testing.T) {
+	var dryRuns, publishes atomic.Int32
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == pubBase+"/dry-runs" && r.Method == http.MethodPost:
+			dryRuns.Add(1)
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(apiDryRun{
+				ID: fmt.Sprintf("d-%d", dryRuns.Load()), ContentHash: "abc", Status: "completed",
+				RequestsSampled: 500, NewlyBlocked: 0,
+			})
+		case r.URL.Path == pubBase+"/publish":
+			if publishes.Add(1) == 1 {
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
+					"code": "conflict", "message": "no completed dry run matches the draft",
+				}})
+				return
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(apiVersion{Version: 4, State: "frozen", ContentHash: "abc"})
+		case r.URL.Path == pubBase+"/versions/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"version": apiVersion{Version: 4, State: "frozen", ContentHash: "abc"},
+				"rules":   []apiRule{},
+			})
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	r := fastPublicationResource(t, c)
+
+	resp := resource.CreateResponse{State: emptyState(t)}
+	r.Create(context.Background(), resource.CreateRequest{
+		Plan: planOf(t, pubModel(t, types.Int64Value(0))),
+	}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("expected the re-gate to land the publish, got %v", resp.Diagnostics.Errors())
+	}
+	if got := dryRuns.Load(); got != 2 {
+		t.Errorf("expected exactly 2 dry-runs (the refused gate re-ran whole), got %d", got)
+	}
+	if got := publishes.Load(); got != 2 {
+		t.Errorf("expected exactly 2 publish attempts, got %d", got)
+	}
+	var out PublicationModel
+	resp.State.Get(context.Background(), &out)
+	if out.Version.ValueInt64() != 4 {
+		t.Fatalf("published version must land in state: %+v", out)
+	}
+	// The dry-run attrs name the gate that FED the publish — the second one.
+	if out.DryRunID.ValueString() != "d-2" {
+		t.Errorf("dry_run_id = %q, want d-2 (the gate that fed the published version)", out.DryRunID.ValueString())
+	}
+}
+
+// TestPublishRegateIsBoundedToOneExtraGate: when another writer keeps moving
+// the draft, the apply still fails — with the concurrent-editor diagnostic —
+// after ONE extra gate. No unbounded dry-run spinning against a moving draft.
+func TestPublishRegateIsBoundedToOneExtraGate(t *testing.T) {
+	var dryRuns, publishes atomic.Int32
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == pubBase+"/dry-runs" && r.Method == http.MethodPost:
+			dryRuns.Add(1)
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(apiDryRun{
+				ID: "d-7", ContentHash: "abc", Status: "completed",
+				RequestsSampled: 500, NewlyBlocked: 0,
+			})
+		case r.URL.Path == pubBase+"/publish":
+			publishes.Add(1)
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
+				"code": "conflict", "message": "no completed dry run matches the draft",
+			}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	r := fastPublicationResource(t, c)
+
+	resp := resource.CreateResponse{State: emptyState(t)}
+	r.Create(context.Background(), resource.CreateRequest{
+		Plan: planOf(t, pubModel(t, types.Int64Value(0))),
+	}, &resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a publish refused twice must error, not go green")
+	}
+	if got := dryRuns.Load(); got != 2 || publishes.Load() != 2 {
+		t.Errorf("expected exactly 2 gates, got dry-runs=%d publishes=%d", dryRuns.Load(), publishes.Load())
+	}
+	var detail string
+	for _, d := range resp.Diagnostics.Errors() {
+		detail += d.Summary() + " " + d.Detail() + "\n"
+	}
+	if !strings.Contains(detail, "already re-ran the full dry-run + publish gate") {
+		t.Fatalf("the exhausted re-gate must say so:\n%s", detail)
+	}
+	if !strings.Contains(detail, "Nothing was published") || !strings.Contains(detail, "d-7") {
+		t.Fatalf("the concurrent-editor diagnostic must survive intact:\n%s", detail)
+	}
+}
+
+// TestPublish500DoesNotRegate: only a 409 re-runs the gate. Any other
+// failure surfaces once, after the single gate that rightfully ran.
+func TestPublish500DoesNotRegate(t *testing.T) {
+	var dryRuns, publishes atomic.Int32
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == pubBase+"/dry-runs" && r.Method == http.MethodPost:
+			dryRuns.Add(1)
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(apiDryRun{
+				ID: "d-1", ContentHash: "abc", Status: "completed",
+				RequestsSampled: 500, NewlyBlocked: 0,
+			})
+		case r.URL.Path == pubBase+"/publish":
+			publishes.Add(1)
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	r := fastPublicationResource(t, c)
+
+	resp := resource.CreateResponse{State: emptyState(t)}
+	r.Create(context.Background(), resource.CreateRequest{
+		Plan: planOf(t, pubModel(t, types.Int64Value(0))),
+	}, &resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a 500 from publish must fail the apply")
+	}
+	if got := dryRuns.Load(); got != 1 || publishes.Load() != 1 {
+		t.Errorf("non-409 errors must not re-gate: dry-runs=%d publishes=%d", dryRuns.Load(), publishes.Load())
+	}
+	var detail string
+	for _, d := range resp.Diagnostics.Errors() {
+		detail += d.Summary() + " " + d.Detail() + "\n"
+	}
+	if !strings.Contains(detail, "Failed to Publish WAF Policy") {
+		t.Fatalf("expected the generic publish failure:\n%s", detail)
 	}
 }

@@ -365,11 +365,14 @@ func (r *publicationResource) Schema(_ context.Context, _ resource.SchemaRequest
 		Blocks: map[string]schema.Block{
 			// Customer-tunable wait budgets: defaults keep the values this
 			// resource has always hardcoded (5m on the dry-run replay). Create
-			// and update both publish a version, and that dry-run + publish
-			// flow is bounded by this budget. A timeouts change is an in-place
-			// no-op on real infrastructure, as on every resource with this
-			// block. Delete makes NO API call — it warns that the published
-			// version stays enforced — so its budget is never consulted.
+			// and update both publish a version, and the dry-run + publish
+			// flow is bounded by this budget PER GATE — a publish refused with
+			// a 409 re-gates once (publishRegateMaxRetries), each gate getting
+			// a fresh allocation, so the worst case is 2x. A timeouts change is
+			// an in-place no-op on real infrastructure, as on every resource
+			// with this block. Delete makes NO API call — it warns that the
+			// published version stays enforced — so its budget is never
+			// consulted.
 			"timeouts": timeouts.Schema(),
 		},
 	}
@@ -541,128 +544,167 @@ func publishedSomething(m *PublicationModel) bool {
 	return !m.Version.IsNull() && !m.Version.IsUnknown()
 }
 
+// publishRegateMaxRetries is how many EXTRA full dry-run → publish gates this
+// resource runs when the server refuses the publish with a 409. The appgw
+// server's refusal on this path is WAF_DRAFT_CHANGED-class — it answers any
+// publish whose draft no longer matches the latest completed dry-run — and
+// its own instruction is "try again": the draft was moved by a concurrent
+// writer (a second apply, the portal, the CLI) between this apply's dry-run
+// and its publish.
+//
+// A bare re-POST of the publish cannot clear that 409 — the hash the server
+// checks is re-established only by a NEW completed dry-run over the CURRENT
+// draft — so the retry is the whole gate, not just the POST. One extra gate:
+// the writer either landed (the re-gate succeeds and the apply is green with
+// state naming exactly what was replayed and published) or is still writing
+// (surfacing the 409 names the race; a longer retry loop would just spin the
+// same dry-run for minutes against a moving draft).
+const publishRegateMaxRetries = 1
+
 // publish runs the whole gate: dry-run, budget check, publish. budget is the
 // verb's ceiling on the dry-run (create and update run the same flow, but the
-// ceilings are configured separately like on any resource).
+// ceilings are configured separately like on any resource); a refused publish
+// re-gates up to publishRegateMaxRetries times, each gate bounded by the same
+// budget.
 func (r *publicationResource) publish(ctx context.Context, m *PublicationModel, diags diagnosticsSink, budget time.Duration) {
 	base := r.policyPath(m.GatewayID.ValueString(), m.PolicyID.ValueString())
 
-	dr, err := r.runDryRun(ctx, base, budget)
-	if err != nil {
-		diags.AddError("WAF Dry Run Failed", err.Error())
-		return
-	}
-	m.DryRunID = types.StringValue(dr.ID)
-	m.DryRunNewlyBlocked = types.Int64Value(int64(dr.NewlyBlocked))
-	m.DryRunNewlyAllowed = types.Int64Value(int64(dr.NewlyAllowed))
-	m.DryRunRequestsSampled = types.Int64Value(int64(dr.RequestsSampled))
-
-	// 🔴 A ZERO-SAMPLE DRY-RUN MEASURES NOTHING, so it cannot satisfy a budget.
-	// A gateway with no recent traffic — freshly built, or whose appliance was
-	// just replaced — produces a completed dry-run with 0 sampled and 0 newly
-	// blocked, and `0 > 0` is false. Without this, max_newly_blocked = 0 would
-	// wave through a ruleset that refuses every request the site actually
-	// serves.
-	if !m.MaxNewlyBlocked.IsNull() && !m.MaxNewlyBlocked.IsUnknown() && dr.RequestsSampled == 0 {
-		diags.AddError("The Dry Run Replayed No Traffic, So The Budget Could Not Be Checked",
-			"max_newly_blocked is set, but the dry-run sampled 0 requests — it has nothing to "+
-				"measure this ruleset against, so passing the budget means nothing.\n\n"+
-				"A gateway accumulates the request signatures a replay uses only once it is serving "+
-				"traffic. Check that the gateway is running and has applied a configuration; if it "+
-				"is genuinely new, publish once without max_newly_blocked and set it before the "+
-				"next change.")
-		return
-	}
-
-	// The budget check, before anything is published.
-	if !m.MaxNewlyBlocked.IsNull() && !m.MaxNewlyBlocked.IsUnknown() {
-		if max := m.MaxNewlyBlocked.ValueInt64(); int64(dr.NewlyBlocked) > max {
-			diags.AddError("Publication Refused: Too Many Requests Would Newly Be Blocked",
-				fmt.Sprintf("The dry-run replayed %d requests and found %d that this ruleset would "+
-					"newly refuse, which is more than max_newly_blocked = %d. Nothing was published.\n\n%s\n\n"+
-					"Either narrow the rules (an exclusion is the usual fix), or raise "+
-					"max_newly_blocked if this ruleset is meant to start blocking.",
-					dr.RequestsSampled, dr.NewlyBlocked, max, formatSample(dr.Sample)))
+	for attempt := 0; ; attempt++ {
+		dr, err := r.runDryRun(ctx, base, budget)
+		if err != nil {
+			diags.AddError("WAF Dry Run Failed", err.Error())
 			return
 		}
-	}
-	if dr.NewlyBlocked > 0 {
-		diags.AddWarning("This Publication Newly Blocks Traffic",
-			fmt.Sprintf("%d of the %d requests replayed would newly be refused.\n\n%s",
-				dr.NewlyBlocked, dr.RequestsSampled, formatSample(dr.Sample)))
-	}
+		m.DryRunID = types.StringValue(dr.ID)
+		m.DryRunNewlyBlocked = types.Int64Value(int64(dr.NewlyBlocked))
+		m.DryRunNewlyAllowed = types.Int64Value(int64(dr.NewlyAllowed))
+		m.DryRunRequestsSampled = types.Int64Value(int64(dr.RequestsSampled))
 
-	apiResp, err := r.client.Post(ctx, base+"/publish", nil)
-	if err != nil {
-		// 🔴 IN THIS RESOURCE A 409 CANNOT MEAN "YOU FORGOT TO DRY-RUN".
+		// 🔴 A ZERO-SAMPLE DRY-RUN MEASURES NOTHING, so it cannot satisfy a budget.
+		// A gateway with no recent traffic — freshly built, or whose appliance was
+		// just replaced — produces a completed dry-run with 0 sampled and 0 newly
+		// blocked, and `0 > 0` is false. Without this, max_newly_blocked = 0 would
+		// wave through a ruleset that refuses every request the site actually
+		// serves.
+		if !m.MaxNewlyBlocked.IsNull() && !m.MaxNewlyBlocked.IsUnknown() && dr.RequestsSampled == 0 {
+			diags.AddError("The Dry Run Replayed No Traffic, So The Budget Could Not Be Checked",
+				"max_newly_blocked is set, but the dry-run sampled 0 requests — it has nothing to "+
+					"measure this ruleset against, so passing the budget means nothing.\n\n"+
+					"A gateway accumulates the request signatures a replay uses only once it is serving "+
+					"traffic. Check that the gateway is running and has applied a configuration; if it "+
+					"is genuinely new, publish once without max_newly_blocked and set it before the "+
+					"next change.")
+			return
+		}
+
+		// The budget check, before anything is published.
+		if !m.MaxNewlyBlocked.IsNull() && !m.MaxNewlyBlocked.IsUnknown() {
+			if max := m.MaxNewlyBlocked.ValueInt64(); int64(dr.NewlyBlocked) > max {
+				diags.AddError("Publication Refused: Too Many Requests Would Newly Be Blocked",
+					fmt.Sprintf("The dry-run replayed %d requests and found %d that this ruleset would "+
+						"newly refuse, which is more than max_newly_blocked = %d. Nothing was published.\n\n%s\n\n"+
+						"Either narrow the rules (an exclusion is the usual fix), or raise "+
+						"max_newly_blocked if this ruleset is meant to start blocking.",
+						dr.RequestsSampled, dr.NewlyBlocked, max, formatSample(dr.Sample)))
+				return
+			}
+		}
+		if dr.NewlyBlocked > 0 {
+			diags.AddWarning("This Publication Newly Blocks Traffic",
+				fmt.Sprintf("%d of the %d requests replayed would newly be refused.\n\n%s",
+					dr.NewlyBlocked, dr.RequestsSampled, formatSample(dr.Sample)))
+		}
+
+		apiResp, err := r.client.Post(ctx, base+"/publish", nil)
+		if err != nil {
+			// 🔴 IN THIS RESOURCE A 409 CANNOT MEAN "YOU FORGOT TO DRY-RUN".
+			//
+			// The server refuses a publish with 409 (WAF_DRAFT_CHANGED-class:
+			// "no completed dry run matches the draft", appgw errors.go:223-230,
+			// "try again") when no completed dry-run matches the draft's content
+			// hash, and for a human at a CLI the actionable advice is "run one".
+			// Here it is not: this resource ran a dry-run seconds ago, on this
+			// same draft, and waited for it. The hash can therefore only have
+			// stopped matching because SOMETHING ELSE moved the draft in between
+			// -- a second apply, the portal, the CLI -- which is the same race
+			// the replayed-hash check below catches on the other side of the
+			// publish. Repeating the generic advice would send a practitioner to
+			// re-run the thing that is already running.
+			//
+			// The server's "try again" is honoured as a REGATE, not a re-POST:
+			// a fresh dry-run is what re-establishes the hash, so the retry
+			// re-runs the whole gate (bounded by publishRegateMaxRetries). The
+			// branch text below fires only once that extra gate has been
+			// refused too.
+			if client.IsConflict(err) {
+				if attempt < publishRegateMaxRetries {
+					continue
+				}
+				regated := ""
+				if attempt > 0 {
+					regated = fmt.Sprintf("This apply already re-ran the full dry-run + publish gate %d time(s) "+
+						"after the first refusal — another writer is racing this one continuously.\n\n",
+						attempt)
+				}
+				diags.AddError("The Draft Changed While This Apply Was Publishing It",
+					fmt.Sprintf("The server refused the publish: no completed dry-run matches the "+
+						"draft any more. This apply ran a dry-run (%s) against the draft moments ago "+
+						"and it completed, so the draft has been edited since — by a concurrent "+
+						"apply, the portal, or the CLI.\n\n%sNothing was published. Re-run to "+
+						"dry-run and publish the current draft, and check whether another writer is "+
+						"racing this configuration.\n\nUnderlying error: %s", dr.ID, regated, err.Error()))
+				return
+			}
+			diags.AddError("Failed to Publish WAF Policy", err.Error())
+			return
+		}
+
+		// 204 means the draft is byte-identical to what is already active: a
+		// successful no-op, and what makes a repeated apply idempotent instead of
+		// cutting a version nobody asked for. The active version is read back so
+		// state still names what is enforced.
+		if apiResp.StatusCode == 204 {
+			v, optOuts, verr := r.activeVersion(ctx, base)
+			if verr != nil {
+				diags.AddError("Failed to Read The Active WAF Version", verr.Error())
+				return
+			}
+			m.applyVersion(v)
+			m.PlatformOptOuts = listOfStrings(ctx, optOuts)
+			return
+		}
+
+		v, err := client.ParseResponse[apiVersion](apiResp)
+		if err != nil {
+			diags.AddError("Failed to Parse WAF Publish Response", err.Error())
+			return
+		}
+		// 🔴 THE VERSION PUBLISHED MUST BE THE ONE THAT WAS REPLAYED.
 		//
-		// The server refuses a publish with 409 when no completed dry-run
-		// matches the draft's content hash, and for a human at a CLI the
-		// actionable advice is "run one". Here it is not: this resource ran a
-		// dry-run seconds ago, on this same draft, and waited for it. The hash
-		// can therefore only have stopped matching because SOMETHING ELSE moved
-		// the draft in between -- a second apply, the portal, the CLI -- which
-		// is the same race the replayed-hash check below catches on the other
-		// side of the publish. Repeating the generic advice would send a
-		// practitioner to re-run the thing that is already running.
-		if client.IsConflict(err) {
-			diags.AddError("The Draft Changed While This Apply Was Publishing It",
-				fmt.Sprintf("The server refused the publish: no completed dry-run matches the "+
-					"draft any more. This apply ran a dry-run (%s) against the draft moments ago "+
-					"and it completed, so the draft has been edited since — by a concurrent "+
-					"apply, the portal, or the CLI.\n\nNothing was published. Re-run to "+
-					"dry-run and publish the current draft, and check whether another writer is "+
-					"racing this configuration.\n\nUnderlying error: %s", dr.ID, err.Error()))
+		// The server's gate accepts ANY completed dry-run whose hash matches the
+		// draft at publish time — not specifically the one this apply started. So a
+		// concurrent editor (a second apply, the portal, the CLI) can move the
+		// draft to a different ruleset and dry-run it, and this publish then ships
+		// content that max_newly_blocked never measured. Without this check the
+		// resource would record one dry-run's numbers beside another ruleset's
+		// hash, attesting to a measurement that does not describe what it published.
+		if dr.ContentHash != "" && v.ContentHash != "" && dr.ContentHash != v.ContentHash {
+			diags.AddError("Published A Ruleset That Was Not The One Replayed",
+				fmt.Sprintf("The dry-run measured content hash %s, but version %d was published with "+
+					"hash %s — the draft changed between the two, so another change landed during this "+
+					"apply.\n\nThe published version was NOT checked against max_newly_blocked. "+
+					"Re-run to dry-run and publish the current draft, and check whether a concurrent "+
+					"apply or an out-of-band edit is racing this one.", dr.ContentHash, v.Version, v.ContentHash))
+			// State is still written: the version IS published, and leaving
+			// Terraform unaware of it would be worse than a failed apply.
+			m.applyVersion(v)
+			r.recordPublishedOptOuts(ctx, base, m, diags)
 			return
 		}
-		diags.AddError("Failed to Publish WAF Policy", err.Error())
-		return
-	}
-
-	// 204 means the draft is byte-identical to what is already active: a
-	// successful no-op, and what makes a repeated apply idempotent instead of
-	// cutting a version nobody asked for. The active version is read back so
-	// state still names what is enforced.
-	if apiResp.StatusCode == 204 {
-		v, optOuts, verr := r.activeVersion(ctx, base)
-		if verr != nil {
-			diags.AddError("Failed to Read The Active WAF Version", verr.Error())
-			return
-		}
-		m.applyVersion(v)
-		m.PlatformOptOuts = listOfStrings(ctx, optOuts)
-		return
-	}
-
-	v, err := client.ParseResponse[apiVersion](apiResp)
-	if err != nil {
-		diags.AddError("Failed to Parse WAF Publish Response", err.Error())
-		return
-	}
-	// 🔴 THE VERSION PUBLISHED MUST BE THE ONE THAT WAS REPLAYED.
-	//
-	// The server's gate accepts ANY completed dry-run whose hash matches the
-	// draft at publish time — not specifically the one this apply started. So a
-	// concurrent editor (a second apply, the portal, the CLI) can move the
-	// draft to a different ruleset and dry-run it, and this publish then ships
-	// content that max_newly_blocked never measured. Without this check the
-	// resource would record one dry-run's numbers beside another ruleset's
-	// hash, attesting to a measurement that does not describe what it published.
-	if dr.ContentHash != "" && v.ContentHash != "" && dr.ContentHash != v.ContentHash {
-		diags.AddError("Published A Ruleset That Was Not The One Replayed",
-			fmt.Sprintf("The dry-run measured content hash %s, but version %d was published with "+
-				"hash %s — the draft changed between the two, so another change landed during this "+
-				"apply.\n\nThe published version was NOT checked against max_newly_blocked. "+
-				"Re-run to dry-run and publish the current draft, and check whether a concurrent "+
-				"apply or an out-of-band edit is racing this one.", dr.ContentHash, v.Version, v.ContentHash))
-		// State is still written: the version IS published, and leaving
-		// Terraform unaware of it would be worse than a failed apply.
 		m.applyVersion(v)
 		r.recordPublishedOptOuts(ctx, base, m, diags)
 		return
 	}
-	m.applyVersion(v)
-	r.recordPublishedOptOuts(ctx, base, m, diags)
 }
 
 // recordPublishedOptOuts reads the now-enforcing version to record which

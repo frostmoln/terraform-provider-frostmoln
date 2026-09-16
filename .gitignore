@@ -49,3 +49,6 @@ override.tf.json
 *_override.tf.json
 .terraformrc
 terraform.rc
+
+# git worktree checkouts (but worktree metadata lives in .git/worktrees)
+.worktrees/

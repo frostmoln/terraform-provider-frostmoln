@@ -313,11 +313,13 @@ func (r *apacheInstanceResource) refreshStateAfterPartialUpdate(ctx context.Cont
 
 // setExposure toggles the instance's public exposure via the action endpoints
 // (POST /expose | /unexpose), then waits for the returned async operation to
-// finish. The expose/unexpose actions are idempotent from the caller's side:
-// the backend returns 409 when the instance is already in the desired state, so
-// a 409 is treated as success rather than an error. The instance status stays
-// "running" throughout (ADR-0097), so completion is tracked via the operation,
-// not an instance state transition.
+// finish. The actions are accepted-as-won only after convergence: the backend
+// answers "already in desired state" with a 409 that covers BOTH the converged
+// end state and a saga still running toward it (see IsAlreadyInDesiredState),
+// so the helper polls the read-back to the requested state and errors the
+// apply if the saga outlives the budget — never a silent green. The instance
+// status stays "running" throughout (ADR-0097), so completion is tracked via
+// the operation and the read-back, not an instance state transition.
 func (r *apacheInstanceResource) setExposure(ctx context.Context, id string, desired bool, budget time.Duration) error {
 	action := "unexpose"
 	if desired {
@@ -326,10 +328,26 @@ func (r *apacheInstanceResource) setExposure(ctx context.Context, id string, des
 	resp, err := r.client.Post(ctx, r.client.TenantPath("/webservers/"+id+"/"+action), nil)
 	if err != nil {
 		if client.IsAlreadyInDesiredState(err) {
-			// Already exposed / already not exposed / an operation already in
-			// progress — the requested end state is (being) reached. A 409
-			// invalid_state ("cannot expose an instance in <state> state") is NOT
-			// swallowed by this helper and surfaces as a real error.
+			// Already exposed / already not exposed / an expose operation
+			// already in progress — the SAME 409 code covers both the converged
+			// end state and a saga still running toward it, and nothing in the
+			// error says which. So NEVER settle on it directly: returning nil
+			// here (the old behaviour) let an update record state off a single
+			// immediate read-back while an expose saga was still in flight —
+			// recording public=false and an empty public_ip as a green apply,
+			// convergence silently deferred. Instead WAIT FOR CONVERGENCE: poll
+			// the read-back until it reports the requested state. An instance
+			// that is already converged settles on the first poll (no wait); an
+			// in-flight saga converges with it; a saga that fails or outlives
+			// the update budget errors the apply. A 409 invalid_state ("cannot
+			// expose an instance in <state> state") is NOT swallowed by this
+			// helper and surfaces as a real error.
+			if perr := r.pollPublicExposed(ctx, id, desired, budget); perr != nil {
+				return fmt.Errorf("the expose operation for this instance was reported as already "+
+					"in progress and did not finish within the update budget. Wait for the in-flight "+
+					"operation to complete (an interrupted apply may have left it running), then "+
+					"re-run this apply: %w", perr)
+			}
 			return nil
 		}
 		return err
@@ -346,17 +364,25 @@ func (r *apacheInstanceResource) setExposure(ctx context.Context, id string, des
 	return err
 }
 
-// pollPublicExposed waits until the instance read-back reports public==true. The
-// create-with-public=true saga stamps exposure in a second write AFTER
-// status=running (webserver syncer), so a create must wait for that write to land
-// before its final read, otherwise the read could see public=false while the plan
-// had public=true. It keeps polling while the instance is still "running" (not yet
-// exposed) and errors out if the instance drops into an error state.
-func (r *apacheInstanceResource) pollPublicExposed(ctx context.Context, id string, budget time.Duration) error {
+// pollPublicExposed waits until the instance read-back reports public==desired.
+// The create-with-public=true saga stamps exposure in a second write AFTER
+// status=running (webserver syncer), so a create must wait for that write to
+// land before its final read, otherwise the read could see public=false while
+// the plan had public=true. On the update path the same wait also settles the
+// swallowed "already in desired state" 409: convergence, not acceptance, is
+// the success condition. It keeps polling while the instance is still
+// "running" (not yet (un)exposed) and errors out if the instance drops into an
+// error state or the budget expires with the saga unfinished — never settling
+// an in-flight saga as green.
+func (r *apacheInstanceResource) pollPublicExposed(ctx context.Context, id string, desired bool, budget time.Duration) error {
+	target := "unexposed"
+	if desired {
+		target = "exposed"
+	}
 	_, err := client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
 		Timeout:      budget,
-		TargetStates: []string{"exposed"},
+		TargetStates: []string{target},
 		ErrorStates:  []string{"error", "failed"},
 		ResourceName: "apache_instance exposure",
 		PollFunc: func(pollCtx context.Context) (string, error) {
@@ -368,10 +394,11 @@ func (r *apacheInstanceResource) pollPublicExposed(ctx context.Context, id strin
 			if parseErr != nil {
 				return "", parseErr
 			}
-			if current.Public {
-				return "exposed", nil
+			if current.Public == desired {
+				return target, nil
 			}
-			// Not yet exposed: surface a genuine error status, else keep polling.
+			// Not yet in the requested state: surface a genuine error status,
+			// else keep polling.
 			return current.Status, nil
 		},
 	})
@@ -778,7 +805,7 @@ func (r *apacheInstanceResource) Create(ctx context.Context, req resource.Create
 	// public to become true first. Gated on requestedPublic so the common
 	// public-unset / public=false path is not delayed.
 	if requestedPublic {
-		if err := r.pollPublicExposed(ctx, instID, budgets.Create); err != nil {
+		if err := r.pollPublicExposed(ctx, instID, true, budgets.Create); err != nil {
 			resp.Diagnostics.AddError("Apache instance failed to become publicly exposed", err.Error())
 			return
 		}

@@ -432,8 +432,14 @@ func IsNotFound(err error) bool {
 // IsAlreadyInDesiredState reports whether err is a 409 Conflict whose error code
 // is the servicekit "conflict" code. The webserver expose/unexpose actions return
 // this for "instance is already exposed" / "not exposed" / "an expose operation is
-// already in progress" — all cases where the requested end state is already reached
-// (or being reached), so an idempotent caller treats it as success. It deliberately
+// already in progress" — cases where the requested end state is already reached
+// or already being reached. It says only that the request was ACCEPTED AS WON —
+// never that convergence is done: the same code and status cover a converged
+// instance AND a saga still running toward the state, and nothing in the error
+// says which. Callers must therefore treat this predicate as licensing a
+// CONVERGENCE WAIT (poll the read-back until it reports the requested state,
+// like nginx/apache setExposure's pollPublicExposed) — never as a green light
+// to settle state off the next immediate read. It deliberately
 // does NOT match the other 409 those actions can return, "invalid_state" ("cannot
 // expose an instance in <state> state"), which is a real precondition failure the
 // caller must surface rather than swallow.
@@ -1088,6 +1094,50 @@ func (c *Client) PostWithConflictRetry(ctx context.Context, path string, body an
 	deadline := time.Now().Add(timeout)
 	for {
 		resp, err := c.Post(ctx, path, body)
+		if err == nil || !retryable(err) {
+			return resp, err
+		}
+		if !time.Now().Before(deadline) {
+			return resp, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(interval):
+		}
+	}
+}
+
+// PutWithConflictRetry sends a PUT and retries while retryable(err) is true,
+// up to timeout, sleeping interval between attempts. It is the mirror of
+// PostWithConflictRetry for the appgw WAF draft writers, whose 409s the appgw
+// server documents as RETRYABLE contention: WAF_RULE_ID_CONTENDED — "It is
+// RETRYABLE contention, not a customer mistake" — arises because Terraform
+// applies resources concurrently (default concurrency 10, the provider's own
+// comment in appgw_config_apply), so two resources writing the same policy's
+// draft in one apply can collide on id allocation inside the draft.
+//
+// Like PostWithConflictRetry, the retry predicate is a parameter: the draft
+// PUT can also fail with permanent 409s (and any other error), and blindly
+// retrying those would spin until timeout. Callers pass a code-specific
+// predicate; every other error returns on the first attempt.
+//
+// Idempotency: the WAF draft writers send COMPLETE desired state — the rule
+// key (or exclusion id) IS the identity, so the PUT is a full upsert,
+// not partially-applied — re-PUTting the same body cannot double-apply
+// anything (appgw_waf_rule's own comment: "Create and Update are the same
+// PUT … a declarative client sends desired state"). Once the PUT succeeds the
+// loop stops. A conflict that never clears within the budget surfaces
+// the last 409 (more actionable than a bare deadline error), never swallowed.
+// That a rejected 409 leaves the draft untouched — no partial write in flight
+// to re-send into — is REPORT-TRUSTED, like the code itself: the appgw
+// repository is unavailable locally; the server-side refusal semantics
+// (errors.go:217-221, verified 2026-08-29) describe id-allocation contention
+// rejected before the write, not a partially-applied write.
+func (c *Client) PutWithConflictRetry(ctx context.Context, path string, body any, retryable func(error) bool, interval, timeout time.Duration) (*Response, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		resp, err := c.Put(ctx, path, body)
 		if err == nil || !retryable(err) {
 			return resp, err
 		}

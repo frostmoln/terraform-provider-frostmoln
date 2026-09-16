@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	tfpath "github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -317,4 +319,121 @@ func importState(t *testing.T) tfsdk.State {
 		attrs[name] = tftypes.NewValue(at, nil)
 	}
 	return tfsdk.State{Schema: s, Raw: tftypes.NewValue(obj, attrs)}
+}
+
+// --- The draft-write 409 retry (S2: WAF_RULE_ID_CONTENDED) ---
+
+// wrContention is the retryable 409's wire shape: appgw
+// internal/domain/errors.go:217-221, "It is RETRYABLE contention, not a
+// customer mistake".
+const wrContentionBody = `{"code":"WAF_RULE_ID_CONTENDED","message":"another write to this draft holds the id; it is RETRYABLE contention, not a customer mistake"}`
+
+// TestRulePutRetriesContendedID: the id-allocation collision the appgw server
+// documents as retryable — reachable whenever two same-apply rule writes race
+// the draft (Terraform's default concurrency is 10) — retries instead of
+// hard-failing an apply the server asked to try again.
+func TestRulePutRetriesContendedID(t *testing.T) {
+	var calls atomic.Int32
+	c, _ := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.URL.Path == wrBase+"/rules/block-admin" {
+			if calls.Add(1) == 1 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				_, _ = w.Write([]byte(wrContentionBody))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(wrFixture())
+			return
+		}
+		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	})
+	rr := &ruleResource{client: c, putRetryInterval: time.Millisecond, putRetryTimeout: 200 * time.Millisecond}
+
+	resp := resource.CreateResponse{State: emptyState(t)}
+	rr.Create(context.Background(), resource.CreateRequest{Plan: planOf(t, wrModel())}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("expected the contended-write retry to land the put, got %v", resp.Diagnostics.Errors())
+	}
+	if got := calls.Load(); got < 2 {
+		t.Errorf("expected >1 attempt (the first 409 retried), got %d", got)
+	}
+	var created RuleModel
+	createStateErr := resp.State.Get(context.Background(), &created)
+	if createStateErr.HasError() || created.RuleKey.ValueString() != "block-admin" {
+		t.Fatalf("retried put must still write real state: %v", createStateErr.Errors())
+	}
+}
+
+// TestRulePutDoesNotRetryPermanentConflicts: the same put can 409
+// PERMANENTLY — a blanket IsConflict retry would spin to the ceiling and then
+// surface the same error late. One attempt, error out.
+func TestRulePutDoesNotRetryPermanentConflicts(t *testing.T) {
+	var calls atomic.Int32
+	c, _ := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.URL.Path == wrBase+"/rules/block-admin" {
+			calls.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"code":"conflict","message":"an ordinal already used by another rule in this policy"}`))
+			return
+		}
+		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	})
+	rr := &ruleResource{client: c, putRetryInterval: time.Millisecond, putRetryTimeout: 200 * time.Millisecond}
+
+	resp := resource.CreateResponse{State: emptyState(t)}
+	rr.Create(context.Background(), resource.CreateRequest{Plan: planOf(t, wrModel())}, &resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a permanent 409 must fail the apply")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("permanent 409 must not retry: expected exactly 1 attempt, got %d", got)
+	}
+	foundDetail := false
+	for _, d := range resp.Diagnostics.Errors() {
+		if strings.Contains(d.Detail(), "an ordinal already used by another rule") {
+			foundDetail = true
+		}
+	}
+	if !foundDetail {
+		t.Errorf("the permanent 409's own message must surface, got %v", resp.Diagnostics.Errors())
+	}
+}
+
+// TestRulePutSurfacesTheContentionWhenItNeverClears: a contention that never
+// clears surfaces the LAST 409 — never swallowed as success.
+func TestRulePutSurfacesTheContentionWhenItNeverClears(t *testing.T) {
+	var calls atomic.Int32
+	c, _ := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.URL.Path == wrBase+"/rules/block-admin" {
+			calls.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(wrContentionBody))
+			return
+		}
+		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	})
+	rr := &ruleResource{client: c, putRetryInterval: time.Millisecond, putRetryTimeout: 50 * time.Millisecond}
+
+	resp := resource.CreateResponse{State: emptyState(t)}
+	rr.Create(context.Background(), resource.CreateRequest{Plan: planOf(t, wrModel())}, &resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a contention that never clears must error, not go green")
+	}
+	if got := calls.Load(); got < 2 {
+		t.Errorf("expected the retry to fire before giving up, got %d attempt(s)", got)
+	}
+	foundDetail := false
+	for _, d := range resp.Diagnostics.Errors() {
+		if strings.Contains(d.Detail(), "RETRYABLE contention") {
+			foundDetail = true
+		}
+	}
+	if !foundDetail {
+		t.Errorf("the surfaced error must be the last contention 409, got %v", resp.Diagnostics.Errors())
+	}
 }

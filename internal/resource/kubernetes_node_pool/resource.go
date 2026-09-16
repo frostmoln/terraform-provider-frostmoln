@@ -2,7 +2,9 @@ package kubernetes_node_pool
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
@@ -62,6 +64,14 @@ type kubernetesNodePoolResource struct {
 	client       *client.Client
 	pollInterval time.Duration
 	pollTimeout  time.Duration
+
+	// scaleRetryInterval and scaleRetryTimeout default the retry of the ONE
+	// transient scale refusal (scaleRetry* below). They are fields on the same
+	// injection seam the other waits use so a test can shrink them: with the
+	// real 30s ceiling a test that exercises the never-clears path would sit
+	// out the full budget.
+	scaleRetryInterval time.Duration
+	scaleRetryTimeout  time.Duration
 }
 
 func (r *kubernetesNodePoolResource) getPollInterval() time.Duration {
@@ -69,6 +79,67 @@ func (r *kubernetesNodePoolResource) getPollInterval() time.Duration {
 		return r.pollInterval
 	}
 	return 10 * time.Second
+}
+
+// scaleRetryIntervalDefault and scaleRetryTimeoutDefault bound the scale
+// retry. Short, like vpc_route's route-write retry: the 409 means a PRIOR
+// scale saga for this pool is still live (kubernetes v5.8.2,
+// internal/service/impl/nodepool.go:512-515 — verified locally, 2026-09-16).
+// A node-pool scale saga can run for minutes, so a bounded retry cannot wait
+// it out; the point is to clear the races that DO clear (a saga closing right
+// behind the apply) and name the runner when it doesn't — the tailored
+// diagnostic on exhaust, not an open-ended hang.
+const (
+	scaleRetryIntervalDefault = 2 * time.Second
+	scaleRetryTimeoutDefault  = 30 * time.Second
+)
+
+func (r *kubernetesNodePoolResource) getScaleRetryInterval() time.Duration {
+	if r.scaleRetryInterval > 0 {
+		return r.scaleRetryInterval
+	}
+	return scaleRetryIntervalDefault
+}
+
+func (r *kubernetesNodePoolResource) getScaleRetryTimeout() time.Duration {
+	if r.scaleRetryTimeout > 0 {
+		return r.scaleRetryTimeout
+	}
+	return scaleRetryTimeoutDefault
+}
+
+// scaleConflictMarker is the message substring of the one TRANSIENT 409 the
+// scale endpoint emits. It is matched as a substring, never a bare code match:
+// the wire code ("conflict") is shared with PERMANENT scale refusals ("any
+// other non-scalable state is 409" — the comment on Update below), and a blind
+// code retry would spin those to the ceiling. Default-deny, mirroring
+// client.IsTransientResizeConflict's technique on the database resize path.
+//
+// The message is owned by the kubernetes service (nodepool.go:514). If it is
+// reworded there, this marker must follow — a transient reword degrades safely
+// (the SCALE surfaces the 409 as before the fix, in the tailored diagnostic)
+// but silently.
+const scaleConflictMarker = "a scale operation for this node pool is already in progress"
+
+// isRetryableScaleConflict reports whether a scale 409 is the one the
+// kubernetes server documents as retryable: a prior scale saga for this pool
+// is still running and must not be silently re-targeted — the server's own
+// comment says the row keeps the amended count and "a retry after the prior
+// run closes converges". That retry — while the prior run closes, then state
+// polling to active on the customer's update timeout — is what
+// PostWithConflictRetry + the exhaust diagnostic implement. It deliberately
+// does NOT extend to anything else: a duplicate-name 409 (code "conflict") on
+// the create path stays hard-fast via isRetryableCreateConflict, untouched.
+func isRetryableScaleConflict(err error) bool {
+	var apiErr *client.APIError
+	// errors.As, not a bare type assertion — a wrapped *APIError would fail the
+	// assertion and silently turn a retryable 409 permanent (the trap
+	// client.IsNotFound's doc records). The WAF predicates added alongside this
+	// one use the same shape.
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusConflict || apiErr.Code != "conflict" {
+		return false
+	}
+	return strings.Contains(apiErr.Message, scaleConflictMarker)
 }
 
 // getPollTimeout is the DEFAULT wait budget — the timeouts block's fallback
@@ -408,17 +479,39 @@ func (r *kubernetesNodePoolResource) Update(ctx context.Context, req resource.Up
 	// node_count is the only in-place-updatable attribute (everything else
 	// RequiresReplace). The backend gates /scale on both the cluster and the
 	// pool being serviceable: a soft-deleted pool is 404, any other
-	// non-scalable state is 409 — both surface as-is. The status poll after
-	// the scale runs on the timeouts block's update budget.
+	// non-scalable state is 409 — both surface with tailored or raw
+	// diagnostics. The 409 "a scale operation ... is already in progress" is
+	// the one the server documents as retryable ("retry when it completes",
+	// nodepool.go:514): a prior scale saga is still live, and re-POSTing once
+	// it closes converges on the requested count. PostWithConflictRetry with
+	// a message-scoped predicate — NOT a bare IsConflict, which would retry
+	// the endpoint's PERMANENT non-scalable 409s to the ceiling.
 	budgets := r.resolveBudgets(plan.Timeouts)
 	if !plan.NodeCount.Equal(state.NodeCount) {
 		scaleReq := apiScaleNodePoolRequest{NodeCount: int(plan.NodeCount.ValueInt64())}
-		if _, err := r.client.Post(ctx, r.poolPath(clusterID, poolID)+"/scale", scaleReq); err != nil {
+		if _, err := r.client.PostWithConflictRetry(ctx, r.poolPath(clusterID, poolID)+"/scale", scaleReq,
+			isRetryableScaleConflict, r.getScaleRetryInterval(), r.getScaleRetryTimeout()); err != nil {
 			if client.IsNotFound(err) {
 				resp.Diagnostics.AddError(
 					"Node pool no longer exists",
 					fmt.Sprintf("Node pool %s was deleted outside Terraform, so it cannot be scaled. "+
 						"Remove it from state or re-create it (terraform apply).", poolID),
+				)
+				return
+			}
+			if isRetryableScaleConflict(err) {
+				// The retry budget ran out while the prior scale saga is still
+				// live. Name it like the 404 sibling does — the retry did its
+				// job, the saga simply outlasted it.
+				resp.Diagnostics.AddError(
+					"A Scale Operation Is Already Running For This Node Pool",
+					fmt.Sprintf("Node pool %s was not scaled: a scale operation for this pool is "+
+						"already in progress, still driving toward its own target. Terraform retried "+
+						"for %s and it had not completed in that window.\n\n"+
+						"Wait for the current scale to finish (the pool's status is on its parent "+
+						"cluster in the portal and CLI), then run terraform apply again — the retry "+
+						"once it closes converges on the requested count.\n\nUnderlying error: %s",
+						poolID, r.getScaleRetryTimeout(), err.Error()),
 				)
 				return
 			}

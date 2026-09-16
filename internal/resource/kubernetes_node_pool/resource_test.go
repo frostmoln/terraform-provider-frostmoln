@@ -189,6 +189,10 @@ func testResource(c *client.Client) *kubernetesNodePoolResource {
 		client:       c,
 		pollInterval: 5 * time.Millisecond,
 		pollTimeout:  5 * time.Second,
+		// The real 2s/30s scale-retry budget would turn every conflict test
+		// into a 30s sit-out; shrink the seam like the other waits.
+		scaleRetryInterval: 2 * time.Millisecond,
+		scaleRetryTimeout:  30 * time.Millisecond,
 	}
 }
 
@@ -879,8 +883,9 @@ func TestUpdateScale404(t *testing.T) {
 	}
 }
 
-// TestUpdateScaleConflict: a 409 (scale already in progress / non-scalable
-// state) surfaces as-is.
+// TestUpdateScaleConflict: a scale 409 the retry cannot clear — the prior
+// scale saga outlives the whole retry budget — errors the apply with the
+// tailored diagnostic, which still carries the server's own message.
 func TestUpdateScaleConflict(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == poolPath+"/scale" {
@@ -1123,5 +1128,185 @@ func TestImportStateInvalidID(t *testing.T) {
 		if !resp.Diagnostics.HasError() {
 			t.Errorf("expected error for import ID %q", id)
 		}
+	}
+}
+
+// --- Update (scale) — the retryable in-progress 409 (S2) ---
+
+// TestUpdateScaleRetriesWhileAScaleSagaIsLive: the kubernetes server answers a
+// /scale racing a still-running prior scale saga with 409 "a scale operation
+// for this node pool is already in progress; retry when it completes"
+// (kubernetes internal/service/impl/nodepool.go:512-515, verified locally
+// 2026-09-16) — and its own comment says a retry after the prior run closes
+// converges. The provider honours it: bounded retry, then the normal
+// state poll to active.
+func TestUpdateScaleRetriesWhileAScaleSagaIsLive(t *testing.T) {
+	var scaleCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == poolPath+"/scale":
+			if scaleCalls.Add(1) == 1 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				_, _ = w.Write([]byte(`{"code":"conflict","message":"a scale operation for this node pool is already in progress; retry when it completes"}`))
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == poolPath:
+			// Post-scale status poll + final read: the pool is active.
+			writeJSON(t, w, testPool(statusActive))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	r := testResource(newTestClient(t, server))
+
+	prior := KubernetesNodePoolModel{
+		ID:        types.StringValue("np-2"),
+		ClusterID: types.StringValue("c-1"),
+		Name:      types.StringValue("workers"),
+		FlavorID:  types.StringValue("k8s.gp1.small"),
+		NodeCount: types.Int64Value(2),
+		Status:    types.StringValue(statusActive),
+		CreatedAt: types.StringValue("2026-07-01T00:00:00Z"),
+	}
+	planned := prior
+	planned.NodeCount = types.Int64Value(4)
+
+	resp := resource.UpdateResponse{State: buildState(t, prior)}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:  buildPlan(t, planned),
+		State: buildState(t, prior),
+	}, &resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("expected the in-progress 409 to be retried and the scale to land, got %v", resp.Diagnostics.Errors())
+	}
+	if got := scaleCalls.Load(); got != 2 {
+		t.Errorf("expected exactly 2 scale attempts (first 409 retried), got %d", got)
+	}
+	var state KubernetesNodePoolModel
+	if diags := resp.State.Get(context.Background(), &state); diags.HasError() {
+		t.Fatalf("failed to read state: %v", diags.Errors())
+	}
+	if state.NodeCount.ValueInt64() != 4 {
+		t.Errorf("node_count = %d, want the planned 4", state.NodeCount.ValueInt64())
+	}
+}
+
+// TestUpdateScale409NonScalableDoesNotRetry: the scale endpoint also 409s
+// PERMANENTLY ("any other non-scalable state") — the same "conflict" code as
+// the transient one. A message-scoped predicate retries only the documented
+// in-progress case; everything else fails on the first attempt.
+func TestUpdateScale409NonScalableDoesNotRetry(t *testing.T) {
+	var scaleCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == poolPath+"/scale" {
+			scaleCalls.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"code":"conflict","message":"this node pool is not currently serviceable while its cluster is upgrading"}`))
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	r := testResource(newTestClient(t, server))
+
+	prior := KubernetesNodePoolModel{
+		ID:        types.StringValue("np-2"),
+		ClusterID: types.StringValue("c-1"),
+		Name:      types.StringValue("workers"),
+		FlavorID:  types.StringValue("k8s.gp1.small"),
+		NodeCount: types.Int64Value(2),
+		Status:    types.StringValue(statusActive),
+		CreatedAt: types.StringValue("2026-07-01T00:00:00Z"),
+	}
+	planned := prior
+	planned.NodeCount = types.Int64Value(4)
+
+	resp := resource.UpdateResponse{State: buildState(t, prior)}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:  buildPlan(t, planned),
+		State: buildState(t, prior),
+	}, &resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a permanent non-scalable 409 must fail the apply")
+	}
+	if got := scaleCalls.Load(); got != 1 {
+		t.Errorf("permanent 409 must not retry: expected exactly 1 attempt, got %d", got)
+	}
+	found := false
+	for _, d := range resp.Diagnostics.Errors() {
+		if strings.Contains(d.Detail(), "not currently serviceable") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the permanent 409's own message must surface, got %v", resp.Diagnostics.Errors())
+	}
+}
+
+// TestUpdateScaleExhaustedRetryNamesTheLiveSaga: when the prior saga outlives
+// the retry budget the apply still fails — but with a diagnostic that names
+// the live scale, tells the practitioner to re-run after it closes, and
+// carries the server's message.
+func TestUpdateScaleExhaustedRetryNamesTheLiveSaga(t *testing.T) {
+	var scaleCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == poolPath+"/scale" {
+			scaleCalls.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"code":"conflict","message":"a scale operation for this node pool is already in progress; retry when it completes"}`))
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	r := testResource(newTestClient(t, server))
+
+	prior := KubernetesNodePoolModel{
+		ID:        types.StringValue("np-2"),
+		ClusterID: types.StringValue("c-1"),
+		Name:      types.StringValue("workers"),
+		FlavorID:  types.StringValue("k8s.gp1.small"),
+		NodeCount: types.Int64Value(2),
+		Status:    types.StringValue(statusActive),
+		CreatedAt: types.StringValue("2026-07-01T00:00:00Z"),
+	}
+	planned := prior
+	planned.NodeCount = types.Int64Value(4)
+
+	resp := resource.UpdateResponse{State: buildState(t, prior)}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:  buildPlan(t, planned),
+		State: buildState(t, prior),
+	}, &resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a scale saga that outlives the retry budget must error, not go green")
+	}
+	if got := scaleCalls.Load(); got < 2 {
+		t.Errorf("expected the retry to fire before giving up, got %d attempt(s)", got)
+	}
+	var summary, detail string
+	for _, d := range resp.Diagnostics.Errors() {
+		summary += d.Summary() + "\n"
+		detail += d.Detail() + "\n"
+	}
+	if !strings.Contains(summary, "A Scale Operation Is Already Running For This Node Pool") {
+		t.Errorf("expected the tailored in-progress diagnostic, got %s", summary)
+	}
+	if !strings.Contains(detail, "terraform apply again") || !strings.Contains(detail, "already in progress") {
+		t.Errorf("the diagnostic must advise re-running and carry the server message:\n%s", detail)
 	}
 }

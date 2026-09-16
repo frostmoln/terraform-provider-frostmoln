@@ -1845,3 +1845,195 @@ func TestCreateWaitTimeoutVerifiedAbsent(t *testing.T) {
 		t.Error("verified absence must not record state")
 	}
 }
+
+// --- The expose swallow (S2): never settle an in-flight saga ---
+
+// swConflictBody is the webserver service's in-flight arm of the SAME 409 the
+// expose action sends when the instance is already in the desired state
+// (webserver internal/service/impl/instance.go:421, "an expose operation is
+// already in progress"; verified locally 2026-09-16; the apache twin at :454
+// says "an unexpose operation is already in progress"). Code "conflict" either
+// way — the message is the only discriminator, and the provider deliberately
+// does not parse it: it polls to convergence instead.
+const swConflictBody = `{"error":{"code":"conflict","message":"an expose operation is already in progress"}}`
+
+func swServingInstance(gets *atomic.Int32, publicAfter int32) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		inst := apiWebserverInstance{ID: "apache-1", Name: "apache", Type: "apache", Status: "running"}
+		if gets.Add(1) >= publicAfter {
+			inst.Public = true
+			inst.PublicIP = "203.0.113.7"
+		}
+		_ = json.NewEncoder(w).Encode(inst)
+	}
+}
+
+// TestSetExposureSwallowedConflictWaitsForConvergence: on the "already in
+// desired state" 409, exposure is only settled once the read-back actually
+// reports it — an in-flight saga converges, the apply stays honest.
+func TestSetExposureSwallowedConflictWaitsForConvergence(t *testing.T) {
+	var gets atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/apache-1":
+			swServingInstance(&gets, 4)(w, r) // public=true only on the 4th read
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/webservers/apache-1/expose":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(swConflictBody))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &apacheInstanceResource{client: c, pollInterval: 1 * time.Millisecond}
+
+	if err := r.setExposure(context.Background(), "apache-1", true, 500*time.Millisecond); err != nil {
+		t.Fatalf("an in-flight saga must converge within the budget: %v", err)
+	}
+	if got := gets.Load(); got < 4 {
+		t.Errorf("expected the read-back to be polled until public=true, got %d read(s)", got)
+	}
+}
+
+// TestSetExposureAlreadyConvergedSettlesOnFirstReadback: the converged arm of
+// the same 409 ("instance is already exposed") still costs no wait — the first
+// read-back already reports the requested state.
+func TestSetExposureAlreadyConvergedSettlesOnFirstReadback(t *testing.T) {
+	var gets atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/apache-1":
+			swServingInstance(&gets, 1)(w, r) // already public
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/webservers/apache-1/expose":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":{"code":"conflict","message":"instance is already exposed"}}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &apacheInstanceResource{client: c, pollInterval: 1 * time.Millisecond}
+
+	if err := r.setExposure(context.Background(), "apache-1", true, 500*time.Millisecond); err != nil {
+		t.Fatalf("a converged instance must settle immediately: %v", err)
+	}
+	if got := gets.Load(); got != 1 {
+		t.Errorf("a converged settle must cost exactly one read-back, got %d", got)
+	}
+}
+
+// TestSetExposureNeverSettlesAnInFlightSaga: a saga that never converges
+// errors the exposure wait (the budget is the update's) — the apply fails
+// instead of going green on an exposure the platform has not finished.
+func TestSetExposureNeverSettlesAnInFlightSaga(t *testing.T) {
+	var gets atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/apache-1":
+			swServingInstance(&gets, 1<<30)(w, r) // never public
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/webservers/apache-1/expose":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(swConflictBody))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &apacheInstanceResource{client: c, pollInterval: 1 * time.Millisecond}
+
+	err := r.setExposure(context.Background(), "apache-1", true, 80*time.Millisecond)
+	if err == nil {
+		t.Fatal("a saga that never converges must not be recorded as settled")
+	}
+	if !strings.Contains(err.Error(), "timed out waiting") {
+		t.Errorf("expected the poll's timeout, got: %v", err)
+	}
+}
+
+// TestUpdateSwallowedExposeSagaIsNotRecordedGreen: the swallow regression
+// itself. The OLD code returned nil on this 409 and wrote state off ONE
+// immediate GET that still reported public=false and an empty public_ip — a
+// green apply, convergence silently deferred. The update must now wait for the
+// saga: no success, and no state, until public is really true.
+func TestUpdateSwallowedExposeSagaIsNotRecordedGreen(t *testing.T) {
+	var gets atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/apache-123":
+			// The FIRST read after the swallowed 409 reports the instance
+			// exactly as the saga-STILL-RUNNING world looks: public=false,
+			// no public_ip. Convergence lands on a later read. If the settle
+			// ever comes off that first read again, the assertions below fail.
+			inst := apiWebserverInstance{
+				ID: "apache-123", Name: "my-apache", Type: "apache", Status: "running",
+				FlavorID: "web.gp1.small", StorageGB: 20,
+				VPCID: "vpc-1", SubnetID: "sn-1", TLSEnabled: true,
+				Port: 80, CreatedAt: "2025-01-01T00:00:00Z",
+			}
+			if gets.Add(1) >= 3 {
+				inst.Public = true
+				inst.PublicIP = "203.0.113.7"
+			}
+			_ = json.NewEncoder(w).Encode(inst)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/webservers/apache-123/expose":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(swConflictBody))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := newTestApacheResource(c)
+
+	stateModel := baseApacheModel()
+	stateModel.ID = types.StringValue("apache-123")
+	stateModel.Status = types.StringValue("running")
+	stateModel.CreatedAt = types.StringValue("2025-01-01T00:00:00Z")
+	stateModel.Public = types.BoolValue(false)
+	stateModel.PublicIP = types.StringNull()
+	state := buildApacheInstanceState(t, stateModel)
+
+	planModel := stateModel
+	planModel.Public = types.BoolValue(true)
+	plan := buildApacheInstancePlan(t, planModel)
+
+	updateResp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("an in-flight saga that converges must land green only after convergence: %v", updateResp.Diagnostics.Errors())
+	}
+	if got := gets.Load(); got < 3 {
+		t.Errorf("expected the update to keep reading until the saga landed, got %d read(s)", got)
+	}
+	var out ApacheInstanceModel
+	if diags := updateResp.State.Get(context.Background(), &out); diags.HasError() {
+		t.Fatalf("failed to read back state: %v", diags.Errors())
+	}
+	if !out.Public.ValueBool() {
+		t.Error("state must record public=true — the saga CONVERGED, not was accepted")
+	}
+	if out.PublicIP.ValueString() != "203.0.113.7" {
+		t.Errorf("public_ip = %q — recording it before the saga lands is the swallow", out.PublicIP.ValueString())
+	}
+}
