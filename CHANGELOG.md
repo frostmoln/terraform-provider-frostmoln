@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.69.6] - 2026-09-16
+
+### 🐛 Bug Fixes
+
+- *(audit-s2)* Retry the documented 409s the provider hard-failed; never record an in-flight expose saga green (#576)
+- *(backup)* Accept only type full on postgres/mysql backups (#575)
+
 ## [0.69.5] - 2026-09-16
 
 ### 🐛 Bug Fixes
