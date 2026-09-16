@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.69.5] - 2026-09-16
+
+### 🐛 Bug Fixes
+
+- *(class-a)* Refuse at plan time the attributes the platform never enacts (audit A1/A2/A3) (#573)
+
 ## [0.69.4] - 2026-09-16
 
 ### 🐛 Bug Fixes
