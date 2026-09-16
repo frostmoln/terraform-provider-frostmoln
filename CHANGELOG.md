@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.69.2] - 2026-09-16
+
+### 🐛 Bug Fixes
+
+- *(import)* Guard the ten hand-rolled importers against dot-segment IDs (S1) (#567)
+
 ## [0.69.1] - 2026-09-16
 
 ### 🐛 Bug Fixes
