@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.68.1] - 2026-09-16
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.23 (#560)
+
+### 📚 Documentation
+
+- *(tag-colors)* An API key reaches only its tenant's organization (#559)
+
+### 🧪 Testing
+
+- *(launch-templates)* Pin the vpc_id update contract end to end (#557)
+
 ## [0.68.0] - 2026-09-15
 
 ### 🚀 Features
