@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.69.1] - 2026-09-16
+
+### 🐛 Bug Fixes
+
+- *(orphan)* Adopt-and-track the six remaining create-orphan families (D2 residue) (#565)
+
 ## [0.69.0] - 2026-09-16
 
 ### 🚀 Features
