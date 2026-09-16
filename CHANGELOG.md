@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.69.3] - 2026-09-16
+
+### 🐛 Bug Fixes
+
+- *(timeouts)* Raise wait ceilings below the platform budgets (D3-D8, D1 default) (#569)
+
 ## [0.69.2] - 2026-09-16
 
 ### 🐛 Bug Fixes
