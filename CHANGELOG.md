@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.69.4] - 2026-09-16
+
+### 🐛 Bug Fixes
+
+- *(dns_zone)* Pin server-owned computed fields through update (audit B1) (#571)
+
 ## [0.69.3] - 2026-09-16
 
 ### 🐛 Bug Fixes
