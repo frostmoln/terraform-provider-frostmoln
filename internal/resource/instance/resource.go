@@ -178,10 +178,13 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				//
 				// 01a041f8-98ef: the create constraint is REAL and refused inside the
 				// saga — with subnet_id set the port is pinned and provisioning runs
-				// "security_group_ids is required". The description states both sides:
-				// the create-time requirement and the update-only clear path. Pinned
-				// by TestAttributeDescriptionContract (pinnedBehaviorSentences).
-				Description: "The security group IDs attached to the instance. On create, the platform requires at least one security group whenever `subnet_id` is set — a pinned port with no security groups is refused inside the create saga (`security_group_ids is required`), so with `subnet_id` set, set `security_groups` as well. On update, changing the set replaces the instance's security groups across all its ports in place, and setting it to [] or removing the attribute clears ALL security groups (the instance falls back to default-drop — typically no inbound access). Out-of-band changes (made via the portal, CLI, or another client) are detected as drift on refresh when you set `security_groups` in your configuration and every port shares the same set; if you leave the attribute unset, out-of-band changes are not tracked, and if ports hold differing sets the configured value is preserved with a warning (edit per port instead).",
+				// "security_group_ids is required". ModifyPlan surfaces the same
+				// constraint on a CREATE plan — refused before the 202, without
+				// touching the update-only clear (that reads state, a ValidateConfig
+				// cannot). The description states both sides: the create-time
+				// requirement and the update-only clear path. Pinned by
+				// TestAttributeDescriptionContract (pinnedBehaviorSentences).
+				Description: "The security group IDs attached to the instance. On create, the platform requires at least one security group whenever `subnet_id` is set — a pinned port with no security groups is refused inside the create saga (`security_group_ids is required`), and a create plan is refused up front by this same rule, so the failure no longer surfaces mid-apply. Set `security_groups` whenever you set `subnet_id`; the required group needs no rules. On update, changing the set replaces the instance's security groups across all its ports in place, and setting it to [] or removing the attribute clears ALL security groups (the instance falls back to default-drop — typically no inbound access). Out-of-band changes (made via the portal, CLI, or another client) are detected as drift on refresh when you set `security_groups` in your configuration and every port shares the same set; if you leave the attribute unset, out-of-band changes are not tracked, and if ports hold differing sets the configured value is preserved with a warning (edit per port instead).",
 				Optional:    true,
 				ElementType: types.StringType,
 			},
@@ -1030,6 +1033,81 @@ func (r *instanceResource) ImportState(ctx context.Context, req resource.ImportS
 // platform's tag set, including a change to the provider's default_tags.
 func (r *instanceResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	r.modifyPlanPinnedSecurityGroups(ctx, req, resp)
+}
+
+// modifyPlanPinnedSecurityGroups refuses, at PLAN time for a CREATE plan, the
+// combination the platform refuses inside the saga: `subnet_id` set without
+// `security_groups` — null or empty (01a041f8-98ef). Until this gate existed the
+// failure was a 202-turned-failed-operation MINUTES into the apply, with the
+// half-created instance to adopt-or-reap.
+//
+// THIS GATE LIVES IN ModifyPlan AND READS THE STATE, deliberately — the
+// resource-level ValidateConfig (config only, no state) was tried first, and the
+// panel review rejected it twice over: every UPDATE plan of a pinned instance
+// looks identically-shaped to a create in config, so ValidateConfig blocked the
+// DOCUMENTED update-only clear (security_groups = [] or omitted on an instance
+// that exists — Update PUTs clearSecurityGroups, a wire contract the behaviour
+// pins) and made an imported pinned instance unable to leave security_groups
+// unset to skip drift-tracking. Here, an empty state means CREATE — the only
+// plan the saga's constraint applies to; a non-empty state (update, clear,
+// import) is untouched.
+//
+// `subnet_id` "set" is any config expression that is not null — including a
+// computed reference, which is UNKNOWN at plan time but unambiguously expresses
+// the intent to pin (the ordinary first-apply shape). The one bail is
+// `security_groups` UNKNOWN: its value may satisfy the constraint once known,
+// and a plan may only refuse what it can prove invalid now. A nullable
+// variable that may resolve to no subnet at all therefore still refuses — set
+// security_groups alongside whenever you configure subnet_id, conditionally or
+// not; the remedy is benign (attaching groups to what turns out unpinned is
+// legal), the mainstream errored-create being exactly what this gate removes.
+func (r *instanceResource) modifyPlanPinnedSecurityGroups(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if !req.State.Raw.IsNull() {
+		// Update / refresh / import: the instance exists. The clear-to-default-
+		// drop is the documented, wire-pinned update path.
+		return
+	}
+	if req.Config.Raw.IsNull() {
+		return
+	}
+
+	var cfg InstanceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if cfg.SubnetID.IsNull() {
+		return
+	}
+	if cfg.SecurityGroups.IsUnknown() {
+		return
+	}
+
+	empty := cfg.SecurityGroups.IsNull()
+	if !empty {
+		var ids []types.String
+		resp.Diagnostics.Append(cfg.SecurityGroups.ElementsAs(ctx, &ids, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		empty = len(ids) == 0
+	}
+	if !empty {
+		return
+	}
+
+	resp.Diagnostics.AddAttributeError(
+		path.Root("security_groups"),
+		"Instance With subnet_id Requires security_groups",
+		"On create, the platform requires at least one security group whenever `subnet_id` is set – "+
+			"a pinned port with no security groups is refused inside the create saga "+
+			"(`security_group_ids is required`), and this refusal now fires at plan time instead of "+
+			"minutes into the apply. Set `security_groups` alongside `subnet_id`; the required group "+
+			"needs no rules. On an instance that already exists, clearing (empty or omitted) remains "+
+			"the documented update path.",
+	)
 }
 
 // currentTags reads the tags the platform holds right now, at memberPath. An update
