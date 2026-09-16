@@ -53,8 +53,27 @@ func TestGetPollDefaults(t *testing.T) {
 	if r.getPollInterval() != 5*time.Second {
 		t.Errorf("expected default poll interval 5s, got %v", r.getPollInterval())
 	}
+	// getPollTimeout stays the delete-window default (15m) — only the CREATE
+	// budget follows the seed clock.
 	if r.getPollTimeout() != 15*time.Minute {
 		t.Errorf("expected default poll timeout 15m, got %v", r.getPollTimeout())
+	}
+	// Audit D1: the create default is the platform's own seed budget.
+	if r.getCreateTimeout() != replicaSeedCreateBudget {
+		t.Errorf("expected default create budget 3h30m (replicaSeedReadyTimeout), got %v", r.getCreateTimeout())
+	}
+	// The legacy seam contract holds: pollTimeout shrinks create too.
+	r.pollTimeout = time.Second
+	if r.getCreateTimeout() != time.Second {
+		t.Errorf("an injected pollTimeout must shrink the create budget too, got %v", r.getCreateTimeout())
+	}
+	// createTimeout narrows the shrink to create only.
+	r2 := &mysqlReadReplicaResource{createTimeout: 2 * time.Second, pollTimeout: time.Second}
+	if r2.getCreateTimeout() != 2*time.Second {
+		t.Errorf("an injected createTimeout must override the create budget, got %v", r2.getCreateTimeout())
+	}
+	if r2.getPollTimeout() != time.Second {
+		t.Errorf("createTimeout must not touch the delete window, got %v", r2.getPollTimeout())
 	}
 }
 

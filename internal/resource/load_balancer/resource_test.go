@@ -20,16 +20,17 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
-// TestTimeoutsDefaultsMatchTheOldConstants pins the defaults contract of the
+// TestTimeoutsDefaultsMatchTodaysConstants pins the defaults contract of the
 // customer-tunable timeouts block: an absent block resolves to exactly the
-// values this resource has always hardcoded (15m per verb), and the
+// values this resource defaults to — 30m per verb since audit D5 (the
+// platform's own lbActiveTimeout; 15m before), and the
 // pollTimeout test-injection seam still shrinks every budget that does not
 // carry an explicit override.
-func TestTimeoutsDefaultsMatchTheOldConstants(t *testing.T) {
+func TestTimeoutsDefaultsMatchTodaysConstants(t *testing.T) {
 	r := &loadBalancerResource{}
-	want := timeouts.Uniform(15 * time.Minute)
+	want := timeouts.Uniform(30 * time.Minute)
 	if got := r.resolveBudgets(nil); got != want {
-		t.Fatalf("an absent timeouts block must keep the old 15m default; got %+v, want %+v", got, want)
+		t.Fatalf("an absent timeouts block must keep the 30m default (lbActiveTimeout); got %+v, want %+v", got, want)
 	}
 
 	r.pollTimeout = 250 * time.Millisecond

@@ -48,18 +48,35 @@ func (r *mysqlInstanceResource) getPollInterval() time.Duration {
 	return 5 * time.Second
 }
 
+// getPollTimeout is the DEFAULT wait budget — the timeouts block's fallback
+// per verb. Raised from 15m to 30m (audit D7): the platform's readiness step
+// alone in this saga — apt + package install + initdb + the in-VM console probe
+// on a slow mirror (managedServiceReadyTimeout, provisioning
+// internal/activity/managed_readiness.go:20) is budgeted 20 minutes, and it is
+// the LAST leg of the create saga, behind the VM/volume/network steps inside a
+// 30-minute CategoryLongRunning envelope. 15m gave up on a create the platform
+// was still legitimately working — 1m short of the readiness budget alone — and
+// left this twin inconsistent with postgres_instance, already at 30m (raised
+// 2026-09-03). 30m matches both the workbook envelope and the twin.
+//
+// 30m sits exactly ON the platform's envelope, not under it: a saga that
+// legitimately outruns the envelope is the platform's own failure to give a
+// verdict on, and the platform's row is richer than the provider's generic
+// timeout — a practitioner expecting those cases raises the budget via the
+// timeouts block and keeps reading the platform's answer.
 func (r *mysqlInstanceResource) getPollTimeout() time.Duration {
 	if r.pollTimeout > 0 {
 		return r.pollTimeout
 	}
-	return 15 * time.Minute
+	return 30 * time.Minute
 }
 
 // resolveBudgets turns the configured timeouts block into effective budgets,
 // falling back per verb to the same value this resource has always hardcoded
-// (getPollTimeout's 15m). Routing the defaults through the accessor keeps the
-// test-injection seam intact: a test that shrinks pollTimeout shrinks every
-// wait that does not carry an explicit timeouts override, exactly as before.
+// (getPollTimeout's 30m — 15m before 2026-09-16). Routing the defaults through
+// the accessor keeps the test-injection seam intact: a test that shrinks
+// pollTimeout shrinks every wait that does not carry an explicit timeouts
+// override, exactly as before.
 func (r *mysqlInstanceResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
 	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
 	if err != nil {
@@ -348,9 +365,11 @@ func (r *mysqlInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 			},
 		},
 		Blocks: map[string]schema.Block{
-			// Customer-tunable wait budgets: defaults keep the values this
-			// resource has always hardcoded (15m per verb). A timeouts change
-			// is an in-place no-op on real infrastructure — verified by the
+			// Customer-tunable wait budgets: default 30m per verb (15m before
+			// 2026-09-16 — audit D7: the platform's readiness step alone is
+			// budgeted 20m, inside a 30m CategoryLongRunning saga envelope).
+			// A timeouts change is an in-place no-op on real infrastructure —
+			// verified by the
 			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
 			"timeouts": timeouts.Schema(),
 		},
@@ -384,8 +403,8 @@ func (r *mysqlInstanceResource) Create(ctx context.Context, req resource.CreateR
 		return
 	}
 
-	// The customer's timeouts block, with defaults identical to the values
-	// this resource has always hardcoded.
+	// The customer's timeouts block, falling back to this resource's
+	// defaults (see resolveBudgets above for what each default is now).
 	budgets := r.resolveBudgets(plan.Timeouts)
 
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/databases"), apiReq)
@@ -594,8 +613,8 @@ func (r *mysqlInstanceResource) Update(ctx context.Context, req resource.UpdateR
 	// WARNED about at plan time (storage_gb GrowOnly modifier — an error there would
 	// also block `terraform destroy`), so this is where it is actually refused: fail
 	// with a clear message rather than a silent no-op.
-	// The customer's timeouts block, with defaults identical to the values
-	// this resource has always hardcoded.
+	// The customer's timeouts block, falling back to this resource's
+	// defaults (see resolveBudgets above for what each default is now).
 	budgets := r.resolveBudgets(plan.Timeouts)
 
 	switch {

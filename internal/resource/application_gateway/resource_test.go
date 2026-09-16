@@ -2,9 +2,26 @@ package application_gateway
 
 import (
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
+
+// TestGatewayBudgetDefaults pin the accessor defaults the timeouts block falls
+// back to: create on the shared 30m CategoryLongRunning saga envelope (was 20m
+// — the readiness budget alone — before the 2026-09-16 raise) and delete 15m.
+func TestGatewayBudgetDefaults(t *testing.T) {
+	r := &gatewayResource{}
+	if got := r.getCreateTimeout(); got != 30*time.Minute {
+		t.Errorf("expected default create budget 30m (managedServiceReadyTimeout 20m is one leg inside the 30m saga envelope), got %v", got)
+	}
+	if got := r.getDeleteTimeout(); got != 15*time.Minute {
+		t.Errorf("expected default delete budget 15m, got %v", got)
+	}
+	if got := (&gatewayResource{createTimeout: time.Second}).getCreateTimeout(); got != time.Second {
+		t.Errorf("an injected createTimeout must override the create budget, got %v", got)
+	}
+}
 
 func TestGatewayModelFromAPI(t *testing.T) {
 	rev := int64(7)

@@ -19,8 +19,8 @@ func TestGetPollDefaults(t *testing.T) {
 	if r.getPollInterval() != 5*time.Second {
 		t.Errorf("expected default poll interval 5s, got %v", r.getPollInterval())
 	}
-	if r.getPollTimeout() != 15*time.Minute {
-		t.Errorf("expected default poll timeout 15m, got %v", r.getPollTimeout())
+	if r.getPollTimeout() != 30*time.Minute {
+		t.Errorf("expected default poll timeout 30m (the platform's CategoryLongRunning saga envelope; readiness alone is budgeted 20m), got %v", r.getPollTimeout())
 	}
 }
 

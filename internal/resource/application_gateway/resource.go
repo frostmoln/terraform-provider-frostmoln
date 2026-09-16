@@ -53,11 +53,22 @@ func (r *gatewayResource) getPollInterval() time.Duration {
 	return 5 * time.Second
 }
 
+// getCreateTimeout is the CREATE wait budget's default — the timeouts block's
+// create fallback. Raised from 20m to 30m (2026-09-16, expert review on the
+// D3-D8 raise): 20m gave the wait exactly the platform's readiness budget
+// (managedServiceReadyTimeout, provisioning internal/activity/managed_readiness.go:20,
+// consumed by the appgw readiness activity at appgw_activities.go:1130) while
+// VM/volume/network legs of the same saga run BEFORE readiness inside the
+// shared 30m CategoryLongRunning envelope — the default expired at the very
+// moment readiness reached its platform cap. 30m matches the envelope and
+// the managed-instance family (postgres_instance first, 2026-09-03; the D8
+// family 2026-09-16). State is written before the wait (Leg A), so a timed-out
+// create is tracked, never orphaned.
 func (r *gatewayResource) getCreateTimeout() time.Duration {
 	if r.createTimeout > 0 {
 		return r.createTimeout
 	}
-	return 20 * time.Minute
+	return 30 * time.Minute
 }
 
 func (r *gatewayResource) getDeleteTimeout() time.Duration {
@@ -234,8 +245,10 @@ func (r *gatewayResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			},
 		},
 		Blocks: map[string]schema.Block{
-			// Customer-tunable wait budgets: defaults keep the values this
-			// resource has always hardcoded (create 20m, delete 15m). A
+			// Customer-tunable wait budgets: defaults hardcode create 30m
+			// (was 20m — the platform's readiness budget alone — before the
+			// 2026-09-16 raise to the shared 30m saga envelope) and delete
+			// 15m. A
 			// timeouts change is an in-place no-op on real infrastructure —
 			// verified by the Gate 2 smoke test (project-docs/product/
 			// TF-CONVERGENCE-WALL-PLAN.md). The 2h config-apply ceiling is NOT

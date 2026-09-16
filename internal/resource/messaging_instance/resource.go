@@ -46,18 +46,35 @@ func (r *messagingInstanceResource) getPollInterval() time.Duration {
 	return 5 * time.Second
 }
 
+// getPollTimeout is the DEFAULT wait budget — the timeouts block's fallback
+// per verb. Raised from 15m to 30m (audit D8): the saga's readiness step
+// alone — apt + engine install + init + the in-VM console probe on a slow
+// mirror (managedServiceReadyTimeout, provisioning
+// internal/activity/managed_readiness.go:20, consumed at
+// messaging_activities.go:564) is budgeted 20 minutes, inside a 30-minute
+// CategoryLongRunning envelope, and it is the LAST leg of the create saga,
+// behind the VM/volume/network steps. 15m gave up on a create the platform
+// was still legitimately working — and this family keeps one HCL surface and
+// one budget story with the database twins, both now at 30m.
+//
+// 30m sits exactly ON the platform's envelope, not under it: a saga that
+// legitimately outruns the envelope is the platform's own failure to give a
+// verdict on, and the platform's row is richer than the provider's generic
+// timeout — a practitioner expecting those cases raises the budget via the
+// timeouts block and keeps reading the platform's answer.
 func (r *messagingInstanceResource) getPollTimeout() time.Duration {
 	if r.pollTimeout > 0 {
 		return r.pollTimeout
 	}
-	return 15 * time.Minute
+	return 30 * time.Minute
 }
 
 // resolveBudgets turns the configured timeouts block into effective budgets,
-// falling back per verb to the same value this resource has always hardcoded.
-// Routing the defaults through the accessor keeps the test-injection seam
-// intact: a test that shrinks pollTimeout shrinks every wait that does not
-// carry an explicit timeouts override, exactly as before.
+// falling back per verb to the same value this resource has always hardcoded
+// (getPollTimeout's 30m — 15m before 2026-09-16). Routing the defaults through
+// the accessor keeps the test-injection seam intact: a test that shrinks
+// pollTimeout shrinks every wait that does not carry an explicit timeouts
+// override, exactly as before.
 func (r *messagingInstanceResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
 	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
 	if err != nil {
@@ -178,8 +195,10 @@ func (r *messagingInstanceResource) Schema(_ context.Context, _ resource.SchemaR
 			},
 		},
 		Blocks: map[string]schema.Block{
-			// Customer-tunable wait budgets: defaults keep the values this
-			// resource has always hardcoded (15m per verb). A timeouts change
+			// Customer-tunable wait budgets: default 30m per verb (15m before
+			// 2026-09-16 — audit D8: the platform's readiness step alone is
+			// budgeted 20m, inside a 30m CategoryLongRunning saga envelope).
+			// A timeouts change
 			// is an in-place no-op on real infrastructure — verified by the
 			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
 			"timeouts": timeouts.Schema(),
@@ -236,8 +255,8 @@ func (r *messagingInstanceResource) Create(ctx context.Context, req resource.Cre
 		return
 	}
 
-	// The customer's timeouts block, with defaults identical to the values
-	// this resource has always hardcoded.
+	// The customer's timeouts block, falling back to this resource's
+	// defaults (see resolveBudgets above for what each default is now).
 	budgets := r.resolveBudgets(plan.Timeouts)
 
 	// The created-at floor and subject for the discovery sweep (below): the

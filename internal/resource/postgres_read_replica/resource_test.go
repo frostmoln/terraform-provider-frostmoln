@@ -20,11 +20,28 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
+// TestTimeoutsDefaultsPinSeedClock pins the defaults contract of the
+// customer-tunable timeouts block: an absent block resolves create to the
+// seed clock (3h30m — the platform's replicaSeedReadyTimeout, audit D1) and
+// update/delete to their long-standing 15m windows.
+func TestTimeoutsDefaultsPinSeedClock(t *testing.T) {
+	r := &postgresReadReplicaResource{}
+	want := timeouts.Budgets{
+		Create: replicaSeedCreateBudget,
+		Update: 15 * time.Minute,
+		Delete: 15 * time.Minute,
+	}
+	if got := r.resolveBudgets(nil); got != want {
+		t.Fatalf("an absent timeouts block must default create to the 3h30m seed budget (replicaSeedReadyTimeout, audit D1) and the rest to 15m; got %+v, want %+v", got, want)
+	}
+}
+
 // TestTimeoutsBlockOverridesTheDefaultBudget pins the two promises of the
 // customer-tunable timeouts block in one behavior test: the configured
 // timeouts.create — NOT the hardcoded default — bounds the create wait (the
-// default here is the full 15 minutes and would hang if the block were
-// ignored), and a wait that still times out leaves a tracked replica —
+// default here is the seed clock's 3h30m and would hang the test's lifetime
+// if the block were ignored), and a wait that still times out leaves a tracked
+// replica —
 // a replica seed is the platform's longest provision and the 🔴
 // state-before-the-wait branch is what keeps a timed-out apply's replica
 // refreshable and destroyable instead of orphaned.

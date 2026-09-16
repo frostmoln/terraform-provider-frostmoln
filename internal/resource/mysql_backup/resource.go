@@ -40,11 +40,21 @@ func (r *mysqlBackupResource) getPollInterval() time.Duration {
 	return 5 * time.Second
 }
 
+// getPollTimeout is the DEFAULT wait budget — the timeouts block's fallback
+// per verb. Raised from 30m to 2h (audit D4): the platform's own polling
+// ceiling for this workflow, backupPollDeadline (provisioning
+// internal/workflow/backup_database.go:27), is 2 hours — matched to the agent
+// job TTL plus the 2h backupPresignTTL so the workflow observes the agent's
+// TRUE terminal state instead of declaring a live backup failed while its
+// object and presigned URL are still usable. 30m gave up on a backup the
+// platform still considers live. State is already written before the wait
+// (adopt contract), so the 30m breach was never an orphan — only a wrong
+// verdict, now closed too.
 func (r *mysqlBackupResource) getPollTimeout() time.Duration {
 	if r.pollTimeout > 0 {
 		return r.pollTimeout
 	}
-	return 30 * time.Minute
+	return 2 * time.Hour
 }
 
 // resolveBudgets turns the configured timeouts block into effective budgets,
@@ -129,8 +139,10 @@ func (r *mysqlBackupResource) Schema(_ context.Context, _ resource.SchemaRequest
 			},
 		},
 		Blocks: map[string]schema.Block{
-			// Customer-tunable wait budgets: defaults keep the values this
-			// resource has always hardcoded (30m per verb). Create is the
+			// Customer-tunable wait budgets: default 2h per verb (30m before
+			// 2026-09-16 — audit D4: the platform's own backupPollDeadline
+			// for this workflow is 2h, agent job TTL + presigned-URL TTL).
+			// Create is the
 			// only verb with a wait to bound — the poll to "completed" —
 			// while update is refused (backups are immutable after creation)
 			// and delete is a plain DELETE answered synchronously, so
@@ -178,8 +190,9 @@ func (r *mysqlBackupResource) Create(ctx context.Context, req resource.CreateReq
 
 	instanceID := plan.InstanceID.ValueString()
 
-	// The customer's timeouts block, with defaults identical to the values
-	// this resource has always hardcoded. Create is the only verb with a
+	// The customer's timeouts block, falling back to this resource's
+	// 2h defaults (see resolveBudgets and the block comment above). Create
+	// is the only verb with a
 	// wait to bound.
 	budgets := r.resolveBudgets(plan.Timeouts)
 

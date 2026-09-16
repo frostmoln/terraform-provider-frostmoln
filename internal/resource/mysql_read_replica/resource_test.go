@@ -20,23 +20,93 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
-// TestTimeoutsDefaultsMatchTheOldConstants pins the defaults contract of the
-// customer-tunable timeouts block: an absent block resolves to exactly the
-// values this resource has always hardcoded (15m per verb), and the
-// pollTimeout test-injection seam still shrinks every budget that does not
-// carry an explicit override. The delete's 409 conflict-retry window is NOT
+// TestTimeoutsDefaultsMatchTodaysConstants pins the defaults contract of the
+// customer-tunable timeouts block: an absent block resolves create to the
+// seed clock (3h30m — the platform's replicaSeedReadyTimeout, audit D1) and
+// update/delete to their long-standing 15m windows, and the pollTimeout
+// test-injection seam still shrinks every budget that does not carry an
+// explicit override. The delete's 409 conflict-retry window is NOT
 // customer-tunable — it stays on getPoll*.
-func TestTimeoutsDefaultsMatchTheOldConstants(t *testing.T) {
+func TestTimeoutsDefaultsMatchTodaysConstants(t *testing.T) {
 	r := &mysqlReadReplicaResource{}
-	want := timeouts.Uniform(15 * time.Minute)
+	want := timeouts.Budgets{
+		Create: replicaSeedCreateBudget,
+		Update: 15 * time.Minute,
+		Delete: 15 * time.Minute,
+	}
 	if got := r.resolveBudgets(nil); got != want {
-		t.Fatalf("an absent timeouts block must keep the old 15m default; got %+v, want %+v", got, want)
+		t.Fatalf("an absent timeouts block must default create to the 3h30m seed budget and the rest to 15m; got %+v, want %+v", got, want)
 	}
 
 	r.pollTimeout = 250 * time.Millisecond
 	wantInj := timeouts.Uniform(250 * time.Millisecond)
 	if got := r.resolveBudgets(nil); got != wantInj {
 		t.Fatalf("a shrunken pollTimeout must shrink the default budget; got %+v, want %+v", got, wantInj)
+	}
+}
+
+// TestTimeoutsCreateBoundsTheWaitAndTimesOutToTrackedReplica is the mysql
+// twin of the postgres behavioral pin: the configured timeouts.create — NOT
+// the hardcoded default (now the 3h30m seed clock, audit D1) — bounds the
+// create wait, and a wait that times out still leaves the tracked replica
+// refreshable and destroyable (🔴 state-before-the-wait).
+func TestTimeoutsCreateBoundsTheWaitAndTimesOutToTrackedReplica(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/databases/db-1/replicas":
+			w.WriteHeader(http.StatusAccepted)
+			// The 202 carries the id (database service, the resourceId field).
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-mr-wall", "status": "pending",
+				"resourceType": "read_replica", "resourceId": "rr-mr-wall",
+			})
+		case strings.HasSuffix(r.URL.Path, "/operations/op-mr-wall"):
+			// Never completes. This is the timeout case.
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"operationId": "op-mr-wall", "status": "running", "resourceType": "read_replica",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/databases/db-1/replicas/rr-mr-wall":
+			// The state-before-the-wait early read.
+			_ = json.NewEncoder(w).Encode(apiMysqlReadReplica{
+				ID: "rr-mr-wall", InstanceID: "db-1", Name: "replica-1", Status: "seeding",
+			})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	// No pollTimeout injection: only the timeouts block under test can end
+	// this wait inside the test's lifetime.
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := &mysqlReadReplicaResource{client: c, pollInterval: 10 * time.Millisecond}
+
+	plan := buildMysqlReplicaPlan(t, MysqlReadReplicaModel{
+		InstanceID: types.StringValue("db-1"),
+		Name:       types.StringValue("replica-1"),
+		Timeouts:   &timeouts.Model{Create: types.StringValue("120ms")},
+	})
+
+	start := time.Now()
+	createResp := resource.CreateResponse{State: emptyMysqlReplicaState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("expected the create to fail: the operation never completed")
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("the timeouts.create override did not bound the wait: took %s", elapsed)
+	}
+
+	var result MysqlReadReplicaModel
+	createResp.State.Get(context.Background(), &result)
+	if result.ID.ValueString() != "rr-mr-wall" {
+		t.Fatalf("a timed-out create must still record the replica id so it can be destroyed; got %q",
+			result.ID.ValueString())
 	}
 }
 

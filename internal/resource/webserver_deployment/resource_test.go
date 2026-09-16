@@ -110,24 +110,27 @@ func TestFromAPIPreservesWriteOnlyAttrs(t *testing.T) {
 }
 
 // TestGetPollDefaults pins the accessor defaults the timeouts block falls
-// back to: a 5s internal poll interval and a 15m per-verb wait budget.
+// back to: a 5s internal poll interval and a 2h per-verb wait budget — the
+// platform's own deployPollDeadline for the in-guest deploy (audit D3; the
+// agent job's queue-side TTL matches it, in-guest capped at 1h).
 func TestGetPollDefaults(t *testing.T) {
 	r := &webserverDeploymentResource{}
 	if r.getPollInterval() != 5*time.Second {
 		t.Errorf("expected default poll interval 5s, got %v", r.getPollInterval())
 	}
-	if r.getPollTimeout() != 15*time.Minute {
-		t.Errorf("expected default poll timeout 15m, got %v", r.getPollTimeout())
+	if r.getPollTimeout() != 2*time.Hour {
+		t.Errorf("expected default poll timeout 2h, got %v", r.getPollTimeout())
 	}
 }
 
 // TestResolveBudgetsDefaultsPinTodaysConstants pins the timeouts block's
-// fallback: with no block configured, every verb budgets at the value this
-// resource has always hardcoded, and a test's pollTimeout injection still
+// fallback: with no block configured, every verb budgets at this resource's
+// hardcoded default (2h — the platform's deployPollDeadline since audit D3),
+// and a test's pollTimeout injection still
 // shrinks the default (the resolveBudgets seam keeps the harness working).
 func TestResolveBudgetsDefaultsPinTodaysConstants(t *testing.T) {
 	bare := (&webserverDeploymentResource{}).resolveBudgets(nil)
-	if want := timeouts.Uniform(15 * time.Minute); bare != want {
+	if want := timeouts.Uniform(2 * time.Hour); bare != want {
 		t.Errorf("resolveBudgets(nil) = %+v, want %+v", bare, want)
 	}
 

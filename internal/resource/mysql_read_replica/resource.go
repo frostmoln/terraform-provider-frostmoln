@@ -31,13 +31,45 @@ type mysqlReadReplicaResource struct {
 	client       *client.Client
 	pollInterval time.Duration
 	pollTimeout  time.Duration
+	// createTimeout overrides the CREATE budget for tests without touching
+	// the delete budget; production reaches the seed default in
+	// getCreateTimeout.
+	createTimeout time.Duration
 }
+
+// replicaSeedCreateBudget mirrors provisioning's replicaSeedReadyTimeout
+// (3h30m, internal/activity/managed_readiness.go:26) — the platform's own
+// readiness cap for seeding a read replica.
+const replicaSeedCreateBudget = 3*time.Hour + 30*time.Minute
 
 func (r *mysqlReadReplicaResource) getPollInterval() time.Duration {
 	if r.pollInterval > 0 {
 		return r.pollInterval
 	}
 	return 5 * time.Second
+}
+
+// getCreateTimeout is the CREATE wait budget's default — the timeouts block's
+// create fallback. Raised from 15m to 3h30m (audit D1, 2026-09-16): a replica
+// seed is the platform's longest provision — the platform's own readiness cap
+// is replicaSeedReadyTimeout = 3h30m (provisioning
+// internal/activity/managed_readiness.go:26; a full pg_basebackup / MySQL
+// CLONE of the entire primary, "potentially hours on a large dataset", inside
+// a 4h CategoryManagedSeed StartToClose). 15m was 1/14 of that budget: Leg A
+// removed the ORPHAN a timed-out create left behind (state-before-wait), but
+// the apply still abandoned a live, billable, tracked replica. A practitioner
+// with a legitimately slower seed raises it per resource via the `timeouts`
+// block.
+func (r *mysqlReadReplicaResource) getCreateTimeout() time.Duration {
+	if r.createTimeout > 0 {
+		return r.createTimeout
+	}
+	if r.pollTimeout > 0 {
+		// Legacy test seam: pollTimeout has always shrunk EVERY wait on this
+		// resource and the create-path tests inject it — keep that contract.
+		return r.pollTimeout
+	}
+	return replicaSeedCreateBudget
 }
 
 func (r *mysqlReadReplicaResource) getPollTimeout() time.Duration {
@@ -47,18 +79,25 @@ func (r *mysqlReadReplicaResource) getPollTimeout() time.Duration {
 	return 15 * time.Minute
 }
 
-// resolveBudgets turns the configured timeouts block into effective budgets,
-// falling back per verb to the same value this resource has always hardcoded.
-// Routing the defaults through the accessor keeps the test-injection seam
-// intact: a test that shrinks pollTimeout shrinks every wait that does not
-// carry an explicit timeouts override, exactly as before. The 409
-// conflict-retry window on delete stays provider-internal (getPoll*).
+// resolveBudgets turns the configured timeouts block into effective budgets.
+// The CREATE default follows the seed clock (getCreateTimeout, 3h30m since
+// 2026-09-16); update and delete keep the 15m window they have always run on
+// — Update refuses (replicas are immutable) and the 409 conflict-retry window
+// on delete plus its 404 wait stay provider-internal (getPoll*). Routing the
+// defaults through the accessors keeps the test-injection seams intact: a
+// test that shrinks pollTimeout still shrinks every wait (create included —
+// see getCreateTimeout's fallback); createTimeout narrows that to create only.
 func (r *mysqlReadReplicaResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
-	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
+	defaults := timeouts.Budgets{
+		Create: r.getCreateTimeout(),
+		Update: r.getPollTimeout(),
+		Delete: r.getPollTimeout(),
+	}
+	budgets, err := m.Resolve(defaults)
 	if err != nil {
 		// Unreachable via HCL (the block validator rejects bad durations at
 		// plan time); degrade to the defaults rather than fail a wait.
-		return timeouts.Uniform(r.getPollTimeout())
+		return defaults
 	}
 	return budgets
 }
@@ -122,8 +161,10 @@ func (r *mysqlReadReplicaResource) Schema(_ context.Context, _ resource.SchemaRe
 			},
 		},
 		Blocks: map[string]schema.Block{
-			// Customer-tunable wait budgets: defaults keep the values this
-			// resource has always hardcoded (15m per verb). A timeouts change
+			// Customer-tunable wait budgets: create defaults to 3h30m — the
+			// platform's replicaSeedReadyTimeout, the seed's own readiness
+			// budget (15m before 2026-09-16, audit D1) — while update and
+			// delete keep their 15m windows. A timeouts change
 			// is an in-place no-op on real infrastructure — verified by the
 			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
 			"timeouts": timeouts.Schema(),
@@ -165,8 +206,8 @@ func (r *mysqlReadReplicaResource) Create(ctx context.Context, req resource.Crea
 		return
 	}
 
-	// The customer's timeouts block, with defaults identical to the values
-	// this resource has always hardcoded.
+	// The customer's timeouts block, falling back to this resource's
+	// defaults (see resolveBudgets above for what each default is now).
 	budgets := r.resolveBudgets(plan.Timeouts)
 
 	instanceID := plan.InstanceID.ValueString()

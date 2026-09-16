@@ -39,7 +39,11 @@ type webserverDeploymentResource struct {
 	pollInterval time.Duration
 	pollTimeout  time.Duration
 	// uploadClient sends the presigned multipart POST to the storage edge (a
-	// different host than the API). nil uses a default with a generous timeout.
+	// different host than the API). Its 15m default timeout is a WIRE ceiling
+	// on the one upload request, deliberately NOT one of the wait budgets:
+	// the raised poll deadline bounds the in-guest poll AFTER the upload
+	// completes, and the storage edge's presigned POST policy is the
+	// server-side bound on how long an upload may legally take.
 	uploadClient *http.Client
 }
 
@@ -51,13 +55,21 @@ func (r *webserverDeploymentResource) getPollInterval() time.Duration {
 }
 
 // getPollTimeout is the DEFAULT wait budget — the timeouts block's fallback
-// per verb. Create and update have always polled the in-guest deploy to a
-// terminal status against 15m; delete has no wait at all (see Delete).
+// per verb. Create and update both poll the in-guest deploy to a terminal
+// status; delete has no wait at all (see Delete). Raised from 15m to 2h
+// (audit D3): the platform's own poll deadline for this workflow,
+// deployPollDeadline (provisioning internal/workflow/deploy_webserver_content.go:24),
+// is 2 hours — matched to the agent job's queue-side TTL so the workflow
+// observes the deploy's TRUE terminal state instead of declaring a live
+// deploy failed (the in-guest deploy itself is capped at 1h by the agent;
+// 2h is the safety ceiling). A 15m ceiling gave up on a deploy the platform
+// still considers live. The upload's HTTP client timeout is a separate wire
+// timeout, not one of these budgets.
 func (r *webserverDeploymentResource) getPollTimeout() time.Duration {
 	if r.pollTimeout > 0 {
 		return r.pollTimeout
 	}
-	return 15 * time.Minute
+	return 2 * time.Hour
 }
 
 // resolveBudgets turns the configured timeouts block into effective budgets,
@@ -80,7 +92,7 @@ func (r *webserverDeploymentResource) getUploadClient() *http.Client {
 	if r.uploadClient != nil {
 		return r.uploadClient
 	}
-	return &http.Client{Timeout: 15 * time.Minute}
+	return &http.Client{Timeout: 15 * time.Minute} // separate wire timeout, not a wait budget (see the field comment)
 }
 
 func (r *webserverDeploymentResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -135,8 +147,10 @@ func (r *webserverDeploymentResource) Schema(_ context.Context, _ resource.Schem
 			},
 		},
 		Blocks: map[string]schema.Block{
-			// Customer-tunable wait budgets: defaults keep the values this
-			// resource has always hardcoded (15m per verb). Create and update
+			// Customer-tunable wait budgets: default 2h per verb (15m before
+			// 2026-09-16 — audit D3: the platform's own deployPollDeadline
+			// for the in-guest deploy is 2h, agent capped at 1h + safety).
+			// Create and update
 			// both run the deploy flow, whose poll to a terminal deploy
 			// status is bounded by the matching budget; delete is a
 			// deliberate no-op — there is no "undeploy" API, so destroying
@@ -235,8 +249,8 @@ func (r *webserverDeploymentResource) Create(ctx context.Context, req resource.C
 	instanceID := plan.InstanceID.ValueString()
 	archivePath := plan.SourceArchive.ValueString()
 
-	// The customer's timeouts block, with defaults identical to the values
-	// this resource has always hardcoded.
+	// The customer's timeouts block, falling back to this resource's
+	// defaults (see resolveBudgets above for what each default is now).
 	budgets := r.resolveBudgets(plan.Timeouts)
 
 	hash, err := hashArchiveFile(archivePath)
@@ -385,8 +399,8 @@ func (r *webserverDeploymentResource) Update(ctx context.Context, req resource.U
 		return
 	}
 
-	// The customer's timeouts block, with defaults identical to the values
-	// this resource has always hardcoded.
+	// The customer's timeouts block, falling back to this resource's
+	// defaults (see resolveBudgets above for what each default is now).
 	budgets := r.resolveBudgets(plan.Timeouts)
 
 	outcome, err := r.runDeploy(ctx, instanceID, archivePath, hash, budgets.Update)

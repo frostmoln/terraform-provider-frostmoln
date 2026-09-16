@@ -53,11 +53,27 @@ func (r *nginxInstanceResource) getPollInterval() time.Duration {
 	return 5 * time.Second
 }
 
+// getPollTimeout is the DEFAULT wait budget — the timeouts block's fallback
+// per verb. Raised from 15m to 30m (audit D8): the saga's readiness step
+// alone — apt + package install + init + the in-VM console probe on a slow
+// mirror (managedServiceReadyTimeout, provisioning
+// internal/activity/managed_readiness.go:20, consumed at
+// webserver_activities.go) is budgeted 20 minutes, inside a 30-minute
+// CategoryLongRunning envelope, and it is the LAST leg of the create saga,
+// behind the VM/volume/network steps. The config-apply wait in this file
+// already followed the same rule (configApplyTimeout pinned to the platform's
+// 2h applyConfigPollDeadline); the create saga's ceiling now follows it too.
+//
+// 30m sits exactly ON the platform's envelope, not under it: a saga that
+// legitimately outruns the envelope is the platform's own failure to give a
+// verdict on, and the platform's row is richer than the provider's generic
+// timeout — a practitioner expecting those cases raises the budget via the
+// timeouts block and keeps reading the platform's answer.
 func (r *nginxInstanceResource) getPollTimeout() time.Duration {
 	if r.pollTimeout > 0 {
 		return r.pollTimeout
 	}
-	return 15 * time.Minute
+	return 30 * time.Minute
 }
 
 // configApplyTimeout bounds the wait for a config apply. It MATCHES provisioning's
@@ -76,9 +92,10 @@ func (r *nginxInstanceResource) getConfigApplyTimeout() time.Duration {
 
 // resolveBudgets turns the configured timeouts block into effective budgets,
 // falling back per verb to the same value this resource has always hardcoded
-// (getPollTimeout's 15m). Routing the defaults through the accessor keeps the
-// test-injection seam intact: a test that shrinks pollTimeout shrinks every
-// wait that does not carry an explicit timeouts override, exactly as before.
+// (getPollTimeout's 30m — 15m before 2026-09-16). Routing the defaults through
+// the accessor keeps the test-injection seam intact: a test that shrinks
+// pollTimeout shrinks every wait that does not carry an explicit timeouts
+// override, exactly as before.
 // The type-config apply's 2h ceiling stays on its own accessor: it is pinned
 // to provisioning's applyConfigPollDeadline, not to a per-verb wait budget.
 func (r *nginxInstanceResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
@@ -555,8 +572,10 @@ func (r *nginxInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 			},
 		},
 		Blocks: map[string]schema.Block{
-			// Customer-tunable wait budgets: defaults keep the values this
-			// resource has always hardcoded (15m per verb). A timeouts change
+			// Customer-tunable wait budgets: default 30m per verb (15m before
+			// 2026-09-16 — audit D8: the platform's readiness step alone is
+			// budgeted 20m, inside a 30m CategoryLongRunning saga envelope).
+			// A timeouts change
 			// is an in-place no-op on real infrastructure — verified by the
 			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
 			// The type-config apply's two-hour ceiling is NOT tunable here:
@@ -597,8 +616,8 @@ func (r *nginxInstanceResource) Create(ctx context.Context, req resource.CreateR
 		return
 	}
 
-	// The customer's timeouts block, with defaults identical to the values
-	// this resource has always hardcoded.
+	// The customer's timeouts block, falling back to this resource's
+	// defaults (see resolveBudgets above for what each default is now).
 	budgets := r.resolveBudgets(plan.Timeouts)
 
 	// The created-at floor and subject for the discovery sweep (below): the

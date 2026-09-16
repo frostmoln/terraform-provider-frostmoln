@@ -39,7 +39,7 @@ var (
 type loadBalancerResource struct {
 	client       *client.Client
 	pollInterval time.Duration // overridable for tests; defaults to 5s
-	pollTimeout  time.Duration // overridable for tests; defaults to 15m (Amphora boot is slow)
+	pollTimeout  time.Duration // overridable for tests; defaults to 30m (Amphora boot is slow)
 }
 
 // NewResource returns a new load balancer resource factory.
@@ -54,11 +54,20 @@ func (r *loadBalancerResource) getPollInterval() time.Duration {
 	return 5 * time.Second
 }
 
+// getPollTimeout is the DEFAULT wait budget — the timeouts block's fallback
+// per verb. Raised from 15m to 30m (audit D5): the platform's own create-workflow
+// ceiling for this resource, lbActiveTimeout (provisioning
+// internal/workflow/create_load_balancer.go:20), is 30 minutes — its comment
+// says amphora provisioning (image download + cloud-init) "can take well over
+// 15 minutes under load". The 15m default sat exactly on the cliff the
+// platform's own comment warns about. Failure on timeout is covered: the
+// adopt-as-tracked contract sweeps a timed-out create into state (PR #517) —
+// what the timeout still decides is how long an apply blocks before giving up.
 func (r *loadBalancerResource) getPollTimeout() time.Duration {
 	if r.pollTimeout > 0 {
 		return r.pollTimeout
 	}
-	return 15 * time.Minute
+	return 30 * time.Minute
 }
 
 // resolveBudgets turns the configured timeouts block into effective budgets,
@@ -234,8 +243,9 @@ func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 			},
 		},
 		Blocks: map[string]schema.Block{
-			// Customer-tunable wait budgets: defaults keep the values this
-			// resource has always hardcoded (15m per verb). A timeouts change
+			// Customer-tunable wait budgets: default 30m per verb (15m before
+			// 2026-09-16 — audit D5: the platform's own lbActiveTimeout for
+			// this resource is 30m). A timeouts change
 			// is an in-place no-op on real infrastructure — verified by the
 			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
 			"timeouts": timeouts.Schema(),
@@ -312,8 +322,8 @@ func (r *loadBalancerResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
-	// The customer's timeouts block, with defaults identical to the values
-	// this resource has always hardcoded.
+	// The customer's timeouts block, falling back to this resource's
+	// defaults (see resolveBudgets above for what each default is now).
 	budgets := r.resolveBudgets(plan.Timeouts)
 
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/load-balancers"), createReq)

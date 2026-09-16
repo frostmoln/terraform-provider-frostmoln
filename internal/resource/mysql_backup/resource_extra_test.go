@@ -54,8 +54,8 @@ func TestGetPollDefaults(t *testing.T) {
 	if r.getPollInterval() != 5*time.Second {
 		t.Errorf("expected default poll interval 5s, got %v", r.getPollInterval())
 	}
-	if r.getPollTimeout() != 30*time.Minute {
-		t.Errorf("expected default poll timeout 30m, got %v", r.getPollTimeout())
+	if r.getPollTimeout() != 2*time.Hour {
+		t.Errorf("expected default poll timeout 2h (the platform's backupPollDeadline), got %v", r.getPollTimeout())
 	}
 }
 
@@ -65,7 +65,7 @@ func TestGetPollDefaults(t *testing.T) {
 // test's pollTimeout injection still shrinks the default.
 func TestResolveBudgetsDefaultsPinTodaysConstants(t *testing.T) {
 	bare := (&mysqlBackupResource{}).resolveBudgets(nil)
-	if want := timeouts.Uniform(30 * time.Minute); bare != want {
+	if want := timeouts.Uniform(2 * time.Hour); bare != want {
 		t.Errorf("resolveBudgets(nil) = %+v, want %+v", bare, want)
 	}
 
