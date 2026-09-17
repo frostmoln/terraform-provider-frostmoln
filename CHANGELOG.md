@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.70.2] - 2026-09-17
+
+### 🐛 Bug Fixes
+
+- *(appgw_config_apply)* Correct the ModifyPlan comment teaching the retracted framework premise (#583)
+
 ## [0.70.1] - 2026-09-17
 
 ### 🐛 Bug Fixes
