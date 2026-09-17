@@ -5,9 +5,9 @@ resource "frostmoln_scale_group" "web" {
   max_size               = 10
   desired_capacity       = 3
   subnet_ids             = [frostmoln_subnet.a.id, frostmoln_subnet.b.id]
-  load_balancer_pool_ids = [frostmoln_load_balancer_pool.web.id]
+  load_balancer_pool_ids = [frostmoln_lb_pool.web.id]
 
-  health_check_type         = "elb"
+  health_check_type         = "lb"
   health_check_grace_period = 120
   cooldown_seconds          = 300
   termination_policy        = "oldest_first"
