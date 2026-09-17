@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.70.0] - 2026-09-17
+
+### 🚀 Features
+
+- *(provider)* Add name-id instance data sources for the eight offers (audit S3) (#579)
+
 ## [0.69.6] - 2026-09-16
 
 ### 🐛 Bug Fixes
