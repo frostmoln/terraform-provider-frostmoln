@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.70.1] - 2026-09-17
+
+### 🐛 Bug Fixes
+
+- *(scale_group)* Correct the example's LB pool type and health check enum (#581)
+
 ## [0.70.0] - 2026-09-17
 
 ### 🚀 Features
