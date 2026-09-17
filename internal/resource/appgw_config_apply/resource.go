@@ -300,11 +300,38 @@ func (r *applyResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 //     `unknown` with unchanged children. `triggers` never moves, so Terraform
 //     reports agreement while the gateway serves something else.
 //
-// Marking the outputs unknown on an ordinary update is separately REQUIRED, not
-// cosmetic: Terraform's proposed-new plan reuses the prior state value for a
-// computed attribute, so without this the plan carries the old revision, the
-// apply returns a new one, and core rejects it with "Provider produced
-// inconsistent result after apply" on the resource's primary path.
+// WHY THE FIVE MARKS BELOW ARE NOT ALL THE SAME — and why the framing this
+// comment used to carry, "Terraform's proposed-new plan reuses the prior state
+// value for a computed attribute", is FALSE as a general rule. Verified at
+// terraform-plugin-framework v1.19.0 (fwserver/server_planresourcechange.go):
+// MarkComputedNilsAsUnknown marks every Computed attribute whose CONFIG value
+// is null as unknown on every plan carrying a change (schema-Default attributes
+// are exempt), BEFORE the attribute plan modifiers and BEFORE this method. A
+// bare Computed attribute nobody writes is already unknown and needs nothing.
+//
+// On an ordinary trigger-changed update, then, marking revision, sha256, status
+// and applied_at again is redundant. `id` is the one mark doing work there: its
+// UseStateForUnknown modifier (schema above) runs in the attribute pass between
+// the framework's marking and this method, re-pinning the plan to the PRIOR
+// "{gatewayID}:{revision}" — a value the next apply will contradict. The
+// re-mark below restores the unknown; without it the plan carries the old
+// revision, the apply writes a new one, and core rejects the apply with
+// "Provider produced inconsistent result after apply" — on the resource's
+// primary path.
+//
+// On the no-trigger-change branch below, the framework's mark-unknown gate is
+// closed ONLY when the whole planned state still matches state — that gate
+// compares everything, not just triggers (a timeouts-only edit opens it, and
+// the framework then marks the bare outputs unknown itself). When it is truly
+// closed, the framework marks nothing, so there ALL FIVE marks are
+// load-bearing: they are what turns the converged-gateway warning into a
+// re-apply that carries fresh outputs.
+//
+// The shape to copy is gateway/resource.go's, not a rule about computed
+// attributes: its ModifyPlan pins KNOWN prior-state values and is safe only
+// because its Update's matching branch writes the same values back without an
+// API call. Pin a plan value only where Update rewrites it from the server's
+// response.
 //
 // Reading the gateway is a GET, so this stays a side-effect-free plan.
 func (r *applyResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
@@ -320,8 +347,10 @@ func (r *applyResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanR
 		return
 	}
 
-	// An ordinary update: triggers moved, so the outputs must go unknown or core
-	// rejects the apply.
+	// An ordinary update: triggers moved. The four bare Computed outputs are
+	// already unknown from the framework's own marking; `id` is the mark doing
+	// work here — UseStateForUnknown re-pinned it to the prior revision, and a
+	// plan carrying that stale value is exactly what core rejects at apply.
 	changed := true
 	if !plan.Triggers.IsUnknown() {
 		var state Model

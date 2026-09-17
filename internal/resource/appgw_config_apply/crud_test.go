@@ -212,12 +212,18 @@ func stateOf(t *testing.T, m Model) tfsdk.State {
 	return st
 }
 
-// 🔴 THE CRITICAL THIS RESOURCE SHIPPED WITHOUT. `revision`, `id`, `status` and
-// `applied_at` are computed with no config counterpart, so Terraform's
-// proposed-new plan reuses the PRIOR state value. Without ModifyPlan the plan
+// 🔴 THE CRITICAL THIS RESOURCE SHIPPED WITHOUT. On a triggers-changed update
+// the framework marks every Computed attribute that carries no config value
+// unknown — but `id`'s UseStateForUnknown modifier re-pins the PLAN to the
+// prior revision first. Without ModifyPlan restoring the unknown, the plan
 // carries revision 7, the apply returns 8, and core rejects it with "Provider
 // produced inconsistent result after apply" — on an update, which is the
-// resource's primary path and the whole reason it exists.
+// resource's primary path and the whole reason it exists. (The proposed-new
+// state does still carry the prior values; it is the framework's
+// MarkComputedNilsAsUnknown, not Terraform itself, that nets them to unknown
+// before the modifiers run — see the ModifyPlan comment in resource.go. The
+// harness below hands ModifyPlan all five outputs as stale KNOWN values — a
+// worst case the real pipeline produces for `id` alone.)
 func TestModifyPlanMarksOutputsUnknownWhenTriggersMove(t *testing.T) {
 	prior := model(t)
 	prior.Revision = types.Int64Value(7)
@@ -259,6 +265,55 @@ func TestModifyPlanMarksOutputsUnknownWhenTriggersMove(t *testing.T) {
 	}
 }
 
+// The pipeline-faithful mirror of the test above: on a real triggers-changed
+// update the framework has already marked the four bare Computed outputs
+// unknown and only `id` arrives RE-PINNED to the prior revision (the
+// UseStateForUnknown pass). The re-mark's observable job is flipping `id`
+// back; the other four passing through unknown is the extra defence.
+func TestModifyPlanRestoresIDToUnknownAfterUseStateForUnknownPinsIt(t *testing.T) {
+	prior := model(t)
+	prior.Revision = types.Int64Value(7)
+	prior.ID = types.StringValue("agw-1:7")
+	prior.Status = types.StringValue("applied")
+
+	moved := prior
+	moved.Status = types.StringUnknown()
+	moved.SHA256 = types.StringUnknown()
+	moved.AppliedAt = types.StringUnknown()
+	tr, d := types.MapValueFrom(context.Background(), types.StringType,
+		map[string]string{"listener.https": "2026-08-29T11:00:00.000001Z"})
+	if d.HasError() {
+		t.Fatalf("triggers: %v", d.Errors())
+	}
+	moved.Triggers = tr
+
+	r := &applyResource{}
+	resp := resource.ModifyPlanResponse{Plan: tfsdk.Plan(stateOf(t, moved))}
+	r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{
+		Plan:  tfsdk.Plan(stateOf(t, moved)),
+		State: stateOf(t, prior),
+	}, &resp)
+
+	var planned Model
+	if d := resp.Plan.Get(context.Background(), &planned); d.HasError() {
+		t.Fatalf("plan: %v", d.Errors())
+	}
+	if !planned.ID.IsUnknown() {
+		t.Error("UseStateForUnknown re-pinned id to the stale revision and ModifyPlan did not " +
+			"restore the unknown; core rejects the apply with \"Provider produced inconsistent result after apply\"")
+	}
+	for name, unknown := range map[string]bool{
+		"revision":   planned.Revision.IsUnknown(),
+		"status":     planned.Status.IsUnknown(),
+		"sha256":     planned.SHA256.IsUnknown(),
+		"applied_at": planned.AppliedAt.IsUnknown(),
+	} {
+		if !unknown {
+			t.Errorf("%s did not pass through unknown: %v", name, unknown)
+		}
+	}
+}
+
 // The delete hole: a child removed from the configuration updates THIS resource
 // first, dispatching a generation that still contains the child, and only then
 // is the child destroyed — bumping the generation again with nothing to dispatch
@@ -285,8 +340,17 @@ func TestModifyPlanReplansWhenTheGatewayIsUnconverged(t *testing.T) {
 	if d := resp.Plan.Get(context.Background(), &planned); d.HasError() {
 		t.Fatalf("plan: %v", d.Errors())
 	}
-	if !planned.Revision.IsUnknown() {
-		t.Error("an unconverged gateway planned no change; a deleted child would stay served")
+	for name, unknown := range map[string]bool{
+		"revision":   planned.Revision.IsUnknown(),
+		"id":         planned.ID.IsUnknown(),
+		"status":     planned.Status.IsUnknown(),
+		"sha256":     planned.SHA256.IsUnknown(),
+		"applied_at": planned.AppliedAt.IsUnknown(),
+	} {
+		if !unknown {
+			t.Errorf("%s stayed known in the plan; the unconverged branch must force a "+
+				"re-apply that carries fresh outputs", name)
+		}
 	}
 	if len(resp.Diagnostics.Warnings()) == 0 {
 		t.Error("re-dispatching without saying why")
@@ -310,8 +374,16 @@ func TestModifyPlanIsQuietWhenConverged(t *testing.T) {
 
 	var planned Model
 	_ = resp.Plan.Get(context.Background(), &planned)
-	if planned.Revision.IsUnknown() {
-		t.Error("a converged gateway planned a re-apply")
+	for name, unknown := range map[string]bool{
+		"revision":   planned.Revision.IsUnknown(),
+		"id":         planned.ID.IsUnknown(),
+		"status":     planned.Status.IsUnknown(),
+		"sha256":     planned.SHA256.IsUnknown(),
+		"applied_at": planned.AppliedAt.IsUnknown(),
+	} {
+		if unknown {
+			t.Errorf("%s went unknown on a converged, unchanged gateway; every plan would re-apply", name)
+		}
 	}
 }
 
