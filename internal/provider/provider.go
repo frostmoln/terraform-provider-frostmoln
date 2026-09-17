@@ -28,6 +28,8 @@ import (
 	apikeyscopesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/api_key_scopes"
 	appgwflavorsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/appgw_flavors"
 	appgwwafrulesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/appgw_waf_rules"
+	applicationgatewayds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/application_gateway"
+	bucketds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/bucket"
 	dscontainerregistry "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/container_registry"
 	dscontainerregistryartifacts "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/container_registry_artifacts"
 	dscontainerregistrycacheupstreams "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/container_registry_cache_upstreams"
@@ -43,23 +45,30 @@ import (
 	instanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/instance"
 	kubernetesaddonversionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/kubernetes_addon_versions"
 	kubernetesaddonsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/kubernetes_addons"
+	kubernetesclusterds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/kubernetes_cluster"
 	kubernetesclusteraddonsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/kubernetes_cluster_addons"
+	kubernetesclusterkubeconfigds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/kubernetes_cluster_kubeconfig"
 	kubernetesflavorsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/kubernetes_flavors"
 	kubernetestiersds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/kubernetes_tiers"
 	kubernetesversionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/kubernetes_versions"
+	loadbalancerds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/load_balancer"
 	messaginginstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/messaging_instance"
+	mysqlinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/mysql_instance"
 	mysqlversionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/mysql_versions"
 	nginxinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/nginx_instance"
+	postgresinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/postgres_instance"
 	postgresversionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/postgres_versions"
 	publicipds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/public_ip"
 	redisinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/redis_instance"
 	regionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/regions"
 	secretds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/secret"
+	securitygroupds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/security_group"
 	securitygrouprulesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/security_group_rules"
 	subnetds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/subnet"
 	tagcolorsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/tag_colors"
 	tenantdefaulttagsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/tenant_default_tags"
 	valkeyinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/valkey_instance"
+	volumeds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/volume"
 	volumetiersds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/volume_tiers"
 	vpcds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/vpc"
 	vpcroutesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/vpc_routes"
@@ -773,6 +782,32 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		gatewayds.NewDataSource,
 		publicipds.NewDataSource,
 		instanceds.NewDataSource,
+		// The name→id resolvers for the eight offers that had none (audit S3) —
+		// an object created outside Terraform (portal, fm CLI) could be
+		// referenced only by a hardcoded UUID or through terraform_remote_state,
+		// and these nine data sources break that: postgres/mysql instances (the
+		// /databases surface carries both types; each resolves only its own),
+		// the Application Gateway (whose eleven child resources all take a
+		// required gateway_id with no lookup anywhere), the managed Kubernetes
+		// cluster, load balancers, buckets, volumes and security groups.
+		// Each resolver is vpc-shaped (id or name, exactly one) and refuses both
+		// absence and ambiguity rather than picking for the practitioner.
+		postgresinstanceds.NewDataSource,
+		mysqlinstanceds.NewDataSource,
+		applicationgatewayds.NewDataSource,
+		// The kubeconfig data source pairs with the cluster resolver and is the
+		// cross-provider composition enabler (endpoint + kubeconfig blob) for
+		// the kubernetes and helm providers. The kubeconfig is secret material
+		// (Sensitive); the resolver exports only the non-secret pairing
+		// (ca_cert_hash).
+		kubernetesclusterds.NewDataSource,
+		kubernetesclusterkubeconfigds.NewDataSource,
+		loadbalancerds.NewDataSource,
+		bucketds.NewDataSource,
+		volumeds.NewDataSource,
+		// The security-group resolver feeds frostmoln_security_group_rules, the
+		// one-owner rules listing.
+		securitygroupds.NewDataSource,
 		postgresversionsds.NewDataSource,
 		mysqlversionsds.NewDataSource,
 		databasetypesds.NewDataSource,
