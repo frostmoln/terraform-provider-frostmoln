@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.71.1] - 2026-09-18
+
+### 🐛 Bug Fixes
+
+- *(flavors)* Stop documenting flavor ids the realignment deleted (#587)
+- *(docs)* The flavor data-source example named a flavor that does not exist (#589)
+
 ## [0.71.0] - 2026-09-18
 
 ### 🚀 Features
