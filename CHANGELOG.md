@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.71.0] - 2026-09-18
+
+### 🚀 Features
+
+- Extensions set on frostmoln_postgres_instance — declarative, catalog-checked (P2) (#585)
+
 ## [0.70.2] - 2026-09-17
 
 ### 🐛 Bug Fixes
