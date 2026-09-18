@@ -2,19 +2,24 @@ package postgres_instance
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
@@ -28,6 +33,7 @@ var (
 	_ resource.Resource                 = &postgresInstanceResource{}
 	_ resource.ResourceWithImportState  = &postgresInstanceResource{}
 	_ resource.ResourceWithUpgradeState = &postgresInstanceResource{}
+	_ resource.ResourceWithModifyPlan   = &postgresInstanceResource{}
 )
 
 // NewResource returns a new postgres_instance resource factory.
@@ -326,6 +332,15 @@ func (r *postgresInstanceResource) Schema(_ context.Context, _ resource.SchemaRe
 					unenacted.String(parameterGroupRefusalTitle, parameterGroupRefusalDetail),
 				},
 			},
+			"extensions": schema.SetAttribute{
+				Description: "The set of PostgreSQL extension catalog names this instance has enabled (e.g. \"timescaledb\", \"pg_stat_statements\"). Names are PLATFORM CATALOG VALUES, never free-strings: only what the platform's extension catalog advertises can be enabled, and every name is checked against that live catalog at plan time — an unknown name, a name the platform does not offer for this instance's PostgreSQL version, or a deprecated name is refused at plan with the platform's own typed wording. When the catalog cannot be read at plan time the plan only WARNS and continues; the platform enforces the same check when the request is made and refuses with its typed wording. Enabling requires the database-extensions entitlement on the tenant (without it the platform refuses with feature_not_enabled) and is applied IN PLACE — enabling or disabling pays a full PostgreSQL restart window per operation, and the instance is unavailable for that window. Highly available instances are refused by the platform until coordinated node-restart sequencing ships. Because the platform runs one operation at a time per instance, Terraform applies the diff SERIALIZED: the enables first, then the disables, each waited to its recorded verdict before the next starts; a plan with both waits twice. The platform records outcomes once, at the end: while an enable is running the instance's extension state shows the asked-for revision with no new entries, and a failed enable is recorded with the platform's reason. An enable or disable made outside Terraform (portal, fm) is refreshed into this attribute and removed or re-added on the next apply as ordinary configuration drift. Omitting the attribute keeps whatever the instance has; setting it to an explicit empty set (`[]`) disables every extension, one restart window per extension. Extensions are a PostgreSQL offer; MySQL instances have no extensions.",
+				Optional:    true,
+				Computed:    true,
+				ElementType: types.StringType,
+				PlanModifiers: []planmodifier.Set{
+					setplanmodifier.UseStateForUnknown(),
+				},
+			},
 			"status": schema.StringAttribute{
 				Description: "The current status of the PostgreSQL instance.",
 				Computed:    true,
@@ -378,6 +393,64 @@ func (r *postgresInstanceResource) Schema(_ context.Context, _ resource.SchemaRe
 			// Gate 2 smoke test (project-docs/product/TF-CONVERGENCE-WALL-PLAN.md).
 			"timeouts": timeouts.Schema(),
 		},
+	}
+}
+
+// ModifyPlan is where the declared `extensions` set meets the LIVE platform
+// catalog: every declared name is checked against the catalog rows the
+// platform serves right now (drift-safe by construction — no check, allowlist
+// or copy of catalog rows is ever embedded in the provider). An unknown name,
+// a name the catalog does not offer for this instance's PostgreSQL major, or
+// a deprecated name is refused HERE, before anything is created or changed —
+// including on the create half of a replacement, which Terraform plans as a
+// separate PlanResourceChange with a null prior state. The platform re-checks
+// everything at execution time, fail-closed.
+func (r *postgresInstanceResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// Destroy: no plan to judge.
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+	var plan PostgresInstanceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	resp.Diagnostics.Append(r.checkPlanExtensions(ctx, &plan)...)
+}
+
+// readExtensionsIntoModel refreshes the `extensions` attribute from the
+// instance's recorded out-of-band ledger, so an enable or disable made in the
+// portal or with fm surfaces at plan as ordinary configuration drift.
+//
+// A 404 on THIS read is treated the way the create-202 treats an older
+// backend: as "this deployment predates (or misroutes) the extension route" —
+// the attribute is left exactly as state has it. IsNotFound's flat-envelope
+// strictness is deliberately NOT used here: that predicate protects reads
+// whose 404 could be an instance-deletion verdict, but the instance body was
+// just served on the same path — a 404 on the extension read can only be
+// route-shaped (pre-feature service, misroute), and for every possible
+// meaning of that, keeping the recorded state is the safe degradation. Every
+// non-404 failure is a real read failure.
+func (r *postgresInstanceResource) readExtensionsIntoModel(ctx context.Context, id string, m *PostgresInstanceModel, diags *diag.Diagnostics) {
+	state, err := r.fetchExtensionState(ctx, urlPathEscapeSegments(id))
+	if err != nil {
+		var apiErr *client.APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+			return
+		}
+		// Fail-closed on purpose: this read feeds a DIFF surface, and
+		// fabricating a blank or stale set here could plan removals. The
+		// asymmetry with the catalog read's warn-degrade is deliberate —
+		// that one is advisory and re-verified at enqueue; this one drives
+		// what the next apply will disable.
+		diags.AddError("Failed to read PostgreSQL extension state", err.Error())
+		return
+	}
+	names := enabledExtensionNames(state)
+	set, sdiags := types.SetValueFrom(ctx, types.StringType, names)
+	diags.Append(sdiags...)
+	if !diags.HasError() {
+		m.Extensions = set
 	}
 }
 
@@ -571,6 +644,32 @@ func (r *postgresInstanceResource) Create(ctx context.Context, req resource.Crea
 	}
 
 	plan.fromAPI(ctx, finalInst, &resp.Diagnostics)
+
+	// The declared set, applied to the freshly-running instance: enables
+	// only — a new instance has no recorded extensions to disable. An
+	// extension failure here does NOT fail the create: the instance exists
+	// (and an errored create would TAINT it, i.e. destroy and re-create a
+	// live database to retry what the next apply retries in place). The
+	// failure is a warning naming what did not enable; the recorded ledger
+	// is what state keeps, so the next plan still shows the remainder as a
+	// diff and the next apply converges.
+	if !plan.Extensions.IsNull() && !plan.Extensions.IsUnknown() {
+		if enable, _ := extensionDiff(plan.Extensions, types.SetNull(types.StringType)); len(enable) > 0 {
+			if err := r.applyExtensionDiff(ctx, instID, enable, nil, budgets.Create); err != nil {
+				resp.Diagnostics.AddWarning(
+					"PostgreSQL extensions were not enabled during create",
+					"The instance was created and reached running state, but enabling its declared extensions failed: "+
+						err.Error()+". Nothing was lost — the next apply enables what is still missing.",
+				)
+			}
+		}
+	}
+
+	// Recorded truth into state: a create-time extension failure above leaves
+	// the recorded ledger in state, which is what makes the next apply see
+	// the remainder as an ordinary plan diff.
+	r.readExtensionsIntoModel(ctx, instID, &plan, &resp.Diagnostics)
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -598,6 +697,14 @@ func (r *postgresInstanceResource) Read(ctx context.Context, req resource.ReadRe
 	}
 
 	state.fromAPI(ctx, inst, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// The extension ledger is a separate read: project the recorded enabled
+	// entries into the attribute so out-of-band changes surface as drift.
+	r.readExtensionsIntoModel(ctx, state.ID.ValueString(), &state, &resp.Diagnostics)
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -669,9 +776,30 @@ func (r *postgresInstanceResource) Update(ctx context.Context, req resource.Upda
 			return
 		}
 
-		// Poll until instance is back to "running" after the update.
+		// Poll until instance is back to "running" after the update. The
+		// extension ops below need a running instance (the platform refuses
+		// extension requests on any other status), so they wait for this
+		// first — a backup or restore in flight would refuse them instead,
+		// and waiting here is honest both ways.
 		if _, err := r.pollRunning(ctx, id, budgets.Update); err != nil {
 			resp.Diagnostics.AddError("PostgreSQL instance failed to reach running state after update", err.Error())
+			return
+		}
+	}
+
+	// Enable/disable the declared diff, SERIALIZED (enables first, then
+	// disables — the platform runs one operation per instance, so the second
+	// batch always waits for the first's recorded verdict). The ledger is the
+	// verdict and is re-read before every POST (reconcile-first), so a change
+	// that already happened cannot be paid twice.
+	enable, disable := extensionDiff(plan.Extensions, state.Extensions)
+	if len(enable) > 0 || len(disable) > 0 {
+		if err := r.applyExtensionDiff(ctx, id, enable, disable, budgets.Update); err != nil {
+			verb := "enable"
+			if len(enable) == 0 {
+				verb = "disable"
+			}
+			resp.Diagnostics.AddError("Failed to "+verb+" PostgreSQL extensions", err.Error())
 			return
 		}
 	}
@@ -690,6 +818,14 @@ func (r *postgresInstanceResource) Update(ctx context.Context, req resource.Upda
 	}
 
 	plan.fromAPI(ctx, inst, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// The recorded verdict is what state keeps — e.g. a failed enable names
+	// the failure and shows as drift on the next plan, not as a phantom.
+	r.readExtensionsIntoModel(ctx, id, &plan, &resp.Diagnostics)
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 

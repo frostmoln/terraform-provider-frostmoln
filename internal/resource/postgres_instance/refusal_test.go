@@ -149,6 +149,9 @@ func TestUpdateDrainsStoredParameterGroup(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/databases/pg-123":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"id":"pg-123","name":"my-pg","status":"running"}`))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/extensions"):
+			// The extension ledger read accompanies every refresh; empty here.
+			_ = json.NewEncoder(w).Encode(map[string]any{"extensionRevision": 0, "extensions": []map[string]any{}})
 		case strings.HasSuffix(r.URL.Path, "/events"):
 			w.WriteHeader(http.StatusNotFound)
 		default:

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -497,13 +498,26 @@ func TestImportState(t *testing.T) {
 
 // --- tfsdk helpers ---
 
+// withExtensionSetDefaults returns the model with a well-typed `extensions`
+// set: models are built field-by-field in this package's fixtures, and a model
+// literal that predates the extensions set leaves types.Set{} (zero) — its
+// element type is unset and cannot ride Set() (DynamicPseudoType). A null
+// string set is exactly what an omitted attribute means.
+func withExtensionSetDefaults(m PostgresInstanceModel) PostgresInstanceModel {
+	if reflect.DeepEqual(m.Extensions, types.Set{}) {
+		m.Extensions = types.SetNull(types.StringType)
+	}
+	return m
+}
+
 func buildState(t *testing.T, model PostgresInstanceModel) tfsdk.State {
 	t.Helper()
 	r := NewResource()
 	var schemaResp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 	state := tfsdk.State{Schema: schemaResp.Schema}
-	if diags := state.Set(context.Background(), &model); diags.HasError() {
+	m := withExtensionSetDefaults(model)
+	if diags := state.Set(context.Background(), &m); diags.HasError() {
 		t.Fatalf("failed to set state: %v", diags.Errors())
 	}
 	return state
@@ -515,7 +529,8 @@ func buildPlan(t *testing.T, model PostgresInstanceModel) tfsdk.Plan {
 	var schemaResp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 	plan := tfsdk.Plan{Schema: schemaResp.Schema}
-	if diags := plan.Set(context.Background(), &model); diags.HasError() {
+	m := withExtensionSetDefaults(model)
+	if diags := plan.Set(context.Background(), &m); diags.HasError() {
 		t.Fatalf("failed to set plan: %v", diags.Errors())
 	}
 	return plan
@@ -587,6 +602,10 @@ func TestCreate(t *testing.T) {
 				PrivateIP: "10.0.1.5", Port: 5432, AdminUsername: "frostadmin",
 				CreatedAt: "2025-01-01T00:00:00Z",
 			})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/extensions"):
+			// The extension ledger read accompanies every refresh; this mock
+			// represents a post-v3.5.0 backend with no recorded extensions.
+			_ = json.NewEncoder(w).Encode(map[string]any{"extensionRevision": 0, "extensions": []map[string]any{}})
 		case strings.HasSuffix(r.URL.Path, "/events"):
 			// The client waits on the tenant SSE stream instead of a timer
 			// (internal/client/events.go). A 404 stands in for a gateway that does
@@ -681,6 +700,11 @@ func TestRead(t *testing.T) {
 				StorageGB: 50, VPCID: "vpc-1", SubnetID: "sn-1", Status: "running",
 				Port: 5432, CreatedAt: "2025-01-01T00:00:00Z",
 			})
+			return
+		}
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/extensions") {
+			// The extension ledger read accompanies every refresh; empty here.
+			_ = json.NewEncoder(w).Encode(map[string]any{"extensionRevision": 0, "extensions": []map[string]any{}})
 			return
 		}
 		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -781,6 +805,10 @@ func TestUpdate(t *testing.T) {
 				StorageGB: 100, VPCID: "vpc-1", SubnetID: "sn-1", Status: "running",
 				Port: 5432, CreatedAt: "2025-01-01T00:00:00Z",
 			})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/extensions"):
+			// The extension ledger read accompanies every refresh; this mock
+			// represents a post-v3.5.0 backend with no recorded extensions.
+			_ = json.NewEncoder(w).Encode(map[string]any{"extensionRevision": 0, "extensions": []map[string]any{}})
 		case strings.HasSuffix(r.URL.Path, "/events"):
 			// The client waits on the tenant SSE stream instead of a timer
 			// (internal/client/events.go). A 404 stands in for a gateway that does
@@ -849,6 +877,10 @@ func TestUpdateStorageOnlySkipsPut(t *testing.T) {
 				StorageGB: 100, VPCID: "vpc-1", SubnetID: "sn-1", Status: "running",
 				Port: 5432, CreatedAt: "2025-01-01T00:00:00Z",
 			})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/extensions"):
+			// The extension ledger read accompanies every refresh; this mock
+			// represents a post-v3.5.0 backend with no recorded extensions.
+			_ = json.NewEncoder(w).Encode(map[string]any{"extensionRevision": 0, "extensions": []map[string]any{}})
 		case strings.HasSuffix(r.URL.Path, "/events"):
 			// The client waits on the tenant SSE stream instead of a timer
 			// (internal/client/events.go). A 404 stands in for a gateway that does
@@ -973,6 +1005,10 @@ func TestDelete(t *testing.T) {
 			} else {
 				_ = json.NewEncoder(w).Encode(apiPostgresInstance{ID: "pg-123", Status: "deleting"})
 			}
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/extensions"):
+			// The extension ledger read accompanies every refresh; this mock
+			// represents a post-v3.5.0 backend with no recorded extensions.
+			_ = json.NewEncoder(w).Encode(map[string]any{"extensionRevision": 0, "extensions": []map[string]any{}})
 		case strings.HasSuffix(r.URL.Path, "/events"):
 			// The client waits on the tenant SSE stream instead of a timer
 			// (internal/client/events.go). A 404 stands in for a gateway that does
@@ -1146,6 +1182,10 @@ func TestCreate202TimeoutStillRecordsTheInstance(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"operationId": "op-1", "status": "running", "resourceType": "database",
 			})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/extensions"):
+			// The extension ledger read accompanies every refresh; this mock
+			// represents a post-v3.5.0 backend with no recorded extensions.
+			_ = json.NewEncoder(w).Encode(map[string]any{"extensionRevision": 0, "extensions": []map[string]any{}})
 		case strings.HasSuffix(r.URL.Path, "/events"):
 			w.WriteHeader(http.StatusNotFound)
 		default:
@@ -1207,6 +1247,10 @@ func TestCreate202WithoutAResourceIDStillWorks(t *testing.T) {
 				StorageGB: 50, VPCID: "vpc-1", SubnetID: "sn-1", Status: "running",
 				PrivateIP: "10.0.1.9", Port: 5432, CreatedAt: "2025-01-01T00:00:00Z",
 			})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/extensions"):
+			// The extension ledger read accompanies every refresh; this mock
+			// represents a post-v3.5.0 backend with no recorded extensions.
+			_ = json.NewEncoder(w).Encode(map[string]any{"extensionRevision": 0, "extensions": []map[string]any{}})
 		case strings.HasSuffix(r.URL.Path, "/events"):
 			w.WriteHeader(http.StatusNotFound)
 		default:
@@ -1292,6 +1336,10 @@ func TestTimeoutsBlockOverridesTheDefaultBudget(t *testing.T) {
 				StorageGB: 50, VPCID: "vpc-1", SubnetID: "sn-1", Status: "provisioning",
 				CreatedAt: "2025-01-01T00:00:00Z",
 			})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/extensions"):
+			// The extension ledger read accompanies every refresh; this mock
+			// represents a post-v3.5.0 backend with no recorded extensions.
+			_ = json.NewEncoder(w).Encode(map[string]any{"extensionRevision": 0, "extensions": []map[string]any{}})
 		case strings.HasSuffix(r.URL.Path, "/events"):
 			w.WriteHeader(http.StatusNotFound)
 		default:

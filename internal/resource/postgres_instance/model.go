@@ -39,14 +39,20 @@ type PostgresInstanceModel struct {
 	BackupSchedule      types.String `tfsdk:"backup_schedule"`
 	BackupRetentionDays types.Int64  `tfsdk:"backup_retention_days"`
 	ParameterGroupID    types.String `tfsdk:"parameter_group_id"`
-	Status              types.String `tfsdk:"status"`
-	PrivateIP           types.String `tfsdk:"private_ip"`
-	Port                types.Int64  `tfsdk:"port"`
-	PublicIP            types.String `tfsdk:"public_ip"`
-	AdminUsername       types.String `tfsdk:"admin_username"`
-	CreatedAt           types.String `tfsdk:"created_at"`
-	UpdatedAt           types.String `tfsdk:"updated_at"`
-	TenantID            types.String `tfsdk:"tenant_id"`
+	// Extensions is the DECLARATIVE set of enabled extension catalog names.
+	// fromAPI never reads it from the instance body (the wire carries the
+	// extension ledger on a separate GET); every refresh path calls
+	// readExtensionsIntoModel, which projects the ledger's enabled entries
+	// into this set — removed/failed entries are intent history, not state.
+	Extensions    types.Set    `tfsdk:"extensions"`
+	Status        types.String `tfsdk:"status"`
+	PrivateIP     types.String `tfsdk:"private_ip"`
+	Port          types.Int64  `tfsdk:"port"`
+	PublicIP      types.String `tfsdk:"public_ip"`
+	AdminUsername types.String `tfsdk:"admin_username"`
+	CreatedAt     types.String `tfsdk:"created_at"`
+	UpdatedAt     types.String `tfsdk:"updated_at"`
+	TenantID      types.String `tfsdk:"tenant_id"`
 	// Timeouts is the customer-tunable `timeouts` block. fromAPI never touches
 	// it: the pointer the practitioner configured rides through every
 	// model copy (plan -> early -> state) unchanged, which is what keeps the
