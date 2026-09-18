@@ -43,7 +43,7 @@ func TestNginxInstanceModelToCreateRequest(t *testing.T) {
 	model := NginxInstanceModel{
 		Name:       types.StringValue("my-nginx"),
 		Version:    types.StringValue("1.27"),
-		FlavorID:   types.StringValue("web.gp1.small"),
+		FlavorID:   types.StringValue("web.co1.small"),
 		StorageGB:  types.Int64Value(20),
 		VPCID:      types.StringValue("vpc-1"),
 		SubnetID:   types.StringValue("sn-1"),
@@ -64,8 +64,8 @@ func TestNginxInstanceModelToCreateRequest(t *testing.T) {
 	if req.Name != "my-nginx" {
 		t.Errorf("expected name my-nginx, got %s", req.Name)
 	}
-	if req.FlavorID != "web.gp1.small" {
-		t.Errorf("expected flavorId web.gp1.small, got %s", req.FlavorID)
+	if req.FlavorID != "web.co1.small" {
+		t.Errorf("expected flavorId web.co1.small, got %s", req.FlavorID)
 	}
 	if req.StorageGB != 20 {
 		t.Errorf("expected storageGb 20, got %d", req.StorageGB)
@@ -94,7 +94,7 @@ func TestNginxInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 	model := NginxInstanceModel{
 		Name:       types.StringValue("my-nginx"),
 		Version:    types.StringValue("1.27"),
-		FlavorID:   types.StringValue("web.gp1.medium"),
+		FlavorID:   types.StringValue("web.co1.medium"),
 		StorageGB:  types.Int64Value(40),
 		VPCID:      types.StringValue("vpc-1"),
 		SubnetID:   types.StringValue("sn-1"),
@@ -129,7 +129,7 @@ func TestNginxInstanceModelToUpdateRequest(t *testing.T) {
 
 	plan := NginxInstanceModel{
 		Name:       types.StringValue("new-name"),
-		FlavorID:   types.StringValue("web.gp1.large"),
+		FlavorID:   types.StringValue("web.co1.large"),
 		StorageGB:  types.Int64Value(80),
 		TLSEnabled: types.BoolValue(true),
 		PHPEnabled: types.BoolValue(true),
@@ -138,7 +138,7 @@ func TestNginxInstanceModelToUpdateRequest(t *testing.T) {
 	}
 	state := NginxInstanceModel{
 		Name:       types.StringValue("old-name"),
-		FlavorID:   types.StringValue("web.gp1.small"),
+		FlavorID:   types.StringValue("web.co1.small"),
 		StorageGB:  types.Int64Value(20),
 		TLSEnabled: types.BoolValue(false),
 		PHPEnabled: types.BoolValue(false),
@@ -210,7 +210,7 @@ func TestNginxInstanceModelToUpdateRequestNoChanges(t *testing.T) {
 
 	same := NginxInstanceModel{
 		Name:       types.StringValue("same"),
-		FlavorID:   types.StringValue("web.gp1.small"),
+		FlavorID:   types.StringValue("web.co1.small"),
 		StorageGB:  types.Int64Value(20),
 		TLSEnabled: types.BoolValue(true),
 		PHPEnabled: types.BoolValue(false),
@@ -239,7 +239,7 @@ func TestNginxInstanceModelFromAPI(t *testing.T) {
 		Name:            "my-nginx",
 		Type:            "nginx",
 		TypeVersion:     "1.27",
-		FlavorID:        "web.gp1.small",
+		FlavorID:        "web.co1.small",
 		StorageGB:       20,
 		VPCID:           "vpc-1",
 		SubnetID:        "sn-1",
@@ -265,8 +265,8 @@ func TestNginxInstanceModelFromAPI(t *testing.T) {
 	if model.ID.ValueString() != "nginx-123" {
 		t.Errorf("expected ID nginx-123, got %s", model.ID.ValueString())
 	}
-	if model.FlavorID.ValueString() != "web.gp1.small" {
-		t.Errorf("expected flavor web.gp1.small, got %s", model.FlavorID.ValueString())
+	if model.FlavorID.ValueString() != "web.co1.small" {
+		t.Errorf("expected flavor web.co1.small, got %s", model.FlavorID.ValueString())
 	}
 	if model.VPCID.ValueString() != "vpc-1" {
 		t.Errorf("expected vpc_id vpc-1, got %s", model.VPCID.ValueString())
@@ -305,7 +305,7 @@ func TestNginxInstanceModelFromAPINulls(t *testing.T) {
 		Name:        "my-nginx",
 		Type:        "nginx",
 		TypeVersion: "1.27",
-		FlavorID:    "web.gp1.small",
+		FlavorID:    "web.co1.small",
 		StorageGB:   20,
 		VPCID:       "vpc-1",
 		SubnetID:    "sn-1",
@@ -572,7 +572,7 @@ func baseNginxModel() NginxInstanceModel {
 	return NginxInstanceModel{
 		Name:       types.StringValue("my-nginx"),
 		Version:    types.StringValue("1.27"),
-		FlavorID:   types.StringValue("web.gp1.small"),
+		FlavorID:   types.StringValue("web.co1.small"),
 		StorageGB:  types.Int64Value(20),
 		VPCID:      types.StringValue("vpc-1"),
 		SubnetID:   types.StringValue("sn-1"),
@@ -598,8 +598,8 @@ func TestCreate(t *testing.T) {
 			if body.Type != "nginx" {
 				t.Errorf("expected type nginx, got %s", body.Type)
 			}
-			if body.FlavorID != "web.gp1.small" {
-				t.Errorf("expected flavorId web.gp1.small, got %s", body.FlavorID)
+			if body.FlavorID != "web.co1.small" {
+				t.Errorf("expected flavorId web.co1.small, got %s", body.FlavorID)
 			}
 			if body.VPCID != "vpc-1" {
 				t.Errorf("expected vpcId vpc-1, got %s", body.VPCID)
@@ -635,7 +635,7 @@ func TestCreate(t *testing.T) {
 				Name:        "test-nginx",
 				Type:        "nginx",
 				TypeVersion: "1.27",
-				FlavorID:    "web.gp1.small",
+				FlavorID:    "web.co1.small",
 				StorageGB:   20,
 				VPCID:       "vpc-1",
 				SubnetID:    "sn-1",
@@ -755,7 +755,7 @@ func TestRead(t *testing.T) {
 				Name:        "my-nginx",
 				Type:        "nginx",
 				TypeVersion: "1.27",
-				FlavorID:    "web.gp1.small",
+				FlavorID:    "web.co1.small",
 				StorageGB:   20,
 				VPCID:       "vpc-1",
 				SubnetID:    "sn-1",
@@ -875,7 +875,7 @@ func TestUpdate(t *testing.T) {
 				Name:        "updated-nginx",
 				Type:        "nginx",
 				TypeVersion: "1.27",
-				FlavorID:    "web.gp1.small",
+				FlavorID:    "web.co1.small",
 				StorageGB:   20,
 				VPCID:       "vpc-1",
 				SubnetID:    "sn-1",
@@ -956,7 +956,7 @@ func TestUpdateConfigUsesConfigRoute(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123":
 			_, _ = fmt.Fprint(w, `{"id":"nginx-123","name":"my-nginx","type":"nginx","typeVersion":"1.27",`+
-				`"flavorId":"web.gp1.small","storageGb":20,"vpcId":"vpc-1","subnetId":"sn-1","tlsEnabled":true,`+
+				`"flavorId":"web.co1.small","storageGb":20,"vpcId":"vpc-1","subnetId":"sn-1","tlsEnabled":true,`+
 				`"typeConfig":{"gzip":"true"},"status":"running","port":443,"createdAt":"2025-01-01T00:00:00Z"}`)
 		case strings.HasSuffix(r.URL.Path, "/events"):
 			// The client waits on the tenant SSE stream instead of a timer
@@ -1025,7 +1025,7 @@ func TestUpdateConfigEmptyMapResets(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123":
 			// An instance with an empty stored config OMITS typeConfig entirely.
 			_, _ = fmt.Fprint(w, `{"id":"nginx-123","name":"my-nginx","type":"nginx","typeVersion":"1.27",`+
-				`"flavorId":"web.gp1.small","storageGb":20,"vpcId":"vpc-1","subnetId":"sn-1","tlsEnabled":true,`+
+				`"flavorId":"web.co1.small","storageGb":20,"vpcId":"vpc-1","subnetId":"sn-1","tlsEnabled":true,`+
 				`"status":"running","port":443,"createdAt":"2025-01-01T00:00:00Z"}`)
 		case strings.HasSuffix(r.URL.Path, "/events"):
 			// The client waits on the tenant SSE stream instead of a timer
@@ -1095,7 +1095,7 @@ func TestUpdateConfigSupersededByAnotherClient(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{"typeConfig":{"spaFallback":"true"},"configVersion":5,"configStatus":"applied"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123":
 			_, _ = fmt.Fprint(w, `{"id":"nginx-123","name":"my-nginx","type":"nginx","typeVersion":"1.27",`+
-				`"flavorId":"web.gp1.small","storageGb":20,"vpcId":"vpc-1","subnetId":"sn-1","tlsEnabled":true,`+
+				`"flavorId":"web.co1.small","storageGb":20,"vpcId":"vpc-1","subnetId":"sn-1","tlsEnabled":true,`+
 				`"typeConfig":{"spaFallback":"true"},"status":"running","port":443,"createdAt":"2025-01-01T00:00:00Z"}`)
 		case strings.HasSuffix(r.URL.Path, "/events"):
 			// The client waits on the tenant SSE stream instead of a timer
@@ -1152,7 +1152,7 @@ func TestUpdateConfigApplyFailed(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/webservers/nginx-123":
 			// A rename that landed BEFORE the config apply failed.
 			_, _ = fmt.Fprint(w, `{"id":"nginx-123","name":"renamed-nginx","type":"nginx","typeVersion":"1.27",`+
-				`"flavorId":"web.gp1.small","storageGb":20,"vpcId":"vpc-1","subnetId":"sn-1","tlsEnabled":true,`+
+				`"flavorId":"web.co1.small","storageGb":20,"vpcId":"vpc-1","subnetId":"sn-1","tlsEnabled":true,`+
 				`"status":"running","port":443,"createdAt":"2025-01-01T00:00:00Z"}`)
 		case strings.HasSuffix(r.URL.Path, "/events"):
 			// The client waits on the tenant SSE stream instead of a timer
@@ -1230,7 +1230,7 @@ func TestUpdateStorageResize(t *testing.T) {
 				Name:        "my-nginx",
 				Type:        "nginx",
 				TypeVersion: "1.27",
-				FlavorID:    "web.gp1.small",
+				FlavorID:    "web.co1.small",
 				StorageGB:   80,
 				VPCID:       "vpc-1",
 				SubnetID:    "sn-1",
@@ -1520,7 +1520,7 @@ func TestUpgradeState_V0ToV1(t *testing.T) {
 	}
 	raw["id"] = tftypes.NewValue(tftypes.String, "inst-123")
 	raw["name"] = tftypes.NewValue(tftypes.String, "my-inst")
-	raw["flavor"] = tftypes.NewValue(tftypes.String, "web.gp1.small")
+	raw["flavor"] = tftypes.NewValue(tftypes.String, "web.co1.small")
 	priorVal := tftypes.NewValue(priorType, raw)
 
 	var schemaResp resource.SchemaResponse
@@ -1536,8 +1536,8 @@ func TestUpgradeState_V0ToV1(t *testing.T) {
 	}
 	var model NginxInstanceModel
 	resp.State.Get(ctx, &model)
-	if model.FlavorID.ValueString() != "web.gp1.small" {
-		t.Errorf("expected flavor_id web.gp1.small, got %s", model.FlavorID.ValueString())
+	if model.FlavorID.ValueString() != "web.co1.small" {
+		t.Errorf("expected flavor_id web.co1.small, got %s", model.FlavorID.ValueString())
 	}
 	if model.ID.ValueString() != "inst-123" {
 		t.Errorf("expected id carried through, got %s", model.ID.ValueString())
@@ -1571,7 +1571,7 @@ func TestUpdateFlavorChangeRejected(t *testing.T) {
 	state := buildNginxInstanceState(t, stateModel)
 
 	planModel := stateModel
-	planModel.FlavorID = types.StringValue("web.gp1.large")
+	planModel.FlavorID = types.StringValue("web.co1.large")
 	plan := buildNginxInstancePlan(t, planModel)
 
 	updateResp := resource.UpdateResponse{State: state}
@@ -1698,7 +1698,7 @@ func TestCreateWaitTimeoutAdopts(t *testing.T) {
 			// The adoption's honest read: the platform's row, running.
 			_ = json.NewEncoder(w).Encode(apiWebserverInstance{
 				ID: "nginx-fresh", Name: "test-nginx", Type: "nginx", TypeVersion: "1.27",
-				FlavorID: "web.gp1.small", StorageGB: 20, VPCID: "vpc-1", SubnetID: "sn-1",
+				FlavorID: "web.co1.small", StorageGB: 20, VPCID: "vpc-1", SubnetID: "sn-1",
 				TLSEnabled: true, Status: "running", Port: 443, CreatedAt: now,
 			})
 		case strings.HasSuffix(p, "/events"):
@@ -1717,7 +1717,7 @@ func TestCreateWaitTimeoutAdopts(t *testing.T) {
 	plan := buildNginxInstancePlan(t, NginxInstanceModel{
 		Name:     types.StringValue("test-nginx"),
 		Version:  types.StringValue("1.27"),
-		FlavorID: types.StringValue("web.gp1.small"),
+		FlavorID: types.StringValue("web.co1.small"),
 		VPCID:    types.StringValue("vpc-1"),
 		SubnetID: types.StringValue("sn-1"),
 		Config:   types.MapNull(types.StringType),
@@ -1771,7 +1771,7 @@ func TestCreateOperationRefused(t *testing.T) {
 	plan := buildNginxInstancePlan(t, NginxInstanceModel{
 		Name:     types.StringValue("test-nginx"),
 		Version:  types.StringValue("1.27"),
-		FlavorID: types.StringValue("web.gp1.small"),
+		FlavorID: types.StringValue("web.co1.small"),
 		VPCID:    types.StringValue("vpc-1"),
 		SubnetID: types.StringValue("sn-1"),
 		Config:   types.MapNull(types.StringType),
@@ -1825,7 +1825,7 @@ func TestCreateWaitTimeoutVerifiedAbsent(t *testing.T) {
 	plan := buildNginxInstancePlan(t, NginxInstanceModel{
 		Name:     types.StringValue("test-nginx"),
 		Version:  types.StringValue("1.27"),
-		FlavorID: types.StringValue("web.gp1.small"),
+		FlavorID: types.StringValue("web.co1.small"),
 		VPCID:    types.StringValue("vpc-1"),
 		SubnetID: types.StringValue("sn-1"),
 		Config:   types.MapNull(types.StringType),
@@ -1986,7 +1986,7 @@ func TestUpdateSwallowedExposeSagaIsNotRecordedGreen(t *testing.T) {
 			// ever comes off that first read again, the assertions below fail.
 			inst := apiWebserverInstance{
 				ID: "nginx-123", Name: "my-nginx", Type: "nginx", Status: "running",
-				FlavorID: "web.gp1.small", StorageGB: 20,
+				FlavorID: "web.co1.small", StorageGB: 20,
 				VPCID: "vpc-1", SubnetID: "sn-1", TLSEnabled: true,
 				Port: 80, CreatedAt: "2025-01-01T00:00:00Z",
 			}

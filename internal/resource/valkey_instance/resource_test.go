@@ -30,7 +30,7 @@ func TestValkeyInstanceModelToCreateRequest(t *testing.T) {
 	model := ValkeyInstanceModel{
 		Name:            types.StringValue("my-valkey"),
 		Version:         types.StringValue("7.2"),
-		FlavorID:        types.StringValue("cache.gp1.small"),
+		FlavorID:        types.StringValue("cache.mo1.small"),
 		StorageGB:       types.Int64Value(10),
 		VPCID:           types.StringValue("vpc-123"),
 		SubnetID:        types.StringValue("subnet-456"),
@@ -55,8 +55,8 @@ func TestValkeyInstanceModelToCreateRequest(t *testing.T) {
 	if req.TypeVersion != "7.2" {
 		t.Errorf("expected typeVersion 7.2, got %s", req.TypeVersion)
 	}
-	if req.FlavorID != "cache.gp1.small" {
-		t.Errorf("expected flavorId cache.gp1.small, got %s", req.FlavorID)
+	if req.FlavorID != "cache.mo1.small" {
+		t.Errorf("expected flavorId cache.mo1.small, got %s", req.FlavorID)
 	}
 	if req.PersistenceMode != "" {
 		t.Errorf("expected empty persistenceMode for null, got %s", req.PersistenceMode)
@@ -73,7 +73,7 @@ func TestValkeyInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 	model := ValkeyInstanceModel{
 		Name:            types.StringValue("my-valkey"),
 		Version:         types.StringValue("7.4"),
-		FlavorID:        types.StringValue("cache.gp1.medium"),
+		FlavorID:        types.StringValue("cache.mo1.medium"),
 		VPCID:           types.StringValue("vpc-123"),
 		SubnetID:        types.StringValue("subnet-456"),
 		PersistenceMode: types.StringValue("aof"),
@@ -96,13 +96,13 @@ func TestValkeyInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 func TestValkeyInstanceModelToUpdateRequest(t *testing.T) {
 	plan := ValkeyInstanceModel{
 		Name:            types.StringValue("new-name"),
-		FlavorID:        types.StringValue("cache.gp1.large"),
+		FlavorID:        types.StringValue("cache.mo1.large"),
 		PersistenceMode: types.StringValue("aof"),
 		EvictionPolicy:  types.StringValue("allkeys-lru"),
 	}
 	state := ValkeyInstanceModel{
 		Name:            types.StringValue("old-name"),
-		FlavorID:        types.StringValue("cache.gp1.small"),
+		FlavorID:        types.StringValue("cache.mo1.small"),
 		PersistenceMode: types.StringValue("rdb"),
 		EvictionPolicy:  types.StringValue("noeviction"),
 	}
@@ -124,7 +124,7 @@ func TestValkeyInstanceModelToUpdateRequest(t *testing.T) {
 func TestValkeyInstanceModelToUpdateRequestNoChanges(t *testing.T) {
 	same := ValkeyInstanceModel{
 		Name:            types.StringValue("same"),
-		FlavorID:        types.StringValue("cache.gp1.small"),
+		FlavorID:        types.StringValue("cache.mo1.small"),
 		PersistenceMode: types.StringValue("rdb"),
 		EvictionPolicy:  types.StringValue("noeviction"),
 	}
@@ -144,7 +144,7 @@ func TestValkeyInstanceModelFromAPI(t *testing.T) {
 		Name:            "my-valkey",
 		Type:            "valkey",
 		TypeVersion:     "7.2",
-		FlavorID:        "cache.gp1.small",
+		FlavorID:        "cache.mo1.small",
 		StorageGB:       25,
 		VPCID:           "vpc-123",
 		SubnetID:        "subnet-456",
@@ -193,7 +193,7 @@ func TestValkeyInstanceModelFromAPINulls(t *testing.T) {
 		Name:            "my-valkey",
 		Type:            "valkey",
 		TypeVersion:     "7.2",
-		FlavorID:        "cache.gp1.small",
+		FlavorID:        "cache.mo1.small",
 		VPCID:           "vpc-123",
 		SubnetID:        "subnet-456",
 		PersistenceMode: "rdb",
@@ -390,7 +390,7 @@ func TestCreate(t *testing.T) {
 				Name:            "test-valkey",
 				Type:            "valkey",
 				TypeVersion:     "7.2",
-				FlavorID:        "cache.gp1.small",
+				FlavorID:        "cache.mo1.small",
 				VPCID:           "vpc-1",
 				SubnetID:        "sn-1",
 				PersistenceMode: "rdb",
@@ -423,7 +423,7 @@ func TestCreate(t *testing.T) {
 	plan := buildValkeyInstancePlan(t, ValkeyInstanceModel{
 		Name:            types.StringValue("test-valkey"),
 		Version:         types.StringValue("7.2"),
-		FlavorID:        types.StringValue("cache.gp1.small"),
+		FlavorID:        types.StringValue("cache.mo1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
 		PersistenceMode: types.StringValue("rdb"),
@@ -469,7 +469,7 @@ func TestCreateAPIError(t *testing.T) {
 	plan := buildValkeyInstancePlan(t, ValkeyInstanceModel{
 		Name:            types.StringValue("test-valkey"),
 		Version:         types.StringValue("7.2"),
-		FlavorID:        types.StringValue("cache.gp1.small"),
+		FlavorID:        types.StringValue("cache.mo1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
 		PersistenceMode: types.StringValue("rdb"),
@@ -535,7 +535,7 @@ func TestRead(t *testing.T) {
 				Name:            "my-valkey",
 				Type:            "valkey",
 				TypeVersion:     "7.2",
-				FlavorID:        "cache.gp1.small",
+				FlavorID:        "cache.mo1.small",
 				StorageGB:       25,
 				VPCID:           "vpc-1",
 				SubnetID:        "sn-1",
@@ -561,7 +561,7 @@ func TestRead(t *testing.T) {
 		ID:              types.StringValue("valkey-123"),
 		Name:            types.StringValue("my-valkey"),
 		Version:         types.StringValue("7.2"),
-		FlavorID:        types.StringValue("cache.gp1.small"),
+		FlavorID:        types.StringValue("cache.mo1.small"),
 		StorageGB:       types.Int64Value(25),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -604,7 +604,7 @@ func TestReadNotFound(t *testing.T) {
 		ID:              types.StringValue("valkey-gone"),
 		Name:            types.StringValue("gone"),
 		Version:         types.StringValue("7.2"),
-		FlavorID:        types.StringValue("cache.gp1.small"),
+		FlavorID:        types.StringValue("cache.mo1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
 		PersistenceMode: types.StringValue("rdb"),
@@ -675,7 +675,7 @@ func TestUpdate(t *testing.T) {
 				Name:            "updated-valkey",
 				Type:            "valkey",
 				TypeVersion:     "7.2",
-				FlavorID:        "cache.gp1.large",
+				FlavorID:        "cache.mo1.large",
 				VPCID:           "vpc-1",
 				SubnetID:        "sn-1",
 				PersistenceMode: "aof",
@@ -707,7 +707,7 @@ func TestUpdate(t *testing.T) {
 		ID:              types.StringValue("valkey-123"),
 		Name:            types.StringValue("old-valkey"),
 		Version:         types.StringValue("7.2"),
-		FlavorID:        types.StringValue("cache.gp1.small"),
+		FlavorID:        types.StringValue("cache.mo1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
 		PersistenceMode: types.StringValue("rdb"),
@@ -725,7 +725,7 @@ func TestUpdate(t *testing.T) {
 		// persistence/eviction settings are REFUSED on change (class A2; see
 		// TestUpdateRefuses...) and a flavor change goes to /resize (TestUpdateFlavorResize),
 		// so neither may appear in a working PUT.
-		FlavorID:        types.StringValue("cache.gp1.small"),
+		FlavorID:        types.StringValue("cache.mo1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
 		PersistenceMode: types.StringValue("rdb"),
@@ -773,7 +773,7 @@ func TestUpdateRefusesEvictionPolicyChange(t *testing.T) {
 		ID:              types.StringValue("valkey-123"),
 		Name:            types.StringValue("v"),
 		Version:         types.StringValue("7.2"),
-		FlavorID:        types.StringValue("cache.gp1.small"),
+		FlavorID:        types.StringValue("cache.mo1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
 		PersistenceMode: types.StringValue("rdb"),
@@ -786,7 +786,7 @@ func TestUpdateRefusesEvictionPolicyChange(t *testing.T) {
 		ID:              types.StringValue("valkey-123"),
 		Name:            types.StringValue("v"),
 		Version:         types.StringValue("7.2"),
-		FlavorID:        types.StringValue("cache.gp1.small"),
+		FlavorID:        types.StringValue("cache.mo1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
 		PersistenceMode: types.StringValue("rdb"),
@@ -832,7 +832,7 @@ func TestUpdateRefusesPersistenceModeChange(t *testing.T) {
 		ID:              types.StringValue("valkey-123"),
 		Name:            types.StringValue("v"),
 		Version:         types.StringValue("7.2"),
-		FlavorID:        types.StringValue("cache.gp1.small"),
+		FlavorID:        types.StringValue("cache.mo1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
 		PersistenceMode: types.StringValue("rdb"),
@@ -845,7 +845,7 @@ func TestUpdateRefusesPersistenceModeChange(t *testing.T) {
 		ID:              types.StringValue("valkey-123"),
 		Name:            types.StringValue("v"),
 		Version:         types.StringValue("7.2"),
-		FlavorID:        types.StringValue("cache.gp1.small"),
+		FlavorID:        types.StringValue("cache.mo1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
 		PersistenceMode: types.StringValue("none"),
@@ -890,7 +890,7 @@ func TestUpdateRefusesResizePlusConfigChange(t *testing.T) {
 		ID:              types.StringValue("valkey-123"),
 		Name:            types.StringValue("v"),
 		Version:         types.StringValue("7.2"),
-		FlavorID:        types.StringValue("cache.gp1.small"),
+		FlavorID:        types.StringValue("cache.mo1.small"),
 		StorageGB:       types.Int64Value(20),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -904,7 +904,7 @@ func TestUpdateRefusesResizePlusConfigChange(t *testing.T) {
 		ID:              types.StringValue("valkey-123"),
 		Name:            types.StringValue("v"),
 		Version:         types.StringValue("7.2"),
-		FlavorID:        types.StringValue("cache.gp1.small"),
+		FlavorID:        types.StringValue("cache.mo1.small"),
 		StorageGB:       types.Int64Value(40),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
@@ -936,7 +936,7 @@ func TestModifyPlanWarnsCreateRenderedChange(t *testing.T) {
 		ID:              types.StringValue("valkey-123"),
 		Name:            types.StringValue("v"),
 		Version:         types.StringValue("7.2"),
-		FlavorID:        types.StringValue("cache.gp1.small"),
+		FlavorID:        types.StringValue("cache.mo1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
 		PersistenceMode: types.StringValue("rdb"),
@@ -949,7 +949,7 @@ func TestModifyPlanWarnsCreateRenderedChange(t *testing.T) {
 		ID:       types.StringValue("valkey-123"),
 		Name:     types.StringValue("v"),
 		Version:  types.StringValue("7.2"),
-		FlavorID: types.StringValue("cache.gp1.small"),
+		FlavorID: types.StringValue("cache.mo1.small"),
 		VPCID:    types.StringValue("vpc-1"),
 		SubnetID: types.StringValue("sn-1"),
 		// persistence_mode unchanged; one changed attribute is one warning.
@@ -995,7 +995,7 @@ func TestModifyPlanCreateAndDestroyStayClean(t *testing.T) {
 		ID:              types.StringValue("valkey-123"),
 		Name:            types.StringValue("new"),
 		Version:         types.StringValue("7.2"),
-		FlavorID:        types.StringValue("cache.gp1.small"),
+		FlavorID:        types.StringValue("cache.mo1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
 		PersistenceMode: types.StringValue("rdb"),
@@ -1034,7 +1034,7 @@ func TestUpdateStorageResize(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/caches/valkey-123":
 			_ = json.NewEncoder(w).Encode(apiValkeyInstance{
-				ID: "valkey-123", Name: "v", TypeVersion: "8.1", FlavorID: "cache.gp1.small",
+				ID: "valkey-123", Name: "v", TypeVersion: "8.1", FlavorID: "cache.mo1.small",
 				VPCID: "vpc-1", SubnetID: "sn-1", PersistenceMode: "rdb", EvictionPolicy: "noeviction",
 				Status: "running", StorageGB: 20, Port: 6379, CreatedAt: "2025-01-01T00:00:00Z",
 			})
@@ -1058,7 +1058,7 @@ func TestUpdateStorageResize(t *testing.T) {
 
 	base := ValkeyInstanceModel{
 		ID: types.StringValue("valkey-123"), Name: types.StringValue("v"), Version: types.StringValue("8.1"),
-		FlavorID: types.StringValue("cache.gp1.small"), VPCID: types.StringValue("vpc-1"), SubnetID: types.StringValue("sn-1"),
+		FlavorID: types.StringValue("cache.mo1.small"), VPCID: types.StringValue("vpc-1"), SubnetID: types.StringValue("sn-1"),
 		PersistenceMode: types.StringValue("rdb"), EvictionPolicy: types.StringValue("noeviction"),
 		Status: types.StringValue("running"), CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
 	}
@@ -1098,7 +1098,7 @@ func TestUpdateFlavorResize(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/caches/valkey-123":
 			_ = json.NewEncoder(w).Encode(apiValkeyInstance{
-				ID: "valkey-123", Name: "v", TypeVersion: "8.1", FlavorID: "cache.gp1.large",
+				ID: "valkey-123", Name: "v", TypeVersion: "8.1", FlavorID: "cache.mo1.large",
 				VPCID: "vpc-1", SubnetID: "sn-1", PersistenceMode: "rdb", EvictionPolicy: "noeviction",
 				Status: "running", StorageGB: 10, Port: 6379, CreatedAt: "2025-01-01T00:00:00Z",
 			})
@@ -1127,8 +1127,8 @@ func TestUpdateFlavorResize(t *testing.T) {
 		Status: types.StringValue("running"), StorageGB: types.Int64Value(10), CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
 	}
 	stateM, planM := base, base
-	stateM.FlavorID = types.StringValue("cache.gp1.small")
-	planM.FlavorID = types.StringValue("cache.gp1.large")
+	stateM.FlavorID = types.StringValue("cache.mo1.small")
+	planM.FlavorID = types.StringValue("cache.mo1.large")
 	state := buildValkeyInstanceState(t, stateM)
 	plan := buildValkeyInstancePlan(t, planM)
 
@@ -1137,8 +1137,8 @@ func TestUpdateFlavorResize(t *testing.T) {
 	if updateResp.Diagnostics.HasError() {
 		t.Fatalf("flavor resize update failed: %v", updateResp.Diagnostics.Errors())
 	}
-	if resizeBody.FlavorID != "cache.gp1.large" {
-		t.Errorf("expected resize to flavor cache.gp1.large, got %q", resizeBody.FlavorID)
+	if resizeBody.FlavorID != "cache.mo1.large" {
+		t.Errorf("expected resize to flavor cache.mo1.large, got %q", resizeBody.FlavorID)
 	}
 	if resizeBody.StorageGB != 0 {
 		t.Errorf("a flavor resize must not send storageGb, got %d", resizeBody.StorageGB)
@@ -1156,7 +1156,7 @@ func TestUpdateStorageShrinkRejected(t *testing.T) {
 
 	base := ValkeyInstanceModel{
 		ID: types.StringValue("valkey-123"), Name: types.StringValue("v"), Version: types.StringValue("8.1"),
-		FlavorID: types.StringValue("cache.gp1.small"), VPCID: types.StringValue("vpc-1"), SubnetID: types.StringValue("sn-1"),
+		FlavorID: types.StringValue("cache.mo1.small"), VPCID: types.StringValue("vpc-1"), SubnetID: types.StringValue("sn-1"),
 		PersistenceMode: types.StringValue("rdb"), EvictionPolicy: types.StringValue("noeviction"),
 		Status: types.StringValue("running"), CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
 	}
@@ -1193,7 +1193,7 @@ func TestUpdateAPIError(t *testing.T) {
 		ID:              types.StringValue("valkey-123"),
 		Name:            types.StringValue("old"),
 		Version:         types.StringValue("7.2"),
-		FlavorID:        types.StringValue("cache.gp1.small"),
+		FlavorID:        types.StringValue("cache.mo1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
 		PersistenceMode: types.StringValue("rdb"),
@@ -1249,7 +1249,7 @@ func TestDelete(t *testing.T) {
 		ID:              types.StringValue("valkey-123"),
 		Name:            types.StringValue("my-valkey"),
 		Version:         types.StringValue("7.2"),
-		FlavorID:        types.StringValue("cache.gp1.small"),
+		FlavorID:        types.StringValue("cache.mo1.small"),
 		VPCID:           types.StringValue("vpc-1"),
 		SubnetID:        types.StringValue("sn-1"),
 		PersistenceMode: types.StringValue("rdb"),

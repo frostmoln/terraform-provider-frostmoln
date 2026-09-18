@@ -188,7 +188,7 @@ func (d *applicationGatewayDataSource) Schema(_ context.Context, _ datasource.Sc
 				Computed: true,
 			},
 			"flavor_id": schema.StringAttribute{
-				Description: "The flavor (size) of the gateway, e.g. `agw.gp1.small`.",
+				Description: "The flavor (size) of the gateway, e.g. `agw.co1.medium`.",
 				Computed:    true,
 			},
 			"version": schema.StringAttribute{

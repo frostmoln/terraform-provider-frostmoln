@@ -41,7 +41,7 @@ resource "frostmoln_appgw_listener" "https" {
 # (e.g. the gateway this configuration itself created).
 resource "frostmoln_application_gateway" "self_served" {
   name      = "self-served"
-  flavor_id = "agw.gp1.small"
+  flavor_id = "agw.co1.medium"
   vpc_id    = frostmoln_vpc.main.id
   subnet_id = frostmoln_subnet.edge.id
 }
@@ -86,7 +86,7 @@ locals {
 - `config_revision` (Number) The configuration generation the appliance has ACKNOWLEDGED. Null until something has been applied. When it differs from `config_generation` there is a change the gateway is not yet serving.
 - `config_status` (String) What happened to the last configuration apply: `pending`, `applying`, `applied`, `failed` or `unknown`. Distinct from `status`, which is the appliance's lifecycle.
 - `created_at` (String) The timestamp when the gateway was created.
-- `flavor_id` (String) The flavor (size) of the gateway, e.g. `agw.gp1.small`.
+- `flavor_id` (String) The flavor (size) of the gateway, e.g. `agw.co1.medium`.
 - `private_ip` (String) The appliance's address inside the VPC, null while provisioning has not yet reached the address.
 - `public_ip` (String) The gateway's public address, null while provisioning has not yet reached the address.
 - `public_ip_id` (String) The Public IP id for a bring-your-own (`selected`) gateway; the allocated address deliberately has no id here and is visible as `public_ip` only.

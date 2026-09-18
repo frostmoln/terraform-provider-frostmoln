@@ -123,7 +123,7 @@ func (r *gatewayResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				Required:    true,
 			},
 			"flavor_id": schema.StringAttribute{
-				Description: "The flavor (size) of the Application Gateway, e.g. `agw.gp1.small`. " +
+				Description: "The flavor (size) of the Application Gateway, e.g. `agw.co1.medium`. " +
 					"Changing this forces a new resource. Available sizes and their structural limits " +
 					"are in the `frostmoln_appgw_flavors` data source.",
 				Required: true,

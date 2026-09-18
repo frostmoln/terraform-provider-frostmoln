@@ -102,7 +102,7 @@ func (d *flavorsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 				Computed:    true,
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
-						"id":            schema.StringAttribute{Description: "The flavor id, e.g. `agw.gp1.small`.", Computed: true},
+						"id":            schema.StringAttribute{Description: "The flavor id, e.g. `agw.co1.medium`.", Computed: true},
 						"name":          schema.StringAttribute{Description: "The display name.", Computed: true},
 						"description":   schema.StringAttribute{Description: "What this size is for.", Computed: true},
 						"max_listeners": schema.Int64Attribute{Description: "Maximum listeners. Enforced.", Computed: true},

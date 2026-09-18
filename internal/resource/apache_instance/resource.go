@@ -461,7 +461,7 @@ func (r *apacheInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 				},
 			},
 			"flavor_id": schema.StringAttribute{
-				Description: "The flavor ID/size for the webserver instance (e.g. \"web.gp1.small\", \"web.gp1.medium\").",
+				Description: "The flavor ID/size for the webserver instance (e.g. \"web.co1.small\", \"web.co1.medium\").",
 				Required:    true,
 				PlanModifiers: []planmodifier.String{
 					planmod.StringWarnOnChange("Changing flavor_id (flavor resize) is not yet supported for managed webserver instances. Keep the original flavor_id, or destroy and recreate the instance to change it."),

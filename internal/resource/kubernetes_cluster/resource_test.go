@@ -33,7 +33,7 @@ func TestToCreateRequestMinimal(t *testing.T) {
 		VPCID:    types.StringValue("vpc-1"),
 		SubnetID: types.StringValue("sn-1"),
 		InitialNodePool: &InitialNodePoolModel{
-			FlavorID:  types.StringValue("k8s.gp1.small"),
+			FlavorID:  types.StringValue("k8s.gp1.medium"),
 			NodeCount: types.Int64Value(1),
 			Name:      types.StringUnknown(),
 		},
@@ -46,7 +46,7 @@ func TestToCreateRequestMinimal(t *testing.T) {
 	if req.KubernetesVersion != "" || req.ControlPlaneTier != "" || req.Region != "" || req.PublicIPID != "" {
 		t.Errorf("expected empty optional fields, got %+v", req)
 	}
-	if req.InitialNodePool.FlavorID != "k8s.gp1.small" || req.InitialNodePool.NodeCount != 1 {
+	if req.InitialNodePool.FlavorID != "k8s.gp1.medium" || req.InitialNodePool.NodeCount != 1 {
 		t.Errorf("unexpected initial pool: %+v", req.InitialNodePool)
 	}
 	if req.InitialNodePool.Name != "" {
@@ -65,7 +65,7 @@ func TestToCreateRequestFull(t *testing.T) {
 		PublicIPID:       types.StringNull(),
 		InitialNodePool: &InitialNodePoolModel{
 			Name:      types.StringValue("workers"),
-			FlavorID:  types.StringValue("k8s.gp1.medium"),
+			FlavorID:  types.StringValue("k8s.gp1.large"),
 			NodeCount: types.Int64Value(3),
 		},
 	}
@@ -164,7 +164,7 @@ func TestFromAPINulls(t *testing.T) {
 func TestToCreateRequestRetiredKeysNeverSent(t *testing.T) {
 	pool := func() *InitialNodePoolModel {
 		return &InitialNodePoolModel{
-			FlavorID:  types.StringValue("k8s.gp1.small"),
+			FlavorID:  types.StringValue("k8s.gp1.medium"),
 			NodeCount: types.Int64Value(1),
 			Name:      types.StringNull(),
 		}
@@ -232,7 +232,7 @@ func TestToCreateRequestVersionsSentAsConfigured(t *testing.T) {
 			Addons:        stringSliceToSet([]string{"external-dns", "cert-manager"}),
 			AddonVersions: pins,
 			InitialNodePool: &InitialNodePoolModel{
-				FlavorID:  types.StringValue("k8s.gp1.small"),
+				FlavorID:  types.StringValue("k8s.gp1.medium"),
 				NodeCount: types.Int64Value(1),
 			},
 		}
@@ -294,7 +294,7 @@ func TestToCreateRequestAddonsUnsetOmitted(t *testing.T) {
 				SubnetID: types.StringValue("sn-1"),
 				Addons:   addons,
 				InitialNodePool: &InitialNodePoolModel{
-					FlavorID:  types.StringValue("k8s.gp1.small"),
+					FlavorID:  types.StringValue("k8s.gp1.medium"),
 					NodeCount: types.Int64Value(1),
 				},
 			}
@@ -324,7 +324,7 @@ func TestToCreateRequestAddonsExplicit(t *testing.T) {
 		SubnetID: types.StringValue("sn-1"),
 		Addons:   addonsSet,
 		InitialNodePool: &InitialNodePoolModel{
-			FlavorID:  types.StringValue("k8s.gp1.small"),
+			FlavorID:  types.StringValue("k8s.gp1.medium"),
 			NodeCount: types.Int64Value(1),
 		},
 	}
@@ -358,7 +358,7 @@ func TestToCreateRequestAddonsExplicitEmpty(t *testing.T) {
 		SubnetID: types.StringValue("sn-1"),
 		Addons:   emptySet,
 		InitialNodePool: &InitialNodePoolModel{
-			FlavorID:  types.StringValue("k8s.gp1.small"),
+			FlavorID:  types.StringValue("k8s.gp1.medium"),
 			NodeCount: types.Int64Value(1),
 		},
 	}
@@ -676,7 +676,7 @@ func initialPool(status string) apiNodePool {
 		ClusterID: "c-1",
 		Name:      "default",
 		Status:    status,
-		FlavorID:  "k8s.gp1.small",
+		FlavorID:  "k8s.gp1.medium",
 		NodeCount: 2,
 		IsInitial: true,
 		CreatedAt: "2026-07-01T00:00:00Z",
@@ -714,7 +714,7 @@ func TestCreate(t *testing.T) {
 			if bytes.Contains(rawBody, []byte(`"addons"`)) {
 				t.Errorf("expected no addons key in create body, got %s", rawBody)
 			}
-			if body.InitialNodePool.FlavorID != "k8s.gp1.small" || body.InitialNodePool.NodeCount != 2 {
+			if body.InitialNodePool.FlavorID != "k8s.gp1.medium" || body.InitialNodePool.NodeCount != 2 {
 				t.Errorf("unexpected initialNodePool: %+v", body.InitialNodePool)
 			}
 			created := runningCluster()
@@ -735,8 +735,8 @@ func TestCreate(t *testing.T) {
 			// Includes a soft-deleted initial pool row (name reuse) that the
 			// discovery must skip, plus a non-initial pool.
 			writeJSON(t, w, apiNodePoolList{NodePools: []apiNodePool{
-				{ID: "np-0", Name: "default", Status: statusDeleted, IsInitial: true, FlavorID: "k8s.gp1.small", NodeCount: 1},
-				{ID: "np-9", Name: "extra", Status: statusActive, IsInitial: false, FlavorID: "k8s.gp1.small", NodeCount: 1},
+				{ID: "np-0", Name: "default", Status: statusDeleted, IsInitial: true, FlavorID: "k8s.gp1.medium", NodeCount: 1},
+				{ID: "np-9", Name: "extra", Status: statusActive, IsInitial: false, FlavorID: "k8s.gp1.medium", NodeCount: 1},
 				initialPool(statusActive),
 			}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/kubernetes-clusters/c-1/node-pools/np-1":
@@ -779,7 +779,7 @@ func TestCreate(t *testing.T) {
 		InitialNodePool: &InitialNodePoolModel{
 			ID:        types.StringUnknown(),
 			Name:      types.StringUnknown(),
-			FlavorID:  types.StringValue("k8s.gp1.small"),
+			FlavorID:  types.StringValue("k8s.gp1.medium"),
 			NodeCount: types.Int64Value(2),
 			Status:    types.StringUnknown(),
 		},
@@ -868,7 +868,7 @@ func TestCreateClusterErrorStatus(t *testing.T) {
 		SubnetID: types.StringValue("sn-1"),
 		Addons:   types.SetUnknown(types.StringType),
 		InitialNodePool: &InitialNodePoolModel{
-			FlavorID:  types.StringValue("k8s.gp1.small"),
+			FlavorID:  types.StringValue("k8s.gp1.medium"),
 			NodeCount: types.Int64Value(1),
 		},
 	})
@@ -928,7 +928,7 @@ func TestCreateKubeconfigExhaustedIsWarning(t *testing.T) {
 		SubnetID: types.StringValue("sn-1"),
 		Addons:   types.SetUnknown(types.StringType),
 		InitialNodePool: &InitialNodePoolModel{
-			FlavorID:  types.StringValue("k8s.gp1.small"),
+			FlavorID:  types.StringValue("k8s.gp1.medium"),
 			NodeCount: types.Int64Value(2),
 		},
 	})
@@ -995,7 +995,7 @@ func TestCreateInitialPoolErrorStatus(t *testing.T) {
 		SubnetID: types.StringValue("sn-1"),
 		Addons:   types.SetUnknown(types.StringType),
 		InitialNodePool: &InitialNodePoolModel{
-			FlavorID:  types.StringValue("k8s.gp1.small"),
+			FlavorID:  types.StringValue("k8s.gp1.medium"),
 			NodeCount: types.Int64Value(2),
 		},
 	})
@@ -1027,7 +1027,7 @@ func stateModel() KubernetesClusterModel {
 		InitialNodePool: &InitialNodePoolModel{
 			ID:        types.StringValue("np-1"),
 			Name:      types.StringValue("default"),
-			FlavorID:  types.StringValue("k8s.gp1.small"),
+			FlavorID:  types.StringValue("k8s.gp1.medium"),
 			NodeCount: types.Int64Value(2),
 			Status:    types.StringValue(statusActive),
 		},
@@ -1428,7 +1428,7 @@ func TestCreateKubeconfig4xxNotRetried(t *testing.T) {
 		SubnetID: types.StringValue("sn-1"),
 		Addons:   types.SetUnknown(types.StringType),
 		InitialNodePool: &InitialNodePoolModel{
-			FlavorID:  types.StringValue("k8s.gp1.small"),
+			FlavorID:  types.StringValue("k8s.gp1.medium"),
 			NodeCount: types.Int64Value(2),
 		},
 	})

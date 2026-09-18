@@ -46,14 +46,19 @@ func harness(t *testing.T, h http.HandlerFunc) (*flavorsDataSource, tfsdk.Config
 // them: the substrate fields are being withdrawn from the catalog in a later
 // wave, and this data source must ignore them in the meantime rather than fail
 // on them. It is also the shape a practitioner on an older provider sees.
+//
+// The "agw.co1.legacy" row is SYNTHETIC — no "legacy" size exists in any
+// family. It stands in for a withdrawn size, so the test can prove the data
+// source re-emits whatever the server sent rather than filtering it. Do not
+// copy it as a catalogue id; the offered sizes start at agw.co1.medium.
 func body() string {
 	return `{"flavors":[
-	  {"id":"agw.gp1.small","name":"Small","vcpus":2,"ramMb":4096,"diskGb":40,
+	  {"id":"agw.co1.medium","name":"Medium","vcpus":2,"ramMb":4096,"diskGb":40,
 	   "maxListeners":5,"maxRoutes":50,"maxBackends":50,"maxWafRules":100,
 	   "maxWafExclusions":200,
 	   "maxRequestsPerSecond":5000,"maxConcurrentConnections":20000,
 	   "pricingTier":"app_gateway_gp1","active":true},
-	  {"id":"agw.gp1.legacy","name":"Legacy","vcpus":1,"active":false}
+	  {"id":"agw.co1.legacy","name":"Legacy","vcpus":1,"active":false}
 	],"totalCount":2}`
 }
 

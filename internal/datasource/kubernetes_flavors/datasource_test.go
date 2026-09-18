@@ -74,8 +74,8 @@ func TestRead(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(apiKubernetesFlavorList{
 			Flavors: []apiKubernetesFlavor{
-				{ID: "k8s.gp1.small", Name: "K8s GP1 Small", Family: "general-purpose", VCPUs: 2, RAMMB: 4096, DiskGB: 40, PricingTier: "k8s-gp1-small"},
-				{ID: "k8s.gp1.medium", Name: "K8s GP1 Medium", Family: "general-purpose", VCPUs: 4, RAMMB: 8192, DiskGB: 80},
+				{ID: "k8s.gp1.medium", Name: "K8s GP1 Medium", Family: "general-purpose", VCPUs: 2, RAMMB: 8192, DiskGB: 40, PricingTier: "k8s-gp1-medium"},
+				{ID: "k8s.gp1.large", Name: "K8s GP1 Large", Family: "general-purpose", VCPUs: 4, RAMMB: 16384, DiskGB: 80},
 			},
 		})
 	}))
@@ -99,11 +99,11 @@ func TestRead(t *testing.T) {
 	if len(items) != 2 {
 		t.Fatalf("expected 2 flavors, got %d", len(items))
 	}
-	if items[0].ID.ValueString() != "k8s.gp1.small" || items[0].VCPUs.ValueInt64() != 2 {
+	if items[0].ID.ValueString() != "k8s.gp1.medium" || items[0].VCPUs.ValueInt64() != 2 {
 		t.Errorf("unexpected first flavor: %+v", items[0])
 	}
-	if items[0].PricingTier.ValueString() != "k8s-gp1-small" {
-		t.Errorf("expected pricing_tier k8s-gp1-small, got %s", items[0].PricingTier.ValueString())
+	if items[0].PricingTier.ValueString() != "k8s-gp1-medium" {
+		t.Errorf("expected pricing_tier k8s-gp1-medium, got %s", items[0].PricingTier.ValueString())
 	}
 	if !items[1].PricingTier.IsNull() {
 		t.Error("expected null pricing_tier for flavor without one")

@@ -24,12 +24,12 @@ func TestToCreateRequestMinimal(t *testing.T) {
 	m := KubernetesNodePoolModel{
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringUnknown(),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(1),
 	}
 
 	req := m.toCreateRequest()
-	if req.FlavorID != "k8s.gp1.small" || req.NodeCount != 1 {
+	if req.FlavorID != "k8s.gp1.medium" || req.NodeCount != 1 {
 		t.Errorf("unexpected create request: %+v", req)
 	}
 	if req.Name != "" {
@@ -48,12 +48,12 @@ func TestToCreateRequestNamed(t *testing.T) {
 	m := KubernetesNodePoolModel{
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringValue("workers"),
-		FlavorID:  types.StringValue("k8s.gp1.medium"),
+		FlavorID:  types.StringValue("k8s.gp1.large"),
 		NodeCount: types.Int64Value(3),
 	}
 
 	req := m.toCreateRequest()
-	if req.Name != "workers" || req.FlavorID != "k8s.gp1.medium" || req.NodeCount != 3 {
+	if req.Name != "workers" || req.FlavorID != "k8s.gp1.large" || req.NodeCount != 3 {
 		t.Errorf("unexpected create request: %+v", req)
 	}
 }
@@ -65,7 +65,7 @@ func TestFromAPI(t *testing.T) {
 		ClusterID: "c-1",
 		Name:      "pool-ab12cd34",
 		Status:    statusActive,
-		FlavorID:  "k8s.gp1.small",
+		FlavorID:  "k8s.gp1.medium",
 		NodeCount: 2,
 		CreatedAt: "2026-07-01T00:00:00Z",
 		UpdatedAt: "2026-07-01T00:10:00Z",
@@ -209,7 +209,7 @@ func testPool(status string) apiNodePool {
 		ClusterID: "c-1",
 		Name:      "workers",
 		Status:    status,
-		FlavorID:  "k8s.gp1.small",
+		FlavorID:  "k8s.gp1.medium",
 		NodeCount: 2,
 		IsInitial: false,
 		CreatedAt: "2026-07-01T00:00:00Z",
@@ -240,7 +240,7 @@ func TestCreate(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Errorf("failed to decode request: %v", err)
 			}
-			if body.Name != "workers" || body.FlavorID != "k8s.gp1.small" || body.NodeCount != 2 {
+			if body.Name != "workers" || body.FlavorID != "k8s.gp1.medium" || body.NodeCount != 2 {
 				t.Errorf("unexpected create request: %+v", body)
 			}
 			created := testPool("creating")
@@ -271,7 +271,7 @@ func TestCreate(t *testing.T) {
 	plan := buildPlan(t, KubernetesNodePoolModel{
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringValue("workers"),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(2),
 		ID:        types.StringUnknown(),
 		Status:    types.StringUnknown(),
@@ -339,7 +339,7 @@ func TestCreateAdoptsGeneratedName(t *testing.T) {
 	plan := buildPlan(t, KubernetesNodePoolModel{
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringUnknown(),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(2),
 		ID:        types.StringUnknown(),
 		Status:    types.StringUnknown(),
@@ -401,7 +401,7 @@ func TestCreateRetriesInvalidStateConflict(t *testing.T) {
 	plan := buildPlan(t, KubernetesNodePoolModel{
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringValue("workers"),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(2),
 		ID:        types.StringUnknown(),
 		Status:    types.StringUnknown(),
@@ -445,7 +445,7 @@ func TestCreateDuplicateNameFailsFast(t *testing.T) {
 	plan := buildPlan(t, KubernetesNodePoolModel{
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringValue("workers"),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(2),
 		ID:        types.StringUnknown(),
 		Status:    types.StringUnknown(),
@@ -500,7 +500,7 @@ func TestCreateNameRecycle(t *testing.T) {
 	plan := buildPlan(t, KubernetesNodePoolModel{
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringValue("workers"),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(2),
 		ID:        types.StringUnknown(),
 		Status:    types.StringUnknown(),
@@ -552,7 +552,7 @@ func TestCreatePollError(t *testing.T) {
 	plan := buildPlan(t, KubernetesNodePoolModel{
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringValue("workers"),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(2),
 		ID:        types.StringUnknown(),
 		Status:    types.StringUnknown(),
@@ -596,7 +596,7 @@ func TestRead(t *testing.T) {
 		ID:        types.StringValue("np-2"),
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringValue("workers"),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(2),
 		Status:    types.StringValue(statusActive),
 		CreatedAt: types.StringValue("2026-07-01T00:00:00Z"),
@@ -630,7 +630,7 @@ func TestReadRemovesOn404(t *testing.T) {
 		ID:        types.StringValue("np-2"),
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringValue("workers"),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(2),
 	})
 
@@ -658,7 +658,7 @@ func TestReadRemovesOnSoftDeleted(t *testing.T) {
 		ID:        types.StringValue("np-2"),
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringValue("workers"),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(2),
 	})
 
@@ -770,7 +770,7 @@ func TestUpdateScales(t *testing.T) {
 		ID:        types.StringValue("np-2"),
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringValue("workers"),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(2),
 		Status:    types.StringValue(statusActive),
 		CreatedAt: types.StringValue("2026-07-01T00:00:00Z"),
@@ -818,7 +818,7 @@ func TestUpdateNoChangeSkipsScale(t *testing.T) {
 		ID:        types.StringValue("np-2"),
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringValue("workers"),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(2),
 		Status:    types.StringValue(statusActive),
 		CreatedAt: types.StringValue("2026-07-01T00:00:00Z"),
@@ -855,7 +855,7 @@ func TestUpdateScale404(t *testing.T) {
 		ID:        types.StringValue("np-2"),
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringValue("workers"),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(2),
 		Status:    types.StringValue(statusActive),
 		CreatedAt: types.StringValue("2026-07-01T00:00:00Z"),
@@ -907,7 +907,7 @@ func TestUpdateScaleConflict(t *testing.T) {
 		ID:        types.StringValue("np-2"),
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringValue("workers"),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(2),
 		Status:    types.StringValue(statusActive),
 		CreatedAt: types.StringValue("2026-07-01T00:00:00Z"),
@@ -972,7 +972,7 @@ func TestDelete(t *testing.T) {
 		ID:        types.StringValue("np-2"),
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringValue("workers"),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(2),
 	})
 
@@ -1017,7 +1017,7 @@ func TestDeleteLastPoolConflict(t *testing.T) {
 		ID:        types.StringValue("np-2"),
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringValue("workers"),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(2),
 	})
 
@@ -1059,7 +1059,7 @@ func TestDeleteAlreadySoftDeleted(t *testing.T) {
 		ID:        types.StringValue("np-2"),
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringValue("workers"),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(2),
 	})
 
@@ -1084,7 +1084,7 @@ func TestDeleteAlreadyGone(t *testing.T) {
 		ID:        types.StringValue("np-2"),
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringValue("workers"),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(2),
 	})
 
@@ -1168,7 +1168,7 @@ func TestUpdateScaleRetriesWhileAScaleSagaIsLive(t *testing.T) {
 		ID:        types.StringValue("np-2"),
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringValue("workers"),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(2),
 		Status:    types.StringValue(statusActive),
 		CreatedAt: types.StringValue("2026-07-01T00:00:00Z"),
@@ -1222,7 +1222,7 @@ func TestUpdateScale409NonScalableDoesNotRetry(t *testing.T) {
 		ID:        types.StringValue("np-2"),
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringValue("workers"),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(2),
 		Status:    types.StringValue(statusActive),
 		CreatedAt: types.StringValue("2026-07-01T00:00:00Z"),
@@ -1278,7 +1278,7 @@ func TestUpdateScaleExhaustedRetryNamesTheLiveSaga(t *testing.T) {
 		ID:        types.StringValue("np-2"),
 		ClusterID: types.StringValue("c-1"),
 		Name:      types.StringValue("workers"),
-		FlavorID:  types.StringValue("k8s.gp1.small"),
+		FlavorID:  types.StringValue("k8s.gp1.medium"),
 		NodeCount: types.Int64Value(2),
 		Status:    types.StringValue(statusActive),
 		CreatedAt: types.StringValue("2026-07-01T00:00:00Z"),

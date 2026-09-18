@@ -31,7 +31,7 @@ Manages a managed Valkey instance in the Frostmoln platform.
 resource "frostmoln_valkey_instance" "cache" {
   name      = "app-cache"
   version   = "8.1"
-  flavor_id = "cache.gp1.small"
+  flavor_id = "cache.mo1.small"
   vpc_id    = frostmoln_vpc.main.id
   subnet_id = frostmoln_subnet.private.id
 
@@ -49,7 +49,7 @@ output "valkey_endpoint" {
 
 ### Required
 
-- `flavor_id` (String) The flavor/size for the Valkey instance (e.g. "cache.gp1.small", "cache.gp1.medium"). Changing this triggers an in-place flavor resize, which RESTARTS the instance (brief downtime) — unlike an online storage grow. Cannot be changed together with storage_gb in the same apply.
+- `flavor_id` (String) The flavor/size for the Valkey instance (e.g. "cache.mo1.small", "cache.mo1.medium"). Changing this triggers an in-place flavor resize, which RESTARTS the instance (brief downtime) — unlike an online storage grow. Cannot be changed together with storage_gb in the same apply.
 - `name` (String) The name of the Valkey instance.
 - `subnet_id` (String) The subnet ID where the Valkey instance will be deployed.
 - `version` (String) The Valkey version (e.g. "8.1").

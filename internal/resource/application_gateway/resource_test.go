@@ -27,7 +27,7 @@ func TestGatewayModelFromAPI(t *testing.T) {
 	rev := int64(7)
 	g := &apiGateway{
 		ID: "agw-1", Name: "edge", TenantID: "t-1", Status: "running",
-		FlavorID: "agw.gp1.small", Version: "1.0.0",
+		FlavorID: "agw.co1.medium", Version: "1.0.0",
 		VPCID: "vpc-1", SubnetID: "sub-1", PrivateIP: "10.0.0.5", VPCCIDR: "10.0.0.0/16",
 		PublicIPMode: "allocated", PublicIP: "203.0.113.10",
 		ConfigGeneration: 7, ConfigRevision: &rev, ConfigStatus: "applied",

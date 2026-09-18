@@ -56,7 +56,7 @@ data "frostmoln_appgw_flavors" "available" {}
 
 resource "frostmoln_application_gateway" "edge" {
   name      = "edge"
-  flavor_id = "agw.gp1.small"
+  flavor_id = "agw.co1.medium"
   vpc_id    = frostmoln_vpc.main.id
   subnet_id = frostmoln_subnet.public.id
 
@@ -69,7 +69,7 @@ resource "frostmoln_application_gateway" "edge" {
 # the gateway is destroyed.
 resource "frostmoln_application_gateway" "byo" {
   name      = "edge-byo"
-  flavor_id = "agw.gp1.medium"
+  flavor_id = "agw.co1.large"
   vpc_id    = frostmoln_vpc.main.id
   subnet_id = frostmoln_subnet.public.id
 
@@ -83,7 +83,7 @@ resource "frostmoln_application_gateway" "byo" {
 
 ### Required
 
-- `flavor_id` (String) The flavor (size) of the Application Gateway, e.g. `agw.gp1.small`. Changing this forces a new resource. Available sizes and their structural limits are in the `frostmoln_appgw_flavors` data source.
+- `flavor_id` (String) The flavor (size) of the Application Gateway, e.g. `agw.co1.medium`. Changing this forces a new resource. Available sizes and their structural limits are in the `frostmoln_appgw_flavors` data source.
 - `name` (String) The name of the Application Gateway.
 - `subnet_id` (String) The subnet the gateway's appliance attaches to. Changing this forces a new resource.
 - `vpc_id` (String) The VPC the gateway lives in. Changing this forces a new resource.

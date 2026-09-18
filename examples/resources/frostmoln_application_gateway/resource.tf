@@ -8,7 +8,7 @@ data "frostmoln_appgw_flavors" "available" {}
 
 resource "frostmoln_application_gateway" "edge" {
   name      = "edge"
-  flavor_id = "agw.gp1.small"
+  flavor_id = "agw.co1.medium"
   vpc_id    = frostmoln_vpc.main.id
   subnet_id = frostmoln_subnet.public.id
 
@@ -21,7 +21,7 @@ resource "frostmoln_application_gateway" "edge" {
 # the gateway is destroyed.
 resource "frostmoln_application_gateway" "byo" {
   name      = "edge-byo"
-  flavor_id = "agw.gp1.medium"
+  flavor_id = "agw.co1.large"
   vpc_id    = frostmoln_vpc.main.id
   subnet_id = frostmoln_subnet.public.id
 

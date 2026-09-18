@@ -64,7 +64,7 @@ Read-Only:
 
 - `active` (Boolean) Whether new gateways may be created on this size.
 - `description` (String) What this size is for.
-- `id` (String) The flavor id, e.g. `agw.gp1.small`.
+- `id` (String) The flavor id, e.g. `agw.co1.medium`.
 - `max_backends` (Number) Maximum backends. Enforced.
 - `max_concurrent_connections` (Number) Concurrent connections this size allows. **Enforced**: a listener whose `max_connections` exceeds it is refused at create, and a stored value above it is clamped when the configuration is rendered. Derived from `max_requests_per_second` rather than stored, so it cannot disagree with the limit the appliance is actually built with.
 - `max_listeners` (Number) Maximum listeners. Enforced.

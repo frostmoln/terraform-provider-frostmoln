@@ -20,7 +20,7 @@ resource "frostmoln_appgw_listener" "https" {
 # (e.g. the gateway this configuration itself created).
 resource "frostmoln_application_gateway" "self_served" {
   name      = "self-served"
-  flavor_id = "agw.gp1.small"
+  flavor_id = "agw.co1.medium"
   vpc_id    = frostmoln_vpc.main.id
   subnet_id = frostmoln_subnet.edge.id
 }

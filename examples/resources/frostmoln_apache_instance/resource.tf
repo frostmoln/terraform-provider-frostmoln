@@ -1,7 +1,7 @@
 resource "frostmoln_apache_instance" "site" {
   name       = "site-1"
   version    = "2.4"
-  flavor_id  = "web.gp1.small"
+  flavor_id  = "web.co1.small"
   storage_gb = 20
   vpc_id     = frostmoln_vpc.main.id
   subnet_id  = frostmoln_subnet.public.id

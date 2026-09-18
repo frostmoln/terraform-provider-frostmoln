@@ -31,7 +31,7 @@ Manages a managed Redis instance in the Frostmoln platform.
 resource "frostmoln_redis_instance" "cache" {
   name      = "my-cache"
   version   = "7.2"
-  flavor_id = "cache.gp1.small"
+  flavor_id = "cache.mo1.small"
   vpc_id    = frostmoln_vpc.main.id
   subnet_id = frostmoln_subnet.private.id
 
@@ -50,7 +50,7 @@ resource "frostmoln_redis_instance" "cache" {
 
 ### Required
 
-- `flavor_id` (String) The flavor/size for the Redis instance (e.g. "cache.gp1.small", "cache.gp1.medium"). Changing this triggers an in-place flavor resize, which RESTARTS the instance (brief downtime) — unlike an online storage grow. Cannot be changed together with storage_gb in the same apply.
+- `flavor_id` (String) The flavor/size for the Redis instance (e.g. "cache.mo1.small", "cache.mo1.medium"). Changing this triggers an in-place flavor resize, which RESTARTS the instance (brief downtime) — unlike an online storage grow. Cannot be changed together with storage_gb in the same apply.
 - `name` (String) The name of the Redis instance.
 - `subnet_id` (String) The subnet ID where the Redis instance will be deployed.
 - `version` (String) The Redis version (e.g. "7.2", "7.4").

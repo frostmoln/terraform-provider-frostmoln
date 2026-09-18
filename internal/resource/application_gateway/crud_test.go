@@ -93,7 +93,7 @@ func gwFixture(status string) apiGateway {
 	rev := int64(3)
 	return apiGateway{
 		ID: "agw-1", Name: "edge", TenantID: "t-1", Status: status,
-		FlavorID: "agw.gp1.small", Version: "1.0.0", VPCID: "vpc-1", SubnetID: "sub-1",
+		FlavorID: "agw.co1.medium", Version: "1.0.0", VPCID: "vpc-1", SubnetID: "sub-1",
 		VPCCIDR: "10.0.0.0/16", PrivateIP: "10.0.0.5",
 		PublicIPMode: "allocated", PublicIP: "203.0.113.10",
 		ConfigGeneration: 3, ConfigRevision: &rev, ConfigStatus: "applied",
@@ -104,7 +104,7 @@ func gwFixture(status string) apiGateway {
 func gwModel() GatewayModel {
 	return GatewayModel{
 		Name:         types.StringValue("edge"),
-		FlavorID:     types.StringValue("agw.gp1.small"),
+		FlavorID:     types.StringValue("agw.co1.medium"),
 		VPCID:        types.StringValue("vpc-1"),
 		SubnetID:     types.StringValue("sub-1"),
 		PublicIPMode: types.StringValue("allocated"),

@@ -275,7 +275,7 @@ func TestReadByID(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"id":"gw-1","name":"edge","tenantId":"tenant-1","status":"running",
-			"flavorId":"agw.gp1.small","version":"2.4.1",
+			"flavorId":"agw.co1.medium","version":"2.4.1",
 			"vpcId":"vpc-1","subnetId":"subnet-1","privateIp":"10.0.1.10","vpcCidr":"10.0.0.0/16",
 			"publicIpMode":"selected","publicIpId":"pip-1","publicIp":"203.0.113.7",
 			"wafPolicyId":"waf-1","appliedWafVersion":7,
@@ -301,7 +301,7 @@ func TestReadByID(t *testing.T) {
 	if m.Status.ValueString() != "running" {
 		t.Errorf("status is %s", m.Status.ValueString())
 	}
-	if m.FlavorID.ValueString() != "agw.gp1.small" || m.Version.ValueString() != "2.4.1" {
+	if m.FlavorID.ValueString() != "agw.co1.medium" || m.Version.ValueString() != "2.4.1" {
 		t.Errorf("flavor/version are %s/%s", m.FlavorID.ValueString(), m.Version.ValueString())
 	}
 	if m.VPCID.ValueString() != "vpc-1" || m.SubnetID.ValueString() != "subnet-1" {
@@ -363,7 +363,7 @@ func TestReadByIDTreatsADeletedGatewayAsGone(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"id":"gw-1","name":"edge","tenantId":"tenant-1","status":"deleted",
-			"flavorId":"agw.gp1.small","version":"2.4.1","vpcId":"vpc-1","subnetId":"subnet-1",
+			"flavorId":"agw.co1.medium","version":"2.4.1","vpcId":"vpc-1","subnetId":"subnet-1",
 			"publicIpMode":"allocated","configGeneration":0,"configStatus":"pending",
 			"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-02-01T00:00:00Z",
 			"deletedAt":"2026-02-01T00:00:00Z"
@@ -394,7 +394,7 @@ func TestReadByIDRefusesA200ThatDoesNotCarryTheID(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"gw-other","name":"other","status":"running","flavorId":"agw.gp1.small","version":"2.4.1","vpcId":"vpc-1","subnetId":"subnet-1","publicIpMode":"allocated","configGeneration":0,"configStatus":"pending","createdAt":"2026-01-01T00:00:00Z"}`))
+		_, _ = w.Write([]byte(`{"id":"gw-other","name":"other","status":"running","flavorId":"agw.co1.medium","version":"2.4.1","vpcId":"vpc-1","subnetId":"subnet-1","publicIpMode":"allocated","configGeneration":0,"configStatus":"pending","createdAt":"2026-01-01T00:00:00Z"}`))
 	})
 	defer server.Close()
 
@@ -424,11 +424,11 @@ func TestReadByNameResolvesFromTheList(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"gateways":[
 			{"id":"gw-other","name":"analytics","tenantId":"tenant-1","status":"running",
-			 "flavorId":"agw.gp1.small","version":"2.4.1","vpcId":"vpc-1","subnetId":"subnet-1",
+			 "flavorId":"agw.co1.medium","version":"2.4.1","vpcId":"vpc-1","subnetId":"subnet-1",
 			 "privateIp":"10.0.1.9","publicIpMode":"allocated","configGeneration":0,"configStatus":"pending",
 			 "createdAt":"2026-01-02T00:00:00Z"},
 			{"id":"gw-1","name":"edge","tenantId":"tenant-1","status":"running",
-			 "flavorId":"agw.gp1.small","version":"2.4.1","vpcId":"vpc-1","subnetId":"subnet-1",
+			 "flavorId":"agw.co1.medium","version":"2.4.1","vpcId":"vpc-1","subnetId":"subnet-1",
 			 "privateIp":"10.0.1.10","publicIpMode":"allocated","configGeneration":0,"configStatus":"pending",
 			 "createdAt":"2026-01-01T00:00:00Z"}
 		],"totalCount":2}`))
@@ -467,11 +467,11 @@ func TestReadByNameSkipsADeletedGateway(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"gateways":[
 			{"id":"gw-dead","name":"edge","tenantId":"tenant-1","status":"deleted",
-			 "flavorId":"agw.gp1.small","version":"2.4.1","vpcId":"vpc-1","subnetId":"subnet-1",
+			 "flavorId":"agw.co1.medium","version":"2.4.1","vpcId":"vpc-1","subnetId":"subnet-1",
 			 "publicIpMode":"allocated","configGeneration":0,"configStatus":"pending",
 			 "createdAt":"2026-01-01T00:00:00Z"},
 			{"id":"gw-tomb","name":"edge","tenantId":"tenant-1","status":"running",
-			 "flavorId":"agw.gp1.small","version":"2.4.1","vpcId":"vpc-1","subnetId":"subnet-1",
+			 "flavorId":"agw.co1.medium","version":"2.4.1","vpcId":"vpc-1","subnetId":"subnet-1",
 			 "publicIpMode":"allocated","configGeneration":0,"configStatus":"pending",
 			 "createdAt":"2026-01-01T00:00:00Z","deletedAt":"2026-02-01T00:00:00Z"}
 		],"totalCount":2}`))
@@ -491,7 +491,7 @@ func TestReadByNameSkipsADeletedGateway(t *testing.T) {
 func TestReadByName404WhenNoGatewayMatches(t *testing.T) {
 	server := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"gateways":[{"id":"gw-1","name":"analytics","tenantId":"tenant-1","status":"running","flavorId":"agw.gp1.small","version":"2.4.1","vpcId":"vpc-1","subnetId":"subnet-1","publicIpMode":"allocated","configGeneration":0,"configStatus":"pending","createdAt":"2026-01-01T00:00:00Z"}],"totalCount":1}`))
+		_, _ = w.Write([]byte(`{"gateways":[{"id":"gw-1","name":"analytics","tenantId":"tenant-1","status":"running","flavorId":"agw.co1.medium","version":"2.4.1","vpcId":"vpc-1","subnetId":"subnet-1","publicIpMode":"allocated","configGeneration":0,"configStatus":"pending","createdAt":"2026-01-01T00:00:00Z"}],"totalCount":1}`))
 	})
 	defer server.Close()
 
@@ -510,8 +510,8 @@ func TestReadByNameRefusesAnAmbiguousName(t *testing.T) {
 	server := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"gateways":[
-			{"id":"gw-a","name":"edge","tenantId":"tenant-1","status":"running","flavorId":"agw.gp1.small","version":"2.4.1","vpcId":"vpc-1","subnetId":"subnet-1","publicIpMode":"allocated","configGeneration":0,"configStatus":"pending","createdAt":"2026-01-01T00:00:00Z"},
-			{"id":"gw-b","name":"edge","tenantId":"tenant-1","status":"running","flavorId":"agw.gp1.small","version":"2.4.1","vpcId":"vpc-1","subnetId":"subnet-1","publicIpMode":"allocated","configGeneration":0,"configStatus":"pending","createdAt":"2026-01-02T00:00:00Z"}
+			{"id":"gw-a","name":"edge","tenantId":"tenant-1","status":"running","flavorId":"agw.co1.medium","version":"2.4.1","vpcId":"vpc-1","subnetId":"subnet-1","publicIpMode":"allocated","configGeneration":0,"configStatus":"pending","createdAt":"2026-01-01T00:00:00Z"},
+			{"id":"gw-b","name":"edge","tenantId":"tenant-1","status":"running","flavorId":"agw.co1.medium","version":"2.4.1","vpcId":"vpc-1","subnetId":"subnet-1","publicIpMode":"allocated","configGeneration":0,"configStatus":"pending","createdAt":"2026-01-02T00:00:00Z"}
 		],"totalCount":2}`))
 	})
 	defer server.Close()
@@ -577,7 +577,7 @@ func TestReadMapsAbsentOptionalsToNull(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"gw-1","name":"edge","tenantId":"tenant-1","status":"provisioning","flavorId":"agw.gp1.small","version":"2.4.1","vpcId":"vpc-1","subnetId":"subnet-1","publicIpMode":"allocated","appliedWafVersion":0,"configGeneration":0,"configStatus":"pending","createdAt":"2026-01-01T00:00:00Z"}`))
+		_, _ = w.Write([]byte(`{"id":"gw-1","name":"edge","tenantId":"tenant-1","status":"provisioning","flavorId":"agw.co1.medium","version":"2.4.1","vpcId":"vpc-1","subnetId":"subnet-1","publicIpMode":"allocated","appliedWafVersion":0,"configGeneration":0,"configStatus":"pending","createdAt":"2026-01-01T00:00:00Z"}`))
 	})
 	defer server.Close()
 

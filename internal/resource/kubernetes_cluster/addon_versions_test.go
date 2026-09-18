@@ -170,7 +170,7 @@ func pinnedCreatePlan() KubernetesClusterModel {
 		AddonVersions: pinMap(eso, "v2"),
 		InitialNodePool: &InitialNodePoolModel{
 			ID: types.StringUnknown(), Name: types.StringUnknown(),
-			FlavorID: types.StringValue("k8s.gp1.small"), NodeCount: types.Int64Value(2), Status: types.StringUnknown(),
+			FlavorID: types.StringValue("k8s.gp1.medium"), NodeCount: types.Int64Value(2), Status: types.StringUnknown(),
 		},
 	}
 }
