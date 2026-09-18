@@ -1,5 +1,5 @@
 data "frostmoln_flavor" "medium" {
-  name = "m1.medium"
+  name = "gp1.medium"
 }
 
 output "medium_flavor_specs" {
