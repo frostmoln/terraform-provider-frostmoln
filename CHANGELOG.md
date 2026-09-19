@@ -2,7 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.71.2] - 2026-09-18
+## [0.71.3] - 2026-09-19
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.25 (#597)
+
+## [0.71.2] - 2026-09-19
 
 ### 🐛 Bug Fixes
 
