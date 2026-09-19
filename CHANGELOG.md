@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.71.4] - 2026-09-19
+
+### 📚 Documentation
+
+- *(postgres_instance)* Qualify the extensions restart window to the preload-required set (#599)
+
 ## [0.71.3] - 2026-09-19
 
 ### 🐛 Bug Fixes
