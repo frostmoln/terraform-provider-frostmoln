@@ -80,6 +80,14 @@ type postgresInstanceModel struct {
 	CreatedAt           types.String `tfsdk:"created_at"`
 	UpdatedAt           types.String `tfsdk:"updated_at"`
 	TenantID            types.String `tfsdk:"tenant_id"`
+	// Point-in-time recovery. The same five attributes the resource exposes,
+	// so a data-source read can be fed straight into a check block or an
+	// output without translating names.
+	PITREnabled             types.Bool   `tfsdk:"pitr_enabled"`
+	PITRCapable             types.Bool   `tfsdk:"pitr_capable"`
+	PITRArchivePausedReason types.String `tfsdk:"pitr_archive_paused_reason"`
+	EarliestRestorableTime  types.String `tfsdk:"earliest_restorable_time"`
+	LatestRestorableTime    types.String `tfsdk:"latest_restorable_time"`
 }
 
 // apiDatabaseInstance is the API representation of one database instance —
@@ -109,6 +117,18 @@ type apiDatabaseInstance struct {
 	CreatedAt           string `json:"createdAt"`
 	UpdatedAt           string `json:"updatedAt,omitempty"`
 	TenantID            string `json:"tenantId,omitempty"`
+	// Point-in-time recovery. The booleans are POINTERS because absent is not
+	// false: a database service older than the release that added the feature
+	// omits them, and reporting that as "recovery: off" would be an assertion
+	// no service made.
+	PITREnabled *bool `json:"pitrEnabled,omitempty"`
+	PITRCapable *bool `json:"pitrCapable,omitempty"`
+	// The window and the pause reason are served on the single-instance GET
+	// and on nothing else — which is why resolveByName re-reads the instance
+	// it found by id instead of rendering the list row it matched.
+	PITRArchivePausedReason string `json:"pitrArchivePausedReason,omitempty"`
+	EarliestRestorableTime  string `json:"earliestRestorableTime,omitempty"`
+	LatestRestorableTime    string `json:"latestRestorableTime,omitempty"`
 }
 
 type apiDatabaseInstanceList struct {
@@ -245,6 +265,38 @@ func (d *postgresInstanceDataSource) Schema(_ context.Context, _ datasource.Sche
 				Description: "The tenant ID that owns this instance.",
 				Computed:    true,
 			},
+			"pitr_enabled": schema.BoolAttribute{
+				Description: "Whether point-in-time recovery is on for this instance, null when the " +
+					"platform does not report it. Archiving actually runs only when this AND " +
+					"`backup_enabled` are true.",
+				Computed: true,
+			},
+			"pitr_capable": schema.BoolAttribute{
+				Description: "Whether the instance CAN do point-in-time recovery. Fixed when it was " +
+					"created and never changes, so it is what tells \"turned off\" apart from " +
+					"\"cannot be turned on\".",
+				Computed: true,
+			},
+			"pitr_archive_paused_reason": schema.StringAttribute{
+				Description: "Why the platform has paused write-ahead log archiving, null when it is " +
+					"not paused. `tenant_cap` is the tenant's retained-storage cap; " +
+					"`platform_disabled` is a fleet-wide pause. Any other value means a reason this " +
+					"provider release does not know about.",
+				Computed: true,
+			},
+			"earliest_restorable_time": schema.StringAttribute{
+				Description: "The earliest instant the instance can be restored to (RFC 3339, UTC), " +
+					"null when it has no restorable window right now.",
+				Computed: true,
+			},
+			"latest_restorable_time": schema.StringAttribute{
+				Description: "The latest instant the instance can be restored to (RFC 3339, UTC), " +
+					"null when it has no restorable window right now. It advances continuously " +
+					"while archiving runs, so it is a reading taken at refresh time, not a value " +
+					"that stays true — the platform checks a restore target against the window it " +
+					"has at that moment.",
+				Computed: true,
+			},
 		},
 	}
 }
@@ -305,7 +357,18 @@ func (d *postgresInstanceDataSource) Read(ctx context.Context, req datasource.Re
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		inst = found
+		// The LIST row is how the name was resolved, but it is not what this
+		// data source renders: the restorable window and the archive pause
+		// reason are served on the single-instance GET and on no other
+		// response, so a name lookup that stopped at the list row would report
+		// every instance as having no window at all. Re-read the instance the
+		// name found, so an id lookup and a name lookup answer identically.
+		reread, rereadDiags := d.readByID(ctx, found.ID)
+		resp.Diagnostics.Append(rereadDiags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		inst = reread
 	}
 
 	setInstanceState(&cfg, inst)
@@ -531,6 +594,19 @@ func setInstanceState(state *postgresInstanceModel, inst *apiDatabaseInstance) {
 	state.CreatedAt = stringFromWire(inst.CreatedAt)
 	state.UpdatedAt = stringFromWire(inst.UpdatedAt)
 	state.TenantID = stringFromWire(inst.TenantID)
+	state.PITREnabled = boolFromWire(inst.PITREnabled)
+	state.PITRCapable = boolFromWire(inst.PITRCapable)
+	state.PITRArchivePausedReason = stringFromWire(inst.PITRArchivePausedReason)
+	state.EarliestRestorableTime = stringFromWire(inst.EarliestRestorableTime)
+	state.LatestRestorableTime = stringFromWire(inst.LatestRestorableTime)
+}
+
+// boolFromWire maps an absent optional boolean to null, not false.
+func boolFromWire(v *bool) types.Bool {
+	if v == nil {
+		return types.BoolNull()
+	}
+	return types.BoolValue(*v)
 }
 
 // int64FromWire maps an absent optional count to null, not zero.

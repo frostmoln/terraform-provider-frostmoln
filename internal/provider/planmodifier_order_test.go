@@ -433,6 +433,15 @@ func replayModifiers(t *testing.T, attrPath string, a schema.Attribute) (onChang
 	case schema.SingleNestedAttribute:
 		// Its children are walked separately. Object-level modifiers on the
 		// nested attribute itself are unused here and would be ignored.
+		//
+		// NOTE for whoever hits this next: this walk only reaches an attribute
+		// that is Optional+COMPUTED, and it replays with a NULL ConfigValue
+		// (the "practitioner omitted it" case). A conditional RequiresReplaceIf
+		// whose predicate reads the CONFIG therefore cannot be exercised from
+		// here at all — `restore_from` is checked by TestScopeDeclarations
+		// instead, which replays with the config SET. Extending this arm means
+		// giving it a non-null-config pass too, or it will report "checked"
+		// while checking nothing.
 		if len(a.PlanModifiers) > 0 {
 			t.Fatalf("%s: object-level plan modifiers are not replayed — extend replayModifiers", attrPath)
 		}

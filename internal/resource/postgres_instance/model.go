@@ -4,22 +4,39 @@ package postgres_instance
 import (
 	"context"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
-// The backup policy the database service applies itself when backups are enabled without an
-// explicit value (ADR-0085: the retention floor equals the 35-day COMPLIANCE object-lock window).
-// Mirrors managedbackup.DefaultBackupSchedule / managedbackup.BackupRetentionMinDays in
-// servicekit (the shared package both managed offers validate against as of servicekit v1.22.0) --
-// if the platform ever moves either, this must move with it. The provider does not import
-// servicekit, so this is a deliberate copy, not an oversight.
-const (
-	defaultBackupSchedule      = "0 2 * * *"
-	defaultBackupRetentionDays = 35
-)
+// defaultBackupRetentionDays is the retention floor ADR-0085 tells every client to
+// reflect: the 35-day COMPLIANCE object-lock window. It is a FLOOR, not a ladder, so
+// copying it here is what the ADR asks for rather than a duplicated platform rule.
+//
+// There is deliberately no schedule counterpart. The platform's schedule default is
+// SIZE-AWARE for a point-in-time-recovery instance (daily, weekly or twice-monthly by
+// volume), so any literal this provider held would be a copy of one rung of a ladder
+// the platform owns — the failure ADR-0015 forbids for prices. An unwritten schedule
+// is left unknown and the platform answers with the one it picked.
+const defaultBackupRetentionDays = 35
+
+// offerTypePostgreSQL is the /databases surface's discriminator: it carries
+// both managed database offers, and this resource resolves PostgreSQL or it
+// refuses.
+const offerTypePostgreSQL = "postgresql"
+
+// restoreTargetNameMaxLen is the platform's cap on a restore target's name
+// (database domain/backup.go's RestoreRequest.Validate).
+const restoreTargetNameMaxLen = 63
+
+// apiPostgresInstanceList is one page of the tenant's databases. Only the
+// restore path's confirm-by-name lookup reads it.
+type apiPostgresInstanceList struct {
+	Instances  []apiPostgresInstance `json:"instances"`
+	TotalCount int                   `json:"totalCount"`
+}
 
 // PostgresInstanceModel is the Terraform state model for a managed PostgreSQL instance.
 type PostgresInstanceModel struct {
@@ -44,7 +61,28 @@ type PostgresInstanceModel struct {
 	// extension ledger on a separate GET); every refresh path calls
 	// readExtensionsIntoModel, which projects the ledger's enabled entries
 	// into this set — removed/failed entries are intent history, not state.
-	Extensions    types.Set    `tfsdk:"extensions"`
+	Extensions types.Set `tfsdk:"extensions"`
+	// PITREnabled is the only WRITEABLE PITR attribute: what the customer asks
+	// for. It is sent only when the configuration carries it (see
+	// toCreateRequest/toUpdateRequest) — pre-GA an OMITTED pitrEnabled resolves
+	// OFF even for an entitled tenant, and pitr_capable is fixed at create, so
+	// a provider that helpfully filled in a value the practitioner did not
+	// write would decide their data-protection posture for them, permanently.
+	PITREnabled types.Bool `tfsdk:"pitr_enabled"`
+	// The four read-only PITR attributes. PITRCapable is fixed at create; the
+	// other three move under the customer between one plan and the next
+	// (latest_restorable_time advances with every archived segment), which is
+	// why none of them carries UseStateForUnknown and why ModifyPlan re-plans
+	// them as unknown on any apply. See the schema.
+	PITRCapable             types.Bool   `tfsdk:"pitr_capable"`
+	PITRArchivePausedReason types.String `tfsdk:"pitr_archive_paused_reason"`
+	EarliestRestorableTime  types.String `tfsdk:"earliest_restorable_time"`
+	LatestRestorableTime    types.String `tfsdk:"latest_restorable_time"`
+	// RestoreFrom is create-only input, carried as types.Object rather than a
+	// pointer-to-struct because an Optional+Computed object is UNKNOWN in the
+	// plan of every create that omits it, and the framework's reflection
+	// refuses to decode an unknown into a Go pointer.
+	RestoreFrom   types.Object `tfsdk:"restore_from"`
 	Status        types.String `tfsdk:"status"`
 	PrivateIP     types.String `tfsdk:"private_ip"`
 	Port          types.Int64  `tfsdk:"port"`
@@ -62,8 +100,12 @@ type PostgresInstanceModel struct {
 
 // apiPostgresInstance is the API representation of a managed PostgreSQL instance.
 type apiPostgresInstance struct {
-	ID                  string `json:"id"`
-	Name                string `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Type is `postgresql` or `mysql`: the /databases surface carries both, and
+	// a restore SOURCE is looked up on it by an id the practitioner supplied,
+	// so this resource has to be able to see that the id names the wrong offer.
+	Type                string `json:"type"`
 	PostgresVersion     string `json:"typeVersion"`
 	FlavorID            string `json:"flavorId"`
 	StorageGB           int    `json:"storageGb"`
@@ -83,6 +125,23 @@ type apiPostgresInstance struct {
 	CreatedAt           string `json:"createdAt"`
 	UpdatedAt           string `json:"updatedAt,omitempty"`
 	TenantID            string `json:"tenantId,omitempty"`
+
+	// PITR. The two booleans are POINTERS because absent and false are
+	// different answers here, and reading one as the other is the whole bug
+	// class this feature can produce: a database below the P8 floor omits both
+	// fields entirely, and a plain `bool` would report that instance as
+	// "point-in-time recovery: off" — an assertion no service made — instead of
+	// "this deployment does not say".
+	PITREnabled *bool `json:"pitrEnabled,omitempty"`
+	PITRCapable *bool `json:"pitrCapable,omitempty"`
+	// The window and the paused reason are served on the single-instance GET
+	// and NOWHERE else (plan §4.15 item 3): on a create, update or list
+	// response their absence means nothing at all, which is why every path
+	// that fills them re-reads by GET. On a GET their absence does mean
+	// something — there is no restorable window right now.
+	PITRArchivePausedReason string `json:"pitrArchivePausedReason,omitempty"`
+	EarliestRestorableTime  string `json:"earliestRestorableTime,omitempty"`
+	LatestRestorableTime    string `json:"latestRestorableTime,omitempty"`
 }
 
 // apiCreatePostgresInstanceRequest is the API request to create a managed PostgreSQL instance.
@@ -98,6 +157,18 @@ type apiCreatePostgresInstanceRequest struct {
 	BackupSchedule      string `json:"backupSchedule,omitempty"`
 	BackupRetentionDays *int   `json:"backupRetentionDays,omitempty"`
 	ParameterGroupID    string `json:"parameterGroupId,omitempty"`
+	PITREnabled         *bool  `json:"pitrEnabled,omitempty"`
+}
+
+// apiRestorePostgresInstanceRequest is the body for
+// POST /databases/{sourceId}/restore. Exactly one of BackupID and
+// PITRTimestamp is set: the two together are refused by the service (400
+// invalid_input) precisely because an older service silently dropped the
+// timestamp and restored the backup instead.
+type apiRestorePostgresInstanceRequest struct {
+	TargetName    string `json:"targetName"`
+	BackupID      string `json:"backupId,omitempty"`
+	PITRTimestamp string `json:"pitrTimestamp,omitempty"`
 }
 
 // apiUpdatePostgresInstanceRequest is the API request to update a managed
@@ -111,18 +182,29 @@ type apiUpdatePostgresInstanceRequest struct {
 	BackupSchedule      *string `json:"backupSchedule,omitempty"`
 	BackupRetentionDays *int    `json:"backupRetentionDays,omitempty"`
 	ParameterGroupID    *string `json:"parameterGroupId,omitempty"`
+	PITREnabled         *bool   `json:"pitrEnabled,omitempty"`
 }
 
 // hasChanges reports whether the update request carries any field to PUT.
 func (r apiUpdatePostgresInstanceRequest) hasChanges() bool {
 	return r.Name != nil || r.BackupEnabled != nil || r.BackupSchedule != nil ||
-		r.BackupRetentionDays != nil || r.ParameterGroupID != nil
+		r.BackupRetentionDays != nil || r.ParameterGroupID != nil || r.PITREnabled != nil
 }
 
 // apiResizePostgresInstanceRequest is the body for POST /databases/{id}/resize.
 // Storage grows online and cannot be shrunk (backend rejects a decrease).
+//
+// BackupSchedule is not decoration. On a point-in-time-recovery instance the
+// platform re-validates the schedule against the NEW size's base-backup floor:
+// a schedule the platform chose it re-picks itself, but one the CUSTOMER wrote
+// it never rewrites — it refuses the resize with a 400 unless the resize
+// request itself carries a schedule that passes. Growing past a threshold and
+// sparsening the schedule is therefore a single operation, and sending the two
+// separately cannot work: the resize runs first and fails with the fix still
+// unsent.
 type apiResizePostgresInstanceRequest struct {
-	StorageGB int `json:"storageGb"`
+	StorageGB      int     `json:"storageGb"`
+	BackupSchedule *string `json:"backupSchedule,omitempty"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -154,6 +236,18 @@ func (m *PostgresInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagn
 	if !m.ParameterGroupID.IsNull() && !m.ParameterGroupID.IsUnknown() {
 		req.ParameterGroupID = m.ParameterGroupID.ValueString()
 	}
+	// Sent ONLY when the configuration carries it. On an omitted attribute the
+	// plan value is unknown at create, so the guard below already withholds it
+	// — but the rule matters enough to state: pre-GA the service resolves an
+	// omitted pitrEnabled to OFF even for an entitled tenant (ADR-0038 clause
+	// 8), and pitr_capable is stamped once, at create. A value invented here
+	// would be the difference between a database that can be restored to a
+	// point in time and one that can never be made to, with destroy-and-
+	// recreate as the only remedy.
+	if !m.PITREnabled.IsNull() && !m.PITREnabled.IsUnknown() {
+		v := m.PITREnabled.ValueBool()
+		req.PITREnabled = &v
+	}
 
 	return req
 }
@@ -162,37 +256,59 @@ func (m *PostgresInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagn
 func (m *PostgresInstanceModel) toUpdateRequest(state *PostgresInstanceModel) apiUpdatePostgresInstanceRequest {
 	req := apiUpdatePostgresInstanceRequest{}
 
-	if !m.Name.Equal(state.Name) {
+	// An UNKNOWN plan value is never sent, on any field below. Unknown means
+	// "whatever the platform decides", and ValueBool()/ValueInt64() of an
+	// unknown are the zero values — so sending one would PUT `false` or `0`
+	// under the guise of a diff. That is reachable: a restore's create planned
+	// its backup fields unknown so the target could inherit the source's, and
+	// a resize plans the schedule unknown so the platform can re-pick it.
+	if !m.Name.IsUnknown() && !m.Name.Equal(state.Name) {
 		v := m.Name.ValueString()
 		req.Name = &v
 	}
-	if !m.BackupEnabled.Equal(state.BackupEnabled) {
+	// The null guard matches pitr_enabled's below, and for the same reason:
+	// ValueBool() of a null is `false`, so a null plan value against a `true`
+	// state would PUT backups OFF on an instance nobody asked to change.
+	if !m.BackupEnabled.IsUnknown() && !m.BackupEnabled.IsNull() && !m.BackupEnabled.Equal(state.BackupEnabled) {
 		v := m.BackupEnabled.ValueBool()
 		req.BackupEnabled = &v
 	}
 	// An enable carries the backup policy explicitly even when neither value changed. Both are
-	// pinned to state by the plan modifier, so on an omitted attribute plan == state and the
-	// diff-only rule would send nothing -- leaving the server to fill the NULL columns from its
-	// own constants. Those happen to equal ours today, but a divergence would surface as an
-	// inconsistent-result error on every enable, and a schedule the server does NOT write (the
-	// pre-ADR-0085 path) leaves a row that silently takes no backups. Sending the planned values
-	// makes the outcome ours to guarantee.
-	enabling := m.BackupEnabled.ValueBool() && !state.BackupEnabled.ValueBool()
-	if enabling || !m.BackupSchedule.Equal(state.BackupSchedule) {
+	// pinned to state by their plan modifiers, so on an omitted attribute plan == state and the
+	// diff-only rule would send nothing -- leaving the server to fill the NULL columns itself.
+	// Sending the recorded values keeps the outcome ours to guarantee rather than the server's
+	// to choose.
+	//
+	// It sends a RECORDED value, never a fabricated one. An instance with no schedule on record
+	// plans unknown (fromAPI writes null, UseStateForUnknown bails on it), the guard below skips
+	// it, and the platform picks the schedule for the size -- which is what should happen, since
+	// there is no client-side ladder to pick from.
+	enabling := !m.BackupEnabled.IsUnknown() && m.BackupEnabled.ValueBool() && !state.BackupEnabled.ValueBool()
+	if !m.BackupSchedule.IsUnknown() && (enabling || !m.BackupSchedule.Equal(state.BackupSchedule)) {
 		v := m.BackupSchedule.ValueString()
 		if v != "" {
 			req.BackupSchedule = &v
 		}
 	}
-	if enabling || !m.BackupRetentionDays.Equal(state.BackupRetentionDays) {
+	if !m.BackupRetentionDays.IsUnknown() && (enabling || !m.BackupRetentionDays.Equal(state.BackupRetentionDays)) {
 		v := int(m.BackupRetentionDays.ValueInt64())
 		if v > 0 {
 			req.BackupRetentionDays = &v
 		}
 	}
-	if !m.ParameterGroupID.Equal(state.ParameterGroupID) {
+	if !m.ParameterGroupID.IsUnknown() && !m.ParameterGroupID.Equal(state.ParameterGroupID) {
 		v := m.ParameterGroupID.ValueString()
 		req.ParameterGroupID = &v
+	}
+	// O12: the one PITR field that updates in place. Diff-only, and never sent
+	// unknown — an omitted attribute is pinned to state by UseStateForUnknown,
+	// so plan equals state and nothing is sent, which is what keeps Terraform
+	// from deciding a data-protection setting the practitioner left alone.
+	// The null guard is not belt-and-braces: ValueBool() of a null is `false`,
+	// so a null plan value against a `true` state would PUT a silent disable.
+	if !m.PITREnabled.IsUnknown() && !m.PITREnabled.IsNull() && !m.PITREnabled.Equal(state.PITREnabled) {
+		v := m.PITREnabled.ValueBool()
+		req.PITREnabled = &v
 	}
 
 	return req
@@ -215,31 +331,33 @@ func (m *PostgresInstanceModel) fromAPI(_ context.Context, inst *apiPostgresInst
 
 	// Both backup fields are absent from the response whenever the backend column is NULL --
 	// every instance created with backups off, since the server applies its defaults only when
-	// backup_enabled is true. Reading that back as null would leave the plan carrying null while
-	// the apply reads a real value the moment backups are enabled, so the absent value is mapped
-	// to what the server itself would apply. That substitution is only sound where the NULL
-	// column and the literal are genuinely equivalent, which differs per field:
+	// backup_enabled is true. The two are read back DIFFERENTLY, and the difference is the
+	// point:
 	//
-	//   retention -- equivalent unconditionally. The reaper reads the column as
+	//   retention -- SUBSTITUTED with the floor, unconditionally. The reaper reads the column as
 	//     GREATEST(COALESCE(backup_retention_days, 35), 35) and provisioning's sweep floors a
-	//     zero the same way, so NULL already MEANS 35. Sub-floor legacy values (written before
-	//     the floor existed; no migration backfilled them) are floored here too -- the server
-	//     clamps them on the next update, and reporting the pre-clamp number would mismatch.
+	//     zero the same way, so NULL already MEANS 35 and the substitution states what is
+	//     already true. Sub-floor legacy values (written before the floor existed; no migration
+	//     backfilled them) are floored here too -- the server clamps them on the next update,
+	//     and reporting the pre-clamp number would mismatch.
 	//
-	//   schedule -- equivalent ONLY while backups are off. With backups ON, a NULL schedule is
-	//     not "the default": the sweep's due-list requires `backup_schedule <> ''`, so such a row
-	//     takes no backups at all and appears in no overdue metric. That row is reachable (an
-	//     Update carried no defaults-on-enable before the ADR-0085 work, and nothing backfilled
-	//     the column). Substituting the default there would report a silently-unbacked-up
-	//     instance as healthy, so it is left null and the plan modifier surfaces it as a diff.
-	switch {
-	case inst.BackupSchedule != "":
-		m.BackupSchedule = types.StringValue(inst.BackupSchedule)
-	case inst.BackupEnabled:
-		m.BackupSchedule = types.StringNull()
-	default:
-		m.BackupSchedule = types.StringValue(defaultBackupSchedule)
-	}
+	//   schedule -- NEVER substituted; absent reads back as NULL. This arm used to write
+	//     "0 2 * * *" whenever backups were off, so that state held a value to pin. Two things
+	//     make that wrong now. The platform's schedule default became SIZE-AWARE for a
+	//     point-in-time-recovery instance (daily, weekly or twice-monthly by volume), so there
+	//     is no single literal to substitute -- and worse, toUpdateRequest's enable arm then
+	//     sent that pinned literal EXPLICITLY, which the platform refuses above ~1,260 GB for
+	//     failing the base-backup floor: the exact refusal removing the client-side default was
+	//     meant to avoid, moved from create to update. Null is safe because backup_schedule's
+	//     UseStateForUnknown bails on a null prior value and leaves the plan unknown, which is
+	//     precisely "the platform chooses one for this size".
+	//
+	//     The old text also justified the substitution as healing a legacy
+	//     (backup_enabled = true, schedule NULL) row -- a row that takes no backups and appears
+	//     in no overdue metric. That population is gone: ADR-0085 gave every offer a CHECK
+	//     forbidding it plus a one-time backfill (database migration 000024), so the database,
+	//     not this provider, is what keeps it empty.
+	m.BackupSchedule = stringFromWire(inst.BackupSchedule)
 
 	if inst.BackupRetentionDays > defaultBackupRetentionDays {
 		m.BackupRetentionDays = types.Int64Value(int64(inst.BackupRetentionDays))
@@ -287,5 +405,84 @@ func (m *PostgresInstanceModel) fromAPI(_ context.Context, inst *apiPostgresInst
 		m.TenantID = types.StringValue(inst.TenantID)
 	} else {
 		m.TenantID = types.StringNull()
+	}
+
+	// PITR. Absent stays NULL on every one of these — never substituted the way
+	// the backup fields above are. There is no literal a client may stand in
+	// for them: the window and the paused reason are served on the
+	// single-instance GET alone, and the two booleans are absent from a
+	// database below the P8 release. "The platform did not say" is the honest
+	// value, and it is what a `check` block needs in order to tell it from
+	// "the platform said no".
+	m.PITREnabled = boolFromWire(inst.PITREnabled)
+	m.PITRCapable = boolFromWire(inst.PITRCapable)
+	m.PITRArchivePausedReason = stringFromWire(inst.PITRArchivePausedReason)
+	m.EarliestRestorableTime = stringFromWire(inst.EarliestRestorableTime)
+	m.LatestRestorableTime = stringFromWire(inst.LatestRestorableTime)
+}
+
+// boolFromWire maps an absent optional boolean to null, not false.
+func boolFromWire(v *bool) types.Bool {
+	if v == nil {
+		return types.BoolNull()
+	}
+	return types.BoolValue(*v)
+}
+
+// stringFromWire maps an absent optional string to null, not "".
+func stringFromWire(v string) types.String {
+	if v == "" {
+		return types.StringNull()
+	}
+	return types.StringValue(v)
+}
+
+// restoreFromAttrTypes is the object type of the `restore_from` attribute. It
+// is declared once and shared by the schema, the model and every null/unknown
+// literal, so the three cannot drift into a type mismatch at runtime.
+var restoreFromAttrTypes = map[string]attr.Type{
+	"source_instance_id": types.StringType,
+	"point_in_time":      types.StringType,
+	"backup_id":          types.StringType,
+}
+
+// restoreFrom is the decoded `restore_from` block.
+type restoreFrom struct {
+	SourceInstanceID string
+	PointInTime      string
+	BackupID         string
+}
+
+// decodeRestoreFrom reads the block out of a types.Object, returning nil when
+// the practitioner did not write one. An UNKNOWN object is also nil: that is
+// the shape of every create that omits the block (Optional+Computed with no
+// prior state), and it is never a restore.
+func decodeRestoreFrom(o types.Object) *restoreFrom {
+	if o.IsNull() || o.IsUnknown() {
+		return nil
+	}
+	attrs := o.Attributes()
+	str := func(name string) string {
+		v, ok := attrs[name].(types.String)
+		if !ok || v.IsNull() || v.IsUnknown() {
+			return ""
+		}
+		return v.ValueString()
+	}
+	return &restoreFrom{
+		SourceInstanceID: str("source_instance_id"),
+		PointInTime:      str("point_in_time"),
+		BackupID:         str("backup_id"),
+	}
+}
+
+// toRestoreRequest builds the POST body. The caller has already established
+// that exactly one of the two selectors is set (schema validators, re-checked
+// in Create).
+func (rf *restoreFrom) toRestoreRequest(targetName string) apiRestorePostgresInstanceRequest {
+	return apiRestorePostgresInstanceRequest{
+		TargetName:    targetName,
+		BackupID:      rf.BackupID,
+		PITRTimestamp: rf.PointInTime,
 	}
 }

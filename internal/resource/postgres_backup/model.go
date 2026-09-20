@@ -10,6 +10,12 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
+// backupTypeBase is the platform's own physical backup, taken for point-in-time
+// recovery. It is never customer-creatable (`type` validates to "full"), it
+// cannot be deleted, and it is restored by timestamp rather than by id — so
+// this resource recognises one only to refuse it clearly.
+const backupTypeBase = "base"
+
 // PostgresBackupModel is the Terraform state model for a PostgreSQL backup.
 type PostgresBackupModel struct {
 	ID          types.String `tfsdk:"id"`

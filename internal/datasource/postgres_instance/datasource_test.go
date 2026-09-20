@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -49,6 +50,8 @@ func TestSchemaAttributes(t *testing.T) {
 		"ha_status", "backup_enabled", "backup_schedule", "backup_retention_days",
 		"parameter_group_id", "security_group_id", "admin_username", "created_at",
 		"updated_at", "tenant_id",
+		"pitr_enabled", "pitr_capable", "pitr_archive_paused_reason",
+		"earliest_restorable_time", "latest_restorable_time",
 	} {
 		if _, ok := s.Attributes[attr]; !ok {
 			t.Errorf("attribute %s missing from the schema", attr)
@@ -171,6 +174,12 @@ func readWith(t *testing.T, serverURL string, id, name *string) readResult {
 		"created_at":            tftypes.NewValue(tftypes.String, nil),
 		"updated_at":            tftypes.NewValue(tftypes.String, nil),
 		"tenant_id":             tftypes.NewValue(tftypes.String, nil),
+
+		"pitr_enabled":               tftypes.NewValue(tftypes.Bool, nil),
+		"pitr_capable":               tftypes.NewValue(tftypes.Bool, nil),
+		"pitr_archive_paused_reason": tftypes.NewValue(tftypes.String, nil),
+		"earliest_restorable_time":   tftypes.NewValue(tftypes.String, nil),
+		"latest_restorable_time":     tftypes.NewValue(tftypes.String, nil),
 	})
 
 	var readResp datasource.ReadResponse
@@ -402,8 +411,26 @@ func TestReadByIDRefusesAMysqlInstance(t *testing.T) {
 
 func TestReadByNameResolvesFromTheList(t *testing.T) {
 	var gotQuery atomic.Pointer[url.Values]
+	// A name lookup resolves the id from the LIST and then re-READS the
+	// instance by id: the restorable window and the archive pause reason are
+	// served on the single-instance GET and on nothing else, so the list row
+	// alone would render an instance as having no window at all. The handler
+	// therefore answers both shapes.
 	newListBody := func(pages [][]string) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
+			if id := strings.TrimPrefix(r.URL.Path, "/v1/tenants/tenant-1/databases/"); id != r.URL.Path && id != "" {
+				for _, page := range pages {
+					for _, row := range page {
+						if strings.Contains(row, `"id":"`+id+`"`) {
+							w.Header().Set("Content-Type", "application/json")
+							_, _ = io.WriteString(w, row)
+							return
+						}
+					}
+				}
+				writeFlatError(w, http.StatusNotFound, "not_found", "no such instance")
+				return
+			}
 			q := r.URL.Query()
 			gotQuery.Store(&q)
 			limit, _ := strconv.Atoi(q.Get("limit"))
@@ -516,6 +543,14 @@ func TestReadByNameWalksListPages(t *testing.T) {
 	}
 
 	server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		// The re-read by id that follows a name resolution (see the comment in
+		// TestReadByNameResolvesFromTheList). It is deliberately NOT counted:
+		// this test is about how many LIST pages the walk fetches.
+		if id := strings.TrimPrefix(r.URL.Path, "/v1/tenants/tenant-1/databases/"); id != r.URL.Path && id != "" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, row(id))
+			return
+		}
 		requests.Add(1)
 		offset := r.URL.Query().Get("offset")
 		var rows []string
@@ -651,5 +686,86 @@ func TestReadByNameReportsTheSearchWindowInsteadOfAbsence(t *testing.T) {
 	}
 	if strings.Contains(got, "Check the spelling") {
 		t.Errorf("the not-found copy must not fire for a capped walk: %s", got)
+	}
+}
+
+// --- point-in-time recovery ---
+
+// The window and the archive pause reason are served on the SINGLE-INSTANCE
+// GET and on nothing else, so a name lookup that rendered the list row it
+// matched would report every instance as having no restorable window at all.
+// The two lookup paths must answer identically.
+func TestReadCarriesThePITRWindowOnBothLookupPaths(t *testing.T) {
+	const full = `{"id":"db-billing","name":"billing","type":"postgresql","typeVersion":"16",
+		"flavorId":"db.gp1.small","storageGb":50,"vpcId":"vpc-1","subnetId":"subnet-1",
+		"privateIp":"10.0.1.5","port":5432,"status":"running","createdAt":"2026-01-01T00:00:00Z",
+		"pitrEnabled":true,"pitrCapable":true,"pitrArchivePausedReason":"tenant_cap",
+		"earliestRestorableTime":"2026-09-19T08:00:00Z","latestRestorableTime":"2026-09-20T11:59:31Z"}`
+	// The LIST row carries the two booleans but never the window — exactly as
+	// the platform serves it.
+	const listRow = `{"id":"db-billing","name":"billing","type":"postgresql","typeVersion":"16",
+		"flavorId":"db.gp1.small","storageGb":50,"vpcId":"vpc-1","subnetId":"subnet-1",
+		"privateIp":"10.0.1.5","port":5432,"status":"running","createdAt":"2026-01-01T00:00:00Z",
+		"pitrEnabled":true,"pitrCapable":true}`
+
+	server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/databases/db-billing") {
+			_, _ = io.WriteString(w, full)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"instances":[%s],"totalCount":1}`, listRow)
+	})
+	defer server.Close()
+
+	id, name := "db-billing", "billing"
+	for _, tc := range []struct {
+		label    string
+		id, name *string
+	}{
+		{"by id", &id, nil},
+		{"by name", nil, &name},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			got := readWith(t, server.URL, tc.id, tc.name)
+			if got.diagnostics.HasError() {
+				t.Fatalf("read: %v", got.diagnostics.Errors())
+			}
+			m := got.model
+			if !m.PITREnabled.ValueBool() || !m.PITRCapable.ValueBool() {
+				t.Errorf("pitr_enabled=%v pitr_capable=%v, want both true", m.PITREnabled, m.PITRCapable)
+			}
+			if got := m.PITRArchivePausedReason.ValueString(); got != "tenant_cap" {
+				t.Errorf("pitr_archive_paused_reason = %q", got)
+			}
+			if got := m.EarliestRestorableTime.ValueString(); got != "2026-09-19T08:00:00Z" {
+				t.Errorf("earliest_restorable_time = %q — a name lookup must re-read the instance, not render the list row", got)
+			}
+			if got := m.LatestRestorableTime.ValueString(); got != "2026-09-20T11:59:31Z" {
+				t.Errorf("latest_restorable_time = %q", got)
+			}
+		})
+	}
+}
+
+// A database below the P8 release omits the PITR fields entirely; reading them
+// back as `false` would assert something no service said.
+func TestReadLeavesAbsentPITRFieldsNull(t *testing.T) {
+	server := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"db-old","name":"old","type":"postgresql","typeVersion":"16",
+			"flavorId":"db.gp1.small","storageGb":50,"vpcId":"vpc-1","subnetId":"subnet-1",
+			"status":"running","createdAt":"2026-01-01T00:00:00Z"}`)
+	})
+	defer server.Close()
+
+	id := "db-old"
+	got := readWith(t, server.URL, &id, nil)
+	if got.diagnostics.HasError() {
+		t.Fatalf("read: %v", got.diagnostics.Errors())
+	}
+	if !got.model.PITREnabled.IsNull() || !got.model.PITRCapable.IsNull() {
+		t.Errorf("pitr_enabled=%v pitr_capable=%v, want both null when the platform does not report them",
+			got.model.PITREnabled, got.model.PITRCapable)
 	}
 }

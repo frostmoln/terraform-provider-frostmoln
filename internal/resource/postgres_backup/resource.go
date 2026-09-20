@@ -106,9 +106,10 @@ func (r *postgresBackupResource) Schema(_ context.Context, _ resource.SchemaRequ
 				},
 			},
 			"type": schema.StringAttribute{
-				Description: "The type of backup. Only \"full\" is supported (every backup is a full dump). Defaults to \"full\".",
-				Optional:    true,
-				Computed:    true,
+				Description: "The type of backup. Only \"full\" is supported (every backup you create is a full dump). Defaults to \"full\".\n\n" +
+					"    The platform also takes `base` backups of its own on instances with point-in-time recovery, and those appear in the backup list. They are not managed here: importing or reading one is refused with an explanation, they cannot be deleted, and a point-in-time restore uses `restore_from` on `frostmoln_postgres_instance` rather than a backup id.",
+				Optional: true,
+				Computed: true,
 				Validators: []validator.String{
 					stringvalidator.OneOf("full"),
 				},
@@ -285,6 +286,30 @@ func (r *postgresBackupResource) Read(ctx context.Context, req resource.ReadRequ
 	backup, err := client.ParseResponse[apiPostgresBackup](apiResp)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to parse PostgreSQL backup response", err.Error())
+		return
+	}
+
+	// A `base` row is not a backup this resource can manage, and Read is where
+	// one arrives: by import, or when an id in state turns out to name one.
+	//
+	// It is caught HERE, with a sentence that says what a base is, rather than
+	// left to the schema's OneOf("full") validator — which would answer the
+	// same situation with "Attribute type value must be one of: [\"full\"], got:
+	// \"base\"", a message about this provider's validator rather than about the
+	// platform. Base backups are taken by the platform for point-in-time
+	// recovery; the customer neither creates nor deletes them.
+	if backup.Type == backupTypeBase {
+		resp.Diagnostics.AddError(
+			"Base backups are managed by the platform",
+			fmt.Sprintf("Backup %s of instance %s is a `base` backup: a physical copy the platform takes "+
+				"on its own to serve point-in-time restores. Terraform cannot manage one — it is not "+
+				"created here, it cannot be deleted (the platform refuses), and it is restored by "+
+				"timestamp rather than by id.\n\n"+
+				"Remove it from the configuration and from state (`terraform state rm`). To restore to a "+
+				"point in time, set `restore_from` with `point_in_time` on a new "+
+				"`frostmoln_postgres_instance`.",
+				backup.ID, backup.InstanceID),
+		)
 		return
 	}
 

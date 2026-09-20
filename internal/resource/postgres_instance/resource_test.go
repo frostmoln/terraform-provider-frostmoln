@@ -273,10 +273,18 @@ func TestPostgresInstanceModelFromAPINulls(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
 
-	// Not null: an absent schedule/retention is normalized to the value the server applies on
-	// enable, so UseStateForUnknown has something to pin (see TestSchemaBackupAttributes).
-	if model.BackupSchedule.IsNull() || model.BackupRetentionDays.IsNull() {
-		t.Error("expected normalized backup_schedule/backup_retention_days, got null")
+	// Retention is normalized to the ADR-0085 floor (a NULL column already MEANS 35 to the
+	// reaper). The SCHEDULE is not, and must not be: the platform's schedule default is
+	// size-aware for a point-in-time-recovery instance, so any literal substituted here would
+	// be a copy of one rung of the platform's ladder — and it used to be PUT explicitly on the
+	// enable, which is the refusal above ~1,260 GB that removing the client-side default was
+	// meant to avoid. Null is safe because backup_schedule's UseStateForUnknown bails on a null
+	// prior value, leaving the plan unknown: "the platform chooses".
+	if !model.BackupSchedule.IsNull() {
+		t.Errorf("backup_schedule = %v, want null — the platform owns the size-aware default", model.BackupSchedule)
+	}
+	if model.BackupRetentionDays.IsNull() {
+		t.Error("expected the retention floor, got null")
 	}
 	if !model.ParameterGroupID.IsNull() {
 		t.Error("expected null parameter_group_id")
@@ -364,11 +372,24 @@ func TestSchemaBackupAttributes(t *testing.T) {
 	if sched.Default != nil {
 		t.Error("backup_schedule must not carry a schema Default: dropping it from config would then rewrite the server's schedule")
 	}
+	// UseStateForUnknown, and NOT planmod.StringUseStateOrDefault.
+	//
+	// The old modifier substituted "0 2 * * *" for a null state, and the platform no longer has
+	// one schedule default — it picks daily, weekly or twice-monthly by the instance's size, so
+	// planning the daily literal is an "inconsistent result after apply" on a create and on a
+	// resize across a threshold.
+	//
+	// But NO modifier at all is wrong too, and that is what this pins. MarkComputedNilsAsUnknown
+	// keys ONLY on the config value, so a Computed attribute whose config is null is planned
+	// unknown on EVERY changing plan regardless of what state holds — `toUpdateRequest` then
+	// skips it as unknown, and an enable went out as {"backupEnabled":true,...} with no schedule
+	// at all. UseStateForUnknown pins a RECORDED value back and bails on a null prior value,
+	// leaving unknown exactly where the platform must choose.
 	if len(sched.PlanModifiers) != 1 {
 		t.Fatalf("backup_schedule has %d plan modifiers, want exactly 1 (UseStateForUnknown)", len(sched.PlanModifiers))
 	}
-	if got := sched.PlanModifiers[0].Description(ctx); got != useStateOrDefaultDescription {
-		t.Errorf("backup_schedule plan modifier = %q, want planmod.StringUseStateOrDefault (%q)", got, useStateOrDefaultDescription)
+	if got := sched.PlanModifiers[0].Description(ctx); got == useStateOrDefaultDescription {
+		t.Error("backup_schedule must NOT use planmod.StringUseStateOrDefault — it substitutes a literal from a platform ladder this provider must not copy")
 	}
 
 	ret, ok := resp.Schema.Attributes["backup_retention_days"].(schema.Int64Attribute)
@@ -390,16 +411,21 @@ func TestSchemaBackupAttributes(t *testing.T) {
 }
 
 // useStateOrDefaultDescription is planmod.{String,Int64}UseStateOrDefault's own description
-// string; the plan-modifier interface exposes no other identity. Plain UseStateForUnknown is
-// NOT interchangeable here — it copies a null prior state into the plan (see planmod).
+// string; the plan-modifier interface exposes no other identity.
 const useStateOrDefaultDescription = "keeps the value already in state; a null state plans the server-side default"
 
 // TestPostgresInstanceModelFromAPIBackupDefaults covers the backups-off read: the backend
-// column is NULL, so the response omits both fields. They must land in state as the values an
-// enable would apply, NOT as null — UseStateForUnknown has nothing to pin against a null prior
-// state, so a null here means the plan still carries null across a backups-off -> backups-on
-// flip and the server's default breaks the apply. Values are literals matching the database
-// service's shared servicekit/managedbackup DefaultBackupSchedule / BackupRetentionMinDays.
+// column is NULL, so the response omits both fields.
+//
+// Retention lands as the ADR-0085 floor — a NULL column already MEANS 35 to the reaper, which
+// reads GREATEST(COALESCE(backup_retention_days, 35), 35), so the substitution states what is
+// already true. The SCHEDULE lands as NULL, and used to land as "0 2 * * *": the platform's
+// schedule default is SIZE-AWARE for a point-in-time-recovery instance (daily, weekly or
+// twice-monthly by volume), so the literal was a copy of one rung of a ladder the platform
+// owns — and worse, `toUpdateRequest`'s enable arm then sent that pinned literal EXPLICITLY,
+// which the platform refuses above ~1,260 GB for failing the base-backup floor. Null is safe
+// now because backup_schedule's UseStateForUnknown bails on a null prior value and leaves the
+// plan unknown, which is exactly "the platform picks one for this size".
 func TestPostgresInstanceModelFromAPIBackupDefaults(t *testing.T) {
 	ctx := context.Background()
 	diags := diag.Diagnostics{}
@@ -409,8 +435,8 @@ func TestPostgresInstanceModelFromAPIBackupDefaults(t *testing.T) {
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
-	if got := model.BackupSchedule.ValueString(); got != "0 2 * * *" {
-		t.Errorf("backup_schedule = %q, want %q", got, "0 2 * * *")
+	if !model.BackupSchedule.IsNull() {
+		t.Errorf("backup_schedule = %v, want null — never a fabricated literal", model.BackupSchedule)
 	}
 	if got := model.BackupRetentionDays.ValueInt64(); got != 35 {
 		t.Errorf("backup_retention_days = %d, want 35 (ADR-0085 object-lock floor)", got)
@@ -507,7 +533,25 @@ func withExtensionSetDefaults(m PostgresInstanceModel) PostgresInstanceModel {
 	if reflect.DeepEqual(m.Extensions, types.Set{}) {
 		m.Extensions = types.SetNull(types.StringType)
 	}
+	// Same problem, same fix, for the restore_from object: a zero types.Object
+	// carries no attribute types and cannot ride Set().
+	if reflect.DeepEqual(m.RestoreFrom, types.Object{}) {
+		m.RestoreFrom = types.ObjectNull(restoreFromAttrTypes)
+	}
 	return m
+}
+
+// createRequest and updateRequest pair a plan with a CONFIG carrying the same
+// values. Create and Update read the configuration to tell an attribute the
+// practitioner WROTE from one the plan merely resolved — these fixtures build a
+// single model and use it for both, which is what a configuration that omits
+// nothing looks like. A test that needs the two to differ builds its own config.
+func createRequest(plan tfsdk.Plan) resource.CreateRequest {
+	return resource.CreateRequest{Plan: plan, Config: tfsdk.Config{Schema: plan.Schema, Raw: plan.Raw}}
+}
+
+func updateRequest(plan tfsdk.Plan, state tfsdk.State) resource.UpdateRequest {
+	return resource.UpdateRequest{Plan: plan, State: state, Config: tfsdk.Config{Schema: plan.Schema, Raw: plan.Raw}}
 }
 
 func buildState(t *testing.T, model PostgresInstanceModel) tfsdk.State {
@@ -622,7 +666,7 @@ func TestCreate(t *testing.T) {
 
 	r := newResource(newClient(t, server))
 	createResp := resource.CreateResponse{State: emptyState(t)}
-	r.Create(context.Background(), resource.CreateRequest{Plan: buildPlan(t, fullPlanModel())}, &createResp)
+	r.Create(context.Background(), createRequest(buildPlan(t, fullPlanModel())), &createResp)
 
 	if createResp.Diagnostics.HasError() {
 		t.Fatalf("create failed: %v", createResp.Diagnostics.Errors())
@@ -649,7 +693,7 @@ func TestCreateAPIError(t *testing.T) {
 
 	r := newResource(newClient(t, server))
 	createResp := resource.CreateResponse{State: emptyState(t)}
-	r.Create(context.Background(), resource.CreateRequest{Plan: buildPlan(t, fullPlanModel())}, &createResp)
+	r.Create(context.Background(), createRequest(buildPlan(t, fullPlanModel())), &createResp)
 	if !createResp.Diagnostics.HasError() {
 		t.Error("expected error for API failure on create")
 	}
@@ -664,7 +708,7 @@ func TestCreateBadResponseBody(t *testing.T) {
 
 	r := newResource(newClient(t, server))
 	createResp := resource.CreateResponse{State: emptyState(t)}
-	r.Create(context.Background(), resource.CreateRequest{Plan: buildPlan(t, fullPlanModel())}, &createResp)
+	r.Create(context.Background(), createRequest(buildPlan(t, fullPlanModel())), &createResp)
 	if !createResp.Diagnostics.HasError() {
 		t.Error("expected error for bad response body")
 	}
@@ -686,7 +730,7 @@ func TestCreatePollingErrorState(t *testing.T) {
 
 	r := newResource(newClient(t, server))
 	createResp := resource.CreateResponse{State: emptyState(t)}
-	r.Create(context.Background(), resource.CreateRequest{Plan: buildPlan(t, fullPlanModel())}, &createResp)
+	r.Create(context.Background(), createRequest(buildPlan(t, fullPlanModel())), &createResp)
 	if !createResp.Diagnostics.HasError() {
 		t.Error("expected error when instance enters failed state")
 	}
@@ -841,7 +885,7 @@ func TestUpdate(t *testing.T) {
 		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
 	})
 	updateResp := resource.UpdateResponse{State: state}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	r.Update(context.Background(), updateRequest(plan, state), &updateResp)
 
 	if updateResp.Diagnostics.HasError() {
 		t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
@@ -909,7 +953,7 @@ func TestUpdateStorageOnlySkipsPut(t *testing.T) {
 	plan := buildPlan(t, grown)
 
 	updateResp := resource.UpdateResponse{State: state}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	r.Update(context.Background(), updateRequest(plan, state), &updateResp)
 	if updateResp.Diagnostics.HasError() {
 		t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
 	}
@@ -949,7 +993,7 @@ func TestUpdateShrinkRejected(t *testing.T) {
 	plan := buildPlan(t, shrunk)
 
 	updateResp := resource.UpdateResponse{State: state}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	r.Update(context.Background(), updateRequest(plan, state), &updateResp)
 	if !updateResp.Diagnostics.HasError() {
 		t.Error("expected error rejecting a storage shrink")
 	}
@@ -985,7 +1029,7 @@ func TestUpdateAPIError(t *testing.T) {
 		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
 	})
 	updateResp := resource.UpdateResponse{State: state}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	r.Update(context.Background(), updateRequest(plan, state), &updateResp)
 	if !updateResp.Diagnostics.HasError() {
 		t.Error("expected error for API failure on update")
 	}
@@ -1198,7 +1242,7 @@ func TestCreate202TimeoutStillRecordsTheInstance(t *testing.T) {
 	r.pollInterval = 10 * time.Millisecond
 	r.pollTimeout = 120 * time.Millisecond
 	createResp := resource.CreateResponse{State: emptyState(t)}
-	r.Create(context.Background(), resource.CreateRequest{Plan: buildPlan(t, fullPlanModel())}, &createResp)
+	r.Create(context.Background(), createRequest(buildPlan(t, fullPlanModel())), &createResp)
 
 	if !createResp.Diagnostics.HasError() {
 		t.Fatal("expected the create to fail: the operation never completed")
@@ -1263,7 +1307,7 @@ func TestCreate202WithoutAResourceIDStillWorks(t *testing.T) {
 	r.pollInterval = 10 * time.Millisecond
 	r.pollTimeout = 3 * time.Second
 	createResp := resource.CreateResponse{State: emptyState(t)}
-	r.Create(context.Background(), resource.CreateRequest{Plan: buildPlan(t, fullPlanModel())}, &createResp)
+	r.Create(context.Background(), createRequest(buildPlan(t, fullPlanModel())), &createResp)
 
 	if createResp.Diagnostics.HasError() {
 		t.Fatalf("a 202 without resourceId must still create: %v", createResp.Diagnostics.Errors())
@@ -1302,7 +1346,7 @@ func TestUpdateFlavorChangeRejected(t *testing.T) {
 	plan := buildPlan(t, resized)
 
 	updateResp := resource.UpdateResponse{State: state}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	r.Update(context.Background(), updateRequest(plan, state), &updateResp)
 	if !updateResp.Diagnostics.HasError() {
 		t.Error("expected error rejecting a flavor_id change")
 	}
@@ -1357,7 +1401,7 @@ func TestTimeoutsBlockOverridesTheDefaultBudget(t *testing.T) {
 
 	start := time.Now()
 	createResp := resource.CreateResponse{State: emptyState(t)}
-	r.Create(context.Background(), resource.CreateRequest{Plan: buildPlan(t, planModel)}, &createResp)
+	r.Create(context.Background(), createRequest(buildPlan(t, planModel)), &createResp)
 
 	if !createResp.Diagnostics.HasError() {
 		t.Fatal("expected the create to fail: the operation never completed")
@@ -1408,7 +1452,7 @@ func TestUpdateStorageResizeWaitsForTheOperation(t *testing.T) {
 	c.SetTenantIDForTest("t-1")
 	r := &postgresInstanceResource{client: c, pollInterval: 5 * time.Millisecond}
 
-	if err := r.resizeStorage(context.Background(), "pg-1", 40, 200*time.Millisecond); err != nil {
+	if err := r.resizeStorage(context.Background(), "pg-1", 40, nil, 200*time.Millisecond); err != nil {
 		t.Fatalf("resize whose operation completed must succeed: %v", err)
 	}
 	if polled == 0 {
@@ -1445,7 +1489,7 @@ func TestUpdateStorageResizeOperationRefusedSurfaces(t *testing.T) {
 	c.SetTenantIDForTest("t-1")
 	r := &postgresInstanceResource{client: c, pollInterval: 5 * time.Millisecond}
 
-	err := r.resizeStorage(context.Background(), "pg-1", 40, 200*time.Millisecond)
+	err := r.resizeStorage(context.Background(), "pg-1", 40, nil, 200*time.Millisecond)
 	if err == nil {
 		t.Fatal("a refused resize operation must fail the update, not report success")
 	}

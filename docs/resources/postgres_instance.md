@@ -7,8 +7,10 @@ description: |-
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — ha_enabled, subnet_id, version, vpc_id: the platform has no in-place migration for it — a change re-creates the instance.
+  Create-immutable — restore_from: (maintainer note: if TestScopeDeclarations reports this path is "not an attribute of this resource", the plan modifier was deleted, not the attribute renamed — the walk only records a nested object that carries its own modifiers) a restore is how the instance came into existence, not a setting on it — the platform never reports one back and nothing can re-run it in place, so changing it from one source or point in time to another can only mean a different database. Removing it clears the record in a single in-place update, and importing an instance that was restored records nothing — neither is a replacement.
   Create-only, change refused (not replaced) — parameter_group_id: the platform stores the parameter group reference but its parameter-apply is an unimplemented stub — the values never reach the running server on create or on update, so any value is refused outright at plan and apply instead of recorded as intent that is not enacted.
-  Observed, not enacted — private_ip: platform-assigned from the subnet at create. public_ip: platform-assigned where the offer exposes one.
+  Not enacted state — restore_from.backup_id: create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards. restore_from.point_in_time: create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards. restore_from.source_instance_id: create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards.
+  Observed, not enacted — earliest_restorable_time: the platform moves it as write-ahead log is reaped and as newer base backups supersede older ones. latest_restorable_time: the platform advances it with every archived write-ahead log segment, continuously, whether or not anything is being applied. pitr_archive_paused_reason: the platform pauses write-ahead log archiving under the customer (a tenant storage cap, or a fleet-wide pause) and clears it again on its own. pitr_capable: stamped by the platform when the instance is created and never changed afterwards — it says whether point-in-time recovery can ever be turned on, which no configuration can grant. private_ip: platform-assigned from the subnet at create. public_ip: platform-assigned where the offer exposes one.
 ---
 
 # frostmoln_postgres_instance (Resource)
@@ -21,9 +23,13 @@ Manages a managed PostgreSQL database instance in the Frostmoln platform.
 
 **Create-immutable** — `ha_enabled`, `subnet_id`, `version`, `vpc_id`: the platform has no in-place migration for it — a change re-creates the instance.
 
+**Create-immutable** — `restore_from`: (maintainer note: if TestScopeDeclarations reports this path is "not an attribute of this resource", the plan modifier was deleted, not the attribute renamed — the walk only records a nested object that carries its own modifiers) a restore is how the instance came into existence, not a setting on it — the platform never reports one back and nothing can re-run it in place, so changing it from one source or point in time to another can only mean a different database. Removing it clears the record in a single in-place update, and importing an instance that was restored records nothing — neither is a replacement.
+
 **Create-only, change refused (not replaced)** — `parameter_group_id`: the platform stores the parameter group reference but its parameter-apply is an unimplemented stub — the values never reach the running server on create or on update, so any value is refused outright at plan and apply instead of recorded as intent that is not enacted.
 
-**Observed, not enacted** — `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-assigned where the offer exposes one.
+**Not enacted state** — `restore_from.backup_id`: create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards. `restore_from.point_in_time`: create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards. `restore_from.source_instance_id`: create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards.
+
+**Observed, not enacted** — `earliest_restorable_time`: the platform moves it as write-ahead log is reaped and as newer base backups supersede older ones. `latest_restorable_time`: the platform advances it with every archived write-ahead log segment, continuously, whether or not anything is being applied. `pitr_archive_paused_reason`: the platform pauses write-ahead log archiving under the customer (a tenant storage cap, or a fleet-wide pause) and clears it again on its own. `pitr_capable`: stamped by the platform when the instance is created and never changed afterwards — it says whether point-in-time recovery can ever be turned on, which no configuration can grant. `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-assigned where the offer exposes one.
 
 ## Example Usage
 
@@ -37,8 +43,20 @@ resource "frostmoln_postgres_instance" "main" {
   subnet_id  = frostmoln_subnet.db.id
 
   backup_enabled        = true
-  backup_schedule       = "0 2 * * *"
   backup_retention_days = 35
+
+  # backup_schedule is deliberately NOT set: the platform picks one for the
+  # instance's storage size and reports it back, so it shows as "known after
+  # apply" on create and on any storage_gb change. Larger volumes need longer
+  # between scheduled backups; set it yourself only when you want a specific
+  # window, and the platform's refusal names the floor for your size.
+
+  # Point-in-time recovery: any second inside the restorable window, restored
+  # onto a NEW instance. Write it EXPLICITLY — the platform stamps it at
+  # create and the stamp is permanent, so an instance created without it can
+  # never be given it. PostgreSQL only, needs backup_enabled, not available
+  # with ha_enabled.
+  pitr_enabled = true
 
   # Extensions are platform catalog names, checked against the live catalog
   # at plan time. Preload-required ones (timescaledb, pg_stat_statements
@@ -61,6 +79,42 @@ resource "frostmoln_postgres_instance" "main" {
 output "postgres_endpoint" {
   value = "${frostmoln_postgres_instance.main.private_ip}:${frostmoln_postgres_instance.main.port}"
 }
+
+output "postgres_restorable_window" {
+  description = "When this instance can be restored to, as the platform reported it at the last refresh. latest_restorable_time advances continuously, so quote it, do not pin to it."
+  value = {
+    from   = frostmoln_postgres_instance.main.earliest_restorable_time
+    to     = frostmoln_postgres_instance.main.latest_restorable_time
+    paused = frostmoln_postgres_instance.main.pitr_archive_paused_reason
+  }
+}
+
+# Restore to a point in time: a NEW instance, built from another one's
+# backups. The source is untouched.
+#
+# The platform builds the target from the source's own shape, so version,
+# flavor_id, vpc_id and subnet_id must equal the source's; storage_gb may be
+# larger (grown in place afterwards) but not smaller.
+#
+# restore_from is create-only, and records what Terraform asked for — the
+# platform reports no such field. Removing it later clears that record in one
+# in-place update and changes nothing on the platform; importing a restored
+# instance records nothing. Changing it to a different source or instant
+# REPLACES this resource, which destroys the restored database, and adding it
+# to an instance that already exists is refused.
+resource "frostmoln_postgres_instance" "recovered" {
+  name       = "app-db-recovered"
+  version    = frostmoln_postgres_instance.main.version
+  flavor_id  = frostmoln_postgres_instance.main.flavor_id
+  storage_gb = frostmoln_postgres_instance.main.storage_gb
+  vpc_id     = frostmoln_postgres_instance.main.vpc_id
+  subnet_id  = frostmoln_postgres_instance.main.subnet_id
+
+  restore_from = {
+    source_instance_id = frostmoln_postgres_instance.main.id
+    point_in_time      = "2026-09-20T14:30:00Z"
+  }
+}
 ```
 
 <!-- schema generated by tfplugindocs -->
@@ -79,24 +133,51 @@ output "postgres_endpoint" {
 
 - `backup_enabled` (Boolean) Whether automated backups are enabled.
 - `backup_retention_days` (Number) Number of days to retain backups. Minimum 35 (backups are immutably object-locked for 35 days); maximum 90. Defaults to 35 server-side.
-- `backup_schedule` (String) Cron expression for the backup schedule. Defaults to "0 2 * * *" server-side.
+- `backup_schedule` (String) Cron expression for the backup schedule. When omitted, the platform picks one for the instance's storage size and reports it back, so the value shows as "known after apply" on create and on any `storage_gb` change. Larger volumes need longer between scheduled backups; the platform owns that rule and its refusal names the floor for your size.
 - `extensions` (Set of String) The set of PostgreSQL extension catalog names this instance has enabled (e.g. "timescaledb", "pg_stat_statements"). Names are PLATFORM CATALOG VALUES, never free-strings: only what the platform's extension catalog advertises can be enabled, and every name is checked against that live catalog at plan time — an unknown name, a name the platform does not offer for this instance's PostgreSQL version, or a deprecated name is refused at plan with the platform's own typed wording. When the catalog cannot be read at plan time the plan only WARNS and continues; the platform enforces the same check when the request is made and refuses with its typed wording. Enabling or disabling requires the database-extensions entitlement on the tenant (without it the platform refuses with feature_not_enabled) and is applied IN PLACE — the cost is per-extension, not per-operation: an extension that requires preload (timescaledb and pg_stat_statements in the catalog today) pays a restart window and the instance is unavailable while that apply runs; the apply for the rest is in place, with no restart. Highly available instances are refused by the platform until coordinated node-restart sequencing ships. Because the platform runs one operation at a time per instance, Terraform applies the diff SERIALIZED: the enables first, then the disables, each waited to its recorded verdict before the next starts; a plan with both waits twice. The platform records outcomes once, at the end: while an enable is running the instance's extension state shows the asked-for revision with no new entries, and a failed enable is recorded with the platform's reason. An enable or disable made outside Terraform (portal, fm) is refreshed into this attribute and removed or re-added on the next apply as ordinary configuration drift. Omitting the attribute keeps whatever the instance has; setting it to an explicit empty set (`[]`) disables every extension, one restart window for each preload-required one (the rest disable in place). Extensions are a PostgreSQL offer; MySQL instances have no extensions.
 - `ha_enabled` (Boolean) Whether high availability is enabled with a standby replica.
 - `parameter_group_id` (String) The ID of the parameter group to reference on the instance. The platform stores the reference but never applies it — its parameter-apply endpoint is an unimplemented stub, so the group's values never reach the running server on create or on update. Setting it is refused at plan time, with the constraint and remedy in the refusal terraform prints; leave it unset until the platform ships a working apply path.
+- `pitr_enabled` (Boolean) Whether point-in-time recovery is enabled: the platform continuously archives write-ahead log segments so the database can be restored to any second inside its restorable window, onto a NEW instance. PostgreSQL only, requires `backup_enabled`, and not available on highly-available instances.
+
+    SET IT EXPLICITLY TO GET IT. The platform stamps point-in-time recovery at CREATE and the stamp is permanent: an instance created without it can never be given it, and the only remedy is to create another instance (restoring this one produces a capable target, see `restore_from`). Terraform therefore sends this field only when your configuration writes it — omit it and you get whatever the platform defaults to, which today is OFF. Write `pitr_enabled = true` on create if you want the feature.
+
+    It can be turned off and on again in place on an instance that is capable of it (`pitr_capable`). Turning it off stops restores to earlier times; the backups already retained are kept, and billed, until their retention ends. Turning it back on within 24 hours of turning it (or `backup_enabled`) off is refused, and the window restarts from the next base backup rather than resuming.
+- `restore_from` (Attributes) Create this instance by restoring another one, instead of creating an empty database. The platform provisions a NEW instance from the source's backups; the source is untouched.
+
+    The platform builds the target from the source's own shape, so the source must be a PostgreSQL instance and this resource's `version`, `flavor_id`, `vpc_id` and `subnet_id` must equal the source's. Terraform reads the source first and refuses with the mismatch named, rather than quietly creating a plain empty database instead. `storage_gb` may be larger than the source's and is grown in place after the restore; it may not be smaller.
+
+    Create-only, and it records what Terraform asked for rather than anything the platform reports — there is no API field that says how an instance came to exist. Removing it afterwards clears that record in a single in-place update that changes nothing on the platform, and the plan then stays clean. Importing a restored instance records nothing, and plans nothing. Changing it to a DIFFERENT source or instant REPLACES this resource, which destroys the database it created — treat it as you would `vpc_id`. Adding it to an instance that already exists is refused: an instance cannot be un-created into a restore. (see [below for nested schema](#nestedatt--restore_from))
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
 
 - `admin_username` (String) The admin username for the PostgreSQL instance.
 - `created_at` (String) The timestamp when the instance was created.
+- `earliest_restorable_time` (String) The earliest instant this instance can be restored to (RFC 3339, UTC), null when there is no restorable window right now — point-in-time recovery is off, or the first base backup has not finished, or a gap restarted the window. Read from the instance GET only, and shows as "known after apply" whenever anything else on the instance changes, because the platform moves it as write-ahead log is reaped.
 - `ha_status` (String) Availability state of the instance: disabled, provisioning, healthy, degraded, failing_over or no_standby. This is what the platform actually has, as opposed to ha_enabled, which records what was requested at create time. An instance created before high availability was built reports ha_enabled = true with ha_status = no_standby.
 - `id` (String) The unique identifier of the PostgreSQL instance.
+- `latest_restorable_time` (String) The latest instant this instance can be restored to (RFC 3339, UTC), null when there is no restorable window right now. It advances continuously while archiving runs, so it is ALWAYS "known after apply" on a changing instance and is a snapshot, never a promise: quote it, then restore against the platform's own check, which refuses a target outside the window and names both bounds. Read from the instance GET only.
+- `pitr_archive_paused_reason` (String) Why the platform has paused write-ahead log archiving for this instance, null when it is not paused. `tenant_cap` means the tenant's retained point-in-time-recovery storage has reached its cap — the window is broken until the next SCHEDULED base backup re-forms it, which on a weekly schedule can be up to a week. `platform_disabled` means the platform has archiving switched off fleet-wide. Any other value means archiving is paused for a reason this provider release does not know about. Read from the instance GET only, and shows as "known after apply" whenever anything else on the instance changes.
+- `pitr_capable` (Boolean) Whether this instance CAN do point-in-time recovery, as opposed to whether it currently does (`pitr_enabled`). Fixed when the instance is created and never changes afterwards, so it is what tells "turned off" apart from "cannot be turned on". Shows as "known after apply" whenever anything else on the instance changes.
 - `port` (Number) The port number the PostgreSQL instance is listening on.
 - `private_ip` (String) The private IP address of the PostgreSQL instance.
 - `public_ip` (String) The public IP address, if assigned.
 - `status` (String) The current status of the PostgreSQL instance.
 - `tenant_id` (String) The tenant ID that owns this instance.
 - `updated_at` (String) The timestamp when the instance was last updated.
+
+<a id="nestedatt--restore_from"></a>
+### Nested Schema for `restore_from`
+
+Required:
+
+- `source_instance_id` (String) The PostgreSQL instance to restore FROM. It must exist and be visible to this tenant; a source that answers 404 fails the create.
+
+Optional:
+
+- `backup_id` (String) Restore from this backup. It must be a backup of the source instance and must not be a `base` backup — base backups exist to serve point-in-time restores and the platform refuses one named here; use `point_in_time` instead.
+- `point_in_time` (String) Restore to this instant (RFC 3339, e.g. `2026-09-20T14:30:00Z`) instead of to a named backup. It must fall inside the source's restorable window — read `earliest_restorable_time` and `latest_restorable_time` off the source and note that the later bound advances continuously, so the platform, not this provider, is what checks it. Requires point-in-time recovery on the source.
+
 
 <a id="nestedblock--timeouts"></a>
 ### Nested Schema for `timeouts`

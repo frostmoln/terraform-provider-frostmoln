@@ -271,10 +271,14 @@ func walkScopeAttributes(t *testing.T, prefix string, attrs map[string]schema.At
 
 		switch nested := a.(type) {
 		case schema.SingleNestedAttribute:
-			if len(nested.PlanModifiers) > 0 {
-				t.Fatalf("%s: object-level plan modifiers are not replayed — extend scopeReplacesOnChange", attrPath)
-			}
 			walkScopeAttributes(t, attrPath, nested.Attributes, fn)
+			// An object carrying its OWN plan modifiers is planned and
+			// replaced as one value (`restore_from`), so the parent gets a
+			// verdict of its own on top of its children's. Without modifiers
+			// the parent is pure grouping and only the children are judged.
+			if len(nested.PlanModifiers) > 0 {
+				fn(attrPath, a)
+			}
 		case schema.ListNestedAttribute:
 			if len(nested.PlanModifiers) > 0 {
 				t.Fatalf("%s: object-level plan modifiers are not replayed — extend scopeReplacesOnChange", attrPath)
@@ -424,10 +428,49 @@ func scopeReplacesOnChange(t *testing.T, attrPath string, a schema.Attribute) bo
 		}
 		return replace
 
+	case schema.SingleNestedAttribute:
+		// Only reached for an object that carries its own plan modifiers (see
+		// walkScopeAttributes): the parent's verdict, its children judged
+		// separately. The config value is SET to the new value here, as in
+		// every other arm, so a RequiresReplaceIf that asks "is this
+		// configured, and does it differ?" fires exactly as on a real plan.
+		objType, ok := a.GetType().(types.ObjectType)
+		if !ok {
+			t.Fatalf("%s: object-level modifiers on a custom object type %T are not replayed — extend scopeReplacesOnChange", attrPath, a.GetType())
+		}
+		req := planmodifier.ObjectRequest{
+			Path: path.Root(attrPath), State: updateState, Plan: updatePlan,
+			StateValue: scopeObjectValue(t, attrPath, objType, "a"),
+			PlanValue:  scopeObjectValue(t, attrPath, objType, "b"),
+		}
+		req.ConfigValue = req.PlanValue
+		replace := false
+		for _, m := range a.PlanModifiers {
+			resp := &planmodifier.ObjectResponse{PlanValue: req.PlanValue}
+			m.PlanModifyObject(context.Background(), req, resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("%s: plan modifier errored under the synthetic replay — it likely reads sibling attributes this walk does not populate; extend the replay before trusting the replacement verdict", attrPath)
+			}
+			req.PlanValue = resp.PlanValue
+			replace = replace || resp.RequiresReplace
+		}
+		return replace
+
 	default:
 		t.Fatalf("%s: unsupported attribute type %T — extend scopeReplacesOnChange", attrPath, a)
 		return false
 	}
+}
+
+// scopeObjectValue builds one fully-known object of objType, every field seeded
+// from scopeElementValue so two seeds differ in every field.
+func scopeObjectValue(t *testing.T, attrPath string, objType types.ObjectType, seed string) types.Object {
+	t.Helper()
+	attrs := make(map[string]attr.Value, len(objType.AttrTypes))
+	for name, aType := range objType.AttrTypes {
+		attrs[name] = scopeElementValue(t, attrPath+"."+name, aType, seed)
+	}
+	return types.ObjectValueMust(objType.AttrTypes, attrs)
 }
 
 func scopeElementValue(t *testing.T, attrPath string, elemType attr.Type, seed string) attr.Value {

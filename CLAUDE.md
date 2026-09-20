@@ -150,6 +150,15 @@ destroy/recreate: the VM, the volume and its data.
 just one modifier too late, so the planned value was pinned to state either way —
 the ordering decides only whether a replacement is recorded.
 
+**A `RequiresReplaceIf` whose predicate reads `ConfigValue` cannot be held by
+`mustReplaceOnRealChange`.** `replayModifiers` passes a NULL config on every arm
+— that is the "practitioner omitted the attribute" case the ordering trap lives
+in — so such a predicate never fires there and `onChange` comes back false
+however the modifiers are written. Do not conclude the guard is broken and do
+not add the attribute to the table: `TestScopeDeclarations` holds that direction
+instead, because its own replay sets the config to the new value.
+`frostmoln_postgres_instance`'s `restore_from` is the example.
+
 `internal/provider/planmodifier_order_test.go` enforces this behaviourally for
 every Optional+Computed attribute of every resource. A new create-only
 Optional+Computed attribute goes in its `mustReplaceOnRealChange` table, which

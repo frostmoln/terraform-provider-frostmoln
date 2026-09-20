@@ -78,7 +78,7 @@ func TestCreateRefusesParameterGroup(t *testing.T) {
 	plan := buildPlan(t, instanceWithParameterGroup(t, types.StringValue("pg-1")))
 
 	createResp := resource.CreateResponse{State: emptyState(t)}
-	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+	r.Create(context.Background(), createRequest(plan), &createResp)
 
 	if !createResp.Diagnostics.HasError() {
 		t.Fatal("expected the create carrying parameter_group_id to be refused")
@@ -110,7 +110,7 @@ func TestUpdateRefusesParameterGroup(t *testing.T) {
 	state := buildState(t, instanceWithParameterGroup(t, types.StringValue("pg-1")))
 
 	updateResp := resource.UpdateResponse{State: state}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	r.Update(context.Background(), updateRequest(plan, state), &updateResp)
 
 	if !updateResp.Diagnostics.HasError() {
 		t.Fatal("expected the update carrying parameter_group_id to be refused")
@@ -166,7 +166,7 @@ func TestUpdateDrainsStoredParameterGroup(t *testing.T) {
 	state := buildState(t, instanceWithParameterGroup(t, types.StringValue("pg-1")))
 
 	updateResp := resource.UpdateResponse{State: state}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	r.Update(context.Background(), updateRequest(plan, state), &updateResp)
 	if updateResp.Diagnostics.HasError() {
 		t.Fatalf("expected the null plan value to drain cleanly, got %v", updateResp.Diagnostics.Errors())
 	}

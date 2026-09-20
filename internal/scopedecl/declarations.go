@@ -351,13 +351,28 @@ var Declarations = map[string]Decl{
 	},
 	"frostmoln_postgres_instance": {
 		ImmutableWhy: "the platform has no in-place migration for it — a change re-creates the instance",
-		Immutable:    fields("ha_enabled", "subnet_id", "version", "vpc_id"),
+		Immutable: []Field{
+			{Path: "ha_enabled"},
+			{Path: "subnet_id"},
+			{Path: "version"},
+			{Path: "vpc_id"},
+			{Path: "restore_from", Why: "(maintainer note: if TestScopeDeclarations reports this path is \"not an attribute of this resource\", the plan modifier was deleted, not the attribute renamed — the walk only records a nested object that carries its own modifiers) a restore is how the instance came into existence, not a setting on it — the platform never reports one back and nothing can re-run it in place, so changing it from one source or point in time to another can only mean a different database. Removing it clears the record in a single in-place update, and importing an instance that was restored records nothing — neither is a replacement"},
+		},
 		ImmutableWithoutReplace: []Field{
 			{Path: "parameter_group_id", Why: "the platform stores the parameter group reference but its parameter-apply is an unimplemented stub — the values never reach the running server on create or on update, so any value is refused outright at plan and apply instead of recorded as intent that is not enacted"},
+		},
+		EnactsExcept: []Field{
+			{Path: "restore_from.source_instance_id", Why: "create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards"},
+			{Path: "restore_from.point_in_time", Why: "create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards"},
+			{Path: "restore_from.backup_id", Why: "create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards"},
 		},
 		Observes: []Field{
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
 			{Path: "public_ip", Why: "platform-assigned where the offer exposes one"},
+			{Path: "pitr_capable", Why: "stamped by the platform when the instance is created and never changed afterwards — it says whether point-in-time recovery can ever be turned on, which no configuration can grant"},
+			{Path: "pitr_archive_paused_reason", Why: "the platform pauses write-ahead log archiving under the customer (a tenant storage cap, or a fleet-wide pause) and clears it again on its own"},
+			{Path: "earliest_restorable_time", Why: "the platform moves it as write-ahead log is reaped and as newer base backups supersede older ones"},
+			{Path: "latest_restorable_time", Why: "the platform advances it with every archived write-ahead log segment, continuously, whether or not anything is being applied"},
 		},
 	},
 	"frostmoln_postgres_read_replica": {
