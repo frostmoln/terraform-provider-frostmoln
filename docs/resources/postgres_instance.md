@@ -93,8 +93,8 @@ output "postgres_restorable_window" {
 # backups. The source is untouched.
 #
 # The platform builds the target from the source's own shape, so version,
-# flavor_id, vpc_id and subnet_id must equal the source's; storage_gb may be
-# larger (grown in place afterwards) but not smaller.
+# flavor_id, vpc_id, subnet_id and ha_enabled must equal the source's;
+# storage_gb may be larger (grown in place afterwards) but not smaller.
 #
 # restore_from is create-only, and records what Terraform asked for — the
 # platform reports no such field. Removing it later clears that record in one
@@ -139,12 +139,12 @@ resource "frostmoln_postgres_instance" "recovered" {
 - `parameter_group_id` (String) The ID of the parameter group to reference on the instance. The platform stores the reference but never applies it — its parameter-apply endpoint is an unimplemented stub, so the group's values never reach the running server on create or on update. Setting it is refused at plan time, with the constraint and remedy in the refusal terraform prints; leave it unset until the platform ships a working apply path.
 - `pitr_enabled` (Boolean) Whether point-in-time recovery is enabled: the platform continuously archives write-ahead log segments so the database can be restored to any second inside its restorable window, onto a NEW instance. PostgreSQL only, requires `backup_enabled`, and not available on highly-available instances.
 
-    SET IT EXPLICITLY TO GET IT. The platform stamps point-in-time recovery at CREATE and the stamp is permanent: an instance created without it can never be given it, and the only remedy is to create another instance (restoring this one produces a capable target, see `restore_from`). Terraform therefore sends this field only when your configuration writes it — omit it and you get whatever the platform defaults to, which today is OFF. Write `pitr_enabled = true` on create if you want the feature.
+    SET IT EXPLICITLY TO GET IT. The platform stamps point-in-time recovery at CREATE and the stamp is permanent: an instance created without it can never be given it, and the only remedy is to create another instance (restoring this one produces a capable target, see `restore_from`). Terraform therefore sends this field only when your configuration writes it — omit it and you get whatever the platform resolves for the instance's shape, which may be ON, and its archiving is billed. Write `pitr_enabled = true` or `pitr_enabled = false` on create to decide it yourself.
 
     It can be turned off and on again in place on an instance that is capable of it (`pitr_capable`). Turning it off stops restores to earlier times; the backups already retained are kept, and billed, until their retention ends. Turning it back on within 24 hours of turning it (or `backup_enabled`) off is refused, and the window restarts from the next base backup rather than resuming.
 - `restore_from` (Attributes) Create this instance by restoring another one, instead of creating an empty database. The platform provisions a NEW instance from the source's backups; the source is untouched.
 
-    The platform builds the target from the source's own shape, so the source must be a PostgreSQL instance and this resource's `version`, `flavor_id`, `vpc_id` and `subnet_id` must equal the source's. Terraform reads the source first and refuses with the mismatch named, rather than quietly creating a plain empty database instead. `storage_gb` may be larger than the source's and is grown in place after the restore; it may not be smaller.
+    The platform builds the target from the source's own shape, so the source must be a PostgreSQL instance and this resource's `version`, `flavor_id`, `vpc_id`, `subnet_id` and `ha_enabled` must equal the source's. Terraform reads the source first and refuses with the mismatch named, rather than quietly creating a plain empty database instead. `storage_gb` may be larger than the source's and is grown in place after the restore; it may not be smaller.
 
     Create-only, and it records what Terraform asked for rather than anything the platform reports — there is no API field that says how an instance came to exist. Removing it afterwards clears that record in a single in-place update that changes nothing on the platform, and the plan then stays clean. Importing a restored instance records nothing, and plans nothing. Changing it to a DIFFERENT source or instant REPLACES this resource, which destroys the database it created — treat it as you would `vpc_id`. Adding it to an instance that already exists is refused: an instance cannot be un-created into a restore. (see [below for nested schema](#nestedatt--restore_from))
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))

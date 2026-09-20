@@ -57,8 +57,8 @@ output "postgres_restorable_window" {
 # backups. The source is untouched.
 #
 # The platform builds the target from the source's own shape, so version,
-# flavor_id, vpc_id and subnet_id must equal the source's; storage_gb may be
-# larger (grown in place afterwards) but not smaller.
+# flavor_id, vpc_id, subnet_id and ha_enabled must equal the source's;
+# storage_gb may be larger (grown in place afterwards) but not smaller.
 #
 # restore_from is create-only, and records what Terraform asked for — the
 # platform reports no such field. Removing it later clears that record in one

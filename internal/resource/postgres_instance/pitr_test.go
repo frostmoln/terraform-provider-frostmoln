@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1114,4 +1116,59 @@ func TestRestoreGiveUpPathsRecordWhatThePlanPromised(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The restore_from prose and the shipped example both list the fields that must
+// equal the source's. That list is documentation of what checkRestoreSourceShape
+// enforces, and it drifted once already: ha_enabled was enforced but unlisted in
+// both (fixed 2026-09-20). Derive the list from the enforcement itself rather
+// than restating it, so adding a mismatch() call fails here until it is written
+// down on the customer-facing surface.
+func TestRestoreSourceProseNamesEveryEnforcedField(t *testing.T) {
+	src, err := os.ReadFile("resource.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	enforced := regexp.MustCompile(`mismatch\("([a-z0-9_]+)"`).FindAllStringSubmatch(string(src), -1)
+	if len(enforced) == 0 {
+		t.Fatal("no mismatch() calls found: either checkRestoreSourceShape stopped comparing fields, or the regexp no longer matches how it is written")
+	}
+
+	var resp resource.SchemaResponse
+	NewResource().Schema(context.Background(), resource.SchemaRequest{}, &resp)
+	prose := resp.Schema.Attributes["restore_from"].GetDescription()
+
+	example, err := os.ReadFile("../../../examples/resources/frostmoln_postgres_instance/resource.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, m := range enforced {
+		if !strings.Contains(mustEqualList(t, prose), m[1]) {
+			t.Errorf("restore_from description does not name %q in its must-equal list, though checkRestoreSourceShape enforces it", m[1])
+		}
+		if !strings.Contains(mustEqualList(t, string(example)), m[1]) {
+			t.Errorf("the shipped example does not name %q in its must-equal list, though checkRestoreSourceShape enforces it", m[1])
+		}
+	}
+}
+
+// mustEqualList returns just the run of text leading up to "must equal the
+// source's" — the list itself. Searching the whole description or the whole
+// example file instead is what let this gap survive: `ha_enabled` was already
+// written elsewhere in resource.tf, so a whole-file Contains was GREEN for the
+// one field whose absence from the list is the bug.
+//
+// ponytail: a fixed lookback rather than a parser. It only has to span one
+// sentence; if a future list outgrows it the test fails closed, which is the
+// right direction. Widen the window then, or anchor on the sentence start.
+func mustEqualList(t *testing.T, text string) string {
+	t.Helper()
+	const phrase = "must equal the source's"
+	i := strings.Index(text, phrase)
+	if i < 0 {
+		t.Fatalf("no %q phrase to anchor the must-equal list on:\n%s", phrase, text)
+	}
+	start := max(i-260, 0)
+	return text[start:i]
 }
