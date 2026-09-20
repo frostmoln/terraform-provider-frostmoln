@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.73.1] - 2026-09-20
+
+### 🐛 Bug Fixes
+
+- *(postgres)* Correct two PITR descriptions that publish to the docs reference (#605)
+
 ## [0.73.0] - 2026-09-20
 
 ### 🚀 Features
