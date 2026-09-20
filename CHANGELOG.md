@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.73.0] - 2026-09-20
+
+### 🚀 Features
+
+- *(kubernetes_cluster)* Say minutes, not the reconciliation period, for addon changes (#603)
+
 ## [0.72.0] - 2026-09-20
 
 ### 🚀 Features
