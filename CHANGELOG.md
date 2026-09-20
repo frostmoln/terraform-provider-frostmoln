@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.72.0] - 2026-09-20
+
+### 🚀 Features
+
+- *(postgres)* Point-in-time recovery — pitr_enabled, restorable window, restore_from (PITR P8f) (#601)
+
 ## [0.71.4] - 2026-09-19
 
 ### 📚 Documentation
