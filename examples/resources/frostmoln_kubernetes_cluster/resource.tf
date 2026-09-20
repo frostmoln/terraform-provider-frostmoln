@@ -20,7 +20,9 @@ resource "frostmoln_kubernetes_cluster" "main" {
   # below is the Kubernetes API endpoint, for kubectl, not for traffic.
 
   # Cluster addons. Adding OR removing a key is applied in place to a running
-  # cluster and reaches it within the platform's addon reconciliation period;
+  # cluster and reaches it within minutes — the accepted change starts its own
+  # reconciliation, and falls back to the platform's addon reconciliation period
+  # if that cannot be started;
   # removing one DELETES the objects that addon installed. Omit the attribute to
   # install the platform defaults; set an empty list ([]) to install none. See the
   # frostmoln_kubernetes_addons data source for available keys.

@@ -251,8 +251,10 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 			"addons": schema.SetAttribute{
 				Description: "The set of cluster-addon catalog keys for this cluster (see the " +
 					"frostmoln_kubernetes_addons data source for available keys). ADDING a key is applied " +
-					"IN PLACE to a running cluster and reaches it within the platform's addon reconciliation " +
-					"period rather than immediately. REMOVING a key is ALSO applied in place and DELETES the " +
+					"IN PLACE to a running cluster: the accepted change starts its own reconciliation, so it " +
+					"reaches the cluster within minutes rather than immediately, and falls back to the " +
+					"platform's own addon reconciliation period if that cannot be started. REMOVING a key is " +
+					"ALSO applied in place and DELETES the " +
 					"objects that addon installed; a cluster whose control plane predates the platform's " +
 					"ability to remove an addon is refused with an error saying so, and must be recreated " +
 					"to gain it. When you SET this attribute, note that it is refreshed from the API before " +
@@ -297,8 +299,10 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 					"Pins given when the cluster is created are sent in the create request, so the cluster " +
 					"starts on those versions and a pin the platform refuses when the request is made fails the " +
 					"create before anything exists. " +
-					"Changing a pin later is applied IN PLACE and reaches the cluster within the platform's addon " +
-					"reconciliation period. Only pins whose value differs from state are sent, so an addon not " +
+					"Changing a pin later is applied IN PLACE and reaches the cluster within minutes, on the " +
+					"reconciliation the accepted change starts, falling back to the platform's own addon " +
+					"reconciliation period if that cannot be started. " +
+					"Only pins whose value differs from state are sent, so an addon not " +
 					"pinned here keeps whatever version it is pinned to, including a pin set outside Terraform. " +
 					"An addon being ADDED to addons without a pin gets its recommended version; an addon that " +
 					"is already selected keeps its current pin. After an import, or whenever state records no " +
