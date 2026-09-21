@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.73.2] - 2026-09-21
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.26 (#609)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.14.2 (#607)
+
 ## [0.73.1] - 2026-09-20
 
 ### 🐛 Bug Fixes
