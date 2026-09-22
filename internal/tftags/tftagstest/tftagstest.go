@@ -7,6 +7,7 @@ package tftagstest
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -210,6 +211,12 @@ type Fake struct {
 	polls  int
 }
 
+// updatedAt is the object's updatedAt: like the platform, the fake bumps it on
+// every write, so a plan that kept the prior value fails the apply.
+func (f *Fake) updatedAt() string {
+	return fmt.Sprintf("2026-09-13T00:00:00.%06dZ", len(f.writes))
+}
+
 // OperationPolls counts the reads of the async writes' operation.
 func (f *Fake) OperationPolls() int {
 	f.mu.Lock()
@@ -269,6 +276,7 @@ func (f *Fake) Object() map[string]any {
 	}
 	obj[idField] = ObjectID
 	obj["createdAt"] = "2026-09-13T00:00:00Z"
+	obj["updatedAt"] = f.updatedAt()
 	obj[f.Profile.Field(f.Profile.ReadField)] = Merge(f.tags, f.Profile.Reserved)
 	return obj
 }

@@ -803,6 +803,48 @@ func TestAnUnchangedPublicationPlansNoChange(t *testing.T) {
 	}
 }
 
+// TestAPublishPlansTheIDUnknown: a publish the draft forces (a mode flip, a
+// rule deletion, drift) reaches Update with the configuration equal to state,
+// so the framework planned id at its prior value — and the publish names the
+// NEW version in it. A known "wp-1/4" against an applied "wp-1/5" is
+// "Provider produced inconsistent result after apply" (the class of GitHub
+// terraform-provider-frostmoln#2). With nothing to publish, id stays known.
+func TestAPublishPlansTheIDUnknown(t *testing.T) {
+	for _, unpublished := range []bool{true, false} {
+		c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"version": map[string]any{
+					"version": 4, "contentHash": "abc", "hasUnpublishedChanges": unpublished,
+				},
+				"rules": []any{},
+			})
+		})
+		r := &publicationResource{client: c}
+
+		state := pubModel(t, types.Int64Value(0))
+		state.ID = types.StringValue("wp-1/4")
+		state.Version = types.Int64Value(4)
+		state.ContentHash = types.StringValue("abc")
+		state.PlatformOptOuts = types.ListValueMust(types.StringType, nil)
+		state.EffectiveMode = types.StringValue("block")
+
+		resp := resource.ModifyPlanResponse{Plan: planOf(t, state)}
+		r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{
+			Plan: planOf(t, state), State: stateOf(t, state),
+		}, &resp)
+		var out PublicationModel
+		if d := resp.Plan.Get(context.Background(), &out); d.HasError() {
+			t.Fatalf("plan: %v", d)
+		}
+		if unpublished && !out.ID.IsUnknown() {
+			t.Errorf("id = %v on a plan that publishes, want unknown: the publish names the new version", out.ID)
+		}
+		if !unpublished && !out.ID.Equal(state.ID) {
+			t.Errorf("id = %v with nothing to publish, want the state value %v", out.ID, state.ID)
+		}
+	}
+}
+
 // --- The refused-publish re-gate (S2: WAF_DRAFT_CHANGED) ---
 
 // TestPublishRegatesTheDraftChangedRace: the server's refusal on this path is

@@ -258,13 +258,16 @@ func ReadBack(ctx context.Context, apiTags map[string]string, prior types.Map, d
 
 // PlanTagsAll is the plan-time half, called from every taggable resource's
 // ModifyPlan. It marks `tags_all` "(known after apply)" on the first plan after
-// an import, whenever the resource is updated for any reason, and whenever the next write would change the
-// platform's tag set — the provider's default_tags changed, or a managed key
-// drifted — and otherwise leaves the value the attribute's UseStateForUnknown
-// kept. That is what makes a default_tags change plan an in-place update on
-// EVERY taggable resource.
+// an import, whenever the resource is updated for any reason, and whenever the
+// next write would change the platform's tag set — the provider's
+// default_tags changed, or a managed key drifted — and otherwise leaves the
+// value the attribute's UseStateForUnknown kept. That is what makes a
+// default_tags change plan an in-place update on EVERY taggable resource.
 //
 // A create always predicts unknown: the platform may add keys of its own.
+//
+// Whenever it plans that write it also plans `updated_at` unknown, on a
+// resource that has one: the platform bumps it on the write.
 //
 // It never raises an error diagnostic of its own; a destroy's refresh plan runs
 // through here too (see plan_error_diagnostics_test.go).
@@ -282,9 +285,20 @@ func planTagsAll(ctx context.Context, d Defaults, plan tfsdk.Plan, state tfsdk.S
 		return
 	}
 	tagsAllPath := path.Root("tags_all")
-	unknown := types.MapUnknown(types.StringType)
+	// write plans an update that the framework may not have seen: when the
+	// configuration equals state, it planned every other computed attribute at
+	// its prior value, and the platform bumps updated_at on the write — a
+	// stale planned timestamp fails the apply with an inconsistent result
+	// (GitHub #2). A plan that writes nothing returns without calling it, so it
+	// stays empty.
+	write := func() {
+		diags.Append(out.SetAttribute(ctx, tagsAllPath, types.MapUnknown(types.StringType))...)
+		if _, ok := out.Schema.GetAttributes()["updated_at"]; ok {
+			diags.Append(out.SetAttribute(ctx, path.Root("updated_at"), types.StringUnknown())...)
+		}
+	}
 	if state.Raw.IsNull() {
-		diags.Append(out.SetAttribute(ctx, tagsAllPath, unknown)...)
+		write()
 		return
 	}
 
@@ -296,7 +310,7 @@ func planTagsAll(ctx context.Context, d Defaults, plan tfsdk.Plan, state tfsdk.S
 	// update writes nothing away: pending, every key the configuration does
 	// not name is kept.
 	if importPending(ctx, private, diags) {
-		diags.Append(out.SetAttribute(ctx, tagsAllPath, unknown)...)
+		write()
 		return
 	}
 
@@ -306,7 +320,7 @@ func planTagsAll(ctx context.Context, d Defaults, plan tfsdk.Plan, state tfsdk.S
 	// Pinning tags_all to state there would fail the apply with an inconsistent
 	// result.
 	if !plan.Raw.Equal(state.Raw) {
-		diags.Append(out.SetAttribute(ctx, tagsAllPath, unknown)...)
+		write()
 		return
 	}
 
@@ -323,7 +337,7 @@ func planTagsAll(ctx context.Context, d Defaults, plan tfsdk.Plan, state tfsdk.S
 	if ok && Equal(desired, prior.All(ctx, diags)) {
 		return
 	}
-	diags.Append(out.SetAttribute(ctx, tagsAllPath, unknown)...)
+	write()
 }
 
 // CurrentTagsReadFailed prefixes the error an update reports when it cannot

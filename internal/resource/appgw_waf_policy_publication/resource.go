@@ -442,6 +442,9 @@ func (r *publicationResource) ModifyPlan(ctx context.Context, req resource.Modif
 
 	// There IS something to publish. Mark the outputs unknown so the plan shows
 	// this resource changing, which is what makes Update run.
+	// id names the version, so it moves with it. The configuration equals state
+	// here, so the framework planned it at its prior value.
+	resp.Plan.SetAttribute(ctx, path.Root("id"), types.StringUnknown())
 	resp.Plan.SetAttribute(ctx, path.Root("version"), types.Int64Unknown())
 	resp.Plan.SetAttribute(ctx, path.Root("content_hash"), types.StringUnknown())
 	resp.Plan.SetAttribute(ctx, path.Root("published_at"), types.StringUnknown())

@@ -573,15 +573,19 @@ func (h *tagHarness) assertTagsAll(state tftypes.Value, want map[string]string, 
 	}
 }
 
-// assertConforms is Terraform core's post-apply check, for the two tag
-// attributes: a known planned value must be exactly what the apply returns, or
+// assertConforms is Terraform core's post-apply check, for the attributes the
+// fake models: a known planned value must be exactly what the apply returns, or
 // the apply fails "Provider produced inconsistent result after apply".
+// updated_at is one — the fake bumps it on every write as the platform does, so
+// an update planned without a change the framework saw (a default_tags change,
+// the first apply after an import) must still plan it unknown (GitHub #2).
 func (h *tagHarness) assertConforms(planned, applied tftypes.Value, step string) {
 	h.t.Helper()
-	for _, name := range []string{"tags", "tags_all"} {
-		p := attrOf(planned, name)
-		if p.IsFullyKnown() && !p.Equal(attrOf(applied, name)) {
-			h.t.Errorf("%s: planned %s = %v but the apply returned %v (inconsistent result after apply)", step, name, p, attrOf(applied, name))
+	got := objAttrs(h.t, applied)
+	for _, name := range []string{"tags", "tags_all", "updated_at"} {
+		p, ok := objAttrs(h.t, planned)[name]
+		if ok && p.IsFullyKnown() && !p.Equal(got[name]) {
+			h.t.Errorf("%s: planned %s = %v but the apply returned %v (inconsistent result after apply)", step, name, p, got[name])
 		}
 	}
 }

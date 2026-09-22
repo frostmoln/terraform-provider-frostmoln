@@ -7,7 +7,6 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
-	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -365,20 +364,28 @@ func TestFinishReadImport(t *testing.T) {
 
 func testSchema() schema.Schema {
 	return schema.Schema{Attributes: map[string]schema.Attribute{
-		"id":       schema.StringAttribute{Computed: true},
-		"tags":     schema.MapAttribute{Optional: true, ElementType: types.StringType},
-		"tags_all": TagsAllAttribute(),
+		"id":         schema.StringAttribute{Computed: true},
+		"tags":       schema.MapAttribute{Optional: true, ElementType: types.StringType},
+		"tags_all":   TagsAllAttribute(),
+		"updated_at": schema.StringAttribute{Computed: true},
 	}}
 }
 
 type testModel struct {
-	ID      types.String `tfsdk:"id"`
-	Tags    types.Map    `tfsdk:"tags"`
-	TagsAll types.Map    `tfsdk:"tags_all"`
+	ID        types.String `tfsdk:"id"`
+	Tags      types.Map    `tfsdk:"tags"`
+	TagsAll   types.Map    `tfsdk:"tags_all"`
+	UpdatedAt types.String `tfsdk:"updated_at"`
 }
 
 // plannedTagsAll runs the plan-time half and returns the planned tags_all.
 func plannedTagsAll(t *testing.T, d Defaults, state *testModel, plan testModel, private PrivateReader) types.Map {
+	t.Helper()
+	return planned(t, d, state, plan, private).TagsAll
+}
+
+// planned runs the plan-time half and returns the whole planned model.
+func planned(t *testing.T, d Defaults, state *testModel, plan testModel, private PrivateReader) testModel {
 	t.Helper()
 	ctx := context.Background()
 	s := testSchema()
@@ -393,8 +400,8 @@ func plannedTagsAll(t *testing.T, d Defaults, state *testModel, plan testModel, 
 	var diags diag.Diagnostics
 	planTagsAll(ctx, d, p, st, private, &out, &diags)
 	mustNoErr(t, diags)
-	var got types.Map
-	mustNoErr(t, out.GetAttribute(ctx, path.Root("tags_all"), &got))
+	var got testModel
+	mustNoErr(t, out.Get(ctx, &got))
 	return got
 }
 
@@ -485,6 +492,47 @@ func TestPlanTagsAll(t *testing.T) {
 			t.Error("an unmanaged key made the plan predict a tag change")
 		}
 	})
+}
+
+// TestPlanTagsAllUpdatedAt: the platform bumps updated_at on every write, so a
+// plan that writes must not promise the prior timestamp — including the writes
+// only PlanTagsAll sees (a default_tags change, the first apply after an
+// import), where the framework planned it at its prior value (GitHub #2). A
+// plan that writes nothing keeps it, or every plan would show drift.
+func TestPlanTagsAllUpdatedAt(t *testing.T) {
+	all := tm("app", "web", "env", "prod")
+	ts := types.StringValue("2026-09-06T15:17:44Z")
+	model := func() testModel {
+		return testModel{ID: types.StringValue("x"), Tags: tm("app", "web"), TagsAll: all, UpdatedAt: ts}
+	}
+	keys := func(pending bool) fakePrivate {
+		p := fakePrivate{privateDefaultKeys: []byte(`["env"]`)}
+		if pending {
+			p[privateImportPending] = []byte("true")
+		}
+		return p
+	}
+	prior := model()
+	for _, tc := range []struct {
+		name    string
+		d       Defaults
+		private fakePrivate
+		write   bool
+	}{
+		{"nothing changed keeps it", Defaults{Tags: sm("env", "prod")}, keys(false), false},
+		{"a default_tags change plans it unknown", Defaults{Tags: sm("env", "staging")}, keys(false), true},
+		{"the first apply after an import plans it unknown", Defaults{Tags: sm("env", "prod")}, keys(true), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := planned(t, tc.d, &prior, model(), tc.private).UpdatedAt
+			if tc.write && !got.IsUnknown() {
+				t.Errorf("updated_at = %v on a plan that writes, want unknown: the write bumps it", got)
+			}
+			if !tc.write && !got.Equal(ts) {
+				t.Errorf("updated_at = %v on a plan that writes nothing, want the state value %v", got, ts)
+			}
+		})
+	}
 }
 
 // TestUnmanagedAfterImport: until the first write, the tags an import read
