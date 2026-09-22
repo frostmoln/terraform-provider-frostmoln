@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.73.3] - 2026-09-22
+
+### 🐛 Bug Fixes
+
+- *(tags)* Plan updated_at unknown on tags-only updates (#2) (#611)
+
 ## [0.73.2] - 2026-09-21
 
 ### 🐛 Bug Fixes
