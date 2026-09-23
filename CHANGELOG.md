@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.73.5] - 2026-09-23
+
+### 🐛 Bug Fixes
+
+- *(appgw_backend_authorization)* Record adopted = false on a create that did not adopt (#616)
+
 ## [0.73.4] - 2026-09-23
 
 ### 🐛 Bug Fixes
