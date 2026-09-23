@@ -24,7 +24,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
@@ -865,6 +867,9 @@ func (r *postgresInstanceResource) Configure(_ context.Context, req resource.Con
 }
 
 func (r *postgresInstanceResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	// On EVERY return path, whatever state was written: see settleUnknowns.
+	defer settleUnknowns(&resp.State, &resp.Diagnostics)
+
 	var plan PostgresInstanceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
@@ -1018,6 +1023,58 @@ func (r *postgresInstanceResource) Create(ctx context.Context, req resource.Crea
 	}
 
 	r.finishCreate(ctx, instID, &plan, cfg, budgets, resp, resp.Diagnostics.AddError, false)
+}
+
+// settleUnknowns replaces every value still UNKNOWN in the state Create is
+// about to return with a known one.
+//
+// 🔴 WITHOUT IT A FAILED CREATE LEAVES AN UNKNOWN IN STATE, AND CORE TAINTS.
+// Create records the instance early — before the wait, and on the restore path
+// straight after the POST — from a model whose Computed attributes the plan left
+// unknown and that fromAPI then fills. fromAPI does not fill `extensions` (the
+// ledger is a separate GET, read only at the very end of finishCreate), so every
+// return between the early record and that read returned `extensions` unknown.
+// Core refuses that as "Provider returned invalid result object after apply", an
+// ERROR even when Create itself only warned, and an errored create is TAINTED:
+// the next apply destroys it. On the restore path that is the recovered database
+// (Ambix 01a0cb47-9d37; reproduced live twice on 2026-09-22 against v0.73.3).
+//
+// Deferred from Create, so it runs on every return path, including ones not
+// written yet, and it works on the raw state rather than on named fields, so an
+// attribute added later that fromAPI forgets is settled too.
+//
+// A planned-unknown value accepts ANY known value, so this can never produce
+// core's other error, "inconsistent result after apply". The values:
+//   - `extensions` → the EMPTY set. It is true on every path that reaches here
+//     unknown: the set is only ever unknown when the configuration omitted it,
+//     and then nothing enabled anything — finishCreate enables only a written
+//     set, and a restore does not copy the source's extension ledger (database
+//     service, service/impl/backup.go). Empty rather than null because a refresh
+//     reads the ledger back as a set (enabledExtensionNames never returns nil),
+//     so null would show as a change on the next refresh.
+//   - everything else → null, which is also what core would substitute, and what
+//     the next refresh replaces with the platform's value.
+func settleUnknowns(state *tfsdk.State, diags *diag.Diagnostics) {
+	if state.Raw.IsNull() || state.Raw.IsFullyKnown() {
+		return
+	}
+	extensions := tftypes.NewAttributePath().WithAttributeName("extensions")
+	settled, err := tftypes.Transform(state.Raw, func(p *tftypes.AttributePath, v tftypes.Value) (tftypes.Value, error) {
+		if v.IsKnown() {
+			return v, nil
+		}
+		if p.Equal(extensions) {
+			return tftypes.NewValue(v.Type(), []tftypes.Value{}), nil
+		}
+		return tftypes.NewValue(v.Type(), nil), nil
+	})
+	if err != nil {
+		// Unreachable for a schema-shaped value; if it ever happens, core
+		// substitutes null itself and reports the invalid result.
+		diags.AddWarning("Could not settle unknown values in state", err.Error())
+		return
+	}
+	state.Raw = settled
 }
 
 // finishCreate is the tail every create shares: wait for the instance to reach
@@ -1504,9 +1561,20 @@ func (r *postgresInstanceResource) createFromRestore(
 	}
 
 	if _, err := r.pollRunning(ctx, instID, budgets.Create); err != nil {
-		r.saveStateFromGet(ctx, instID, plan, resp)
-		warn("The restored PostgreSQL instance did not reach running state", err.Error())
-		checkPITREnactment(cfg.PITREnabled, target.PITREnabled, warn)
+		// NOT `warn`: its copy says the restored database EXISTS, and here that
+		// is not known. The platform created the target row, but a target
+		// refused before provisioning (a quota, live 2026-09-22) has status
+		// error, no VM and no data — while a slow one may still be restoring.
+		status := "unknown (it could not be read)"
+		if inst := r.saveStateFromGet(ctx, instID, plan, resp); inst != nil {
+			status = strconv.Quote(inst.Status)
+		}
+		resp.Diagnostics.AddWarning("The restore target did not reach running state",
+			err.Error()+notRunningDetail(instID, status))
+		checkPITREnactment(cfg.PITREnabled, target.PITREnabled, func(summary, detail string) {
+			resp.Diagnostics.AddWarning(summary, detail+"\n\nThe restore target did not reach running "+
+				"state; see the warning above for what that means.")
+		})
 		return
 	}
 
@@ -1649,16 +1717,18 @@ func (r *postgresInstanceResource) applyRestoreDifferences(ctx context.Context, 
 // resource with true attributes rather than one carrying the configuration's
 // wishes; a failure to read is swallowed, because the caller is already
 // reporting the real problem and state already holds the id.
-func (r *postgresInstanceResource) saveStateFromGet(ctx context.Context, instID string, plan *PostgresInstanceModel, resp *resource.CreateResponse) {
+//
+// It returns the instance it read, or nil when the read failed.
+func (r *postgresInstanceResource) saveStateFromGet(ctx context.Context, instID string, plan *PostgresInstanceModel, resp *resource.CreateResponse) *apiPostgresInstance {
 	inst, err := r.getInstance(ctx, instID)
 	if err != nil {
-		return
+		return nil
 	}
 	planned := *plan
 	var ignored diag.Diagnostics
 	plan.fromAPI(ctx, inst, &ignored)
 	if ignored.HasError() {
-		return
+		return inst
 	}
 	// Unconditional, unlike finishCreate's: saveStateFromGet is reached ONLY
 	// from the restore path's give-up arms, which is exactly where
@@ -1667,6 +1737,25 @@ func (r *postgresInstanceResource) saveStateFromGet(ctx context.Context, instID 
 	// promise would fail it anyway.
 	keepPlannedValues(planned, plan)
 	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
+	return inst
+}
+
+// notRunningDetail is the tail of every warning on a restore target that never
+// reached running. It says only what is known: the target exists as an
+// instance, and whether it holds any restored data is not.
+func notRunningDetail(instID, status string) string {
+	return fmt.Sprintf("\n\nThe platform accepted the restore and created the target instance %s, which "+
+		"Terraform is now tracking. It did not reach running; its last reported status is %s. Terraform "+
+		"cannot tell from here whether any data was restored: a target the platform refused before "+
+		"provisioning it (over a quota, for example) holds nothing, while one that is merely slow may "+
+		"still be restoring. Check the instance's status in the portal or with `fm`.\n\n"+
+		"This is not reported as an error because Terraform marks a failed create as tainted, and the next "+
+		"apply would then destroy the instance together with anything the restore did recover. State "+
+		"records the status the platform reports, and a refused target can plan clean from here on, so "+
+		"this warning may be the only sign of it. If the instance holds nothing you need, fix the cause "+
+		"and run `terraform apply -replace=<this resource's address>` to restore again — a point_in_time "+
+		"may by then have fallen out of the source's restorable window. Otherwise run `terraform plan` "+
+		"(with its refresh) to see what remains to converge.", instID, status)
 }
 
 // lookupSuffix renders why a target lookup could not answer, for a diagnostic
