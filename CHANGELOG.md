@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.74.0] - 2026-09-23
+
+### 🚀 Features
+
+- *(kubernetes)* Drop the kubernetes-entitlement skip probe and wording — the entitlement is retired (GA) (#613)
+
 ## [0.73.5] - 2026-09-23
 
 ### 🐛 Bug Fixes
