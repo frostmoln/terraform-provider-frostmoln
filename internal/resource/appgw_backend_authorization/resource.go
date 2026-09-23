@@ -187,10 +187,14 @@ func (m *AuthorizationModel) fromAPI(a *apiAuthorization) {
 	// 🔴 `adopted` IS NOT PERSISTED SERVER-SIDE. It is computed at authorize
 	// time and returned on the 201 only; the table has no column for it, so
 	// every later read reports false. Trust it on create, and do not let a
-	// refresh silently turn a shared rule into one that looks exclusive.
-	if a.Adopted {
-		m.Adopted = types.BoolValue(true)
-	}
+	// refresh silently turn a shared rule into one that looks exclusive: Read
+	// restores the prior value over whatever this writes.
+	//
+	// Written on BOTH answers. `adopted` is Computed with no Default, so a
+	// create plans it unknown, and writing only `true` left every create that
+	// did not adopt returning that unknown — which Terraform refuses as an
+	// invalid result and taints (Ambix 01a0cd73-3de9).
+	m.Adopted = types.BoolValue(a.Adopted)
 	m.AuthorizedBy = types.StringValue(a.AuthorizedBy)
 	m.CreatedAt = types.StringValue(a.CreatedAt)
 }
