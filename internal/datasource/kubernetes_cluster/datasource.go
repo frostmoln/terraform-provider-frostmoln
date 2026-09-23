@@ -16,12 +16,9 @@
 // cluster list service has no name filter (its list options are
 // status/limit/offset).
 //
-// The whole /kubernetes-clusters surface is gated twice: the service refuses
-// every operation unless the signed auth context carries the `kubernetes`
-// entitlement (ADR-0038), and API-key callers additionally need the
-// `kubernetes:read` scope (ADR-0096) for GETs. An unentitled tenant is
-// refused on every path of this data source — id read, name list, and the
-// kubeconfig read — so the failure is loud, not an empty row.
+// API-key callers need the `kubernetes:read` scope (ADR-0096) for GETs; a
+// refused read fails loudly rather than rendering an empty row. (The
+// `kubernetes` entitlement gate was retired 2026-09-23 — managed K8s is GA.)
 //
 // Deletes are SOFT: a completed delete sets status "deleted" and RETAINS the
 // row, so GET on a deleted cluster answers 200 with status "deleted" forever —
@@ -159,10 +156,8 @@ func (d *kubernetesClusterDataSource) Schema(_ context.Context, _ datasource.Sch
 			"with status `deleted` forever — and a deleted cluster is reported as ABSENT, on " +
 			"the id path and in the name search, so a gone cluster can never resolve.\n\n" +
 
-			"The surface is gated twice: reads are refused for any tenant without the " +
-			"`kubernetes` entitlement, and API-key callers additionally need the " +
-			"`kubernetes:read` scope — an unentitled tenant is refused on every path, not " +
-			"answered with an empty row.\n\n" +
+			"API-key callers need the `kubernetes:read` scope; a refused read fails on " +
+			"every path rather than answering with an empty row.\n\n" +
 
 			"The addons collection is deliberately NOT part of this schema: one collection, " +
 			"one owner — the addon selection (and the per-addon applied versions) is read " +

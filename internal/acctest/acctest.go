@@ -3,12 +3,9 @@ package acctest
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
@@ -38,16 +35,13 @@ func TestAccPreCheck(t *testing.T) {
 }
 
 // TestAccPreCheckKubernetes gates the managed-K8s acceptance tests. They boot
-// real (billed) cluster VMs, so they require BOTH:
+// real (billed) cluster VMs, so they need an explicit opt-in:
+// FROSTMOLN_TEST_KUBERNETES=1. Without it they always skip — the nightly CI
+// acceptance run must never create a cluster by accident.
 //
-//  1. An explicit opt-in: FROSTMOLN_TEST_KUBERNETES=1. Without it they always
-//     skip — the nightly CI acceptance run must never create a cluster by
-//     accident (e.g. if the feature gate is reverted platform-side, a 403
-//     probe alone would silently stop protecting it).
-//  2. A tenant holding the `kubernetes` entitlement (ADR-0038 per-tenant
-//     feature gate) and an API key with the kubernetes:read/kubernetes:write
-//     scopes. The probe hits the tenant-scoped cluster list — the surface the
-//     tests actually use — and skips loudly on 403.
+// There is deliberately NO 403 probe. The `kubernetes` entitlement was retired
+// on 2026-09-23 (managed Kubernetes is GA), and an opted-in run whose API key
+// lacks the kubernetes/network scopes must FAIL, not skip green.
 func TestAccPreCheckKubernetes(t *testing.T) {
 	t.Helper()
 	TestAccPreCheck(t)
@@ -55,22 +49,6 @@ func TestAccPreCheckKubernetes(t *testing.T) {
 	if os.Getenv("FROSTMOLN_TEST_KUBERNETES") != "1" {
 		t.Skip("SKIPPING managed-K8s acceptance test: set FROSTMOLN_TEST_KUBERNETES=1 to opt in " +
 			"(these tests create real, billed Kubernetes clusters)")
-	}
-
-	c, err := TestClient()
-	if err != nil {
-		t.Fatalf("failed to build test client for the kubernetes entitlement probe: %s", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if _, err := c.Get(ctx, c.TenantPath("/kubernetes-clusters"), nil); err != nil {
-		var apiErr *client.APIError
-		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden {
-			t.Skipf("SKIPPING managed-K8s acceptance test: 403 from the cluster API — the tenant lacks "+
-				"the `kubernetes` entitlement (ADR-0038) or the API key lacks the kubernetes:read/"+
-				"kubernetes:write scopes: %s", err)
-		}
-		t.Fatalf("kubernetes cluster-list probe failed with an unexpected error: %s", err)
 	}
 }
 

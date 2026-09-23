@@ -16,11 +16,9 @@
 // be. The non-secret pairing (the CA cert hash) lives on
 // `frostmoln_kubernetes_cluster`.
 //
-// The whole /kubernetes-clusters surface is gated twice: the service refuses
-// every operation unless the signed auth context carries the `kubernetes`
-// entitlement (ADR-0038), and API-key callers additionally need the
-// `kubernetes:read` scope (ADR-0096) for GETs. An unentitled tenant is
-// refused on every path of this data source.
+// API-key callers need the `kubernetes:read` scope (ADR-0096) for GETs; a
+// refused read fails loudly rather than rendering an empty row. (The
+// `kubernetes` entitlement gate was retired 2026-09-23 — managed K8s is GA.)
 //
 // Deletes are SOFT: a completed delete sets status "deleted" and RETAINS the
 // row, so both resolution paths here treat a "deleted" row as absent, exactly
@@ -126,9 +124,7 @@ func (d *kubernetesClusterKubeconfigDataSource) Schema(_ context.Context, _ data
 			"read instead of rendering empty credential material — the cluster may simply not " +
 			"be serviceable yet.\n\n" +
 
-			"The surface is gated twice: reads are refused for any tenant without the " +
-			"`kubernetes` entitlement, and API-key callers additionally need the " +
-			"`kubernetes:read` scope.",
+			"API-key callers need the `kubernetes:read` scope.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the Kubernetes cluster. Exactly one of " +

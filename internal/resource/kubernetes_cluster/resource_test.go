@@ -1403,7 +1403,7 @@ func TestCreateKubeconfig4xxNotRetried(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/kubernetes-clusters/c-1/kubeconfig":
 			kubeconfigGets.Add(1)
 			w.WriteHeader(http.StatusForbidden)
-			writeJSON(t, w, map[string]any{"code": "feature_not_enabled", "message": "kubernetes not enabled"})
+			writeJSON(t, w, map[string]any{"code": "INSUFFICIENT_SCOPE", "message": "the API key lacks the kubernetes:read scope"})
 		case strings.HasSuffix(r.URL.Path, "/events"):
 			// The client waits on the tenant SSE stream instead of a timer
 			// (internal/client/events.go). A 404 stands in for a gateway that does

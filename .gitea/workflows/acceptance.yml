@@ -111,9 +111,8 @@ jobs:
 
       # The managed-K8s tests (frostmoln_kubernetes_*) always skip here: they
       # need an explicit FROSTMOLN_TEST_KUBERNETES=1 opt-in (they create real,
-      # billed clusters) AND the `kubernetes` entitlement, which the fresh
-      # per-run tenant lacks (ADR-0038). The run recipe for an entitled tenant
-      # is in internal/resource/kubernetes_cluster/resource_acc_test.go —
+      # billed clusters). The run recipe is in
+      # internal/resource/kubernetes_cluster/resource_acc_test.go —
       # never opt in HERE without also raising this job's 30m go-test timeout.
       - name: Run acceptance tests
         run: TF_ACC=1 go test -v -timeout 30m -count=1 ./internal/...

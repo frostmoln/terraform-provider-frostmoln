@@ -6,7 +6,7 @@ description: |-
   Look up a managed Kubernetes cluster by ID or name. Exactly one of id or name must be specified.
   This is how a configuration reaches a cluster that Terraform did not create: a cluster provisioned in the portal or with fm can today be referenced only by a hardcoded UUID or plumbed through terraform_remote_state — both of which tie the configuration to one deployment. Look it up by name instead and the reference survives re-provisioning elsewhere; the endpoint and CIDRs feed other references, while the credential material is fetched separately by frostmoln_kubernetes_cluster_kubeconfig.
   A name lookup that matches NOTHING fails the read, and so does one that matches MORE THAN ONE cluster: the data source refuses to pick for you (the diagnostic names the colliding ids). Deletes are soft — a deleted cluster's row answers 200 with status deleted forever — and a deleted cluster is reported as ABSENT, on the id path and in the name search, so a gone cluster can never resolve.
-  The surface is gated twice: reads are refused for any tenant without the kubernetes entitlement, and API-key callers additionally need the kubernetes:read scope — an unentitled tenant is refused on every path, not answered with an empty row.
+  API-key callers need the kubernetes:read scope; a refused read fails on every path rather than answering with an empty row.
   The addons collection is deliberately NOT part of this schema: one collection, one owner — the addon selection (and the per-addon applied versions) is read with frostmoln_kubernetes_cluster_addons.
 ---
 
@@ -18,7 +18,7 @@ This is how a configuration reaches a cluster that Terraform did not create: a c
 
 A name lookup that matches NOTHING fails the read, and so does one that matches MORE THAN ONE cluster: the data source refuses to pick for you (the diagnostic names the colliding ids). Deletes are soft — a deleted cluster's row answers 200 with status `deleted` forever — and a deleted cluster is reported as ABSENT, on the id path and in the name search, so a gone cluster can never resolve.
 
-The surface is gated twice: reads are refused for any tenant without the `kubernetes` entitlement, and API-key callers additionally need the `kubernetes:read` scope — an unentitled tenant is refused on every path, not answered with an empty row.
+API-key callers need the `kubernetes:read` scope; a refused read fails on every path rather than answering with an empty row.
 
 The addons collection is deliberately NOT part of this schema: one collection, one owner — the addon selection (and the per-addon applied versions) is read with `frostmoln_kubernetes_cluster_addons`.
 

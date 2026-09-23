@@ -19,13 +19,11 @@ import (
 // exists on a live cluster, so pooling both resources into one cluster
 // lifecycle avoids a second ~multi-minute cluster create per package.
 //
-// They create REAL, BILLED clusters, so they are double-gated (see
-// acctest.TestAccPreCheckKubernetes): an explicit FROSTMOLN_TEST_KUBERNETES=1
-// opt-in AND a tenant holding the `kubernetes` entitlement (ADR-0038). The CI
-// acceptance tenant is created fresh per run, is NOT entitled, and does not
-// set the opt-in — these tests always skip there.
+// They create REAL, BILLED clusters, so they need an explicit
+// FROSTMOLN_TEST_KUBERNETES=1 opt-in (see acctest.TestAccPreCheckKubernetes).
+// The CI acceptance run does not set it — these tests always skip there.
 //
-// Running them for real (entitled tenant, API key with kubernetes:read +
+// Running them for real (any tenant, API key with kubernetes:read +
 // kubernetes:write + network:read + network:write scopes):
 //
 //	FROSTMOLN_API_ENDPOINT=<api> FROSTMOLN_API_KEY=<key> \
@@ -37,7 +35,7 @@ import (
 // race the other acceptance packages for the same tenant quota. The -timeout
 // must comfortably exceed BOTH cluster lifecycles (~5-10 min total live): a
 // go-test deadline kill skips destroy AND CheckDestroy, orphaning a billing
-// cluster + nodes + VPC. Never entitle the CI acceptance tenant without also
+// cluster + nodes + VPC. Never opt the CI acceptance run in without also
 // raising the workflow's shared 30m go-test timeout.
 
 // TestAccKubernetesCluster_full exercises the whole plan-Phase-5 flow on one
