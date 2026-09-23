@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.73.4] - 2026-09-23
+
+### 🐛 Bug Fixes
+
+- *(postgres_instance)* Never leave an unknown in state on a failed create (#614)
+
 ## [0.73.3] - 2026-09-22
 
 ### 🐛 Bug Fixes
