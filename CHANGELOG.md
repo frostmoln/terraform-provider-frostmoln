@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.74.2] - 2026-09-24
+
+### 🚜 Refactor
+
+- *(kubernetes)* Drop the retired legacy control plane addon wording (#623)
+
 ## [0.74.1] - 2026-09-24
 
 ### ⚙️ Miscellaneous Tasks
