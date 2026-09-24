@@ -92,11 +92,15 @@ jobs:
           echo "Test user registered successfully"
 
           echo "Creating API key"
+          # api_keys:read/write: frostmoln_api_key's tests manage keys WITH this
+          # key, and identity gates the API-key routes for key callers on them
+          # (security audit 2026-09-23, H-6). A key-minted key is also bounded by
+          # this key's scopes, expiry and rate limit.
           KEY_RESP=$(curl -s --fail-with-body -X POST "${API_ENDPOINT}/api-keys" \
             -H "Authorization: Bearer ${BEARER}" \
             -H "Content-Type: application/json" \
             -H "Origin: ${PORTAL_URL}" \
-            -d '{"name":"tf-acctest-key","scopes":["compute:read","compute:write","storage:read","storage:write","network:read","network:write","billing:read","secrets:read","secrets:write","kubernetes:read","kubernetes:write"]}')
+            -d '{"name":"tf-acctest-key","scopes":["compute:read","compute:write","storage:read","storage:write","network:read","network:write","billing:read","secrets:read","secrets:write","kubernetes:read","kubernetes:write","api_keys:read","api_keys:write"]}')
 
           API_KEY=$(echo "$KEY_RESP" | jq -r '.key')
           if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ]; then
