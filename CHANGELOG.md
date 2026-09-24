@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.74.1] - 2026-09-24
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update pre-commit hook alessandrojcm/commitlint-pre-commit-hook to v9.27.0 (#619)
+- *(acceptance)* Give the acctest key api_keys:read/write (#621)
+
 ## [0.74.0] - 2026-09-23
 
 ### 🚀 Features
