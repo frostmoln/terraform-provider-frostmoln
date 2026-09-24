@@ -5,7 +5,7 @@
 // whichever resource happened to need it first, then imported by unrelated
 // domains. GatewayOrderingNote began in `internal/resource/public_ip` and within
 // a week was wanted by the load balancer, the managed Kubernetes cluster and two
-// managed web servers — Octavia and RKE2 reaching into the address resource for a
+// managed web servers — the load balancer and Kubernetes reaching into the address resource for a
 // string. A leaf package keeps every future call site a leaf import rather than a
 // new edge between resource packages.
 //

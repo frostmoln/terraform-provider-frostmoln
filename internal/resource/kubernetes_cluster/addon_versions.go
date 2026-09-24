@@ -233,7 +233,7 @@ type apiAddonPinList struct {
 //
 // It never ADDS a key: an unconfigured pin must not enter state. It skips an empty
 // pinnedVersion (nothing to pin; the recorded value stays). On any failure — 409 mid-create,
-// 400 legacy control plane, 501 deployment, 503 outage, an unreadable body — it keeps the
+// 501 deployment, 503 outage, an unreadable body — it keeps the
 // recorded values and warns; a refresh never fails on it. Callers skip it when no pin is
 // recorded, so a cluster without pins costs no extra request. Request values still come only
 // from the plan (changedPins): this changes what state compares against, never what is sent.

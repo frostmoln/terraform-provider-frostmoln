@@ -3,12 +3,12 @@
 page_title: "frostmoln_kubernetes_cluster_addons Data Source - Frostmoln"
 subcategory: ""
 description: |-
-  Reads, per addon of one Kubernetes cluster, the version it is pinned to beside the version the platform last confirmed it applied. This is the platform's record, not a read inside the cluster. When no version data is available (a cluster still being created, a legacy control plane, a deployment in progress or the platform unreachable) the read succeeds with a warning and addons is null.
+  Reads, per addon of one Kubernetes cluster, the version it is pinned to beside the version the platform last confirmed it applied. This is the platform's record, not a read inside the cluster. When no version data is available (a cluster still being created, a deployment in progress or the platform unreachable) the read succeeds with a warning and addons is null.
 ---
 
 # frostmoln_kubernetes_cluster_addons (Data Source)
 
-Reads, per addon of one Kubernetes cluster, the version it is pinned to beside the version the platform last confirmed it applied. This is the platform's record, not a read inside the cluster. When no version data is available (a cluster still being created, a legacy control plane, a deployment in progress or the platform unreachable) the read succeeds with a warning and addons is null.
+Reads, per addon of one Kubernetes cluster, the version it is pinned to beside the version the platform last confirmed it applied. This is the platform's record, not a read inside the cluster. When no version data is available (a cluster still being created, a deployment in progress or the platform unreachable) the read succeeds with a warning and addons is null.
 
 ## Example Usage
 

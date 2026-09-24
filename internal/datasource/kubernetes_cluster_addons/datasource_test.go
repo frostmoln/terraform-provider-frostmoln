@@ -109,10 +109,10 @@ func TestRead_PlatformOrderAndOpenVocabulary(t *testing.T) {
 	}
 }
 
-// TRAP 5: 400 (legacy CP), 409 (mid-create), 501 (deployment) and 503 (unreachable) mean
+// TRAP 5: 409 (mid-create), 501 (deployment) and 503 (unreachable) mean
 // "no version data": a warning and a null list — never an error, never a guess.
 func TestRead_NoVersionDataIsWarningNotError(t *testing.T) {
-	for _, status := range []int{http.StatusBadRequest, http.StatusConflict, http.StatusNotImplemented, http.StatusServiceUnavailable} {
+	for _, status := range []int{http.StatusConflict, http.StatusNotImplemented, http.StatusServiceUnavailable} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			resp, m := read(t, func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(status)

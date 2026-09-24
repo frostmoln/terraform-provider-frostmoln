@@ -8,7 +8,7 @@ description: |-
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — control_plane_tier, initial_node_pool.flavor_id, initial_node_pool.name, region, subnet_id, version, vpc_id: the platform has no in-place migration for it — a change destroys and re-creates the cluster.
   Create-immutable — public_ip_id: retained and deprecated: every new cluster's apiserver is a private VIP and the API refuses any value with a 400 — the attribute exists so a stale configuration is told so.
-  Not enacted state — addon_versions: a refresh reads a pin back only for an addon this attribute already names, and only when the platform can report pins (not while the cluster is still being created, on a legacy control plane, or during a platform deployment or outage, when the recorded value is kept); a pin set outside Terraform for any other addon is neither read into state nor sent.
+  Not enacted state — addon_versions: a refresh reads a pin back only for an addon this attribute already names, and only when the platform can report pins (not while the cluster is still being created, or during a platform deployment or outage, when the recorded value is kept); a pin set outside Terraform for any other addon is neither read into state nor sent.
   Observed, not enacted — endpoint: platform-issued once the apiserver is up. kubeconfig: platform-issued once the apiserver is up. load_balancer_id: the platform provisions the load balancer the cluster rides on.
 ---
 
@@ -24,7 +24,7 @@ Manages a managed Kubernetes cluster in the Frostmoln platform. The cluster owns
 
 **Create-immutable** — `public_ip_id`: retained and deprecated: every new cluster's apiserver is a private VIP and the API refuses any value with a 400 — the attribute exists so a stale configuration is told so.
 
-**Not enacted state** — `addon_versions`: a refresh reads a pin back only for an addon this attribute already names, and only when the platform can report pins (not while the cluster is still being created, on a legacy control plane, or during a platform deployment or outage, when the recorded value is kept); a pin set outside Terraform for any other addon is neither read into state nor sent.
+**Not enacted state** — `addon_versions`: a refresh reads a pin back only for an addon this attribute already names, and only when the platform can report pins (not while the cluster is still being created, or during a platform deployment or outage, when the recorded value is kept); a pin set outside Terraform for any other addon is neither read into state nor sent.
 
 **Observed, not enacted** — `endpoint`: platform-issued once the apiserver is up. `kubeconfig`: platform-issued once the apiserver is up. `load_balancer_id`: the platform provisions the load balancer the cluster rides on.
 

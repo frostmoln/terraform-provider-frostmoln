@@ -65,7 +65,6 @@ var addonStateAttrTypes = map[string]attr.Type{
 // this cluster right now" to the reason shown. They are warnings, not errors: a
 // configuration reading this beside a cluster being created must still plan.
 var noVersionData = map[int]string{
-	http.StatusBadRequest:         "This cluster's control plane does not record addon versions (a legacy control plane whose addons were fixed at create).",
 	http.StatusConflict:           "The cluster has no recorded addon state yet; it is recorded once the cluster finishes being created.",
 	http.StatusNotImplemented:     "A platform deployment is in progress; addon versions are available again once it finishes.",
 	http.StatusServiceUnavailable: "The platform could not be reached, so no version is reported rather than a guessed one.",
@@ -79,7 +78,7 @@ func (d *clusterAddonsDataSource) Schema(_ context.Context, _ datasource.SchemaR
 	resp.Schema = schema.Schema{
 		Description: "Reads, per addon of one Kubernetes cluster, the version it is pinned to beside the version the " +
 			"platform last confirmed it applied. This is the platform's record, not a read inside the cluster. " +
-			"When no version data is available (a cluster still being created, a legacy control plane, a " +
+			"When no version data is available (a cluster still being created, a " +
 			"deployment in progress or the platform unreachable) the read succeeds with a warning and addons is null.",
 		Attributes: map[string]schema.Attribute{
 			"cluster_id": schema.StringAttribute{
