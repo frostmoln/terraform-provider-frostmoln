@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
@@ -98,9 +99,14 @@ func (r *s3CredentialResource) Schema(_ context.Context, _ resource.SchemaReques
 				},
 			},
 			"ip_whitelist": schema.ListAttribute{
-				Description: "Source IPs/CIDRs this credential is restricted to (empty/unset = any source IP). Changing this replaces the credential.",
+				Description: "Source IPs/CIDRs to restrict this credential to. TEMPORARILY UNAVAILABLE: must be empty or unset " +
+					"(= any source IP). The platform refuses a non-empty list, and so does `terraform plan`, before the " +
+					"credential is replaced. Changing this replaces the credential.",
 				Optional:    true,
 				ElementType: types.StringType,
+				Validators: []validator.List{
+					ipWhitelistMustBeEmpty{},
+				},
 				PlanModifiers: []planmodifier.List{
 					listplanmodifier.RequiresReplace(),
 				},

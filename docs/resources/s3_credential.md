@@ -55,7 +55,7 @@ output "s3_secret_key" {
 - `allowed_actions` (List of String) S3 actions this credential may perform, e.g. s3:GetObject. Empty/unset = ALL actions — set it to apply least privilege. Bucket-metadata writes (s3:PutBucketAcl, s3:PutBucketPolicy, s3:PutBucketTagging) are not grantable and are rejected. Changing this replaces the credential.
 - `allowed_buckets` (List of String) Buckets this credential may access. Empty/unset = ALL buckets in the tenant's account — set it to apply least privilege. Changing this replaces the credential.
 - `description` (String) A description of the S3 credential.
-- `ip_whitelist` (List of String) Source IPs/CIDRs this credential is restricted to (empty/unset = any source IP). Changing this replaces the credential.
+- `ip_whitelist` (List of String) Source IPs/CIDRs to restrict this credential to. TEMPORARILY UNAVAILABLE: must be empty or unset (= any source IP). The platform refuses a non-empty list, and so does `terraform plan`, before the credential is replaced. Changing this replaces the credential.
 
 ### Read-Only
 
