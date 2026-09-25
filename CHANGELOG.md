@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.74.3] - 2026-09-25
+
+### 🐛 Bug Fixes
+
+- *(postgres_instance)* A capped tenant has no restore window (#625)
+
 ## [0.74.2] - 2026-09-24
 
 ### 🚜 Refactor
