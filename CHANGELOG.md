@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.75.1] - 2026-09-25
+
+### 🐛 Bug Fixes
+
+- *(s3_credential)* Fail plan for ip_whitelist (unavailable) instead of destroy-then-fail (H-12) (#629)
+
 ## [0.75.0] - 2026-09-25
 
 ### 🚀 Features
