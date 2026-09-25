@@ -404,11 +404,11 @@ func (r *postgresInstanceResource) Schema(_ context.Context, _ resource.SchemaRe
 				Computed:    true,
 			},
 			"pitr_archive_paused_reason": schema.StringAttribute{
-				Description: "Why the platform has paused write-ahead log archiving for this instance, null when it is not paused. `tenant_cap` means the tenant's retained point-in-time-recovery storage has reached its cap — the window is broken until the next SCHEDULED base backup re-forms it, which on a weekly schedule can be up to a week. `platform_disabled` means the platform has archiving switched off fleet-wide. Any other value means archiving is paused for a reason this provider release does not know about. Read from the instance GET only, and shows as \"known after apply\" whenever anything else on the instance changes.",
+				Description: "Why the platform has paused write-ahead log archiving for this instance, null when it is not paused. `tenant_cap` means the tenant's retained point-in-time-recovery storage has reached its cap — there is no restorable window until the tenant is back under its cap; scheduled base backups continue, but none forms a window while the cap holds. `platform_disabled` means the platform has archiving switched off fleet-wide. Any other value means archiving is paused for a reason this provider release does not know about. Read from the instance GET only, and shows as \"known after apply\" whenever anything else on the instance changes.",
 				Computed:    true,
 			},
 			"earliest_restorable_time": schema.StringAttribute{
-				Description: "The earliest instant this instance can be restored to (RFC 3339, UTC), null when there is no restorable window right now — point-in-time recovery is off, or the first base backup has not finished, or a gap restarted the window. Read from the instance GET only, and shows as \"known after apply\" whenever anything else on the instance changes, because the platform moves it as write-ahead log is reaped.",
+				Description: "The earliest instant this instance can be restored to (RFC 3339, UTC), null when there is no restorable window right now — point-in-time recovery is off, or the first base backup has not finished, or a gap restarted the window, or archiving is paused at the tenant's cap (see `pitr_archive_paused_reason`), which leaves no window until the tenant is back under it. Read from the instance GET only, and shows as \"known after apply\" whenever anything else on the instance changes, because the platform moves it as write-ahead log is reaped.",
 				Computed:    true,
 			},
 			"latest_restorable_time": schema.StringAttribute{
