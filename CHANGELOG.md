@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.75.0] - 2026-09-25
+
+### 🚀 Features
+
+- *(authz)* Name the demanded permission on an org-role refusal (Human-axis IAM P2) (#627)
+
 ## [0.74.3] - 2026-09-25
 
 ### 🐛 Bug Fixes
