@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -273,6 +274,13 @@ type APIError struct {
 	// of code/message in the envelope, not inside details, so without this field
 	// encoding/json dropped it and the affordance was unreachable.
 	OperationID string `json:"operationId,omitempty"`
+	// RequiredPermission is the demanded grant on an org-role refusal
+	// (Human-axis IAM P2): the gateway's nested 403 and servicekit's flat human
+	// deny both carry it beside code/message, so one field serves both envelope
+	// shapes. Error() echoes it ONLY for the two permission-negative codes and
+	// only in the well-formed family:resource:action shape (see
+	// wellFormedPermission); every other code keeps a bare "code: message".
+	RequiredPermission string `json:"required_permission,omitempty"`
 	// FlatEnvelope records that this error was decoded from the FLAT body shape
 	// ({"code":…}) rather than the nested one ({"error":{"code":…}}), because for
 	// one code the two shapes mean opposite things.
@@ -311,11 +319,34 @@ type APIError struct {
 	FlatEnvelope bool `json:"-"`
 }
 
-// Error renders code and message only. Details is machine-readable context for a
-// caller that branches on it, not practitioner copy: spilling a decoded map into a
-// diagnostic is the JSON blob this type exists to avoid.
+// permissionDenyCodes are the org-role refusals whose required_permission is
+// practitioner copy (Human-axis IAM P2): the api-gateway policy gate (nested
+// 403) and servicekit's human deny (flat). Only these codes earn the suffix;
+// the field rides other envelopes nothing here should interpret.
+var permissionDenyCodes = map[string]bool{
+	"INSUFFICIENT_PERMISSIONS": true,
+	"insufficient_permission":  true,
+}
+
+// wellFormedPermission is the only required_permission the diagnostic echoes:
+// the 3-part vocabulary the gates demand. Server text — the unclassified-verb
+// marker, a path echo, a bidi escape or any other shape withholds the suffix
+// and leaves the bare "code: message" line.
+var wellFormedPermission = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}:[a-z][a-z0-9_-]{0,31}:[a-z][a-z0-9_-]{0,31}$`)
+
+// Error renders code and message — plus, for the two org-role refusal codes
+// carrying a well-formed demanded permission, that permission. Details is still
+// machine-readable context for a caller that branches on it, not practitioner
+// copy: spilling a decoded map into a diagnostic is the JSON blob this type
+// exists to avoid. A demanded permission is the one server-sent field a
+// practitioner must see to act (an org role is changed by an OWNER, outside
+// Terraform) — hence the exception, and its narrowness.
 func (e *APIError) Error() string {
-	return fmt.Sprintf("%s: %s", e.Code, e.Message)
+	msg := fmt.Sprintf("%s: %s", e.Code, e.Message)
+	if permissionDenyCodes[e.Code] && wellFormedPermission.MatchString(e.RequiredPermission) {
+		msg += fmt.Sprintf(" (required permission: %s)", e.RequiredPermission)
+	}
+	return msg
 }
 
 // IsNotFound reports whether err is a service's own "this resource does not
