@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.75.2] - 2026-09-27
+
+### 🐛 Bug Fixes
+
+- *(postgres_instance)* Actionable destroy error while a restore from the instance is running (merge together with database#698) (#631)
+
 ## [0.75.1] - 2026-09-25
 
 ### 🐛 Bug Fixes
