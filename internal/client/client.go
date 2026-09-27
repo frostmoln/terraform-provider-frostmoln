@@ -481,6 +481,43 @@ func IsAlreadyInDesiredState(err error) bool {
 	return false
 }
 
+// IsRestoreFromInstanceInProgress reports the database service's 409 refusing
+// to delete an instance while a restore FROM it is still running (deleting the
+// source would fail that restore). Callers surface it; they never wait it out.
+func IsRestoreFromInstanceInProgress(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict &&
+		apiErr.Code == "restore_from_instance_in_progress"
+}
+
+// RestoreTargetIDs returns details.restoreTargetIds of a
+// restore_from_instance_in_progress refusal: the instances still restoring from
+// the one being deleted. Optional on the wire (an older database service does
+// not send it), so absent or malformed yields an empty slice.
+func RestoreTargetIDs(err error) []string {
+	ids := []string{}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return ids
+	}
+	raw, _ := apiErr.Details["restoreTargetIds"].([]any)
+	for _, v := range raw {
+		if id, ok := v.(string); ok && id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// RestoreInProgressDetail appends the restoring instance ids, when the
+// refusal carries them, to a resource's restore-in-progress diagnostic.
+func RestoreInProgressDetail(detail string, err error) string {
+	if ids := RestoreTargetIDs(err); len(ids) > 0 {
+		return detail + "\n\nRestoring instance(s): " + strings.Join(ids, ", ") + "."
+	}
+	return detail
+}
+
 // IsConflict reports whether err is a 409 Conflict, regardless of error code.
 // It is deliberately broader than IsAlreadyInDesiredState (which matches only
 // the "conflict"-code 409 that means the requested end state is already

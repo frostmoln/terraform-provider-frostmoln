@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -335,5 +337,46 @@ func TestDeleteAPIError(t *testing.T) {
 	r.Delete(context.Background(), resource.DeleteRequest{State: state}, &deleteResp)
 	if !deleteResp.Diagnostics.HasError() {
 		t.Error("expected error when delete returns 500")
+	}
+}
+
+func TestDeleteRestoreFromInstanceInProgress(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Method != http.MethodDelete {
+			t.Errorf("unexpected %s %s: the refusal must not be polled or retried", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"code":"restore_from_instance_in_progress","message":"a restore from this instance is still running (1)","details":{"restores":1,"restoreTargetIds":["db-t"]}}`))
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+
+	r := &mysqlInstanceResource{client: c, pollInterval: 10 * time.Millisecond, pollTimeout: time.Second}
+	state := buildMysqlInstanceState(t, MysqlInstanceModel{
+		ID:        types.StringValue("db-1"),
+		Name:      types.StringValue("db-1"),
+		Version:   types.StringValue("8.0"),
+		FlavorID:  types.StringValue("db.small"),
+		StorageGB: types.Int64Value(100),
+		VPCID:     types.StringValue("vpc-1"),
+		SubnetID:  types.StringValue("sn-1"),
+		Status:    types.StringValue("running"),
+		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
+	})
+	deleteResp := resource.DeleteResponse{State: state}
+	r.Delete(context.Background(), resource.DeleteRequest{State: state}, &deleteResp)
+	errs := deleteResp.Diagnostics.Errors()
+	if len(errs) != 1 || errs[0].Summary() != "Database has a restore in progress" {
+		t.Fatalf("want the restore-in-progress diagnostic, got %v", errs)
+	}
+	if !strings.HasSuffix(errs[0].Detail(), "Restoring instance(s): db-t.") {
+		t.Fatalf("detail must name the restoring instance, got %q", errs[0].Detail())
+	}
+	if n := requests.Load(); n != 1 {
+		t.Fatalf("want exactly one DELETE (no retry), got %d requests", n)
 	}
 }

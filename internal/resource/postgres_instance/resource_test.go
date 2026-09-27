@@ -1501,3 +1501,45 @@ func TestUpdateStorageResizeOperationRefusedSurfaces(t *testing.T) {
 		t.Errorf("expected the workflow's prose, got: %s", err.Error())
 	}
 }
+
+// TestDeleteRestoreFromInstanceInProgress: the database service's 409 for a
+// source that a restore is still reading from must render the actionable
+// diagnostic through the real Delete path, exactly once (no retry, no poll),
+// naming the restoring instances when the body carries them.
+func TestDeleteRestoreFromInstanceInProgress(t *testing.T) {
+	for name, tc := range map[string]struct{ details, wantSuffix string }{
+		"older service, count only": {`{"restores":1}`, ""},
+		"with target ids":           {`{"restores":2,"restoreTargetIds":["pg-a","pg-b"]}`, "\n\nRestoring instance(s): pg-a, pg-b."},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.Method != http.MethodDelete {
+					t.Errorf("unexpected %s %s: the refusal must not be polled", r.Method, r.URL.Path)
+				}
+				w.WriteHeader(http.StatusConflict)
+				_, _ = w.Write([]byte(`{"code":"restore_from_instance_in_progress","message":"a restore from this instance is still running","details":` + tc.details + `}`))
+			}))
+			defer server.Close()
+
+			r := newResource(newClient(t, server))
+			state := buildState(t, PostgresInstanceModel{
+				ID: types.StringValue("pg-src"), Name: types.StringValue("src"),
+				Version: types.StringValue("16"), FlavorID: types.StringValue("db.gp1.small"),
+				StorageGB: types.Int64Value(50), VPCID: types.StringValue("vpc-1"),
+				SubnetID: types.StringValue("sn-1"), Status: types.StringValue("running"),
+				CreatedAt: types.StringValue("2025-01-01T00:00:00Z"),
+			})
+			deleteResp := resource.DeleteResponse{State: state}
+			r.Delete(context.Background(), resource.DeleteRequest{State: state}, &deleteResp)
+			errs := deleteResp.Diagnostics.Errors()
+			if len(errs) != 1 || errs[0].Summary() != restoreInProgressTitle || errs[0].Detail() != restoreInProgressDetail+tc.wantSuffix {
+				t.Fatalf("want the restore-in-progress diagnostic, got %v", errs)
+			}
+			if n := requests.Load(); n != 1 {
+				t.Fatalf("want exactly one DELETE (no retry), got %d requests", n)
+			}
+		})
+	}
+}

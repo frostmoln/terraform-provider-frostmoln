@@ -4,6 +4,7 @@ page_title: "frostmoln_postgres_instance Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a managed PostgreSQL database instance in the Frostmoln platform.
+  Destroying an instance is refused while a restore FROM it to another instance is still running (deleting the source would fail that restore). The provider reports it and does not wait: let the restore target reach running or error, then destroy again. A restore_from that references this resource in the same configuration never hits this, because Terraform destroys the restore target first (a target that is itself still restoring refuses its own destroy until it finishes).
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — ha_enabled, subnet_id, version, vpc_id: the platform has no in-place migration for it — a change re-creates the instance.
@@ -16,6 +17,8 @@ description: |-
 # frostmoln_postgres_instance (Resource)
 
 Manages a managed PostgreSQL database instance in the Frostmoln platform.
+
+Destroying an instance is refused while a restore FROM it to another instance is still running (deleting the source would fail that restore). The provider reports it and does not wait: let the restore target reach `running` or `error`, then destroy again. A `restore_from` that references this resource in the same configuration never hits this, because Terraform destroys the restore target first (a target that is itself still restoring refuses its own destroy until it finishes).
 
 **Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
 

@@ -195,8 +195,9 @@ func (r *mysqlInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 		// v1: the HCL attribute `flavor` was renamed to `flavor_id` to match the
 		// flagship frostmoln_instance and the cache/messaging offers (the wire tag
 		// was always flavorId). See UpgradeState for the v0→v1 migration.
-		Version:     1,
-		Description: "Manages a managed MySQL database instance in the Frostmoln platform." + "\n\n" + scopedecl.Summary("frostmoln_mysql_instance"),
+		Version: 1,
+		Description: "Manages a managed MySQL database instance in the Frostmoln platform." + "\n\n" +
+			"Destroying an instance is refused while a restore FROM it to another instance is still running (deleting the source would fail that restore). The provider reports it and does not wait: let the restore target reach `running` or `error`, then destroy again." + "\n\n" + scopedecl.Summary("frostmoln_mysql_instance"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the MySQL instance.",
@@ -727,6 +728,13 @@ func (r *mysqlInstanceResource) Delete(ctx context.Context, req resource.DeleteR
 	_, err := r.client.Delete(ctx, r.client.TenantPath("/databases/"+id))
 	if err != nil {
 		if client.IsNotFound(err) {
+			return
+		}
+		if client.IsRestoreFromInstanceInProgress(err) {
+			resp.Diagnostics.AddError("Database has a restore in progress", client.RestoreInProgressDetail(
+				"A restore from this database to another instance (started from the portal or `fm`) is still running. Deleting the source now would fail that restore, so the platform refused the delete and nothing was changed. "+
+					"Wait for the restore target to reach `running` (or `error`), then run terraform destroy again; the provider does not wait or retry on its own.", err,
+			))
 			return
 		}
 		resp.Diagnostics.AddError("Failed to delete MySQL instance", err.Error())

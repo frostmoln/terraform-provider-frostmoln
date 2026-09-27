@@ -4,6 +4,7 @@ page_title: "frostmoln_mysql_instance Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages a managed MySQL database instance in the Frostmoln platform.
+  Destroying an instance is refused while a restore FROM it to another instance is still running (deleting the source would fail that restore). The provider reports it and does not wait: let the restore target reach running or error, then destroy again.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — ha_enabled, subnet_id, version, vpc_id: the platform has no in-place migration for it — a change re-creates the instance.
@@ -14,6 +15,8 @@ description: |-
 # frostmoln_mysql_instance (Resource)
 
 Manages a managed MySQL database instance in the Frostmoln platform.
+
+Destroying an instance is refused while a restore FROM it to another instance is still running (deleting the source would fail that restore). The provider reports it and does not wait: let the restore target reach `running` or `error`, then destroy again.
 
 **Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
 

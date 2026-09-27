@@ -211,8 +211,9 @@ func (r *postgresInstanceResource) Schema(_ context.Context, _ resource.SchemaRe
 		// v1: the HCL attribute flavor was renamed to flavor_id to match the
 		// flagship frostmoln_instance and the cache/messaging offers (the wire
 		// tag was always flavorId). See UpgradeState for the v0->v1 migration.
-		Version:     1,
-		Description: "Manages a managed PostgreSQL database instance in the Frostmoln platform." + "\n\n" + scopedecl.Summary("frostmoln_postgres_instance"),
+		Version: 1,
+		Description: "Manages a managed PostgreSQL database instance in the Frostmoln platform." + "\n\n" +
+			"Destroying an instance is refused while a restore FROM it to another instance is still running (deleting the source would fail that restore). The provider reports it and does not wait: let the restore target reach `running` or `error`, then destroy again. A `restore_from` that references this resource in the same configuration never hits this, because Terraform destroys the restore target first (a target that is itself still restoring refuses its own destroy until it finishes)." + "\n\n" + scopedecl.Summary("frostmoln_postgres_instance"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the PostgreSQL instance.",
@@ -2103,6 +2104,19 @@ func (r *postgresInstanceResource) Update(ctx context.Context, req resource.Upda
 	checkPITREnactment(cfg.PITREnabled, inst.PITREnabled, resp.Diagnostics.AddError)
 }
 
+// restoreInProgressTitle/Detail render the database service's 409
+// restore_from_instance_in_progress on destroy. Within one configuration a
+// target whose restore_from.source_instance_id REFERENCES this resource depends
+// on it, so Terraform destroys the target first and never meets this; the
+// detail names the cases that do.
+const (
+	restoreInProgressTitle  = "Database has a restore in progress"
+	restoreInProgressDetail = "A restore from this database to another instance is still running. Deleting the source now would fail that restore, so the platform refused the delete and nothing was changed. " +
+		"Wait for the restore target to reach `running` (or `error`), then run terraform destroy again; the provider does not wait or retry on its own.\n\n" +
+		"A frostmoln_postgres_instance whose `restore_from.source_instance_id` references this resource is destroyed before it, so this is reached when the restore was started outside this configuration (portal, `fm`, another workspace), " +
+		"when `source_instance_id` is a literal id rather than a reference, or when the restore target was removed from state or lives in another workspace."
+)
+
 func (r *postgresInstanceResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state PostgresInstanceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -2115,6 +2129,10 @@ func (r *postgresInstanceResource) Delete(ctx context.Context, req resource.Dele
 	_, err := r.client.Delete(ctx, r.client.TenantPath("/databases/"+id))
 	if err != nil {
 		if client.IsNotFound(err) {
+			return
+		}
+		if client.IsRestoreFromInstanceInProgress(err) {
+			resp.Diagnostics.AddError(restoreInProgressTitle, client.RestoreInProgressDetail(restoreInProgressDetail, err))
 			return
 		}
 		resp.Diagnostics.AddError("Failed to delete PostgreSQL instance", err.Error())
