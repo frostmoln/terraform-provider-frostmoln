@@ -67,6 +67,7 @@ import (
 	subnetds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/subnet"
 	tagcolorsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/tag_colors"
 	tenantdefaulttagsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/tenant_default_tags"
+	tenantquotasds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/tenant_quotas"
 	valkeyinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/valkey_instance"
 	volumeds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/volume"
 	volumetiersds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/volume_tiers"
@@ -831,5 +832,6 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		// the ids frostmoln_tag_color imports by.
 		tagcolorsds.NewDataSource,
 		tenantdefaulttagsds.NewDataSource,
+		tenantquotasds.NewDataSource,
 	}
 }
