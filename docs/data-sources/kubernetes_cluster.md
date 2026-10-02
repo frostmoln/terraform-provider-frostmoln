@@ -68,6 +68,7 @@ data "frostmoln_kubernetes_cluster" "by_id" {
 - `control_plane_tier` (String) The named control-plane plan (`development`, `production`, …) that sizes the cluster's dedicated control plane — its HA shape, not a customer tenancy.
 - `created_at` (String) The timestamp when the cluster was created.
 - `endpoint` (String) The load-balancer VIP fronting the API server — the address kube clients reach the cluster on. Null while provisioning has not produced one.
+- `failed_step` (String) The provisioning phase the cluster failed in: one of `validation`, `control_plane`, `api_endpoint`, `addons`, `node_pool` or `provisioning`. Set only when `status` is `error`, and may be absent even then.
 - `ha_enabled` (Boolean) Whether the dedicated control plane is high-availability.
 - `load_balancer_id` (String) The ID of the load balancer behind the API endpoint — the only load balancer this surface reports.
 - `pod_cidr` (String) The cluster's per-cluster pod CIDR, allocated from the managed pool. Null while the platform has not allocated one.
@@ -75,6 +76,8 @@ data "frostmoln_kubernetes_cluster" "by_id" {
 - `region` (String) The region the cluster lives in.
 - `service_cidr` (String) The cluster's per-cluster service CIDR, allocated OUTSIDE the infra `10.96.0.0/12` range to avoid colliding with platform services. Null while the platform has not allocated one.
 - `status` (String) The current status of the cluster. On this read surface the status is always a LIVE cluster's status: a soft-deleted cluster is reported as absent rather than rendered, so `deleted` never lands in state.
+- `status_message` (String) A human-readable description of why the cluster failed. Set only when `status` is `error`.
+- `status_reason` (String) Why the cluster failed, as a failure class (e.g. `QuotaExceeded`). Set only when `status` is `error`.
 - `subnet_id` (String) The subnet the cluster's nodes run in.
 - `tenant_id` (String) The tenant ID that owns this cluster.
 - `updated_at` (String) The timestamp when the cluster was last updated, null when the platform has not recorded one.

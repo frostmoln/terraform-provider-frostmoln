@@ -369,6 +369,18 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 				Description: "The current status of the cluster.",
 				Computed:    true,
 			},
+			"status_reason": schema.StringAttribute{
+				Description: "Why the cluster failed, as a failure class (e.g. `QuotaExceeded`). Set only when `status` is `error`.",
+				Computed:    true,
+			},
+			"status_message": schema.StringAttribute{
+				Description: "A human-readable description of why the cluster failed. Set only when `status` is `error`.",
+				Computed:    true,
+			},
+			"failed_step": schema.StringAttribute{
+				Description: "The provisioning phase the cluster failed in: one of `validation`, `control_plane`, `api_endpoint`, `addons`, `node_pool` or `provisioning`. Set only when `status` is `error`, and may be absent even then.",
+				Computed:    true,
+			},
 			"ha_enabled": schema.BoolAttribute{
 				Description: "Whether the control plane is highly available (derived from the control-plane tier).",
 				Computed:    true,
@@ -537,6 +549,7 @@ func (r *kubernetesClusterResource) findInitialNodePool(ctx context.Context, clu
 // a regular state; 404 maps to "deleted" as a fallback. The wait budget is the
 // timeouts block's budget for the operation polling (create, update, delete).
 func (r *kubernetesClusterResource) pollCluster(ctx context.Context, id string, targets, errorStates []string, budget time.Duration) error {
+	var last *apiKubernetesCluster
 	_, err := client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
 		Timeout:      budget,
@@ -551,9 +564,15 @@ func (r *kubernetesClusterResource) pollCluster(ctx context.Context, id string, 
 				}
 				return "", pollErr
 			}
+			last = current
 			return current.Status, nil
 		},
 	})
+	if err != nil && last != nil && last.Status == statusError {
+		if detail := client.ErrorStateDetail("Kubernetes cluster", last.StatusReason, last.StatusMessage, last.FailedStep); detail != nil {
+			return detail
+		}
+	}
 	return err
 }
 
@@ -562,6 +581,7 @@ func (r *kubernetesClusterResource) pollCluster(ctx context.Context, id string, 
 // (create, update, delete).
 func (r *kubernetesClusterResource) pollNodePool(ctx context.Context, clusterID, poolID string, targets, errorStates []string, budget time.Duration) error {
 	poolPath := r.poolPath(clusterID, poolID)
+	var last *apiNodePool
 	_, err := client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
 		Timeout:      budget,
@@ -580,9 +600,15 @@ func (r *kubernetesClusterResource) pollNodePool(ctx context.Context, clusterID,
 			if parseErr != nil {
 				return "", parseErr
 			}
+			last = current
 			return current.Status, nil
 		},
 	})
+	if err != nil && last != nil && last.Status == statusError {
+		if detail := client.ErrorStateDetail("Kubernetes cluster initial node pool", last.StatusReason, last.StatusMessage, last.FailedStep); detail != nil {
+			return detail
+		}
+	}
 	return err
 }
 

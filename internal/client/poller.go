@@ -2,8 +2,11 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode"
 )
 
 // PollConfig configures the async polling behavior.
@@ -131,4 +134,38 @@ func WaitForState(ctx context.Context, cfg PollConfig) (string, error) {
 			// continue polling
 		}
 	}
+}
+
+// ErrorStateDetail builds the error for a resource that WaitForState saw enter
+// an error state, naming why it failed from the API's optional failure fields.
+// It returns nil when all three are empty, so the caller keeps WaitForState's
+// generic error.
+func ErrorStateDetail(name, reason, message, phase string) error {
+	// Server-supplied text lands in a diagnostic and CI logs: drop anything that
+	// is not printable (escape sequences, bidi overrides) before it gets there.
+	reason, message, phase = printableOnly(reason), printableOnly(message), printableOnly(phase)
+	if reason == "" && message == "" && phase == "" {
+		return nil
+	}
+	var b strings.Builder
+	b.WriteString(name + " entered error state")
+	if phase != "" {
+		b.WriteString(" in phase " + phase)
+	}
+	if reason != "" {
+		b.WriteString(" (" + reason + ")")
+	}
+	if message != "" {
+		b.WriteString(": " + message)
+	}
+	return errors.New(b.String())
+}
+
+func printableOnly(s string) string {
+	return strings.Map(func(r rune) rune {
+		if !unicode.IsPrint(r) {
+			return -1
+		}
+		return r
+	}, s)
 }

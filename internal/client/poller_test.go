@@ -179,3 +179,31 @@ func TestWaitForState_TimeoutDoesNotReportAStalePollError(t *testing.T) {
 		t.Errorf("the timeout should name the last observed STATE, got: %v", err)
 	}
 }
+
+func TestErrorStateDetail(t *testing.T) {
+	for _, tc := range []struct{ reason, message, step, want string }{
+		{"", "", "", ""},
+		{"InvalidState", "boom", "api_endpoint", "X entered error state in phase api_endpoint (InvalidState): boom"},
+		{"", "boom", "", "X entered error state: boom"},
+		{"QuotaExceeded", "", "", "X entered error state (QuotaExceeded)"},
+	} {
+		err := ErrorStateDetail("X", tc.reason, tc.message, tc.step)
+		got := ""
+		if err != nil {
+			got = err.Error()
+		}
+		if got != tc.want {
+			t.Errorf("ErrorStateDetail(%q, %q, %q) = %q, want %q", tc.reason, tc.message, tc.step, got, tc.want)
+		}
+	}
+}
+
+func TestErrorStateDetailDropsNonPrintables(t *testing.T) {
+	err := ErrorStateDetail("Kubernetes cluster", "Invalid\x1b[31mState", "bad\u202eline\nhere", "api_endpoint")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if want := "Kubernetes cluster entered error state in phase api_endpoint (Invalid[31mState): badlinehere"; err.Error() != want {
+		t.Fatalf("got %q, want %q", err.Error(), want)
+	}
+}

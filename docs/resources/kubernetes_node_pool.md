@@ -58,8 +58,11 @@ resource "frostmoln_kubernetes_node_pool" "workers" {
 ### Read-Only
 
 - `created_at` (String) The timestamp when the node pool was created.
+- `failed_step` (String) The provisioning phase the node pool failed in: one of `validation`, `control_plane`, `api_endpoint`, `addons`, `node_pool` or `provisioning`. Set only when `status` is `error`, and may be absent even then.
 - `id` (String) The unique identifier of the node pool.
 - `status` (String) The current status of the node pool.
+- `status_message` (String) A human-readable description of why the node pool failed. Set only when `status` is `error`.
+- `status_reason` (String) Why the node pool failed, as a failure class (e.g. `QuotaExceeded`). Set only when `status` is `error`.
 - `updated_at` (String) The timestamp when the node pool was last updated.
 
 <a id="nestedblock--timeouts"></a>

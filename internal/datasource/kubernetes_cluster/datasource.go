@@ -76,6 +76,9 @@ type kubernetesClusterModel struct {
 	ID               types.String `tfsdk:"id"`
 	Name             types.String `tfsdk:"name"`
 	Status           types.String `tfsdk:"status"`
+	StatusReason     types.String `tfsdk:"status_reason"`
+	StatusMessage    types.String `tfsdk:"status_message"`
+	FailedStep       types.String `tfsdk:"failed_step"`
 	Version          types.String `tfsdk:"version"`
 	ControlPlaneTier types.String `tfsdk:"control_plane_tier"`
 	HAEnabled        types.Bool   `tfsdk:"ha_enabled"`
@@ -102,10 +105,15 @@ type kubernetesClusterModel struct {
 // the frostmoln_kubernetes_cluster_addons data source, so this read surface
 // does not mirror it.
 type apiCluster struct {
-	ID                string `json:"id"`
-	Name              string `json:"name"`
-	TenantID          string `json:"tenantId,omitempty"`
-	Status            string `json:"status"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	TenantID string `json:"tenantId,omitempty"`
+	Status   string `json:"status"`
+	// StatusReason, StatusMessage and FailedStep say why the row failed; the
+	// backend sends them only when status is "error".
+	StatusReason      string `json:"statusReason,omitempty"`
+	StatusMessage     string `json:"statusMessage,omitempty"`
+	FailedStep        string `json:"failedStep,omitempty"`
 	KubernetesVersion string `json:"kubernetesVersion"`
 	ControlPlaneTier  string `json:"controlPlaneTier"`
 	HAEnabled         bool   `json:"haEnabled"`
@@ -181,6 +189,18 @@ func (d *kubernetesClusterDataSource) Schema(_ context.Context, _ datasource.Sch
 					"status is always a LIVE cluster's status: a soft-deleted cluster is " +
 					"reported as absent rather than rendered, so `deleted` never lands in state.",
 				Computed: true,
+			},
+			"status_reason": schema.StringAttribute{
+				Description: "Why the cluster failed, as a failure class (e.g. `QuotaExceeded`). Set only when `status` is `error`.",
+				Computed:    true,
+			},
+			"status_message": schema.StringAttribute{
+				Description: "A human-readable description of why the cluster failed. Set only when `status` is `error`.",
+				Computed:    true,
+			},
+			"failed_step": schema.StringAttribute{
+				Description: "The provisioning phase the cluster failed in: one of `validation`, `control_plane`, `api_endpoint`, `addons`, `node_pool` or `provisioning`. Set only when `status` is `error`, and may be absent even then.",
+				Computed:    true,
 			},
 			"version": schema.StringAttribute{
 				Description: "The Kubernetes version (the wire's kubernetesVersion).",
@@ -529,6 +549,9 @@ func setInstanceState(state *kubernetesClusterModel, cluster *apiCluster) {
 	state.ID = types.StringValue(cluster.ID)
 	state.Name = types.StringValue(cluster.Name)
 	state.Status = types.StringValue(cluster.Status)
+	state.StatusReason = stringFromWire(cluster.StatusReason)
+	state.StatusMessage = stringFromWire(cluster.StatusMessage)
+	state.FailedStep = stringFromWire(cluster.FailedStep)
 	state.Version = stringFromWire(cluster.KubernetesVersion)
 	state.ControlPlaneTier = stringFromWire(cluster.ControlPlaneTier)
 	state.HAEnabled = types.BoolValue(cluster.HAEnabled)

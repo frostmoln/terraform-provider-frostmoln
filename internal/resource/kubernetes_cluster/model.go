@@ -30,6 +30,9 @@ type KubernetesClusterModel struct {
 	AddonVersions   types.Map             `tfsdk:"addon_versions"`
 	InitialNodePool *InitialNodePoolModel `tfsdk:"initial_node_pool"`
 	Status          types.String          `tfsdk:"status"`
+	StatusReason    types.String          `tfsdk:"status_reason"`
+	StatusMessage   types.String          `tfsdk:"status_message"`
+	FailedStep      types.String          `tfsdk:"failed_step"`
 	HAEnabled       types.Bool            `tfsdk:"ha_enabled"`
 	PodCIDR         types.String          `tfsdk:"pod_cidr"`
 	ServiceCIDR     types.String          `tfsdk:"service_cidr"`
@@ -62,10 +65,15 @@ type InitialNodePoolModel struct {
 // apiKubernetesCluster is the API representation of a managed Kubernetes
 // cluster (kubernetes service domain.ManagedCluster).
 type apiKubernetesCluster struct {
-	ID                string `json:"id"`
-	Name              string `json:"name"`
-	TenantID          string `json:"tenantId,omitempty"`
-	Status            string `json:"status"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	TenantID string `json:"tenantId,omitempty"`
+	Status   string `json:"status"`
+	// StatusReason, StatusMessage and FailedStep say why the row failed; the
+	// backend sends them only when status is "error".
+	StatusReason      string `json:"statusReason,omitempty"`
+	StatusMessage     string `json:"statusMessage,omitempty"`
+	FailedStep        string `json:"failedStep,omitempty"`
 	KubernetesVersion string `json:"kubernetesVersion"`
 	ControlPlaneTier  string `json:"controlPlaneTier"`
 	HAEnabled         bool   `json:"haEnabled"`
@@ -108,11 +116,16 @@ type apiNodePool struct {
 	ClusterID string `json:"clusterId"`
 	Name      string `json:"name"`
 	Status    string `json:"status"`
-	FlavorID  string `json:"flavorId"`
-	NodeCount int    `json:"nodeCount"`
-	IsInitial bool   `json:"isInitial"`
-	CreatedAt string `json:"createdAt"`
-	UpdatedAt string `json:"updatedAt,omitempty"`
+	// StatusReason, StatusMessage and FailedStep say why the row failed; the
+	// backend sends them only when status is "error".
+	StatusReason  string `json:"statusReason,omitempty"`
+	StatusMessage string `json:"statusMessage,omitempty"`
+	FailedStep    string `json:"failedStep,omitempty"`
+	FlavorID      string `json:"flavorId"`
+	NodeCount     int    `json:"nodeCount"`
+	IsInitial     bool   `json:"isInitial"`
+	CreatedAt     string `json:"createdAt"`
+	UpdatedAt     string `json:"updatedAt,omitempty"`
 }
 
 // apiNodePoolList is the API response for listing a cluster's node pools.
@@ -235,6 +248,9 @@ func (m *KubernetesClusterModel) fromAPI(c *apiKubernetesCluster) {
 	m.VPCID = types.StringValue(c.VPCID)
 	m.SubnetID = types.StringValue(c.SubnetID)
 	m.Status = types.StringValue(c.Status)
+	m.StatusReason = stringOrNull(c.StatusReason)
+	m.StatusMessage = stringOrNull(c.StatusMessage)
+	m.FailedStep = stringOrNull(c.FailedStep)
 	m.HAEnabled = types.BoolValue(c.HAEnabled)
 	m.PodCIDR = stringOrNull(c.PodCIDR)
 	m.ServiceCIDR = stringOrNull(c.ServiceCIDR)

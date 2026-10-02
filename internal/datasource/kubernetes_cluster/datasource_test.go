@@ -157,6 +157,9 @@ func readWith(t *testing.T, serverURL string, id, name *string) readResult {
 		"id":                 stringOr(id),
 		"name":               stringOr(name),
 		"status":             tftypes.NewValue(tftypes.String, nil),
+		"status_reason":      tftypes.NewValue(tftypes.String, nil),
+		"status_message":     tftypes.NewValue(tftypes.String, nil),
+		"failed_step":        tftypes.NewValue(tftypes.String, nil),
 		"version":            tftypes.NewValue(tftypes.String, nil),
 		"control_plane_tier": tftypes.NewValue(tftypes.String, nil),
 		"ha_enabled":         tftypes.NewValue(tftypes.Bool, nil),
@@ -623,5 +626,28 @@ func TestReadMapsAbsentOptionalsToNull(t *testing.T) {
 		if !check() {
 			t.Errorf("%s must render as null when the wire omits it", name)
 		}
+	}
+}
+
+func TestReadByIDRendersWhyAnErrorClusterFailed(t *testing.T) {
+	server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"cluster-1","name":"billing-prod","status":"error","vpcId":"vpc-1","subnetId":"subnet-1",
+			"statusReason":"InvalidState","statusMessage":"boom","failedStep":"api_endpoint",
+			"createdAt":"2026-01-01T00:00:00Z"
+		}`))
+	})
+	defer server.Close()
+
+	id := "cluster-1"
+	readResp := readWith(t, server.URL, &id, nil)
+	if readResp.diagnostics.HasError() {
+		t.Fatalf("read: %v", readResp.diagnostics.Errors())
+	}
+	m := readResp.model
+	if m.StatusReason.ValueString() != "InvalidState" || m.StatusMessage.ValueString() != "boom" ||
+		m.FailedStep.ValueString() != "api_endpoint" {
+		t.Errorf("detail is %v/%v/%v", m.StatusReason, m.StatusMessage, m.FailedStep)
 	}
 }

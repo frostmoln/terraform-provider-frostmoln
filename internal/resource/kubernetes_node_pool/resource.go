@@ -235,6 +235,18 @@ func (r *kubernetesNodePoolResource) Schema(_ context.Context, _ resource.Schema
 				Description: "The current status of the node pool.",
 				Computed:    true,
 			},
+			"status_reason": schema.StringAttribute{
+				Description: "Why the node pool failed, as a failure class (e.g. `QuotaExceeded`). Set only when `status` is `error`.",
+				Computed:    true,
+			},
+			"status_message": schema.StringAttribute{
+				Description: "A human-readable description of why the node pool failed. Set only when `status` is `error`.",
+				Computed:    true,
+			},
+			"failed_step": schema.StringAttribute{
+				Description: "The provisioning phase the node pool failed in: one of `validation`, `control_plane`, `api_endpoint`, `addons`, `node_pool` or `provisioning`. Set only when `status` is `error`, and may be absent even then.",
+				Computed:    true,
+			},
 			"created_at": schema.StringAttribute{
 				Description: "The timestamp when the node pool was created.",
 				Computed:    true,
@@ -305,6 +317,7 @@ func (r *kubernetesNodePoolResource) getPool(ctx context.Context, clusterID, poo
 // regular state; 404 maps to "deleted" as a fallback. The wait budget is the
 // timeouts block's budget for the operation polling (create, update, delete).
 func (r *kubernetesNodePoolResource) pollPool(ctx context.Context, clusterID, poolID string, targets, errorStates []string, budget time.Duration) error {
+	var last *apiNodePool
 	_, err := client.WaitForState(ctx, client.PollConfig{
 		Interval:     r.getPollInterval(),
 		Timeout:      budget,
@@ -319,9 +332,15 @@ func (r *kubernetesNodePoolResource) pollPool(ctx context.Context, clusterID, po
 				}
 				return "", pollErr
 			}
+			last = current
 			return current.Status, nil
 		},
 	})
+	if err != nil && last != nil && last.Status == statusError {
+		if detail := client.ErrorStateDetail("Kubernetes node pool", last.StatusReason, last.StatusMessage, last.FailedStep); detail != nil {
+			return detail
+		}
+	}
 	return err
 }
 

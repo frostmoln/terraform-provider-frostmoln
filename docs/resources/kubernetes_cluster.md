@@ -127,6 +127,7 @@ An existing cluster created with a BYO public IP is unaffected and keeps its add
 - `ca_cert_hash` (String) The cluster CA certificate hash.
 - `created_at` (String) The timestamp when the cluster was created.
 - `endpoint` (String) The Kubernetes API endpoint URL.
+- `failed_step` (String) The provisioning phase the cluster failed in: one of `validation`, `control_plane`, `api_endpoint`, `addons`, `node_pool` or `provisioning`. Set only when `status` is `error`, and may be absent even then.
 - `ha_enabled` (Boolean) Whether the control plane is highly available (derived from the control-plane tier).
 - `id` (String) The unique identifier of the cluster.
 - `kubeconfig` (String, Sensitive) A kubeconfig for the cluster, re-fetched from the platform on every refresh while the cluster is running. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide. Its server address is private to the cluster's VPC, so a `kubernetes` or `helm` provider configured from it must run somewhere with a route into that VPC. Because it is re-fetchable, state is not the only place it can come from: if you do not need it in Terraform, leave the attribute unreferenced and take it out of band with `fm kubernetes cluster kubeconfig <cluster-id> --exec`, which writes a kubeconfig that opens that route itself (it needs an API key with both `kubernetes:read` and `sessions:write`, and the `fm` binary on PATH wherever the kubeconfig is used — a CI runner will not have it by default).
@@ -135,6 +136,8 @@ An existing cluster created with a BYO public IP is unaffected and keeps its add
 - `public_ip` (String) The public IP address of the cluster API endpoint.
 - `service_cidr` (String) The server-allocated service network CIDR.
 - `status` (String) The current status of the cluster.
+- `status_message` (String) A human-readable description of why the cluster failed. Set only when `status` is `error`.
+- `status_reason` (String) Why the cluster failed, as a failure class (e.g. `QuotaExceeded`). Set only when `status` is `error`.
 - `tenant_id` (String) The tenant ID that owns this cluster.
 - `updated_at` (String) The timestamp when the cluster was last updated.
 

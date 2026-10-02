@@ -12,14 +12,17 @@ import (
 
 // KubernetesNodePoolModel is the Terraform state model for a standalone node pool.
 type KubernetesNodePoolModel struct {
-	ID        types.String `tfsdk:"id"`
-	ClusterID types.String `tfsdk:"cluster_id"`
-	Name      types.String `tfsdk:"name"`
-	FlavorID  types.String `tfsdk:"flavor_id"`
-	NodeCount types.Int64  `tfsdk:"node_count"`
-	Status    types.String `tfsdk:"status"`
-	CreatedAt types.String `tfsdk:"created_at"`
-	UpdatedAt types.String `tfsdk:"updated_at"`
+	ID            types.String `tfsdk:"id"`
+	ClusterID     types.String `tfsdk:"cluster_id"`
+	Name          types.String `tfsdk:"name"`
+	FlavorID      types.String `tfsdk:"flavor_id"`
+	NodeCount     types.Int64  `tfsdk:"node_count"`
+	Status        types.String `tfsdk:"status"`
+	StatusReason  types.String `tfsdk:"status_reason"`
+	StatusMessage types.String `tfsdk:"status_message"`
+	FailedStep    types.String `tfsdk:"failed_step"`
+	CreatedAt     types.String `tfsdk:"created_at"`
+	UpdatedAt     types.String `tfsdk:"updated_at"`
 
 	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
 	// absent block, which resolves to the resource's hardcoded defaults.
@@ -34,11 +37,16 @@ type apiNodePool struct {
 	ClusterID string `json:"clusterId"`
 	Name      string `json:"name"`
 	Status    string `json:"status"`
-	FlavorID  string `json:"flavorId"`
-	NodeCount int    `json:"nodeCount"`
-	IsInitial bool   `json:"isInitial"`
-	CreatedAt string `json:"createdAt"`
-	UpdatedAt string `json:"updatedAt,omitempty"`
+	// StatusReason, StatusMessage and FailedStep say why the row failed; the
+	// backend sends them only when status is "error".
+	StatusReason  string `json:"statusReason,omitempty"`
+	StatusMessage string `json:"statusMessage,omitempty"`
+	FailedStep    string `json:"failedStep,omitempty"`
+	FlavorID      string `json:"flavorId"`
+	NodeCount     int    `json:"nodeCount"`
+	IsInitial     bool   `json:"isInitial"`
+	CreatedAt     string `json:"createdAt"`
+	UpdatedAt     string `json:"updatedAt,omitempty"`
 }
 
 // apiCreateNodePoolRequest is the API request to create a standalone node pool.
@@ -78,6 +86,9 @@ func (m *KubernetesNodePoolModel) fromAPI(p *apiNodePool) {
 	m.FlavorID = types.StringValue(p.FlavorID)
 	m.NodeCount = types.Int64Value(int64(p.NodeCount))
 	m.Status = types.StringValue(p.Status)
+	m.StatusReason = stringOrNull(p.StatusReason)
+	m.StatusMessage = stringOrNull(p.StatusMessage)
+	m.FailedStep = stringOrNull(p.FailedStep)
 	m.CreatedAt = types.StringValue(p.CreatedAt)
 	m.UpdatedAt = stringOrNull(p.UpdatedAt)
 }
