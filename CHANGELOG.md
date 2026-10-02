@@ -2,7 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.75.3] - 2026-09-27
+## [0.76.0] - 2026-10-02
+
+### 🚀 Features
+
+- *(kubernetes)* Surface why a cluster or node pool failed (#635)
+
+## [0.75.3] - 2026-09-28
 
 ### 🐛 Bug Fixes
 
