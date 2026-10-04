@@ -122,7 +122,7 @@ func (r *listenerResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				},
 			},
 			"allowed_cidrs": schema.ListAttribute{
-				Description: "The CIDRs allowed to connect to this listener. This is deny-by-default: at least one CIDR is required. To allow all, set this explicitly to [\"0.0.0.0/0\"].",
+				Description: "The CIDRs allowed to connect to this listener. This is deny-by-default: at least one CIDR is required. To allow all, set this explicitly to [\"0.0.0.0/0\"]. On an l4 load balancer only [\"0.0.0.0/0\"] (or [\"::/0\"]) is accepted: it cannot restrict sources at the listener, and the client IP is preserved, so restrict sources in the backend members' security group instead.",
 				Required:    true,
 				ElementType: types.StringType,
 				Validators: []validator.List{

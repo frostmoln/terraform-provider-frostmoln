@@ -27,6 +27,8 @@ Manages a listener on a Frostmoln load balancer.
 # allowed_cidrs is deny-by-default and required: at least one CIDR must be set.
 # To accept connections from anywhere you must opt in explicitly with
 # ["0.0.0.0/0"].
+# On an l4 load balancer ["0.0.0.0/0"] is the only accepted value; restrict
+# sources in the backend members' security group (the client IP is preserved).
 #
 # Note: the listener<->pool link is declared on the POOL via its listener_id
 # attribute (see frostmoln_lb_pool), NOT here via default_pool_id. Setting both
@@ -50,7 +52,7 @@ resource "frostmoln_lb_listener" "https" {
 
 ### Required
 
-- `allowed_cidrs` (List of String) The CIDRs allowed to connect to this listener. This is deny-by-default: at least one CIDR is required. To allow all, set this explicitly to ["0.0.0.0/0"].
+- `allowed_cidrs` (List of String) The CIDRs allowed to connect to this listener. This is deny-by-default: at least one CIDR is required. To allow all, set this explicitly to ["0.0.0.0/0"]. On an l4 load balancer only ["0.0.0.0/0"] (or ["::/0"]) is accepted: it cannot restrict sources at the listener, and the client IP is preserved, so restrict sources in the backend members' security group instead.
 - `load_balancer_id` (String) The ID of the load balancer this listener belongs to. Changing this forces a new resource.
 - `name` (String) The name of the listener.
 - `protocol` (String) The listener protocol: tcp, udp, sctp, http, https, or terminated_https.

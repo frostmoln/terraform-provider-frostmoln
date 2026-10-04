@@ -3,6 +3,8 @@
 # allowed_cidrs is deny-by-default and required: at least one CIDR must be set.
 # To accept connections from anywhere you must opt in explicitly with
 # ["0.0.0.0/0"].
+# On an l4 load balancer ["0.0.0.0/0"] is the only accepted value; restrict
+# sources in the backend members' security group (the client IP is preserved).
 #
 # Note: the listener<->pool link is declared on the POOL via its listener_id
 # attribute (see frostmoln_lb_pool), NOT here via default_pool_id. Setting both
