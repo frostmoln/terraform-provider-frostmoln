@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.0] - 2026-10-04
+
+### 🚀 Features
+
+- *(kubernetes_cluster)* Status_reason, status_message and failed_step on initial_node_pool (#639)
+
 ## [0.77.0] - 2026-10-02
 
 ### 🚀 Features
