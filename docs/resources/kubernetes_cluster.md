@@ -155,8 +155,11 @@ Optional:
 
 Read-Only:
 
+- `failed_step` (String) The provisioning phase the initial node pool failed in, e.g. `node_pool`. Set only when `status` is `error`, and may be absent even then.
 - `id` (String) The unique identifier of the initial node pool.
 - `status` (String) The current status of the initial node pool.
+- `status_message` (String) A human-readable description of why the initial node pool failed. Set only when `status` is `error`.
+- `status_reason` (String) Why the initial node pool failed, as a failure class (e.g. `QuotaExceeded`). Set only when `status` is `error`.
 
 
 <a id="nestedblock--timeouts"></a>

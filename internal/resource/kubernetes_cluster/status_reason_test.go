@@ -85,3 +85,19 @@ func TestFromAPIStatusDetail(t *testing.T) {
 		t.Errorf("error cluster: got %v %v %v", m.StatusReason, m.StatusMessage, m.FailedStep)
 	}
 }
+
+func TestSetInitialNodePoolStatusDetail(t *testing.T) {
+	var m KubernetesClusterModel
+	pool := initialPool(statusActive)
+	m.setInitialNodePool(&pool)
+	if p := m.InitialNodePool; !p.StatusReason.IsNull() || !p.StatusMessage.IsNull() || !p.FailedStep.IsNull() {
+		t.Errorf("active pool: want null detail, got %v %v %v", p.StatusReason, p.StatusMessage, p.FailedStep)
+	}
+
+	pool = initialPool(statusError)
+	pool.StatusReason, pool.StatusMessage, pool.FailedStep = "QuotaExceeded", "instance quota exhausted", "node_pool"
+	m.setInitialNodePool(&pool)
+	if p := m.InitialNodePool; p.StatusReason.ValueString() != "QuotaExceeded" || p.StatusMessage.ValueString() != "instance quota exhausted" || p.FailedStep.ValueString() != "node_pool" {
+		t.Errorf("error pool: got %v %v %v", p.StatusReason, p.StatusMessage, p.FailedStep)
+	}
+}

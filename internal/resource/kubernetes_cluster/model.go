@@ -60,6 +60,11 @@ type InitialNodePoolModel struct {
 	FlavorID  types.String `tfsdk:"flavor_id"`
 	NodeCount types.Int64  `tfsdk:"node_count"`
 	Status    types.String `tfsdk:"status"`
+	// StatusReason, StatusMessage and FailedStep mirror the standalone node-pool
+	// resource: why the pool failed, null unless status is "error".
+	StatusReason  types.String `tfsdk:"status_reason"`
+	StatusMessage types.String `tfsdk:"status_message"`
+	FailedStep    types.String `tfsdk:"failed_step"`
 }
 
 // apiKubernetesCluster is the API representation of a managed Kubernetes
@@ -272,11 +277,14 @@ func (m *KubernetesClusterModel) fromAPI(c *apiKubernetesCluster) {
 // API response.
 func (m *KubernetesClusterModel) setInitialNodePool(p *apiNodePool) {
 	m.InitialNodePool = &InitialNodePoolModel{
-		ID:        types.StringValue(p.ID),
-		Name:      types.StringValue(p.Name),
-		FlavorID:  types.StringValue(p.FlavorID),
-		NodeCount: types.Int64Value(int64(p.NodeCount)),
-		Status:    types.StringValue(p.Status),
+		ID:            types.StringValue(p.ID),
+		Name:          types.StringValue(p.Name),
+		FlavorID:      types.StringValue(p.FlavorID),
+		NodeCount:     types.Int64Value(int64(p.NodeCount)),
+		Status:        types.StringValue(p.Status),
+		StatusReason:  stringOrNull(p.StatusReason),
+		StatusMessage: stringOrNull(p.StatusMessage),
+		FailedStep:    stringOrNull(p.FailedStep),
 	}
 }
 

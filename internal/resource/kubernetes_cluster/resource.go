@@ -363,6 +363,18 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 						Description: "The current status of the initial node pool.",
 						Computed:    true,
 					},
+					"status_reason": schema.StringAttribute{
+						Description: "Why the initial node pool failed, as a failure class (e.g. `QuotaExceeded`). Set only when `status` is `error`.",
+						Computed:    true,
+					},
+					"status_message": schema.StringAttribute{
+						Description: "A human-readable description of why the initial node pool failed. Set only when `status` is `error`.",
+						Computed:    true,
+					},
+					"failed_step": schema.StringAttribute{
+						Description: "The provisioning phase the initial node pool failed in, e.g. `node_pool`. Set only when `status` is `error`, and may be absent even then.",
+						Computed:    true,
+					},
 				},
 			},
 			"status": schema.StringAttribute{
@@ -693,6 +705,9 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 	// untaint, the refresh reads each pin back, so a pin the platform lost shows as drift.
 	plan.InitialNodePool.ID = types.StringNull()
 	plan.InitialNodePool.Status = types.StringNull()
+	plan.InitialNodePool.StatusReason = types.StringNull()
+	plan.InitialNodePool.StatusMessage = types.StringNull()
+	plan.InitialNodePool.FailedStep = types.StringNull()
 	if plan.InitialNodePool.Name.IsUnknown() {
 		plan.InitialNodePool.Name = types.StringNull()
 	}
