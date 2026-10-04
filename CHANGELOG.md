@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.1] - 2026-10-04
+
+### 📚 Documentation
+
+- *(lb_listener)* Allowed_cidrs accepts only allow-all on an l4 load balancer (#641)
+
 ## [0.78.0] - 2026-10-04
 
 ### 🚀 Features
