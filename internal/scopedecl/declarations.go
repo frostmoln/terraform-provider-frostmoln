@@ -163,6 +163,7 @@ var Declarations = map[string]Decl{
 			{Path: "secret", Why: "returned once at create and never again — a refresh cannot read it back"},
 		},
 	},
+	"frostmoln_container_registry_retention": {},
 	"frostmoln_dns_record": {
 		ImmutableWhy: "a record is identified by its zone, name and type; changing one is a different record",
 		Immutable:    fields("name", "type", "zone_id"),

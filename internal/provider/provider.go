@@ -95,6 +95,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/container_registry"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/container_registry_cache"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/container_registry_credential"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/container_registry_retention"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_record"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/dns_zone"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/gateway"
@@ -665,6 +666,7 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		s3_credential.NewResource,
 		container_registry.NewResource,
 		container_registry_credential.NewResource,
+		container_registry_retention.NewResource,
 		// One pull-through cache. Immutable end to end: the API has no update
 		// route, so every argument is RequiresReplace — including the write-only
 		// upstream password, whose missing RequiresReplace would report a
