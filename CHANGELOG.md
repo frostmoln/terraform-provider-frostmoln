@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.0] - 2026-10-06
+
+### 🚀 Features
+
+- *(container-registry)* Add retention policy resource (#643)
+
 ## [0.79.1] - 2026-10-06
 
 ### 🐛 Bug Fixes
