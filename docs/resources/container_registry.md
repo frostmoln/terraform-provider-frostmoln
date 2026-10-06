@@ -3,7 +3,7 @@
 page_title: "frostmoln_container_registry Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Enables this tenant's container registry — the explicit opt-in that creates the tenant's namespace and the billable state that comes with it. Holding the container-registry entitlement does not create a registry by itself.
+  Enables this tenant's container registry — the explicit opt-in that creates the tenant's namespace and the billable state that comes with it.
   Nothing about a registry is configurable, so this resource has no arguments and can never produce a diff. Applying it against a tenant that already opted in (through the portal, the fm CLI, or another Terraform state) ADOPTS the existing registry rather than failing.
   DESTROYING THIS RESOURCE DOES NOT DELETE THE REGISTRY. There is no teardown endpoint: registry teardown belongs to tenant closure. terraform destroy removes it from state and warns; the namespace, its images and its billable state all survive.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
@@ -12,7 +12,7 @@ description: |-
 
 # frostmoln_container_registry (Resource)
 
-Enables this tenant's container registry — the explicit opt-in that creates the tenant's namespace and the billable state that comes with it. Holding the container-registry entitlement does not create a registry by itself.
+Enables this tenant's container registry — the explicit opt-in that creates the tenant's namespace and the billable state that comes with it.
 
 Nothing about a registry is configurable, so this resource has no arguments and can never produce a diff. Applying it against a tenant that already opted in (through the portal, the fm CLI, or another Terraform state) ADOPTS the existing registry rather than failing.
 

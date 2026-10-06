@@ -16,8 +16,7 @@ resource "frostmoln_workload_identity_binding" "app" {
 # A POLICY-GRANTED binding: omit `scopes` entirely and let an attached access
 # policy be the workload's sole authority. Prefer this — a flat scope grants a
 # verb across every resource of a service, while a policy names individual
-# targets, adds constraints and can deny explicitly. Needs the `iam-policies`
-# entitlement.
+# targets, adds constraints and can deny explicitly.
 #
 # The binding is INERT until the attachment exists: with no grant at all the
 # token exchange refuses it rather than minting a credential that grants nothing.

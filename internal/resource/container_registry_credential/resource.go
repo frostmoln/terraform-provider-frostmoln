@@ -321,8 +321,8 @@ func (r *credentialResource) Delete(ctx context.Context, req resource.DeleteRequ
 }
 
 // addCreateRefusal translates the two refusals whose server message does not
-// name the Terraform-level remedy. The entitlement refusal is deliberately not
-// among them: the gateway's own copy already says to contact support.
+// name the Terraform-level remedy. Every other refusal is surfaced with the
+// gateway's own copy.
 func addCreateRefusal(diags interface{ AddError(string, string) }, err error) {
 	switch {
 	case isNotEnabled(err):

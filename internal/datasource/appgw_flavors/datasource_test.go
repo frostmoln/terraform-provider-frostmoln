@@ -112,8 +112,8 @@ func TestTheSchemaSellsCapacityNotSubstrate(t *testing.T) {
 func TestTheCatalogIsReturnedAsTheServerSentIt(t *testing.T) {
 	d, cfg, st := harness(t, func(w http.ResponseWriter, r *http.Request) {
 		// TENANT-SCOPED. The sizes are identical for every tenant, but the
-		// entitlement that decides whether you may SEE them is per tenant, and
-		// only a path naming one lets the gateway resolve it (ADR-0052).
+		// catalog is served on the tenant path like the rest of the offer
+		// (ADR-0052).
 		if r.URL.Path != "/v1/tenants/t-1/application-gateways/catalog/flavors" {
 			t.Errorf("unexpected path %s -- the catalog must be read per tenant", r.URL.Path)
 		}

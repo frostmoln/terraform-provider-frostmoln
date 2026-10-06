@@ -46,8 +46,7 @@ func (r *containerRegistryResource) Metadata(_ context.Context, req resource.Met
 func (r *containerRegistryResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Enables this tenant's container registry — the explicit opt-in that creates the " +
-			"tenant's namespace and the billable state that comes with it. Holding the container-registry " +
-			"entitlement does not create a registry by itself.\n\n" +
+			"tenant's namespace and the billable state that comes with it.\n\n" +
 			"Nothing about a registry is configurable, so this resource has no arguments and can never " +
 			"produce a diff. Applying it against a tenant that already opted in (through the portal, the " +
 			"fm CLI, or another Terraform state) ADOPTS the existing registry rather than failing.\n\n" +
@@ -117,9 +116,9 @@ func (r *containerRegistryResource) Create(ctx context.Context, req resource.Cre
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath(settingsPath), nil)
 	if err != nil {
 		if !isAlreadyEnabled(err) {
-			// No special-casing for the entitlement refusal: the gateway's own
-			// message already names the remedy ("contact support to request
-			// access"), and rewording it here would only risk drifting from it.
+			// No special-casing for other refusals: the gateway's own message
+			// already names the remedy, and rewording it here would only risk
+			// drifting from it.
 			resp.Diagnostics.AddError("Failed to enable the container registry", err.Error())
 			return
 		}

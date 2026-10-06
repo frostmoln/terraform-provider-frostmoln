@@ -137,9 +137,6 @@ func (r *workloadIdentityBindingResource) Schema(_ context.Context, _ resource.S
 					"`frostmoln_iam_policy_attachment` (directly, or through a group). Write `null` or " +
 					"omit the attribute for no scopes; an empty list is not a valid spelling.\n\n" +
 					"Notes on the policy-granted path:\n" +
-					"- The policy-granted path needs the `iam-policies` entitlement. Without it the " +
-					"binding is still created, but `frostmoln_iam_policy` fails and the binding is left " +
-					"inert.\n" +
 					"- Until a policy is attached the binding is inert — the token exchange refuses it " +
 					"rather than minting a credential that grants nothing.\n" +
 					"- While a binding carries BOTH scopes and a policy, its scopes stay authoritative " +

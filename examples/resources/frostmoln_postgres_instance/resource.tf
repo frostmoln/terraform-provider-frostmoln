@@ -25,9 +25,9 @@ resource "frostmoln_postgres_instance" "main" {
   # Extensions are platform catalog names, checked against the live catalog
   # at plan time. Preload-required ones (timescaledb, pg_stat_statements
   # in the catalog today) pay a restart window; the apply for the rest is
-  # in place, with no restart. Requires the database-extensions entitlement
-  # on the tenant. Omitting the attribute keeps whatever the instance has;
-  # an explicit empty set (`extensions = []`) disables every extension.
+  # in place, with no restart. Omitting the attribute keeps whatever the
+  # instance has; an explicit empty set (`extensions = []`) disables every
+  # extension.
   extensions = ["timescaledb", "pg_stat_statements"]
 
   # Customer-tunable wait budgets. Defaults: create/update/delete = 30m.
