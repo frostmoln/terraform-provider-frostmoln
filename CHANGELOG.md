@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.1] - 2026-10-06
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.28 (#652)
+
+### 📚 Documentation
+
+- Drop entitlement wording for features open to every tenant (#651)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.14.3 (#649)
+
 ## [0.80.0] - 2026-10-06
 
 ### 🚀 Features
