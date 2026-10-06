@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.0] - 2026-10-06
+
+### 🚀 Features
+
+- *(client)* The refusal diagnostic reads the edge family-form demand (rung 9 SURFACES-C / D5b) (#644)
+
 ## [0.78.1] - 2026-10-04
 
 ### 📚 Documentation
