@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.1] - 2026-10-06
+
+### 🐛 Bug Fixes
+
+- *(messaging_instance)* Wait for the running row after a completed create (#646)
+
 ## [0.79.0] - 2026-10-06
 
 ### 🚀 Features
