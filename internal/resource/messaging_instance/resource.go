@@ -330,42 +330,8 @@ func (r *messagingInstanceResource) Create(ctx context.Context, req resource.Cre
 		}
 		instanceID = inst.ID
 		// Legacy 201 (a synchronous backend, or a pre-202-rollout messaging build):
-		// the instance comes back as "creating". Persist the row FIRST — a poll
-		// that never reaches running must leave the created instance tracked,
-		// not orphaned (the same D2 class the 202 arm's contract closes) —
-		// then poll to running so `apply` blocks to completion exactly like
-		// the 202 operation path does.
-		if instanceID != "" {
-			plan.fromAPI(ctx, inst, &resp.Diagnostics)
-			if resp.Diagnostics.HasError() {
-				return
-			}
-			resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-			if resp.Diagnostics.HasError() {
-				return
-			}
-			if _, waitErr := client.WaitForState(ctx, client.PollConfig{
-				Interval:     r.getPollInterval(),
-				Timeout:      budgets.Create,
-				TargetStates: []string{"running"},
-				ErrorStates:  []string{"error", "failed"},
-				ResourceName: "messaging_instance",
-				PollFunc: func(pollCtx context.Context) (string, error) {
-					pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/messaging/"+instanceID), nil)
-					if pollErr != nil {
-						return "", pollErr
-					}
-					current, parseErr := client.ParseResponse[apiMessagingInstance](pollResp)
-					if parseErr != nil {
-						return "", parseErr
-					}
-					return current.Status, nil
-				},
-			}); waitErr != nil {
-				resp.Diagnostics.AddError("Messaging instance failed to reach running state", waitErr.Error())
-				return
-			}
-		}
+		// the instance comes back as "creating". The shared tail below persists the
+		// row FIRST and then polls to running, exactly like the 202 arm.
 	}
 	if instanceID == "" {
 		resp.Diagnostics.AddError(
@@ -375,7 +341,7 @@ func (r *messagingInstanceResource) Create(ctx context.Context, req resource.Cre
 		return
 	}
 
-	// Read the final state (the operation completion means the instance is running).
+	// Read the row and, for an adopted instance, confirm it is this apply's.
 	readResp, err := r.client.Get(ctx, r.client.TenantPath("/messaging/"+instanceID), nil)
 	if err != nil {
 		if adopted {
@@ -389,7 +355,12 @@ func (r *messagingInstanceResource) Create(ctx context.Context, req resource.Cre
 					"The instance is tracked in state; refresh once the platform responds.", instanceID, err.Error()))
 			return
 		}
-		resp.Diagnostics.AddError("Failed to read messaging instance after creation", err.Error())
+		// The instance exists (its create was accepted and completed): keep it
+		// tracked by id rather than orphan it.
+		plan.ID = types.StringValue(instanceID)
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		resp.Diagnostics.AddError("Failed to read messaging instance after creation",
+			fmt.Sprintf("Instance %s is tracked in state; refresh once the platform responds: %s", instanceID, err.Error()))
 		return
 	}
 	finalInst, err := client.ParseResponse[apiMessagingInstance](readResp)
@@ -410,7 +381,43 @@ func (r *messagingInstanceResource) Create(ctx context.Context, req resource.Cre
 		return
 	}
 
+	// Persist the platform's real row BEFORE polling: a poll that never reaches
+	// running must leave the instance tracked with real values (no unknowns),
+	// never orphaned.
 	plan.fromAPI(ctx, finalInst, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	if resp.Diagnostics.HasError() || finalInst.Status == "running" {
+		return
+	}
+
+	// A COMPLETED operation does not yet mean the row reads running: on the
+	// platform's command path (H-4 phase 3) messaging applies provisioning's result
+	// event a moment after the workflow closes, so the row can still say `creating`
+	// with no private_ip. Poll to running (every arm, adopted included, like the
+	// sibling offers), then record the finished row.
+	if _, waitErr := r.pollRunning(ctx, instanceID, budgets.Create); waitErr != nil {
+		resp.Diagnostics.AddError("Messaging instance failed to reach running state",
+			fmt.Sprintf("Instance %s did not reach running: %s. It is tracked in state with its last "+
+				"known status; Terraform will replace it on the next apply. If a refresh shows it running, "+
+				"`terraform untaint` keeps it instead.", instanceID, waitErr.Error()))
+		return
+	}
+	doneResp, err := r.client.Get(ctx, r.client.TenantPath("/messaging/"+instanceID), nil)
+	if err != nil {
+		resp.Diagnostics.AddWarning("Messaging instance is running but could not be re-read",
+			fmt.Sprintf("Instance %s reached running, but the final read failed: %s. Refresh to record "+
+				"its final attributes.", instanceID, err.Error()))
+		return
+	}
+	doneInst, err := client.ParseResponse[apiMessagingInstance](doneResp)
+	if err != nil {
+		resp.Diagnostics.AddWarning("Messaging instance is running but could not be re-read", err.Error())
+		return
+	}
+	plan.fromAPI(ctx, doneInst, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -614,4 +621,27 @@ func (r *messagingInstanceResource) Delete(ctx context.Context, req resource.Del
 
 func (r *messagingInstanceResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// pollRunning waits until the instance reads `running` (an `error`/`failed`
+// status ends the wait as a failure). Mirrors nginx_instance's pollRunning.
+func (r *messagingInstanceResource) pollRunning(ctx context.Context, id string, budget time.Duration) (string, error) {
+	return client.WaitForState(ctx, client.PollConfig{
+		Interval:     r.getPollInterval(),
+		Timeout:      budget,
+		TargetStates: []string{"running"},
+		ErrorStates:  []string{"error", "failed"},
+		ResourceName: "messaging_instance",
+		PollFunc: func(pollCtx context.Context) (string, error) {
+			pollResp, pollErr := r.client.Get(pollCtx, r.client.TenantPath("/messaging/"+id), nil)
+			if pollErr != nil {
+				return "", pollErr
+			}
+			current, parseErr := client.ParseResponse[apiMessagingInstance](pollResp)
+			if parseErr != nil {
+				return "", parseErr
+			}
+			return current.Status, nil
+		},
+	})
 }

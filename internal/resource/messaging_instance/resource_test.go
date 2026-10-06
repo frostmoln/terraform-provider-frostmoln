@@ -1285,3 +1285,173 @@ func TestCreateWaitTimeoutVerifiedAbsent(t *testing.T) {
 		t.Error("verified absence must not record state")
 	}
 }
+
+// TestCreateCompletedOperationWaitsForRunningRow pins the command-path lag
+// (H-4 phase 3): the create operation is COMPLETED, but messaging applies
+// provisioning's result event a moment later, so the first reads still say
+// `creating` with no private IP. State must hold the finished row.
+func TestCreateCompletedOperationWaitsForRunningRow(t *testing.T) {
+	var gets int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/messaging":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-mq-lag", "status": "pending", "resourceType": "messaging_instance",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-mq-lag":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-mq-lag", "status": "completed", "resourceType": "messaging_instance", "resourceId": "mq-lag",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/messaging/mq-lag":
+			gets++
+			inst := apiMessagingInstance{
+				ID: "mq-lag", Name: "test-broker", Type: "lavinmq", TypeVersion: "2.3",
+				FlavorID: "mq.gp1.small", VPCID: "vpc-1", SubnetID: "sn-1", PersistenceMode: "persistent",
+				Status: "creating", Port: 5672, AMQPSPort: 5671, ManagementPort: 15672,
+				CreatedAt: "2025-01-01T00:00:00Z",
+			}
+			if gets > 2 {
+				inst.Status, inst.PrivateIP = "running", "10.0.1.9"
+			}
+			_ = json.NewEncoder(w).Encode(inst)
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := newTestMessagingResource(c)
+
+	plan := buildMessagingInstancePlan(t, MessagingInstanceModel{
+		Name: types.StringValue("test-broker"), Type: types.StringValue("lavinmq"),
+		Version: types.StringValue("2.3"), FlavorID: types.StringValue("mq.gp1.small"),
+		VPCID: types.StringValue("vpc-1"), SubnetID: types.StringValue("sn-1"),
+		PersistenceMode: types.StringValue("persistent"),
+	})
+	createResp := resource.CreateResponse{State: emptyMessagingInstanceState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("create failed: %v", createResp.Diagnostics.Errors())
+	}
+	var result MessagingInstanceModel
+	createResp.State.Get(context.Background(), &result)
+	if result.Status.ValueString() != "running" || result.PrivateIP.ValueString() != "10.0.1.9" {
+		t.Fatalf("state holds an unfinished row: status=%q private_ip=%q (gets=%d)",
+			result.Status.ValueString(), result.PrivateIP.ValueString(), gets)
+	}
+	if gets < 3 {
+		t.Fatalf("expected the provider to poll past the creating reads, got %d GETs", gets)
+	}
+}
+
+// A completed operation whose row then goes to error: the instance stays
+// tracked with the platform's real row (no unknowns), and the apply errors.
+func TestCreateCompletedOperationRowGoesToError(t *testing.T) {
+	var gets int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/messaging":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{"operationId": "op-mq-err", "status": "pending"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/operations/op-mq-err":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId": "op-mq-err", "status": "completed", "resourceId": "mq-err",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/messaging/mq-err":
+			gets++
+			st := "creating"
+			if gets > 1 {
+				st = "error"
+			}
+			_ = json.NewEncoder(w).Encode(apiMessagingInstance{
+				ID: "mq-err", Name: "test-broker", Type: "lavinmq", TypeVersion: "2.3",
+				FlavorID: "mq.gp1.small", VPCID: "vpc-1", SubnetID: "sn-1", PersistenceMode: "persistent",
+				Status: st, Port: 5672, AMQPSPort: 5671, ManagementPort: 15672, CreatedAt: "2025-01-01T00:00:00Z",
+			})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := newTestMessagingResource(c)
+	plan := buildMessagingInstancePlan(t, MessagingInstanceModel{
+		Name: types.StringValue("test-broker"), Type: types.StringValue("lavinmq"),
+		Version: types.StringValue("2.3"), FlavorID: types.StringValue("mq.gp1.small"),
+		VPCID: types.StringValue("vpc-1"), SubnetID: types.StringValue("sn-1"),
+		PersistenceMode: types.StringValue("persistent"),
+	})
+	createResp := resource.CreateResponse{State: emptyMessagingInstanceState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("expected an error when the row goes to error")
+	}
+	var result MessagingInstanceModel
+	createResp.State.Get(context.Background(), &result)
+	if result.ID.ValueString() != "mq-err" {
+		t.Fatalf("instance not tracked: id=%q", result.ID.ValueString())
+	}
+	if result.Status.IsUnknown() || result.Port.IsUnknown() || result.PrivateIP.IsUnknown() {
+		t.Fatalf("state carries unknown values: status=%v port=%v private_ip=%v",
+			result.Status, result.Port, result.PrivateIP)
+	}
+}
+
+// A legacy 201 that answers creating: the row is persisted first, then polled
+// to running exactly once through the shared tail.
+func TestCreateLegacy201CreatingPollsToRunning(t *testing.T) {
+	var gets int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		inst := apiMessagingInstance{
+			ID: "mq-201", Name: "test-broker", Type: "lavinmq", TypeVersion: "2.3",
+			FlavorID: "mq.gp1.small", VPCID: "vpc-1", SubnetID: "sn-1", PersistenceMode: "persistent",
+			Status: "creating", Port: 5672, AMQPSPort: 5671, ManagementPort: 15672, CreatedAt: "2025-01-01T00:00:00Z",
+		}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/t-1/messaging":
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(inst)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/messaging/mq-201":
+			gets++
+			if gets > 2 {
+				inst.Status, inst.PrivateIP = "running", "10.0.1.7"
+			}
+			_ = json.NewEncoder(w).Encode(inst)
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	r := newTestMessagingResource(c)
+	plan := buildMessagingInstancePlan(t, MessagingInstanceModel{
+		Name: types.StringValue("test-broker"), Type: types.StringValue("lavinmq"),
+		Version: types.StringValue("2.3"), FlavorID: types.StringValue("mq.gp1.small"),
+		VPCID: types.StringValue("vpc-1"), SubnetID: types.StringValue("sn-1"),
+		PersistenceMode: types.StringValue("persistent"),
+	})
+	createResp := resource.CreateResponse{State: emptyMessagingInstanceState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("create failed: %v", createResp.Diagnostics.Errors())
+	}
+	var result MessagingInstanceModel
+	createResp.State.Get(context.Background(), &result)
+	if result.Status.ValueString() != "running" || result.PrivateIP.ValueString() != "10.0.1.7" {
+		t.Fatalf("state holds an unfinished row: status=%q private_ip=%q", result.Status.ValueString(), result.PrivateIP.ValueString())
+	}
+}
