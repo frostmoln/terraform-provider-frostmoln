@@ -86,6 +86,22 @@ func TestAPIError_ErrorSuffix(t *testing.T) {
 			err:  &APIError{Code: "insufficient_permission", Message: "denied", RequiredPermission: "storage:volumes:delete"},
 			want: " (required permission: storage:volumes:delete)",
 		},
+		"edge family-form demand suffixed (D5b parity)": {
+			err:  &APIError{Code: "INSUFFICIENT_PERMISSIONS", Message: "denied", RequiredPermission: "network:update"},
+			want: " (required permission: network:update)",
+		},
+		"edge family-form unclassified marker withheld": {
+			err:      &APIError{Code: "INSUFFICIENT_PERMISSIONS", Message: "denied", RequiredPermission: "network:unclassified"},
+			wantNone: true,
+		},
+		"family-slot unclassified marker withheld": {
+			err:      &APIError{Code: "INSUFFICIENT_PERMISSIONS", Message: "denied", RequiredPermission: "unclassified:update"},
+			wantNone: true,
+		},
+		"3-part marker withheld": {
+			err:      &APIError{Code: "INSUFFICIENT_PERMISSIONS", Message: "denied", RequiredPermission: "network:instances:unclassified"},
+			wantNone: true,
+		},
 		"unclassified marker withheld": {
 			err:      &APIError{Code: "INSUFFICIENT_PERMISSIONS", Message: "denied", RequiredPermission: "unclassified"},
 			wantNone: true,

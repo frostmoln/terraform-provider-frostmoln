@@ -329,10 +329,22 @@ var permissionDenyCodes = map[string]bool{
 }
 
 // wellFormedPermission is the only required_permission the diagnostic echoes:
-// the 3-part vocabulary the gates demand. Server text — the unclassified-verb
-// marker, a path echo, a bidi escape or any other shape withholds the suffix
-// and leaves the bare "code: message" line.
-var wellFormedPermission = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}:[a-z][a-z0-9_-]{0,31}:[a-z][a-z0-9_-]{0,31}$`)
+// the 3-part vocabulary the gates demand (family:resource:action) — or the
+// edge's 2-part family-form demand (family:action, e.g. network:update — the
+// api-gateway's grantable demand shape; the D5b parity contract: the fm/TF
+// clients speak the SAME denial vocabulary the estate answers with). Server
+// text — the unclassified-verb marker, a path echo, a bidi escape or any other
+// shape withholds the suffix and leaves the bare "code: message" line.
+var wellFormedPermission = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}:[a-z][a-z0-9_-]{0,31}(?::[a-z][a-z0-9_-]{0,31})?$`)
+
+// wellFormedDemand wraps the shape check with the one vocabulary ban: the
+// gate's fail-closed verb marker (family:unclassified) is server text, never
+// an echoed demand.
+func wellFormedDemand(perm string) bool {
+	return wellFormedPermission.MatchString(perm) &&
+		!strings.HasSuffix(perm, ":unclassified") &&
+		!strings.HasPrefix(perm, "unclassified:")
+}
 
 // Error renders code and message — plus, for the two org-role refusal codes
 // carrying a well-formed demanded permission, that permission. Details is still
@@ -343,7 +355,7 @@ var wellFormedPermission = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}:[a-z][a-z0
 // Terraform) — hence the exception, and its narrowness.
 func (e *APIError) Error() string {
 	msg := fmt.Sprintf("%s: %s", e.Code, e.Message)
-	if permissionDenyCodes[e.Code] && wellFormedPermission.MatchString(e.RequiredPermission) {
+	if permissionDenyCodes[e.Code] && wellFormedDemand(e.RequiredPermission) {
 		msg += fmt.Sprintf(" (required permission: %s)", e.RequiredPermission)
 	}
 	return msg
