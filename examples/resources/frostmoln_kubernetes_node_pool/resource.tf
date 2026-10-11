@@ -8,4 +8,10 @@ resource "frostmoln_kubernetes_node_pool" "workers" {
   name       = "workers" # optional — a "pool-<8 hex>" name is generated when omitted
   flavor_id  = data.frostmoln_kubernetes_flavors.available.flavors[0].id
   node_count = 2 # scaled in-place; name/flavor changes replace the pool
+
+  # Resource tags, not Kubernetes node labels: they never reach a node. A pool
+  # does not inherit the cluster's tags.
+  tags = {
+    env = "prod"
+  }
 }

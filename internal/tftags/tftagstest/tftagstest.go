@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 
@@ -54,6 +55,9 @@ type Profile struct {
 	Async bool
 	// AsyncUpdate: the same for the update.
 	AsyncUpdate bool
+	// Routes are further tenant-relative GET paths the resource reads (a cluster's
+	// node-pool list and kubeconfig), answered with the given body.
+	Routes map[string]any
 	// Touch is an in-place change to one attribute that is not about tags —
 	// a string, int or bool value, or for the `timeouts` block the `update`
 	// budget — used to drive an update for another reason.
@@ -71,7 +75,34 @@ func (p Profile) Field(v string) string {
 var (
 	networkReserved = map[string]string{"frostmoln_managed_by": "cluster"}
 	storageReserved = map[string]string{"customer-id": "t-1"}
+	// offerReserved: a managed offer reserves /^frostmoln[_-]/i and REFUSES such a
+	// key on every write, so none should ever be stored — but one that is (a manual
+	// repair) must stay out of tags_all, in any letter case, or the next replace
+	// would send it back and be refused.
+	offerReserved = map[string]string{"Frostmoln_Legacy": "x", "frostmoln-note": "y"}
 )
+
+// k8sInitialPool is the frostmoln_kubernetes_cluster's initial_node_pool block in a
+// create configuration: the nested object, with only flavor_id set.
+func k8sInitialPool() tftypes.Value {
+	str := tftypes.String
+	ot := tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"id": str, "name": str, "flavor_id": str, "node_count": tftypes.Number,
+		"status": str, "status_reason": str, "status_message": str, "failed_step": str,
+	}}
+	vals := map[string]tftypes.Value{}
+	for name, at := range ot.AttributeTypes {
+		vals[name] = tftypes.NewValue(at, nil)
+	}
+	vals["flavor_id"] = Str("k8s.gp1.medium")
+	return tftypes.NewValue(ot, vals)
+}
+
+// k8sInitialPoolWire is the initial pool as the node-pool routes answer it.
+var k8sInitialPoolWire = map[string]any{
+	"id": "np-1", "clusterId": ObjectID, "name": "default", "status": "active",
+	"flavorId": "k8s.gp1.medium", "nodeCount": 1, "isInitial": true,
+}
 
 // Str is a known string value.
 func Str(s string) tftypes.Value { return tftypes.NewValue(tftypes.String, s) }
@@ -95,6 +126,32 @@ var Profiles = map[string]Profile{
 		Reserved: map[string]string{"frostmoln_type": "customer"},
 		Async:    true,
 		Touch:    map[string]any{"name": "touched"},
+	},
+	"frostmoln_kubernetes_cluster": {
+		Create: "/kubernetes-clusters", Member: "/kubernetes-clusters/" + ObjectID, Update: http.MethodPut,
+		Reserved: offerReserved,
+		Config:   map[string]tftypes.Value{"initial_node_pool": k8sInitialPool()},
+		// vpc_id and subnet_id force replacement and read back verbatim, so they echo
+		// the placeholders the create configuration gives them.
+		Extra: map[string]any{"name": "x", "status": "running", "vpcId": "x", "subnetId": "x", "addons": []string{}},
+		Routes: map[string]any{
+			"/kubernetes-clusters/" + ObjectID + "/node-pools":      map[string]any{"nodePools": []any{k8sInitialPoolWire}},
+			"/kubernetes-clusters/" + ObjectID + "/node-pools/np-1": k8sInitialPoolWire,
+			"/kubernetes-clusters/" + ObjectID + "/kubeconfig":      map[string]any{"endpoint": "https://k", "kubeconfig": "apiVersion: v1"},
+		},
+		// The cluster PUT has PATCH semantics: a rename sends the name alone.
+		Touch: map[string]any{"name": "touched"},
+	},
+	"frostmoln_kubernetes_node_pool": {
+		Create: "/kubernetes-clusters/c-1/node-pools", Member: "/kubernetes-clusters/c-1/node-pools/" + ObjectID,
+		Update: http.MethodPatch, ImportID: "c-1/" + ObjectID,
+		Reserved: offerReserved,
+		Config:   map[string]tftypes.Value{"cluster_id": Str("c-1")},
+		// flavor_id forces replacement and reads back verbatim (placeholder "x").
+		Extra: map[string]any{"clusterId": "c-1", "name": "pool-1", "status": "active", "flavorId": "x", "nodeCount": 1},
+		// node_count scales through POST .../scale, which the fake does not model; a
+		// timeouts change drives an update with no tag change instead.
+		Touch: map[string]any{"timeouts": "7m"},
 	},
 	"frostmoln_launch_template": {
 		Create: "/launch-templates", Member: "/launch-templates/" + ObjectID, Update: http.MethodPatch,
@@ -322,6 +379,8 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 	case r.Method == http.MethodGet && isMember:
 		_ = json.NewEncoder(w).Encode(f.Object())
+	case r.Method == http.MethodGet && f.Profile.Routes[strings.TrimPrefix(r.URL.Path, tenant)] != nil:
+		_ = json.NewEncoder(w).Encode(f.Profile.Routes[strings.TrimPrefix(r.URL.Path, tenant)])
 	case r.Method == f.Profile.Update && isMember:
 		f.writes = append(f.writes, Write{r.Method, r.URL.Path, body})
 		if raw, ok := body[f.Profile.Field(f.Profile.UpdateField)]; ok && string(raw) != "null" {

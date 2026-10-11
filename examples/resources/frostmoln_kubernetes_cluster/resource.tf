@@ -48,6 +48,14 @@ resource "frostmoln_kubernetes_cluster" "main" {
     flavor_id  = data.frostmoln_kubernetes_flavors.available.flavors[0].id
     node_count = 3
   }
+
+  # Resource tags: your own metadata for search and filtering, never applied to
+  # the cluster or its nodes. The initial node pool gets a ONE-TIME copy of the
+  # cluster's merged tags at create; changing them here later does not reach it.
+  tags = {
+    env  = "prod"
+    team = "platform"
+  }
 }
 
 # The API endpoint is PRIVATE: it lives on an address inside your own VPC and is

@@ -2,9 +2,14 @@
 package kubernetes_cluster
 
 import (
+	"context"
+
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -44,6 +49,11 @@ type KubernetesClusterModel struct {
 	CreatedAt       types.String          `tfsdk:"created_at"`
 	UpdatedAt       types.String          `tfsdk:"updated_at"`
 	TenantID        types.String          `tfsdk:"tenant_id"`
+	// Tags / TagsAll are the cluster's customer resource tags (internal/tftags). They
+	// are the CLUSTER's only: the initial node pool got a one-time copy at create and
+	// is not modelled here (see the schema description).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 
 	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
 	// absent block, which resolves to the resource's hardcoded defaults.
@@ -99,9 +109,12 @@ type apiKubernetesCluster struct {
 	// backend always includes it (may be empty) — it echoes exactly what was
 	// applied. Addons are create-time only; they cannot change on an existing
 	// cluster.
-	Addons    []string `json:"addons"`
-	CreatedAt string   `json:"createdAt"`
-	UpdatedAt string   `json:"updatedAt,omitempty"`
+	Addons []string `json:"addons"`
+	// Tags are the cluster's customer resource tags; the backend always sends an
+	// object ({} when untagged).
+	Tags      map[string]string `json:"tags"`
+	CreatedAt string            `json:"createdAt"`
+	UpdatedAt string            `json:"updatedAt,omitempty"`
 	// Notices ride a successful PUT .../addons. `pinnedVersions` is deliberately NOT
 	// decoded: it is the platform's full pin map, and a field that does not exist
 	// cannot be persisted or replayed into the next request's `versions` delta.
@@ -166,11 +179,22 @@ type apiCreateClusterRequest struct {
 	// takes it as a delta: a selected addon it does not name gets its recommended version.
 	Versions        map[string]string        `json:"versions,omitempty"`
 	InitialNodePool apiCreateNodePoolRequest `json:"initialNodePool"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty. The API
+	// merges the tenant's default tags in, and copies the merged set ONCE onto the
+	// initial pool — whose own `tags` field it refuses, so apiCreateNodePoolRequest
+	// has none.
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
-// apiUpdateClusterRequest is the API request to update a cluster (name only in v1).
+// apiUpdateClusterRequest is PUT .../kubernetes-clusters/{id}, which has PATCH
+// semantics: an omitted field is left unchanged. Only what changed is sent.
+//
+// Tags is a POINTER on purpose: nil omits the field (keep the tags), a pointer to
+// an EMPTY map sends `"tags":{}` (clear them) — omitempty on a plain map would drop
+// that clear.
 type apiUpdateClusterRequest struct {
-	Name *string `json:"name,omitempty"`
+	Name *string            `json:"name,omitempty"`
+	Tags *map[string]string `json:"tags,omitempty"`
 }
 
 // apiScaleNodePoolRequest is the API request to scale a node pool.
@@ -271,6 +295,21 @@ func (m *KubernetesClusterModel) fromAPI(c *apiKubernetesCluster) {
 	m.CreatedAt = types.StringValue(c.CreatedAt)
 	m.UpdatedAt = stringOrNull(c.UpdatedAt)
 	m.TenantID = stringOrNull(c.TenantID)
+}
+
+// tagsFromAPI renders the API's tags into `tags` (the keys the prior value names)
+// and `tags_all` (every key), after removing the platform namespace the offer
+// reserves. m.Tags must hold the prior value: the configuration on a create or
+// update, the state on a refresh.
+func (m *KubernetesClusterModel) tagsFromAPI(ctx context.Context, c *apiKubernetesCluster, diags *diag.Diagnostics) {
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, customerTags(c), m.Tags, diags)
+}
+
+// customerTags is the tag set the platform holds on a cluster, as Terraform sees
+// it: the read-back and the read an update makes before it writes
+// (tftags.Prior.WithCurrent) both use it, so they agree on which keys exist.
+func customerTags(c *apiKubernetesCluster) map[string]string {
+	return reservedmeta.FilterOffer(c.Tags)
 }
 
 // setInitialNodePool fills the nested initial_node_pool block from a node-pool

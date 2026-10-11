@@ -5,8 +5,13 @@
 package kubernetes_node_pool
 
 import (
+	"context"
+
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -23,6 +28,10 @@ type KubernetesNodePoolModel struct {
 	FailedStep    types.String `tfsdk:"failed_step"`
 	CreatedAt     types.String `tfsdk:"created_at"`
 	UpdatedAt     types.String `tfsdk:"updated_at"`
+	// Tags / TagsAll are the pool's customer resource tags (internal/tftags) — not
+	// Kubernetes node labels.
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 
 	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
 	// absent block, which resolves to the resource's hardcoded defaults.
@@ -45,16 +54,32 @@ type apiNodePool struct {
 	FlavorID      string `json:"flavorId"`
 	NodeCount     int    `json:"nodeCount"`
 	IsInitial     bool   `json:"isInitial"`
-	CreatedAt     string `json:"createdAt"`
-	UpdatedAt     string `json:"updatedAt,omitempty"`
+	// Tags are the pool's customer resource tags; the backend always sends an
+	// object ({} when untagged).
+	Tags      map[string]string `json:"tags"`
+	CreatedAt string            `json:"createdAt"`
+	UpdatedAt string            `json:"updatedAt,omitempty"`
 }
 
 // apiCreateNodePoolRequest is the API request to create a standalone node pool.
 // Name is optional: omitted, the backend generates "pool-<8 hex>".
+//
+// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+// merges the tenant's default tags in.
 type apiCreateNodePoolRequest struct {
-	Name      string `json:"name,omitempty"`
-	FlavorID  string `json:"flavorId"`
-	NodeCount int    `json:"nodeCount"`
+	Name      string            `json:"name,omitempty"`
+	FlavorID  string            `json:"flavorId"`
+	NodeCount int               `json:"nodeCount"`
+	Tags      map[string]string `json:"tags,omitempty"`
+}
+
+// apiUpdateNodePoolRequest is PATCH .../node-pools/{poolId}: only the fields
+// present change. This resource sends it for tags alone (node_count goes through
+// POST .../scale). Tags is a POINTER: nil omits the field (keep), a pointer to an
+// EMPTY map sends `"tags":{}` (clear) — omitempty on a plain map would drop that.
+// A tags-only update touches no node and starts no provisioning work.
+type apiUpdateNodePoolRequest struct {
+	Tags *map[string]string `json:"tags,omitempty"`
 }
 
 // apiScaleNodePoolRequest is the API request to scale a node pool.
@@ -91,6 +116,19 @@ func (m *KubernetesNodePoolModel) fromAPI(p *apiNodePool) {
 	m.FailedStep = stringOrNull(p.FailedStep)
 	m.CreatedAt = types.StringValue(p.CreatedAt)
 	m.UpdatedAt = stringOrNull(p.UpdatedAt)
+}
+
+// tagsFromAPI renders the API's tags into `tags` (the keys the prior value names)
+// and `tags_all` (every key). m.Tags must hold the prior value: the configuration
+// on a create or update, the state on a refresh.
+func (m *KubernetesNodePoolModel) tagsFromAPI(ctx context.Context, p *apiNodePool, diags *diag.Diagnostics) {
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, customerTags(p), m.Tags, diags)
+}
+
+// customerTags is the tag set the platform holds on a pool, minus the namespace
+// the offer reserves; the read-back and the update's pre-write read both use it.
+func customerTags(p *apiNodePool) map[string]string {
+	return reservedmeta.FilterOffer(p.Tags)
 }
 
 func stringOrNull(s string) types.String {

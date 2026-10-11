@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
@@ -47,7 +48,7 @@ func TestSchemaAttributes(t *testing.T) {
 		"id", "name", "status", "version", "control_plane_tier", "ha_enabled",
 		"region", "vpc_id", "subnet_id", "pod_cidr", "service_cidr", "endpoint",
 		"load_balancer_id", "public_ip", "ca_cert_hash", "created_at",
-		"updated_at", "tenant_id",
+		"updated_at", "tenant_id", "tags",
 	} {
 		if _, ok := s.Attributes[attr]; !ok {
 			t.Errorf("attribute %s missing from the schema", attr)
@@ -175,6 +176,7 @@ func readWith(t *testing.T, serverURL string, id, name *string) readResult {
 		"created_at":         tftypes.NewValue(tftypes.String, nil),
 		"updated_at":         tftypes.NewValue(tftypes.String, nil),
 		"tenant_id":          tftypes.NewValue(tftypes.String, nil),
+		"tags":               tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	var readResp datasource.ReadResponse
@@ -289,6 +291,7 @@ func TestReadByID(t *testing.T) {
 			"endpoint":"https://api.billing.k8s.frostmoln.cloud:6443",
 			"loadBalancerId":"lb-1","publicIp":"203.0.113.10",
 			"caCertHash":"sha256:4f9d2c8e8b9a",
+			"tags":{"env":"prod","FROSTMOLN_legacy":"x"},
 			"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-02-01T00:00:00Z"
 		}`))
 	})
@@ -329,6 +332,29 @@ func TestReadByID(t *testing.T) {
 	}
 	if m.CreatedAt.ValueString() != "2026-01-01T00:00:00Z" || m.UpdatedAt.ValueString() != "2026-02-01T00:00:00Z" {
 		t.Errorf("timestamps are %s/%s", m.CreatedAt.ValueString(), m.UpdatedAt.ValueString())
+	}
+	// Tags: the customer's, with the offer-reserved namespace filtered in any case,
+	// as on the resource read-back.
+	if got := m.Tags.Elements(); len(got) != 1 || got["env"].(types.String).ValueString() != "prod" {
+		t.Errorf("tags are %v, want exactly env=prod", m.Tags)
+	}
+}
+
+// An untagged cluster (and an older backend that sends no tags at all) reads as an
+// empty map, never null.
+func TestReadUntaggedClusterHasEmptyTags(t *testing.T) {
+	server := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cluster-1","name":"n","status":"running","vpcId":"v","subnetId":"s","createdAt":"2026-01-01T00:00:00Z"}`))
+	})
+	defer server.Close()
+	id := "cluster-1"
+	r := readWith(t, server.URL, &id, nil)
+	if r.diagnostics.HasError() {
+		t.Fatalf("read: %v", r.diagnostics.Errors())
+	}
+	if r.model.Tags.IsNull() || len(r.model.Tags.Elements()) != 0 {
+		t.Errorf("tags = %v, want an empty map", r.model.Tags)
 	}
 }
 

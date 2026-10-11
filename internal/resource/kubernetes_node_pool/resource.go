@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -23,6 +24,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -53,6 +55,7 @@ var nodePoolNameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 var (
 	_ resource.Resource                = &kubernetesNodePoolResource{}
 	_ resource.ResourceWithImportState = &kubernetesNodePoolResource{}
+	_ resource.ResourceWithModifyPlan  = &kubernetesNodePoolResource{}
 )
 
 // NewResource returns a new kubernetes_node_pool resource factory.
@@ -258,6 +261,25 @@ func (r *kubernetesNodePoolResource) Schema(_ context.Context, _ resource.Schema
 				Description: "The timestamp when the node pool was last updated.",
 				Computed:    true,
 			},
+			"tags": schema.MapAttribute{
+				Description: "Resource tags on the node pool: your own key/value metadata for search and " +
+					"filtering, stored by the platform only. They are NOT Kubernetes node labels and never " +
+					"reach a node. At most 32 keys including the tenant's default tags, which the platform " +
+					"merges in at create; a key is 1-64 bytes matching " +
+					"`^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys " +
+					"beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Changing them updates " +
+					"the pool in place and touches no node. A pool added here does not inherit the " +
+					"cluster's tags. (The cluster's INITIAL pool, which this resource cannot manage, got a " +
+					"one-time copy of the cluster's tags at create; see frostmoln_kubernetes_cluster.)" +
+					tftags.TagsNote,
+				Optional:    true,
+				ElementType: types.StringType,
+				Validators:  []validator.Map{tftags.OfferTagsValidator()},
+				PlanModifiers: []planmodifier.Map{
+					mapplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"tags_all": tftags.TagsAllAttribute(),
 		},
 		Blocks: map[string]schema.Block{
 			// Customer-tunable wait budgets: defaults keep the values this
@@ -364,6 +386,11 @@ func (r *kubernetesNodePoolResource) Create(ctx context.Context, req resource.Cr
 	clusterID := plan.ClusterID.ValueString()
 	createPath := r.poolsPath(clusterID)
 	createReq := plan.toCreateRequest()
+	defaults := r.client.DefaultTags()
+	createReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	// The customer's timeouts block, with defaults identical to the values
 	// this resource has always hardcoded. It bounds only the status poll
@@ -393,6 +420,7 @@ func (r *kubernetesNodePoolResource) Create(ctx context.Context, req resource.Cr
 		resp.Diagnostics.AddError("Failed to create Kubernetes node pool", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	created, err := client.ParseResponse[apiNodePool](apiResp)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to parse Kubernetes node pool response", err.Error())
@@ -402,6 +430,7 @@ func (r *kubernetesNodePoolResource) Create(ctx context.Context, req resource.Cr
 	// Save state immediately so the ID is tracked even if polling fails
 	// (orphan guard).
 	plan.fromAPI(created)
+	plan.tagsFromAPI(ctx, created, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -418,6 +447,7 @@ func (r *kubernetesNodePoolResource) Create(ctx context.Context, req resource.Cr
 		return
 	}
 	plan.fromAPI(final)
+	plan.tagsFromAPI(ctx, final, &resp.Diagnostics)
 	// node_count is a KNOWN planned value; a concurrent out-of-band scale
 	// landing between the active-poll and this final read must not make the
 	// applied state diverge from the plan (Terraform core hard-errors
@@ -474,6 +504,8 @@ func (r *kubernetesNodePoolResource) Read(ctx context.Context, req resource.Read
 	}
 
 	state.fromAPI(pool)
+	state.tagsFromAPI(ctx, pool, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -506,6 +538,48 @@ func (r *kubernetesNodePoolResource) Update(ctx context.Context, req resource.Up
 	// a message-scoped predicate — NOT a bare IsConflict, which would retry
 	// the endpoint's PERMANENT non-scalable 409s to the ceiling.
 	budgets := r.resolveBudgets(plan.Timeouts)
+
+	// TAGS: PATCH .../node-pools/{id} with `tags` alone, only when the platform's set
+	// would change — computed against the tags the pool holds right now (read here,
+	// not taken from state, so a key added outside Terraform since the last refresh is
+	// kept). A tags-only PATCH touches no node.
+	defaults := r.client.DefaultTags()
+	prior := tftags.PriorOf(ctx, state.Tags, state.TagsAll, req.Private, &resp.Diagnostics)
+	if _, changed := tftags.ForUpdate(ctx, defaults, plan.Tags, prior, &resp.Diagnostics); changed {
+		// Judged against state first (the plan was made from it); a write is due, so
+		// recompute against what the pool holds right now — an update that is not
+		// about tags costs no extra read.
+		current, err := r.getPool(ctx, clusterID, poolID)
+		if (err != nil && client.IsNotFound(err)) || (err == nil && current.Status == statusDeleted) {
+			resp.Diagnostics.AddError(
+				"Node pool no longer exists",
+				fmt.Sprintf("Node pool %s was deleted outside Terraform, so its tags cannot be updated. "+
+					"Remove it from state or re-create it (terraform apply).", poolID),
+			)
+			return
+		}
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+			return
+		}
+		tags, stillChanged := tftags.ForUpdate(ctx, defaults, plan.Tags, prior.WithCurrent(customerTags(current)), &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if stillChanged {
+			if _, err := r.client.Patch(ctx, r.poolPath(clusterID, poolID), apiUpdateNodePoolRequest{Tags: &tags}); err != nil {
+				resp.Diagnostics.AddError("Failed to update Kubernetes node pool tags", err.Error())
+				return
+			}
+		}
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+
 	if !plan.NodeCount.Equal(state.NodeCount) {
 		scaleReq := apiScaleNodePoolRequest{NodeCount: int(plan.NodeCount.ValueInt64())}
 		if _, err := r.client.PostWithConflictRetry(ctx, r.poolPath(clusterID, poolID)+"/scale", scaleReq,
@@ -550,6 +624,7 @@ func (r *kubernetesNodePoolResource) Update(ctx context.Context, req resource.Up
 	}
 	planned := plan.NodeCount
 	plan.fromAPI(final)
+	plan.tagsFromAPI(ctx, final, &resp.Diagnostics)
 	// Same planned-value guard as Create: node_count is known in the plan, so
 	// the final read must not adopt a concurrently-amended live count.
 	plan.NodeCount = planned
@@ -638,4 +713,12 @@ func (r *kubernetesNodePoolResource) ImportState(ctx context.Context, req resour
 
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("cluster_id"), parts[0])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[1])...)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
+}
+
+// ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,
+// plans an in-place update of the pool's tags.
+func (r *kubernetesNodePoolResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
 }

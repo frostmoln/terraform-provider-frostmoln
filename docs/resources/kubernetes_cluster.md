@@ -81,6 +81,14 @@ resource "frostmoln_kubernetes_cluster" "main" {
     flavor_id  = data.frostmoln_kubernetes_flavors.available.flavors[0].id
     node_count = 3
   }
+
+  # Resource tags: your own metadata for search and filtering, never applied to
+  # the cluster or its nodes. The initial node pool gets a ONE-TIME copy of the
+  # cluster's merged tags at create; changing them here later does not reach it.
+  tags = {
+    env  = "prod"
+    team = "platform"
+  }
 }
 
 # The API endpoint is PRIVATE: it lives on an address inside your own VPC and is
@@ -119,6 +127,7 @@ An existing cluster created with a BYO public IP is unaffected and keeps its add
 
 🔴 REMOVING IT CAN PLAN A REPLACEMENT. This attribute forces replacement and is never read back from the API, so deleting the line is itself the change that makes Terraform want to destroy and recreate the cluster. Add `lifecycle { ignore_changes = [public_ip_id] }` **as well as** removing it — the two are not alternatives, and only the pair is non-destructive.
 - `region` (String) The region to create the cluster in. Defaults server-side.
+- `tags` (Map of String) Resource tags on the cluster: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only and never applied to the cluster or its nodes. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Changing them updates the cluster in place and does not touch the running cluster. 🔴 THE INITIAL NODE POOL GETS A ONE-TIME COPY. At create, the platform copies the cluster's merged tags (these, the provider's `default_tags` and the tenant's default tags) onto the initial node pool, once. Later changes to this attribute do NOT reach that pool, and this resource does not manage its tags — and the initial pool cannot be imported as a `frostmoln_kubernetes_node_pool` either. Change them in the portal, with `fm kubernetes node-pool tags set`, or with the API (PATCH the node pool's `tags`). Pools you add with `frostmoln_kubernetes_node_pool` get no copy: tag them on that resource, where the same tags can be set again if you want them to match. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `version` (String) The Kubernetes version (e.g. "1.35"). Defaults to the platform default version. Changing it currently REPLACES the cluster — in-place upgrade is not available yet.
 
@@ -138,6 +147,7 @@ An existing cluster created with a BYO public IP is unaffected and keeps its add
 - `status` (String) The current status of the cluster.
 - `status_message` (String) A human-readable description of why the cluster failed. Set only when `status` is `error`.
 - `status_reason` (String) Why the cluster failed, as a failure class (e.g. `QuotaExceeded`). Set only when `status` is `error`.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `tenant_id` (String) The tenant ID that owns this cluster.
 - `updated_at` (String) The timestamp when the cluster was last updated.
 

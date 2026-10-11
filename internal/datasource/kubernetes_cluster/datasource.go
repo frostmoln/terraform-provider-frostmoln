@@ -44,6 +44,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -51,6 +52,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
 )
 
 var _ datasource.DataSource = &kubernetesClusterDataSource{}
@@ -94,6 +96,7 @@ type kubernetesClusterModel struct {
 	CreatedAt        types.String `tfsdk:"created_at"`
 	UpdatedAt        types.String `tfsdk:"updated_at"`
 	TenantID         types.String `tfsdk:"tenant_id"`
+	Tags             types.Map    `tfsdk:"tags"`
 }
 
 // apiCluster is the API representation of one managed Kubernetes cluster —
@@ -130,8 +133,10 @@ type apiCluster struct {
 	// private key material live in Vault, ADR-0020). A hash is safe to render
 	// in plan output and state — the secret material is not on this read.
 	CACertHash string `json:"caCertHash,omitempty"`
-	CreatedAt  string `json:"createdAt"`
-	UpdatedAt  string `json:"updatedAt,omitempty"`
+	// Tags are the cluster's customer resource tags ({} when untagged).
+	Tags      map[string]string `json:"tags"`
+	CreatedAt string            `json:"createdAt"`
+	UpdatedAt string            `json:"updatedAt,omitempty"`
 }
 
 // apiClusterList is the API response for listing a tenant's clusters. There
@@ -275,6 +280,14 @@ func (d *kubernetesClusterDataSource) Schema(_ context.Context, _ datasource.Sch
 			"tenant_id": schema.StringAttribute{
 				Description: "The tenant ID that owns this cluster.",
 				Computed:    true,
+			},
+			"tags": schema.MapAttribute{
+				Description: "Every resource tag on the cluster — the same set as the resource's " +
+					"`tags_all`: your own key/value metadata, never applied to the cluster or its nodes. " +
+					"An empty map when the cluster has none. The cluster's node pools carry their own tags " +
+					"(the initial pool got a one-time copy of these at create).",
+				Computed:    true,
+				ElementType: types.StringType,
 			},
 		},
 	}
@@ -567,6 +580,13 @@ func setInstanceState(state *kubernetesClusterModel, cluster *apiCluster) {
 	state.CreatedAt = types.StringValue(cluster.CreatedAt)
 	state.UpdatedAt = stringFromWire(cluster.UpdatedAt)
 	state.TenantID = stringFromWire(cluster.TenantID)
+	// The platform's reserved namespace is filtered as on the resource read-back,
+	// so `tags` means the same thing on every surface.
+	tags := map[string]attr.Value{}
+	for k, v := range reservedmeta.FilterOffer(cluster.Tags) {
+		tags[k] = types.StringValue(v)
+	}
+	state.Tags = types.MapValueMust(types.StringType, tags)
 }
 
 // stringFromWire maps an empty optional string to null, not "".

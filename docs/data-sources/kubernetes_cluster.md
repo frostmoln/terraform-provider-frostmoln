@@ -79,6 +79,7 @@ data "frostmoln_kubernetes_cluster" "by_id" {
 - `status_message` (String) A human-readable description of why the cluster failed. Set only when `status` is `error`.
 - `status_reason` (String) Why the cluster failed, as a failure class (e.g. `QuotaExceeded`). Set only when `status` is `error`.
 - `subnet_id` (String) The subnet the cluster's nodes run in.
+- `tags` (Map of String) Every resource tag on the cluster — the same set as the resource's `tags_all`: your own key/value metadata, never applied to the cluster or its nodes. An empty map when the cluster has none. The cluster's node pools carry their own tags (the initial pool got a one-time copy of these at create).
 - `tenant_id` (String) The tenant ID that owns this cluster.
 - `updated_at` (String) The timestamp when the cluster was last updated, null when the platform has not recorded one.
 - `version` (String) The Kubernetes version (the wire's kubernetesVersion).

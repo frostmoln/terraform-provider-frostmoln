@@ -68,6 +68,24 @@ func IsReservedNetwork(k string) bool {
 	return strings.HasPrefix(k, "frostmoln_")
 }
 
+// IsReservedOffer reports whether a key is in the platform namespace a managed
+// offer reserves on its customer tags (MANAGED-OFFER-TAGS-PLAN §2, servicekit
+// resourcetags.ReservedPrefix): the frostmoln_ and frostmoln- prefixes, matched
+// CASE-INSENSITIVELY as the offer services fold case. An offer refuses such a key
+// on every write and never stamps one, so a read should never carry it; the filter
+// is the read-back half of that contract — a key that did land (a manual repair)
+// would otherwise be sent back on the next replace and refused, leaving no config
+// that converges.
+func IsReservedOffer(k string) bool {
+	k = strings.ToLower(k)
+	return strings.HasPrefix(k, "frostmoln_") || strings.HasPrefix(k, "frostmoln-")
+}
+
+// FilterOffer returns a copy of m with offer-reserved keys removed.
+func FilterOffer(m map[string]string) map[string]string {
+	return filter(m, IsReservedOffer)
+}
+
 // FilterNetwork returns a copy of m with network-reserved keys removed.
 func FilterNetwork(m map[string]string) map[string]string {
 	return filter(m, IsReservedNetwork)

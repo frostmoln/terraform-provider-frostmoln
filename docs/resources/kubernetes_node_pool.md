@@ -38,6 +38,12 @@ resource "frostmoln_kubernetes_node_pool" "workers" {
   name       = "workers" # optional — a "pool-<8 hex>" name is generated when omitted
   flavor_id  = data.frostmoln_kubernetes_flavors.available.flavors[0].id
   node_count = 2 # scaled in-place; name/flavor changes replace the pool
+
+  # Resource tags, not Kubernetes node labels: they never reach a node. A pool
+  # does not inherit the cluster's tags.
+  tags = {
+    env = "prod"
+  }
 }
 ```
 
@@ -53,6 +59,7 @@ resource "frostmoln_kubernetes_node_pool" "workers" {
 
 - `name` (String) The name of the node pool: a lowercase DNS label (a-z, 0-9, non-leading/trailing hyphens) of at most 18 characters — it becomes part of each node's hostname. Defaults to a generated "pool-<8 hex>" name. Pools cannot be renamed — changing it REPLACES the pool. Pool names are unique per cluster, so an explicitly named pool cannot use `lifecycle { create_before_destroy = true }` — the replacement create conflicts with the still-live pool.
 - `node_count` (Number) The number of worker nodes in the pool (1-100). Scaled in-place. Omitting it manages the pool at 1 node — an out-of-band scale will be reverted on the next apply.
+- `tags` (Map of String) Resource tags on the node pool: your own key/value metadata for search and filtering, stored by the platform only. They are NOT Kubernetes node labels and never reach a node. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Changing them updates the pool in place and touches no node. A pool added here does not inherit the cluster's tags. (The cluster's INITIAL pool, which this resource cannot manage, got a one-time copy of the cluster's tags at create; see frostmoln_kubernetes_cluster.) Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
@@ -63,6 +70,7 @@ resource "frostmoln_kubernetes_node_pool" "workers" {
 - `status` (String) The current status of the node pool.
 - `status_message` (String) A human-readable description of why the node pool failed. Set only when `status` is `error`.
 - `status_reason` (String) Why the node pool failed, as a failure class (e.g. `QuotaExceeded`). Set only when `status` is `error`.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `updated_at` (String) The timestamp when the node pool was last updated.
 
 <a id="nestedblock--timeouts"></a>

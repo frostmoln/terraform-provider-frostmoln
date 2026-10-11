@@ -10,11 +10,13 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/mapvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -24,6 +26,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -115,6 +118,11 @@ func (r *kubernetesClusterResource) resolveBudgets(m *timeouts.Model) timeouts.B
 // a null prior state keeps the pre-destroy protection above and leaves every
 // operation on an EXISTING cluster (update, destroy) free; those get a warning.
 func (r *kubernetesClusterResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// tags_all: a default_tags change, or a managed key's drift, plans an in-place
+	// update (it handles the destroy plan itself).
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
+
 	// Destroy: no plan to judge.
 	if req.Plan.Raw.IsNull() {
 		return
@@ -497,6 +505,30 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 			"timeouts": timeouts.Schema(),
 		},
 	}
+	resp.Schema.Attributes["tags"] = schema.MapAttribute{
+		Description: "Resource tags on the cluster: your own key/value metadata for search and filtering " +
+			"(`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only and never " +
+			"applied to the cluster or its nodes. At most 32 keys including the tenant's default tags, " +
+			"which the platform merges in at create; a key is 1-64 bytes matching " +
+			"`^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning " +
+			"`frostmoln_` or `frostmoln-` (any case) are reserved. Changing them updates the cluster in " +
+			"place and does not touch the running cluster. " +
+			"🔴 THE INITIAL NODE POOL GETS A ONE-TIME COPY. At create, the platform copies the cluster's " +
+			"merged tags (these, the provider's `default_tags` and the tenant's default tags) onto the " +
+			"initial node pool, once. Later changes to this attribute do NOT reach that pool, and this " +
+			"resource does not manage its tags — and the initial pool cannot be imported as a " +
+			"`frostmoln_kubernetes_node_pool` either. Change them in the portal, with " +
+			"`fm kubernetes node-pool tags set`, or with the API (PATCH the node pool's `tags`). Pools you " +
+			"add with `frostmoln_kubernetes_node_pool` get no copy: tag them on that resource, where " +
+			"the same tags can be set again if you want them to match." + tftags.TagsNote,
+		Optional:    true,
+		ElementType: types.StringType,
+		Validators:  []validator.Map{tftags.OfferTagsValidator()},
+		PlanModifiers: []planmodifier.Map{
+			mapplanmodifier.UseStateForUnknown(),
+		},
+	}
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
 }
 
 func (r *kubernetesClusterResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -682,11 +714,18 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 
 	// The configured pins ride this request (toCreateRequest). The platform refuses a pin it
 	// cannot honour with a 400 BEFORE anything is created, so a 201 means they were taken.
-	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/kubernetes-clusters"), plan.toCreateRequest())
+	defaults := r.client.DefaultTags()
+	createReq := plan.toCreateRequest()
+	createReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/kubernetes-clusters"), createReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create Kubernetes cluster", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	created, err := client.ParseResponse[apiKubernetesCluster](apiResp)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to parse Kubernetes cluster response", err.Error())
@@ -698,6 +737,7 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 	// computed attributes stay null until discovered below; unknown plan
 	// values must not be persisted.
 	plan.fromAPI(created)
+	plan.tagsFromAPI(ctx, created, &resp.Diagnostics)
 	plan.Kubeconfig = types.StringNull()
 	// addon_versions keeps the configured pins (fromAPI never touches it): the create request
 	// that just succeeded carried them, so state claims nothing the platform did not accept.
@@ -759,6 +799,7 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 	}
 
 	plan.fromAPI(final)
+	plan.tagsFromAPI(ctx, final, &resp.Diagnostics)
 	plan.setInitialNodePool(finalPool)
 	if kcErr != nil {
 		resp.Diagnostics.AddWarning(
@@ -805,6 +846,8 @@ func (r *kubernetesClusterResource) Read(ctx context.Context, req resource.ReadR
 	// fromAPI leaves public_ip_id and kubeconfig untouched (preserved from
 	// prior state).
 	state.fromAPI(cluster)
+	state.tagsFromAPI(ctx, cluster, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 
 	// Pins are read back only for keys state already records (see refreshPins); no pins,
 	// no request.
@@ -874,13 +917,40 @@ func (r *kubernetesClusterResource) Update(ctx context.Context, req resource.Upd
 	budgets := r.resolveBudgets(plan.Timeouts)
 	deadline := time.Now().Add(budgets.Update)
 
+	// NAME AND TAGS: one PUT .../kubernetes-clusters/{id}, carrying ONLY what changed
+	// (the PUT has PATCH semantics: an omitted field is kept). Tags are sent when the
+	// platform's set would change — computed against the tags the cluster holds right
+	// now, read here rather than taken from state, so a key added outside Terraform
+	// since the last refresh is kept (tftags.Prior.WithCurrent). A tags-only change
+	// starts no work on the cluster.
+	defaults := r.client.DefaultTags()
+	var meta apiUpdateClusterRequest
 	if !plan.Name.Equal(state.Name) {
 		name := plan.Name.ValueString()
-		if _, err := r.client.Put(ctx, r.clusterPath(id), apiUpdateClusterRequest{Name: &name}); err != nil {
-			resp.Diagnostics.AddError("Failed to rename Kubernetes cluster", err.Error())
+		meta.Name = &name
+	}
+	tags, err := r.tagsToWrite(ctx, id, defaults, plan, state, req.Private, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	meta.Tags = tags
+	if meta.Name != nil || meta.Tags != nil {
+		if _, err := r.client.Put(ctx, r.clusterPath(id), meta); err != nil {
+			if meta.Name != nil {
+				resp.Diagnostics.AddError("Failed to update Kubernetes cluster name or tags", err.Error())
+			} else {
+				resp.Diagnostics.AddError("Failed to update Kubernetes cluster tags", err.Error())
+			}
 			return
 		}
 	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// ADDONS — ADDITIONS AND REMOVALS, BOTH IN PLACE. Removing one used to plan a full
 	// cluster REPLACEMENT, because the API was add-only and rebuilding really was the
@@ -992,6 +1062,7 @@ func (r *kubernetesClusterResource) Update(ctx context.Context, req resource.Upd
 		return
 	}
 	plan.fromAPI(final)
+	plan.tagsFromAPI(ctx, final, &resp.Diagnostics)
 
 	if scaled {
 		pool, err := r.findInitialNodePool(ctx, id)
@@ -1057,4 +1128,38 @@ func (r *kubernetesClusterResource) ImportState(ctx context.Context, req resourc
 		return
 	}
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
+}
+
+// tagsToWrite returns the tag map an update must send, or nil when the platform's
+// set needs no change. Judged first against state (the plan was made from it); only
+// when that says a write is due does it read the tags the cluster holds right now
+// and recompute against them, so a key added outside Terraform since the last
+// refresh is kept — and an update that is not about tags costs no extra read.
+func (r *kubernetesClusterResource) tagsToWrite(ctx context.Context, id string, defaults tftags.Defaults,
+	plan, state KubernetesClusterModel, private tftags.PrivateReader, diags *diag.Diagnostics) (*map[string]string, error) {
+	prior := tftags.PriorOf(ctx, state.Tags, state.TagsAll, private, diags)
+	if _, changed := tftags.ForUpdate(ctx, defaults, plan.Tags, prior, diags); !changed {
+		return nil, nil
+	}
+	current, err := r.currentTags(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	tags, changed := tftags.ForUpdate(ctx, defaults, plan.Tags, prior.WithCurrent(current), diags)
+	if !changed {
+		return nil, nil
+	}
+	return &tags, nil
+}
+
+// currentTags reads the tags the cluster holds right now. An update derives the
+// keys it keeps — the ones this configuration does not manage — from this rather
+// than from state, which is only as fresh as the last refresh.
+func (r *kubernetesClusterResource) currentTags(ctx context.Context, id string) (map[string]string, error) {
+	c, err := r.getCluster(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return customerTags(c), nil
 }

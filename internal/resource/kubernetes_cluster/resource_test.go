@@ -601,6 +601,7 @@ func buildState(t *testing.T, model KubernetesClusterModel) tfsdk.State {
 
 	state := tfsdk.State{Schema: schemaResp.Schema}
 	model.AddonVersions = typedPins(model.AddonVersions)
+	nullUnsetTags(&model.Tags, &model.TagsAll)
 	if diags := state.Set(context.Background(), &model); diags.HasError() {
 		t.Fatalf("failed to set state: %v", diags.Errors())
 	}
@@ -615,6 +616,7 @@ func buildPlan(t *testing.T, model KubernetesClusterModel) tfsdk.Plan {
 
 	plan := tfsdk.Plan{Schema: schemaResp.Schema}
 	model.AddonVersions = typedPins(model.AddonVersions)
+	nullUnsetTags(&model.Tags, &model.TagsAll)
 	if diags := plan.Set(context.Background(), &model); diags.HasError() {
 		t.Fatalf("failed to set plan: %v", diags.Errors())
 	}
@@ -1530,5 +1532,15 @@ func TestImportRejectsPathSeparator(t *testing.T) {
 	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "../v1/api-keys/k-1"}, &importResp)
 	if !importResp.Diagnostics.HasError() {
 		t.Error("expected error for an import ID containing path separators")
+	}
+}
+
+// nullUnsetTags gives a fixture that predates tags (a zero types.Map, which has no
+// element type and cannot be set) the null maps an untagged configuration holds.
+func nullUnsetTags(maps ...*types.Map) {
+	for _, m := range maps {
+		if m.ElementType(context.Background()) == nil {
+			*m = types.MapNull(types.StringType)
+		}
 	}
 }
