@@ -389,6 +389,8 @@ func TestSSHKeyResource_Create_TFSDK(t *testing.T) {
 		"public_key":  tftypes.NewValue(tftypes.String, "ssh-ed25519 AAAA..."),
 		"fingerprint": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, tftypes.UnknownValue),
 	})
 
 	createReq := resource.CreateRequest{
@@ -440,6 +442,8 @@ func TestSSHKeyResource_Create_APIError(t *testing.T) {
 		"public_key":  tftypes.NewValue(tftypes.String, "ssh-ed25519 AAAA..."),
 		"fingerprint": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, tftypes.UnknownValue),
 	})
 
 	createReq := resource.CreateRequest{
@@ -485,6 +489,8 @@ func TestSSHKeyResource_Read_TFSDK(t *testing.T) {
 		"public_key":  tftypes.NewValue(tftypes.String, "ssh-ed25519 AAAA..."),
 		"fingerprint": tftypes.NewValue(tftypes.String, "SHA256:xyz"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -529,6 +535,8 @@ func TestSSHKeyResource_Read_NotFound_TFSDK(t *testing.T) {
 		"public_key":  tftypes.NewValue(tftypes.String, "ssh-ed25519 AAAA..."),
 		"fingerprint": tftypes.NewValue(tftypes.String, "SHA256:xyz"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -577,6 +585,8 @@ func TestSSHKeyResource_Read_APIError(t *testing.T) {
 		"public_key":  tftypes.NewValue(tftypes.String, "ssh-ed25519 AAAA..."),
 		"fingerprint": tftypes.NewValue(tftypes.String, "SHA256:xyz"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -593,26 +603,8 @@ func TestSSHKeyResource_Read_APIError(t *testing.T) {
 	}
 }
 
-func TestSSHKeyResource_Update_TFSDK(t *testing.T) {
-	r := &sshKeyResource{}
-	resp := &resource.UpdateResponse{}
-	r.Update(context.Background(), resource.UpdateRequest{}, resp)
-
-	if !resp.Diagnostics.HasError() {
-		t.Fatal("expected error from unsupported update")
-	}
-
-	found := false
-	for _, d := range resp.Diagnostics.Errors() {
-		if d.Summary() == "Update Not Supported" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected 'Update Not Supported' error")
-	}
-}
+// The in-place Update (tags only, via PATCH /sshkeys/{name}) is driven end to end
+// by TestDefaultTags (tftagstest.RunDirect); every other attribute replaces the key.
 
 func TestSSHKeyResource_Delete_TFSDK(t *testing.T) {
 	deleted := false
@@ -639,6 +631,8 @@ func TestSSHKeyResource_Delete_TFSDK(t *testing.T) {
 		"public_key":  tftypes.NewValue(tftypes.String, "ssh-ed25519 AAAA..."),
 		"fingerprint": tftypes.NewValue(tftypes.String, "SHA256:xyz"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -674,6 +668,8 @@ func TestSSHKeyResource_Delete_NotFound_TFSDK(t *testing.T) {
 		"public_key":  tftypes.NewValue(tftypes.String, "ssh-ed25519 AAAA..."),
 		"fingerprint": tftypes.NewValue(tftypes.String, "SHA256:xyz"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -709,6 +705,8 @@ func TestSSHKeyResource_Delete_APIError(t *testing.T) {
 		"public_key":  tftypes.NewValue(tftypes.String, "ssh-ed25519 AAAA..."),
 		"fingerprint": tftypes.NewValue(tftypes.String, "SHA256:xyz"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -735,6 +733,8 @@ func TestSSHKeyResource_ImportState_TFSDK(t *testing.T) {
 		"public_key":  tftypes.NewValue(tftypes.String, nil),
 		"fingerprint": tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, nil),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	// Import ID is the key name (compute's per-tenant identifier).
@@ -794,6 +794,8 @@ func TestSSHKeyResource_ReadDelete_ByName(t *testing.T) {
 		"public_key":  tftypes.NewValue(tftypes.String, "ssh-ed25519 AAAA..."),
 		"fingerprint": tftypes.NewValue(tftypes.String, "SHA256:xyz"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	// Read keys off the name.
@@ -885,5 +887,8 @@ func TestSSHKeyResource_UpgradeState_V0ToV1(t *testing.T) {
 	}
 	if model.PublicKey.ValueString() != "ssh-ed25519 AAAA..." {
 		t.Errorf("expected public_key carried through upgrade, got %s", model.PublicKey.ValueString())
+	}
+	if !model.Tags.IsNull() || !model.TagsAll.IsNull() {
+		t.Errorf("a v0 state has no tags; the next refresh reads them, got %v / %v", model.Tags, model.TagsAll)
 	}
 }

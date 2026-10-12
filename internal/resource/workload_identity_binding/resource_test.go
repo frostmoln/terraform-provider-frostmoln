@@ -271,6 +271,8 @@ func bindingValue(tfType tftypes.Type, id, cluster, ns, sa string, scopes []stri
 		"tenant_id":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"updated_at":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"tags":            tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, tftypes.UnknownValue),
 	})
 }
 
@@ -647,6 +649,8 @@ func TestResourceImportState(t *testing.T) {
 		"tenant_id":       tftypes.NewValue(tftypes.String, nil),
 		"created_at":      tftypes.NewValue(tftypes.String, nil),
 		"updated_at":      tftypes.NewValue(tftypes.String, nil),
+		"tags":            tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: s, Raw: initVal}}
 	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "b-123"}, resp)

@@ -7,6 +7,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // WorkloadIdentityBindingModel is the Terraform state model for a binding.
@@ -19,6 +21,9 @@ type WorkloadIdentityBindingModel struct {
 	Scopes         types.List   `tfsdk:"scopes"`
 	CreatedAt      types.String `tfsdk:"created_at"`
 	UpdatedAt      types.String `tfsdk:"updated_at"`
+	// Tags / TagsAll are the binding's customer resource tags (internal/tftags).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 }
 
 // apiWorkloadIdentityBinding is the API representation (camelCase, ADR-0095).
@@ -31,6 +36,8 @@ type apiWorkloadIdentityBinding struct {
 	Scopes         []string `json:"scopes"`
 	CreatedAt      string   `json:"createdAt"`
 	UpdatedAt      string   `json:"updatedAt"`
+	// Tags are the binding's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 // apiCreateWorkloadIdentityBindingRequest is the create body. The tenant is
@@ -46,6 +53,15 @@ type apiCreateWorkloadIdentityBindingRequest struct {
 	Namespace      string   `json:"namespace"`
 	ServiceAccount string   `json:"serviceAccount"`
 	Scopes         []string `json:"scopes,omitempty"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+	// merges the tenant's default tags on top (a key sent here wins).
+	Tags map[string]string `json:"tags,omitempty"`
+}
+
+// apiUpdateTagsRequest is PATCH /workload-identity/bindings/{id}: the tags-only
+// update (any other field is refused 400 field_not_updatable; scopes ride the PUT).
+type apiUpdateTagsRequest struct {
+	Tags *map[string]string `json:"tags"`
 }
 
 // apiUpdateWorkloadIdentityBindingRequest replaces the binding's scopes (PUT).
@@ -123,4 +139,11 @@ func (m *WorkloadIdentityBindingModel) fromAPI(ctx context.Context, b *apiWorklo
 	scopeList, d := types.ListValueFrom(ctx, types.StringType, b.Scopes)
 	diags.Append(d...)
 	m.Scopes = scopeList
+}
+
+// tagsFromAPI renders the API's tags into `tags` (the keys the prior value names)
+// and `tags_all` (every customer key). m.Tags must hold the prior value: the
+// configuration on a create or update, the state on a refresh.
+func (m *WorkloadIdentityBindingModel) tagsFromAPI(ctx context.Context, b *apiWorkloadIdentityBinding, diags *diag.Diagnostics) {
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(b.Tags), m.Tags, diags)
 }

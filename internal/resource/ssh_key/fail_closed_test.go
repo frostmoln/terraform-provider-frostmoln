@@ -24,6 +24,8 @@ func sshKeyFailClosedState(t *testing.T) tftypes.Value {
 		"public_key":  tftypes.NewValue(tftypes.String, "ssh-ed25519 AAAA..."),
 		"fingerprint": tftypes.NewValue(tftypes.String, "SHA256:xyz"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 }
 

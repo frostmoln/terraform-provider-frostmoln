@@ -161,6 +161,8 @@ func policyStateValue(tfType tftypes.Type, id, name, doc string) tftypes.Value {
 		"version":     tftypes.NewValue(tftypes.Number, 1),
 		"created_at":  tftypes.NewValue(tftypes.String, "2026-07-08T00:00:00Z"),
 		"updated_at":  tftypes.NewValue(tftypes.String, "2026-07-08T00:00:00Z"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 }
 
@@ -196,6 +198,8 @@ func TestResource_Create(t *testing.T) {
 		"version":     tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"updated_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, tftypes.UnknownValue),
 	})
 
 	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
@@ -270,6 +274,8 @@ func TestResource_Update(t *testing.T) {
 		"version":     tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"created_at":  tftypes.NewValue(tftypes.String, "2026-07-08T00:00:00Z"),
 		"updated_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, tftypes.UnknownValue),
 	})
 
 	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s}}
@@ -388,6 +394,8 @@ func TestResource_CreateUsesSelectedTenant(t *testing.T) {
 				"version":     tftypes.NewValue(tftypes.Number, nil),
 				"created_at":  tftypes.NewValue(tftypes.String, nil),
 				"updated_at":  tftypes.NewValue(tftypes.String, nil),
+				"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+				"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 			}),
 		},
 	}, &resp)

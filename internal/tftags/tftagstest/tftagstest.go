@@ -151,6 +151,25 @@ func Str(s string) tftypes.Value { return tftypes.NewValue(tftypes.String, s) }
 // for a resource with `tags` and no entry here, so a new taggable resource
 // cannot ship without running the default_tags matrix.
 var Profiles = map[string]Profile{
+	"frostmoln_api_key": {
+		Create: "/api-keys", Member: "/api-keys/" + ObjectID, Update: http.MethodPatch, Reserved: offerReserved,
+		Config: map[string]tftypes.Value{
+			"name":   Str("k"),
+			"scopes": tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, []tftypes.Value{Str("compute:read")}),
+		},
+		Extra: map[string]any{"name": "k", "keyPrefix": "fmk_1_abcdef", "scopes": []string{"compute:read"}, "status": "active"},
+		// identity answers a create with {apiKey: <the key>, key: <the secret>}.
+		Handle: func(f *Fake, w http.ResponseWriter, r *http.Request, body map[string]json.RawMessage) bool {
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/tenants/t-1/api-keys" {
+				return false
+			}
+			f.create(r, body)
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"apiKey": f.Object(), "key": "fmk_1_secret"}) // pragma: allowlist secret
+			return true
+		},
+		Touch: map[string]any{"description": "touched"},
+	},
 	"frostmoln_apache_instance": {
 		Create: "/webservers", Member: "/webservers/" + ObjectID, Update: http.MethodPut,
 		Reserved: offerReserved,
@@ -263,6 +282,18 @@ var Profiles = map[string]Profile{
 		Config: map[string]tftypes.Value{"name": Str(ObjectID)},
 		Touch:  map[string]any{"versioning": "suspended"},
 	},
+	"frostmoln_workload_identity_binding": {
+		Create: "/workload-identity/bindings", Member: "/workload-identity/bindings/" + ObjectID,
+		Update: http.MethodPatch, TagsOnly: true, Reserved: offerReserved,
+		Config: map[string]tftypes.Value{
+			"cluster_id": Str("c-1"), "namespace": Str("ns"), "service_account": Str("sa"),
+		},
+		Extra: map[string]any{"clusterId": "c-1", "namespace": "ns", "serviceAccount": "sa", "tenantId": "t-1"},
+		// scopes is the binding's other in-place attribute, but it is a list and
+		// the matrix touches scalars only; cluster_id/namespace/service_account
+		// replace it.
+		NoTouch: "its only other in-place attribute, scopes, is a list the matrix cannot touch",
+	},
 	"frostmoln_dns_record": {
 		Create: "/dns/zones/z-1/records", Member: "/dns/zones/z-1/records/" + ObjectID, Update: http.MethodPut,
 		ImportID: "z-1/" + ObjectID, Reserved: offerReserved,
@@ -289,6 +320,38 @@ var Profiles = map[string]Profile{
 		// mode or address change needs a second address the fake does not model);
 		// toggling it sends no write, so the update reads the platform's set.
 		Touch: map[string]any{"acknowledge_connectivity_loss": true},
+	},
+	"frostmoln_iam_policy": {
+		Create: "/iam/policies", Member: "/iam/policies/" + ObjectID, Update: http.MethodPatch, Reserved: offerReserved,
+		Config: map[string]tftypes.Value{
+			"name":     Str("p"),
+			"document": Str(`{"schemaVersion":"1","rules":[]}`),
+		},
+		Extra: map[string]any{
+			"name": "p", "document": map[string]any{"schemaVersion": "1", "rules": []any{}},
+			"authoredBy": "customer", "version": 1, "tenantId": "t-1",
+		},
+		Touch: map[string]any{"description": "touched"},
+	},
+	"frostmoln_image": {
+		// The create runs the whole bring-your-own-image flow (create, presigned
+		// upload, import, poll; imageCreate), and the image it creates is the
+		// object the fake holds. A tags-only change is a PUT carrying tags alone.
+		// Customer tags travel in `resourceTags`; the response's `tags` is a
+		// deprecated string list of them, never read.
+		Create: "/images", Member: "/images/" + ObjectID, Update: http.MethodPut, Reserved: offerReserved,
+		CreateField: "resourceTags", UpdateField: "resourceTags", ReadField: "resourceTags",
+		Handle: imageCreate,
+		Config: map[string]tftypes.Value{
+			"name": Str("x"), "source_file": Str(imageFile), "disk_format": Str("qcow2"),
+			"container_format": Str("bare"),
+		},
+		Extra: map[string]any{
+			"name": "x", "status": "active", "visibility": "private", "diskFormat": "qcow2",
+			"containerFormat": "bare", "owner": "p-1", "tags": []string{"deprecated-list"},
+		},
+		NoImport: "the resource implements no import (the image's source_file cannot be recovered)",
+		Touch:    map[string]any{"description": "touched"},
 	},
 	"frostmoln_instance": {
 		Create: "/instances", Member: "/instances/" + ObjectID, Update: http.MethodPatch,
@@ -514,6 +577,13 @@ var Profiles = map[string]Profile{
 		Async: true,
 		Touch: map[string]any{"name": "touched"},
 	},
+	"frostmoln_s3_credential": {
+		Create: "/credentials", Member: "/credentials/" + ObjectID, IDField: "accessKeyId",
+		Update: http.MethodPut, TagsOnly: true, Reserved: offerReserved,
+		Config:  map[string]tftypes.Value{"name": Str("c")},
+		Extra:   map[string]any{"name": "c", "status": "active", "secretAccessKey": "s3cr3t"}, // pragma: allowlist secret
+		NoTouch: "every other attribute replaces a credential, and it has no timeouts block",
+	},
 	"frostmoln_secret": {
 		Create: "/secrets", Member: "/secrets/" + ObjectID, Update: http.MethodPut,
 		Config: map[string]tftypes.Value{"secret_value": Str("s3cr3t")}, // pragma: allowlist secret
@@ -522,6 +592,13 @@ var Profiles = map[string]Profile{
 	"frostmoln_security_group": {
 		Create: "/security-groups", Member: "/security-groups/" + ObjectID, Update: http.MethodPut, Reserved: networkReserved,
 		Async: true, Touch: map[string]any{"description": "touched"},
+	},
+	"frostmoln_ssh_key": {
+		Create: "/sshkeys", Member: "/sshkeys/" + ObjectID, IDField: "name",
+		Update: http.MethodPatch, TagsOnly: true, Reserved: offerReserved,
+		Config:  map[string]tftypes.Value{"name": Str(ObjectID), "public_key": Str("ssh-ed25519 AAAA")},
+		Extra:   map[string]any{"id": "uuid-1", "publicKey": "ssh-ed25519 AAAA", "fingerprint": "SHA256:x"},
+		NoTouch: "every other attribute replaces an SSH key, and it has no timeouts block",
 	},
 	"frostmoln_snapshot": {
 		Create: "/volumes/vol-1/snapshots", Member: "/volumes/vol-1/snapshots/" + ObjectID, Update: http.MethodPut,
@@ -817,6 +894,44 @@ func webserverDeploy(f *Fake, w http.ResponseWriter, r *http.Request, body map[s
 	}
 	return false
 }
+
+// imageCreate is the frostmoln_image flow beyond the image record itself:
+// create the image (answering a presigned upload form this fake also serves),
+// the upload, and the import. The import poll reads the member, already active.
+func imageCreate(f *Fake, w http.ResponseWriter, r *http.Request, body map[string]json.RawMessage) bool {
+	const tenant = "/v1/tenants/t-1"
+	switch {
+	case r.Method == http.MethodPost && r.URL.Path == tenant+f.Profile.Create:
+		f.create(r, body)
+		obj := f.Object()
+		obj["upload"] = map[string]any{
+			"url": "http://" + r.Host + "/upload", "fields": map[string]string{"key": "k"},
+			"expiresAt": "2999-01-01T00:00:00Z",
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(obj)
+		return true
+	case r.Method == http.MethodPost && r.URL.Path == "/upload":
+		w.WriteHeader(http.StatusNoContent)
+		return true
+	case r.Method == http.MethodPost && r.URL.Path == tenant+f.Profile.Member+"/import":
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]any{})
+		return true
+	}
+	return false
+}
+
+// imageFile is a small file standing in for a disk image.
+var imageFile = func() string {
+	f, err := os.CreateTemp("", "tftagstest-image-*.qcow2")
+	if err != nil {
+		return ""
+	}
+	_, _ = f.WriteString("disk image bytes")
+	_ = f.Close()
+	return f.Name()
+}()
 
 // deployArchive is a small file standing in for a site archive: the deployment
 // hashes it at plan and apply time.

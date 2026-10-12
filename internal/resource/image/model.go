@@ -9,8 +9,12 @@
 package image
 
 import (
+	"context"
+
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -45,6 +49,11 @@ type ImageModel struct {
 	Visibility      types.String `tfsdk:"visibility"`
 	Owner           types.String `tfsdk:"owner"`
 	CreatedAt       types.String `tfsdk:"created_at"`
+
+	// Tags / TagsAll are the image's customer resource tags (internal/tftags),
+	// kept by compute in its own store — never in the image's platform tag list.
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 
 	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
 	// absent block, which resolves to the resource's hardcoded defaults.
@@ -154,6 +163,10 @@ type apiImage struct {
 	ImportFailureReason string `json:"importFailureReason,omitempty"`
 	Owner               string `json:"owner"`
 	CreatedAt           string `json:"createdAt"`
+	// ResourceTags are the image's customer key=value tags ({} when untagged).
+	// The response's `tags` is a deprecated string list of the same tags and is
+	// not read.
+	ResourceTags map[string]string `json:"resourceTags"`
 }
 
 // apiCreateImageRequest mirrors compute domain.CreateImageRequest, narrowed to
@@ -171,6 +184,9 @@ type apiCreateImageRequest struct {
 	OSVersion       string `json:"osVersion,omitempty"`
 	Architecture    string `json:"architecture,omitempty"`
 	DefaultUser     string `json:"defaultUser,omitempty"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; compute
+	// merges the tenant's default tags under it.
+	Tags map[string]string `json:"resourceTags,omitempty"`
 }
 
 // apiImageUpload mirrors compute domain.ImageUpload: a presigned POST form, not
@@ -218,6 +234,9 @@ type apiUpdateImageRequest struct {
 	MinDisk     *int64  `json:"minDisk,omitempty"`
 	MinRAM      *int64  `json:"minRam,omitempty"`
 	DefaultUser *string `json:"defaultUser,omitempty"`
+	// Tags replaces the image's customer tags ({} clears); nil leaves them. A
+	// tags-only update never reaches the image store.
+	Tags *map[string]string `json:"resourceTags,omitempty"`
 }
 
 // toCreateRequest builds the create body from the plan.
@@ -301,6 +320,14 @@ func (m *ImageModel) fromAPI(img *apiImage) {
 //     inconsistent-result error — a coin flip, i.e. a flaky apply. Only a value
 //     the practitioner actually set is restored: when the attribute was omitted
 //     the plan value is unknown and the server's number is the right answer.
+//
+// tagsFromAPI renders the API's tags into `tags` (the keys the prior value names)
+// and `tags_all` (every customer key). m.Tags must hold the prior value: the
+// configuration on a create or update, the state on a refresh.
+func (m *ImageModel) tagsFromAPI(ctx context.Context, img *apiImage, diags *diag.Diagnostics) {
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(img.ResourceTags), m.Tags, diags)
+}
+
 func (m *ImageModel) keepPlanned(description types.String, minDiskGB types.Int64) {
 	if !description.IsUnknown() {
 		m.Description = description

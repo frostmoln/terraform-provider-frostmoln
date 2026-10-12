@@ -5,12 +5,15 @@
 package iam_policy
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // IAMPolicyModel is the Terraform state model for a shared access policy.
@@ -24,6 +27,9 @@ type IAMPolicyModel struct {
 	Version     types.Int64  `tfsdk:"version"`
 	CreatedAt   types.String `tfsdk:"created_at"`
 	UpdatedAt   types.String `tfsdk:"updated_at"`
+	// Tags / TagsAll are the policy's customer resource tags (internal/tftags).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 }
 
 // apiPolicy is the identity representation of a stored access policy (the bare
@@ -38,6 +44,8 @@ type apiPolicy struct {
 	Version     int             `json:"version"`
 	CreatedAt   string          `json:"createdAt"`
 	UpdatedAt   string          `json:"updatedAt"`
+	// Tags are the policy's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 // apiCreatePolicyRequest authors a shared policy. Tenant + authoredBy are server-set.
@@ -45,6 +53,9 @@ type apiCreatePolicyRequest struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	Document    json.RawMessage `json:"document"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+	// merges the tenant's default tags on top (a key sent here wins).
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
 // apiUpdatePolicyRequest updates a shared policy; a nil field is left unchanged.
@@ -52,6 +63,10 @@ type apiUpdatePolicyRequest struct {
 	Name        *string         `json:"name,omitempty"`
 	Description *string         `json:"description,omitempty"`
 	Document    json.RawMessage `json:"document,omitempty"`
+	// Tags, when set, replaces the policy's whole tag set ({} clears). Sent ALONE
+	// for a tags-only change, which the API writes without touching the document
+	// or its version.
+	Tags *map[string]string `json:"tags,omitempty"`
 }
 
 // toCreateRequest converts the model to an API create request. document is
@@ -140,4 +155,19 @@ func sameJSONDoc(a, b string) bool {
 		return false
 	}
 	return reflect.DeepEqual(av, bv)
+}
+
+// tagsFromAPI renders the API's tags into `tags` (the keys the prior value names)
+// and `tags_all` (every customer key). m.Tags must hold the prior value: the
+// configuration on a create or update, the state on a refresh.
+func (m *IAMPolicyModel) tagsFromAPI(ctx context.Context, p *apiPolicy, diags *diag.Diagnostics) {
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(p.Tags), m.Tags, diags)
+}
+
+// onlyTagsDiffer reports whether an update changes nothing but the tags: then the
+// PATCH carries `tags` alone, so the server leaves the document and its version
+// untouched (a label never alters a policy).
+func onlyTagsDiffer(plan, state *IAMPolicyModel) bool {
+	return plan.Name.Equal(state.Name) && plan.Description.Equal(state.Description) &&
+		sameJSONDoc(plan.Document.ValueString(), state.Document.ValueString())
 }

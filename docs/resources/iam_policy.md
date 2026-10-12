@@ -5,7 +5,9 @@ subcategory: ""
 description: |-
   Manages a reusable IAM access policy. A policy is a set of allow/deny rules over operations, targets (FRNs) and constraints; attach it to an API key, workload identity, or group with frostmoln_iam_policy_attachment. The policy is owned by the provider's selected tenant (tenant_id, else the credential's default). Authoring requires an fm CLI / OIDC session — a machine token may not author or attach a policy.
   ~> Upgrade note. Before provider v0.37.9 this resource ignored tenant_id and always acted on the credential's home tenant. If your configuration sets a non-home tenant_id, existing policies live in the HOME tenant: the first plan after upgrading reads a 404, drops them from state and proposes a create in the selected tenant, leaving the originals orphaned and no longer managed. Either terraform state rm + re-import them against the selected tenant, or point tenant_id at the home tenant to keep managing them where they are.
-  Authoritative scope. Every configurable attribute of this resource is enacted and reconciled: the platform applies it and a refresh reads the truth back. No attribute forces replacement, and no platform-invented default attaches. Declared in internal/scopedecl, machine-checked against the schema.
+  Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_iam_policy (Resource)
@@ -14,7 +16,11 @@ Manages a reusable IAM access policy. A policy is a set of allow/deny rules over
 
 ~> **Upgrade note.** Before provider v0.37.9 this resource ignored `tenant_id` and always acted on the credential's home tenant. If your configuration sets a non-home `tenant_id`, existing policies live in the HOME tenant: the first plan after upgrading reads a 404, drops them from state and proposes a create in the selected tenant, leaving the originals orphaned and no longer managed. Either `terraform state rm` + re-`import` them against the selected tenant, or point `tenant_id` at the home tenant to keep managing them where they are.
 
-**Authoritative scope.** Every configurable attribute of this resource is **enacted and reconciled**: the platform applies it and a refresh reads the truth back. No attribute forces replacement, and no platform-invented default attaches. Declared in `internal/scopedecl`, machine-checked against the schema.
+**Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -40,12 +46,14 @@ resource "frostmoln_iam_policy" "ci" {
 ### Optional
 
 - `description` (String) A description of the policy.
+- `tags` (Map of String) Resource tags on the policy: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI). Labels only: they sit beside the document and are never part of it, so they never change what the policy allows or denies, and a `frn:resourceTag` condition does not read a policy's own tags. A tags-only change neither rewrites the document nor bumps `version`. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 
 ### Read-Only
 
 - `authored_by` (String) The user that authored the policy (server-set).
 - `created_at` (String) The timestamp when the policy was created.
 - `id` (String) The unique identifier of the policy.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `tenant_id` (String) The owning tenant (server-set; the provider's tenant_id selects it).
 - `updated_at` (String) The timestamp when the policy was last updated.
 - `version` (Number) The policy version, incremented by the server on each update.

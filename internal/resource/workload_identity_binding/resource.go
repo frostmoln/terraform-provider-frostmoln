@@ -15,6 +15,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 var (
@@ -176,6 +177,10 @@ func (r *workloadIdentityBindingResource) Schema(_ context.Context, _ resource.S
 				Description: "The timestamp when the binding was last updated.",
 				Computed:    true,
 			},
+			"tags": tftags.OfferTagsAttribute("Resource tags on the binding: your own key/value metadata for search " +
+				"and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI). Labels only — the token exchange " +
+				"never reads them, and a tags change (its own tags-only update) never touches the binding's scopes."),
+			"tags_all": tftags.TagsAllAttribute(),
 		},
 	}
 }
@@ -202,6 +207,14 @@ func (r *workloadIdentityBindingResource) Configure(_ context.Context, req resou
 // at its next token mint. ADR-0102 requires that move to be measured per binding,
 // so the plan is the last place to say so before it happens.
 func (r *workloadIdentityBindingResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// tags_all: unknown whenever the next write changes the platform's tag set,
+	// including a change to the provider's default_tags.
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	// Create (no prior state) and destroy (no plan) are not this transition.
 	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
 		return
@@ -244,12 +257,18 @@ func (r *workloadIdentityBindingResource) Create(ctx context.Context, req resour
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	defaults := r.client.DefaultTags()
+	apiReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	apiResp, err := r.client.Post(ctx, basePath(r.client), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create workload identity binding", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	binding, err := client.ParseResponse[apiWorkloadIdentityBinding](apiResp)
 	if err != nil {
@@ -264,6 +283,7 @@ func (r *workloadIdentityBindingResource) Create(ctx context.Context, req resour
 	plannedScopes := plan.Scopes
 	plan.fromAPI(ctx, binding, &resp.Diagnostics)
 	plan.Scopes = plannedScopes
+	plan.tagsFromAPI(ctx, binding, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -291,7 +311,18 @@ func (r *workloadIdentityBindingResource) Read(ctx context.Context, req resource
 	}
 
 	state.fromAPI(ctx, binding, &resp.Diagnostics)
+	state.tagsFromAPI(ctx, binding, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+}
+
+// get reads one binding.
+func (r *workloadIdentityBindingResource) get(ctx context.Context, id string) (*apiWorkloadIdentityBinding, error) {
+	apiResp, err := r.client.Get(ctx, bindingPath(r.client, id), nil)
+	if err != nil {
+		return nil, err
+	}
+	return client.ParseResponse[apiWorkloadIdentityBinding](apiResp)
 }
 
 func (r *workloadIdentityBindingResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -303,23 +334,63 @@ func (r *workloadIdentityBindingResource) Update(ctx context.Context, req resour
 		return
 	}
 
-	// Only scopes are mutable; cluster_id/namespace/service_account force replace.
-	updateReq := plan.toUpdateRequest(ctx, &resp.Diagnostics)
+	// Scopes and tags are mutable (cluster_id/namespace/service_account force
+	// replace), each through its own verb: PUT for the scopes (scope cap, grant
+	// guard), the tags-only PATCH for the tags (which touches nothing else).
+	id := state.ID.ValueString()
+	defaults := r.client.DefaultTags()
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := r.get(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(cur.Tags), nil
+		}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	apiResp, err := r.client.Put(ctx, bindingPath(r.client, state.ID.ValueString()), updateReq)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to update workload identity binding", err.Error())
-		return
+	// Each write answers with the binding as it now stands, so the last one is
+	// the state; with no write at all (a default_tags change the platform
+	// already matches) the binding is read.
+	var binding *apiWorkloadIdentityBinding
+	if !plan.Scopes.Equal(state.Scopes) {
+		updateReq := plan.toUpdateRequest(ctx, &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		apiResp, err := r.client.Put(ctx, bindingPath(r.client, id), updateReq)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to update workload identity binding", err.Error())
+			return
+		}
+		if binding, err = client.ParseResponse[apiWorkloadIdentityBinding](apiResp); err != nil {
+			resp.Diagnostics.AddError("Failed to parse workload identity binding response", err.Error())
+			return
+		}
 	}
-
-	// PUT returns the updated binding, so state is refreshed without a second GET.
-	binding, err := client.ParseResponse[apiWorkloadIdentityBinding](apiResp)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to parse workload identity binding response", err.Error())
-		return
+	if tags != nil {
+		apiResp, err := r.client.Patch(ctx, bindingPath(r.client, id), apiUpdateTagsRequest{Tags: tags})
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to update workload identity binding tags", err.Error())
+			return
+		}
+		if binding, err = client.ParseResponse[apiWorkloadIdentityBinding](apiResp); err != nil {
+			resp.Diagnostics.AddError("Failed to parse workload identity binding response", err.Error())
+			return
+		}
+	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+	if binding == nil {
+		if binding, err = r.get(ctx, id); err != nil {
+			resp.Diagnostics.AddError("Failed to read workload identity binding after update", err.Error())
+			return
+		}
 	}
 
 	// Preserve the planned scopes across the echo (see Create) — scopes is the
@@ -327,6 +398,7 @@ func (r *workloadIdentityBindingResource) Update(ctx context.Context, req resour
 	plannedScopes := plan.Scopes
 	plan.fromAPI(ctx, binding, &resp.Diagnostics)
 	plan.Scopes = plannedScopes
+	plan.tagsFromAPI(ctx, binding, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -348,4 +420,5 @@ func (r *workloadIdentityBindingResource) Delete(ctx context.Context, req resour
 
 func (r *workloadIdentityBindingResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }

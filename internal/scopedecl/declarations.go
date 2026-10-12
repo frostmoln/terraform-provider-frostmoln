@@ -40,6 +40,7 @@ var Declarations = map[string]Decl{
 		ImmutableWhy: "the key's expiry is fixed when it is minted",
 		Immutable:    fields("expires_at"),
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "key", Why: "returned once at create and never again — only this configuration's copy survives; a refresh cannot recover it"},
 		},
 	},
@@ -195,7 +196,9 @@ var Declarations = map[string]Decl{
 			{Path: "source_address", Why: "a platform-attached gateway carries whatever address the platform chose for it"},
 		},
 	},
-	"frostmoln_iam_policy": {},
+	"frostmoln_iam_policy": {
+		Observes: []Field{tagsAllObserved},
+	},
 	"frostmoln_iam_policy_attachment": {
 		EnactsNone:   true,
 		ImmutableWhy: "the attachment is identified by its policy and attachee; changing one is a different attachment",
@@ -204,6 +207,7 @@ var Declarations = map[string]Decl{
 	"frostmoln_image": {
 		ImmutableWhy: "the image's content and format are fixed once imported — changing one imports a new image",
 		Immutable:    fields("architecture", "container_format", "disk_format", "os_distro", "os_version", "source_file", "source_file_hash"),
+		Observes:     []Field{tagsAllObserved},
 	},
 	"frostmoln_instance": {
 		ImmutableWhy: "the platform has no in-place update for it — a change destroys and re-creates the instance",
@@ -427,10 +431,10 @@ var Declarations = map[string]Decl{
 		},
 	},
 	"frostmoln_s3_credential": {
-		EnactsNone:   true,
-		ImmutableWhy: "a credential has no update route — changing what it may do re-mints it and issues a new secret",
+		ImmutableWhy: "a credential's update route takes its tags alone — changing what it may do re-mints it and issues a new secret",
 		Immutable:    fields("allowed_actions", "allowed_buckets", "description", "ip_whitelist", "name"),
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "secret_access_key", Why: "returned once at create and never again — a refresh cannot read it back"},
 		},
 	},
@@ -487,9 +491,9 @@ var Declarations = map[string]Decl{
 		Observes:     []Field{tagsAllObserved},
 	},
 	"frostmoln_ssh_key": {
-		EnactsNone:   true,
-		ImmutableWhy: "the platform stores the key material under its name and has no update route for either — a change re-creates the key",
+		ImmutableWhy: "the platform stores the key material under its name, and its update route takes tags alone — a change re-creates the key",
 		Immutable:    fields("name", "public_key"),
+		Observes:     []Field{tagsAllObserved},
 	},
 	"frostmoln_subnet": {
 		ImmutableWhy: "the network service has no in-place update for it — a change destroys and re-creates the subnet",
@@ -595,6 +599,7 @@ var Declarations = map[string]Decl{
 	"frostmoln_workload_identity_binding": {
 		ImmutableWhy: "the binding is identified by its cluster, namespace and service account; changing one is a different binding",
 		Immutable:    fields("cluster_id", "namespace", "service_account"),
+		Observes:     []Field{tagsAllObserved},
 	},
 }
 

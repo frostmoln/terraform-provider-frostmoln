@@ -847,6 +847,8 @@ func TestAPIKeyResource_Create_TFSDK(t *testing.T) {
 		"key_prefix":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, tftypes.UnknownValue),
 	})
 
 	createReq := resource.CreateRequest{
@@ -917,6 +919,8 @@ func TestAPIKeyResource_Create_APIError(t *testing.T) {
 		"key_prefix":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, tftypes.UnknownValue),
 	})
 
 	createReq := resource.CreateRequest{
@@ -968,6 +972,8 @@ func TestAPIKeyResource_Read_TFSDK(t *testing.T) {
 		"key_prefix":  tftypes.NewValue(tftypes.String, "fmk_test"),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -1020,6 +1026,8 @@ func TestAPIKeyResource_Read_NotFound_TFSDK(t *testing.T) {
 		"key_prefix":  tftypes.NewValue(tftypes.String, "fmk"),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -1082,6 +1090,8 @@ func TestAPIKeyResource_Update_TFSDK(t *testing.T) {
 		"key_prefix":  tftypes.NewValue(tftypes.String, "fmk_test"),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	// Plan (desired)
@@ -1096,6 +1106,8 @@ func TestAPIKeyResource_Update_TFSDK(t *testing.T) {
 		"key_prefix":  tftypes.NewValue(tftypes.String, "fmk_test"),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	updateReq := resource.UpdateRequest{
@@ -1148,6 +1160,8 @@ func TestAPIKeyResource_Update_APIError(t *testing.T) {
 		"key_prefix":  tftypes.NewValue(tftypes.String, "fmk_test"),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
@@ -1161,6 +1175,8 @@ func TestAPIKeyResource_Update_APIError(t *testing.T) {
 		"key_prefix":  tftypes.NewValue(tftypes.String, "fmk_test"),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	updateReq := resource.UpdateRequest{
@@ -1208,6 +1224,8 @@ func TestAPIKeyResource_Delete_TFSDK(t *testing.T) {
 		"key_prefix":  tftypes.NewValue(tftypes.String, "fmk"),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -1248,6 +1266,8 @@ func TestAPIKeyResource_Delete_NotFound_TFSDK(t *testing.T) {
 		"key_prefix":  tftypes.NewValue(tftypes.String, "fmk"),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -1280,6 +1300,8 @@ func TestAPIKeyResource_ImportState_TFSDK(t *testing.T) {
 		"key_prefix":  tftypes.NewValue(tftypes.String, nil),
 		"status":      tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, nil),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	importReq := resource.ImportStateRequest{ID: "ak-123"}

@@ -118,6 +118,8 @@ func createPlanAttrs(sourceFile string) map[string]tftypes.Value {
 		"visibility":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"owner":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"tags":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, tftypes.UnknownValue),
 		"timeouts":         tftypes.NewValue(timeoutsObjectType, nil),
 	}
 }
@@ -159,6 +161,8 @@ func stateAttrs(imageID string) map[string]tftypes.Value {
 		"visibility":       tftypes.NewValue(tftypes.String, "private"),
 		"owner":            tftypes.NewValue(tftypes.String, "proj-1"),
 		"created_at":       tftypes.NewValue(tftypes.String, "2026-08-07T10:00:00Z"),
+		"tags":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"timeouts":         tftypes.NewValue(timeoutsObjectType, nil),
 	}
 }

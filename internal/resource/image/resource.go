@@ -28,12 +28,14 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
-	_ resource.Resource              = &imageResource{}
-	_ resource.ResourceWithConfigure = &imageResource{}
+	_ resource.Resource               = &imageResource{}
+	_ resource.ResourceWithConfigure  = &imageResource{}
+	_ resource.ResourceWithModifyPlan = &imageResource{}
 )
 
 // NewResource returns a new image resource factory.
@@ -123,8 +125,8 @@ func (r *imageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 		Description: "Manages a customer custom image (bring-your-own-image). The provider runs the full " +
 			"flow: it creates the image record, uploads the local disk image straight to Frostmoln object " +
 			"storage with the presigned form the platform returns, asks the platform to import it, and waits " +
-			"for the image to reach \"active\". Only name, description, default_user, min_disk_gb and min_ram_mb " +
-			"can be changed " +
+			"for the image to reach \"active\". Only name, description, default_user, min_disk_gb, min_ram_mb " +
+			"and tags can be changed " +
 			"in place — every other attribute, including source_file, replaces the image. Create waits up to " +
 			"60 minutes for the import to finish, and a destroy retries for the same 60 minutes while an import " +
 			"still holds the image; both budgets are tunable per resource with the `timeouts` block " +
@@ -316,6 +318,11 @@ func (r *imageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"tags": tftags.OfferTagsAttribute("Resource tags on the image: your own key/value metadata for search " +
+				"and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI). Labels only — they never change " +
+				"how the image boots or which images the platform resolves, and changing them updates the image in " +
+				"place. The tenant's default tags are added when the image is created."),
+			"tags_all": tftags.TagsAllAttribute(),
 		},
 		Blocks: map[string]schema.Block{
 			// Customer-tunable wait budgets: defaults keep the values this
@@ -333,6 +340,13 @@ func (r *imageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"timeouts": timeouts.Schema(),
 		},
 	}
+}
+
+// ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,
+// plans an in-place update of the image's tags.
+func (r *imageResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
 }
 
 func (r *imageResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -404,7 +418,13 @@ func (r *imageResource) Create(ctx context.Context, req resource.CreateRequest, 
 	// caller's HOME tenant, so compute talks to Glance in the wrong OpenStack
 	// project. The whole create -> mint -> upload -> import -> poll flow has to
 	// name the same tenant, or the image is created in one and polled in another.
-	createResp, err := r.client.Post(ctx, r.client.TenantPath("/images"), plan.toCreateRequest())
+	createReq := plan.toCreateRequest()
+	defaults := r.client.DefaultTags()
+	createReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	createResp, err := r.client.Post(ctx, r.client.TenantPath("/images"), createReq)
 	if err != nil {
 		detail := imageErrorDetail(err)
 		// A transport-level failure — timeout, connection reset, EOF — is not an
@@ -441,9 +461,13 @@ func (r *imageResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+
 	// The image EXISTS from here on — persist it before anything that can fail.
+	plannedTags := plan.Tags
 	plan.fromAPI(&created.apiImage)
 	plan.keepPlanned(plannedDescription, plannedMinDisk)
+	plan.tagsFromAPI(ctx, &created.apiImage, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -498,6 +522,8 @@ func (r *imageResource) Create(ctx context.Context, req resource.CreateRequest, 
 
 	plan.fromAPI(final)
 	plan.keepPlanned(plannedDescription, plannedMinDisk)
+	plan.Tags = plannedTags
+	plan.tagsFromAPI(ctx, final, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -531,6 +557,8 @@ func (r *imageResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	}
 
 	state.fromAPI(img)
+	state.tagsFromAPI(ctx, img, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -582,6 +610,32 @@ func (r *imageResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		needsUpdate = true
 	}
 
+	// The tag set to write, or nil when the platform's needs no change —
+	// computed against the tags the image holds right now, so a key added
+	// outside Terraform since the last refresh is kept. A tags-only PUT never
+	// reaches the image store.
+	defaults := r.client.DefaultTags()
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := r.get(ctx, imageID)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(cur.ResourceTags), nil
+		}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+imageErrorDetail(err))
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if tags != nil {
+		updateReq.Tags = tags
+		needsUpdate = true
+	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+
 	// Nothing the API owns changed — keep the state values rather than spend a
 	// request that would echo them straight back.
 	if !needsUpdate {
@@ -593,6 +647,8 @@ func (r *imageResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		plan.Visibility = state.Visibility
 		plan.Owner = state.Owner
 		plan.CreatedAt = state.CreatedAt
+		// The platform's tag set is unchanged, so tags_all is the state's.
+		plan.TagsAll = state.TagsAll
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 		return
 	}
@@ -622,7 +678,21 @@ func (r *imageResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	plannedDescription, plannedMinDisk := plan.Description, plan.MinDiskGB
 	plan.fromAPI(img)
 	plan.keepPlanned(plannedDescription, plannedMinDisk)
+	plan.tagsFromAPI(ctx, img, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// get reads one image.
+func (r *imageResource) get(ctx context.Context, imageID string) (*apiImage, error) {
+	readPath, err := r.imagePath(imageID, "")
+	if err != nil {
+		return nil, err
+	}
+	apiResp, err := r.client.Get(ctx, readPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	return client.ParseResponse[apiImage](apiResp)
 }
 
 func (r *imageResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

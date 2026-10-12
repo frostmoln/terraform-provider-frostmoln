@@ -426,6 +426,8 @@ func TestS3CredentialResource_Create_TFSDK(t *testing.T) {
 		"secret_access_key": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"status":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"tags":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, tftypes.UnknownValue),
 		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
@@ -478,6 +480,8 @@ func TestS3CredentialResource_Create_APIError(t *testing.T) {
 		"secret_access_key": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"status":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"tags":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, tftypes.UnknownValue),
 		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
@@ -524,6 +528,8 @@ func TestS3CredentialResource_Read_TFSDK(t *testing.T) {
 		"secret_access_key": tftypes.NewValue(tftypes.String, "saved-secret"), // pragma: allowlist secret
 		"status":            tftypes.NewValue(tftypes.String, "active"),
 		"created_at":        tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
@@ -581,6 +587,8 @@ func TestS3CredentialResource_Read_NotFound_TFSDK(t *testing.T) {
 		"secret_access_key": tftypes.NewValue(tftypes.String, "old-secret"), // pragma: allowlist secret
 		"status":            tftypes.NewValue(tftypes.String, "active"),
 		"created_at":        tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
@@ -625,6 +633,8 @@ func TestS3CredentialResource_Read_APIError(t *testing.T) {
 		"secret_access_key": tftypes.NewValue(tftypes.String, "secret"), // pragma: allowlist secret
 		"status":            tftypes.NewValue(tftypes.String, "active"),
 		"created_at":        tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
@@ -644,26 +654,9 @@ func TestS3CredentialResource_Read_APIError(t *testing.T) {
 	}
 }
 
-func TestS3CredentialResource_Update_TFSDK(t *testing.T) {
-	r := &s3CredentialResource{}
-	resp := &resource.UpdateResponse{}
-	r.Update(context.Background(), resource.UpdateRequest{}, resp)
-
-	if !resp.Diagnostics.HasError() {
-		t.Fatal("expected error from unsupported update")
-	}
-
-	found := false
-	for _, d := range resp.Diagnostics.Errors() {
-		if d.Summary() == "Update Not Supported" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected 'Update Not Supported' error")
-	}
-}
+// The in-place Update (tags only, a PUT carrying `tags` alone) is driven end to
+// end by TestDefaultTags (tftagstest.RunDirect); every other attribute replaces
+// the credential.
 
 func TestS3CredentialResource_Delete_TFSDK(t *testing.T) {
 	deleted := false
@@ -691,6 +684,8 @@ func TestS3CredentialResource_Delete_TFSDK(t *testing.T) {
 		"secret_access_key": tftypes.NewValue(tftypes.String, "secret"), // pragma: allowlist secret
 		"status":            tftypes.NewValue(tftypes.String, "active"),
 		"created_at":        tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
@@ -730,6 +725,8 @@ func TestS3CredentialResource_Delete_NotFound_TFSDK(t *testing.T) {
 		"secret_access_key": tftypes.NewValue(tftypes.String, "secret"), // pragma: allowlist secret
 		"status":            tftypes.NewValue(tftypes.String, "active"),
 		"created_at":        tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
@@ -768,6 +765,8 @@ func TestS3CredentialResource_Delete_APIError(t *testing.T) {
 		"secret_access_key": tftypes.NewValue(tftypes.String, "secret"), // pragma: allowlist secret
 		"status":            tftypes.NewValue(tftypes.String, "active"),
 		"created_at":        tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
@@ -798,6 +797,8 @@ func TestS3CredentialResource_ImportState_TFSDK(t *testing.T) {
 		"secret_access_key": tftypes.NewValue(tftypes.String, nil),
 		"status":            tftypes.NewValue(tftypes.String, nil),
 		"created_at":        tftypes.NewValue(tftypes.String, nil),
+		"tags":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
@@ -831,6 +832,8 @@ func s3CredStateWithID(t *testing.T, id string) tftypes.Value {
 		"secret_access_key": tftypes.NewValue(tftypes.String, "secret"), // pragma: allowlist secret
 		"status":            tftypes.NewValue(tftypes.String, "active"),
 		"created_at":        tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
@@ -906,6 +909,8 @@ func TestS3CredentialResource_Create_NoAccessKeyID_Errors(t *testing.T) {
 		"secret_access_key": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"status":            tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"tags":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, tftypes.UnknownValue),
 		"allowed_buckets":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"allowed_actions":   tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
 		"ip_whitelist":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),

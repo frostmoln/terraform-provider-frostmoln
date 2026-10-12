@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // S3CredentialModel is the Terraform state model for an S3 credential.
@@ -22,6 +24,10 @@ type S3CredentialModel struct {
 	AllowedBuckets types.List `tfsdk:"allowed_buckets"`
 	AllowedActions types.List `tfsdk:"allowed_actions"`
 	IPWhitelist    types.List `tfsdk:"ip_whitelist"`
+
+	// Tags / TagsAll are the credential's customer resource tags (internal/tftags).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 }
 
 // apiS3Credential is the API representation of an S3 credential. The storage
@@ -38,6 +44,8 @@ type apiS3Credential struct {
 	AllowedActions  []string `json:"allowedActions,omitempty"`
 	IPWhitelist     []string `json:"ipWhitelist,omitempty"`
 	CreatedAt       string   `json:"createdAt"`
+	// Tags are the credential's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 // apiCreateS3CredentialRequest is the API request to create an S3 credential.
@@ -47,6 +55,17 @@ type apiCreateS3CredentialRequest struct {
 	AllowedBuckets []string `json:"allowedBuckets,omitempty"`
 	AllowedActions []string `json:"allowedActions,omitempty"`
 	IPWhitelist    []string `json:"ipWhitelist,omitempty"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty. Unlike
+	// most resources the API does NOT merge the tenant's default tags into a new
+	// credential (minting must not depend on the identity service).
+	Tags map[string]string `json:"tags,omitempty"`
+}
+
+// apiUpdateTagsRequest is PUT /credentials/{id} carrying `tags` alone: the
+// credential's only in-place attribute. A tags-only update writes nothing at the
+// S3 endpoint.
+type apiUpdateTagsRequest struct {
+	Tags *map[string]string `json:"tags"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -133,4 +152,11 @@ func stringsToList(ctx context.Context, in []string, dst *types.List) diag.Diagn
 		*dst = types.ListNull(types.StringType)
 	}
 	return nil
+}
+
+// tagsFromAPI renders the API's tags into `tags` (the keys the prior value names)
+// and `tags_all` (every customer key). m.Tags must hold the prior value: the
+// configuration on a create or update, the state on a refresh.
+func (m *S3CredentialModel) tagsFromAPI(ctx context.Context, c *apiS3Credential, diags *diag.Diagnostics) {
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(c.Tags), m.Tags, diags)
 }

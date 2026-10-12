@@ -15,11 +15,13 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 var (
 	_ resource.Resource                = &apiKeyResource{}
 	_ resource.ResourceWithImportState = &apiKeyResource{}
+	_ resource.ResourceWithModifyPlan  = &apiKeyResource{}
 )
 
 // NewResource returns a new API key resource factory.
@@ -125,8 +127,19 @@ func (r *apiKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"tags": tftags.OfferTagsAttribute("Resource tags on the API key: your own key/value metadata for search " +
+				"and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI). Labels only — they change no " +
+				"scope, expiry or rate limit, and a tags-only change is accepted even on a revoked or expired key."),
+			"tags_all": tftags.TagsAllAttribute(),
 		},
 	}
+}
+
+// ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,
+// plans an in-place update of the key's tags.
+func (r *apiKeyResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
 }
 
 func (r *apiKeyResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -155,12 +168,18 @@ func (r *apiKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	defaults := r.client.DefaultTags()
+	apiReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/api-keys"), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create API key", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// Create returns an envelope {apiKey: {...}, key: "..."}, unlike Read which
 	// returns a bare key object.
@@ -179,6 +198,7 @@ func (r *apiKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 	}
 
 	plan.fromAPI(ctx, key, &resp.Diagnostics)
+	plan.tagsFromAPI(ctx, key, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -214,6 +234,8 @@ func (r *apiKeyResource) Read(ctx context.Context, req resource.ReadRequest, res
 	}
 
 	state.fromAPI(ctx, key, &resp.Diagnostics)
+	state.tagsFromAPI(ctx, key, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 
 	// Restore the key value from prior state.
 	state.Key = savedKey
@@ -245,11 +267,44 @@ func (r *apiKeyResource) Update(ctx context.Context, req resource.UpdateRequest,
 		resp.Diagnostics.AddError("Invalid API key ID", err.Error())
 		return
 	}
-	_, err = r.client.Patch(ctx, keyPath, updateReq)
+	// The tag set to write, or nil when the platform's needs no change —
+	// computed against the tags the key holds right now, so a key added outside
+	// Terraform since the last refresh is kept.
+	defaults := r.client.DefaultTags()
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := r.client.Get(ctx, keyPath, nil)
+			if err != nil {
+				return nil, err
+			}
+			key, err := client.ParseResponse[apiAPIKey](cur)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(key.Tags), nil
+		}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	switch {
+	case onlyTagsDiffer(&plan, &state) && tags != nil:
+		// Tags alone: the API accepts this on a revoked or expired key too.
+		_, err = r.client.Patch(ctx, keyPath, apiUpdateAPIKeyRequest{Tags: tags})
+	case onlyTagsDiffer(&plan, &state):
+		// Nothing to write (a default_tags change the platform already matches).
+	default:
+		updateReq.Tags = tags
+		_, err = r.client.Patch(ctx, keyPath, updateReq)
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to update API key", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// Refresh state from API.
 	apiResp, err := r.client.Get(ctx, keyPath, nil)
@@ -265,6 +320,7 @@ func (r *apiKeyResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 
 	plan.fromAPI(ctx, key, &resp.Diagnostics)
+	plan.tagsFromAPI(ctx, key, &resp.Diagnostics)
 
 	// Restore the key value from state.
 	plan.Key = state.Key
@@ -302,6 +358,7 @@ func (r *apiKeyResource) ImportState(ctx context.Context, req resource.ImportSta
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[0])...)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }
 
 // apiKeyPath builds the tenant-scoped path for one API key, optionally with a

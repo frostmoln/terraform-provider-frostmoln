@@ -10,6 +10,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // expiresAtSemanticEquality is a plan modifier that suppresses a diff when the
@@ -95,6 +97,9 @@ type APIKeyModel struct {
 	KeyPrefix   types.String `tfsdk:"key_prefix"`
 	Status      types.String `tfsdk:"status"`
 	CreatedAt   types.String `tfsdk:"created_at"`
+	// Tags / TagsAll are the key's customer resource tags (internal/tftags).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 }
 
 // apiAPIKey is the API representation of an API key.
@@ -109,6 +114,8 @@ type apiAPIKey struct {
 	RateLimit   int      `json:"rateLimit,omitempty"`
 	Status      string   `json:"status"`
 	CreatedAt   string   `json:"createdAt"`
+	// Tags are the key's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 // apiCreateAPIKeyRequest is the API request to create an API key.
@@ -118,6 +125,9 @@ type apiCreateAPIKeyRequest struct {
 	Scopes      []string `json:"scopes,omitempty"`
 	ExpiresAt   string   `json:"expiresAt,omitempty"`
 	RateLimit   int      `json:"rateLimit,omitempty"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+	// merges the tenant's default tags on top (a key sent here wins).
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
 // apiCreateAPIKeyResponse is the envelope identity returns on create: the key
@@ -137,6 +147,8 @@ type apiUpdateAPIKeyRequest struct {
 	Description *string  `json:"description,omitempty"`
 	Scopes      []string `json:"scopes,omitempty"`
 	RateLimit   *int     `json:"rateLimit,omitempty"`
+	// Tags, when set, replaces the key's whole tag set ({} clears).
+	Tags *map[string]string `json:"tags,omitempty"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -253,4 +265,19 @@ func (m *APIKeyModel) fromAPI(ctx context.Context, key *apiAPIKey, diags *diag.D
 	}
 
 	// key field is NOT set here; it's only available on create and preserved from state.
+}
+
+// tagsFromAPI renders the API's tags into `tags` (the keys the prior value names)
+// and `tags_all` (every customer key). m.Tags must hold the prior value: the
+// configuration on a create or update, the state on a refresh.
+func (m *APIKeyModel) tagsFromAPI(ctx context.Context, key *apiAPIKey, diags *diag.Diagnostics) {
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(key.Tags), m.Tags, diags)
+}
+
+// onlyTagsDiffer reports whether an update changes nothing the API stores but the
+// tags: then the PATCH carries `tags` alone, which the API also accepts on a
+// revoked or expired key.
+func onlyTagsDiffer(plan, state *APIKeyModel) bool {
+	return plan.Name.Equal(state.Name) && plan.Description.Equal(state.Description) &&
+		plan.Scopes.Equal(state.Scopes) && plan.RateLimit.Equal(state.RateLimit)
 }

@@ -37,6 +37,8 @@ func apiKeyStateValue(t *testing.T) tftypes.Value {
 		"key_prefix":  tftypes.NewValue(tftypes.String, "fmk"),
 		"status":      tftypes.NewValue(tftypes.String, "active"),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 }
 

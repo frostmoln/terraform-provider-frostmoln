@@ -5,7 +5,9 @@ subcategory: ""
 description: |-
   Manages an SSH key in the Frostmoln platform.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
-  Create-immutable — name, public_key: the platform stores the key material under its name and has no update route for either — a change re-creates the key.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — name, public_key: the platform stores the key material under its name, and its update route takes tags alone — a change re-creates the key.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_ssh_key (Resource)
@@ -14,7 +16,11 @@ Manages an SSH key in the Frostmoln platform.
 
 **Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
 
-**Create-immutable** — `name`, `public_key`: the platform stores the key material under its name and has no update route for either — a change re-creates the key.
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `name`, `public_key`: the platform stores the key material under its name, and its update route takes tags alone — a change re-creates the key.
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -33,8 +39,13 @@ resource "frostmoln_ssh_key" "example" {
 - `name` (String) The name of the SSH key.
 - `public_key` (String) The public key content.
 
+### Optional
+
+- `tags` (Map of String) Resource tags on the SSH key: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only — never written into an instance. Changing them updates the key in place; the key itself never changes. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
+
 ### Read-Only
 
 - `created_at` (String) The timestamp when the SSH key was created.
 - `fingerprint` (String) The fingerprint of the SSH key.
 - `id` (String) The identifier of the SSH key. Compute identifies keys by name within a tenant, so this equals the key name. Import by name: `terraform import frostmoln_ssh_key.<label> <key-name>`.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.

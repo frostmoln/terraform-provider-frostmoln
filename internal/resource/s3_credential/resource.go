@@ -18,11 +18,13 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 var (
 	_ resource.Resource                = &s3CredentialResource{}
 	_ resource.ResourceWithImportState = &s3CredentialResource{}
+	_ resource.ResourceWithModifyPlan  = &s3CredentialResource{}
 )
 
 // missingIDSummary is raised when a credential in state has no access key ID.
@@ -55,10 +57,10 @@ func (r *s3CredentialResource) Metadata(_ context.Context, req resource.Metadata
 
 func (r *s3CredentialResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages an S3 credential in the Frostmoln platform. Credentials are immutable: " +
-			"changing the name, description, or any scope attribute (allowed_buckets/allowed_actions/" +
-			"ip_whitelist) replaces the credential and issues a new secret_access_key, so update any " +
-			"downstream consumers. Per-credential scoping requires an IAM-capable object-storage backend." +
+		Description: "Manages an S3 credential in the Frostmoln platform. Credentials are immutable apart " +
+			"from their tags: changing the name, description, or any scope attribute (allowed_buckets/" +
+			"allowed_actions/ip_whitelist) replaces the credential and issues a new secret_access_key, so " +
+			"update any downstream consumers; changing `tags` updates it in place. Per-credential scoping requires an IAM-capable object-storage backend." +
 			"\n\n" + scopedecl.Summary("frostmoln_s3_credential"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -131,8 +133,22 @@ func (r *s3CredentialResource) Schema(_ context.Context, _ resource.SchemaReques
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"tags": tftags.OfferTagsAttribute("Resource tags on the credential: your own key/value metadata for " +
+				"search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI). Labels only — they never " +
+				"reach the S3 endpoint or the credential's access, and changing them updates the credential in place " +
+				"(no new secret). The provider's `default_tags` apply as usual; the tenant's default tags are NOT " +
+				"added by the platform when a credential is created (they reach credentials only through " +
+				"\"apply default tags to existing resources\")."),
+			"tags_all": tftags.TagsAllAttribute(),
 		},
 	}
+}
+
+// ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,
+// plans an in-place update of the credential's tags.
+func (r *s3CredentialResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
 }
 
 func (r *s3CredentialResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -162,12 +178,18 @@ func (r *s3CredentialResource) Create(ctx context.Context, req resource.CreateRe
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	defaults := r.client.DefaultTags()
+	apiReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/credentials"), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create S3 credential", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	cred, err := client.ParseResponse[apiS3Credential](apiResp)
 	if err != nil {
@@ -179,6 +201,7 @@ func (r *s3CredentialResource) Create(ctx context.Context, req resource.CreateRe
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	plan.tagsFromAPI(ctx, cred, &resp.Diagnostics)
 	// Persist state before failing on a missing id: the credential was created
 	// and its secret_access_key is returned only once, so dropping the state
 	// would lose it. The error tells the operator how to reconcile.
@@ -245,15 +268,74 @@ func (r *s3CredentialResource) Read(ctx context.Context, req resource.ReadReques
 	if found.SecretAccessKey == "" && !secretKey.IsNull() && !secretKey.IsUnknown() { // pragma: allowlist secret
 		state.SecretAccessKey = secretKey // pragma: allowlist secret
 	}
+	state.tagsFromAPI(ctx, found, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-func (r *s3CredentialResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError(
-		"Update Not Supported",
-		"S3 credentials cannot be updated. All attribute changes require resource replacement.",
-	)
+// get reads one credential.
+func (r *s3CredentialResource) get(ctx context.Context, id string) (*apiS3Credential, error) {
+	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/credentials/"+url.PathEscape(id)), nil)
+	if err != nil {
+		return nil, err
+	}
+	return client.ParseResponse[apiS3Credential](apiResp)
+}
+
+// Update changes the credential's tags — its only in-place attribute (every
+// other one replaces it) — with a PUT carrying `tags` alone, sent only when the
+// platform's set would change. It writes nothing at the S3 endpoint and never
+// issues a new secret.
+func (r *s3CredentialResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state S3CredentialModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	id := state.ID.ValueString()
+	if id == "" {
+		resp.Diagnostics.AddError(missingIDSummary, missingIDRemedy)
+		return
+	}
+	defaults := r.client.DefaultTags()
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := r.get(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(cur.Tags), nil
+		}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if tags != nil {
+		if _, err := r.client.Put(ctx, r.client.TenantPath("/credentials/"+url.PathEscape(id)), apiUpdateTagsRequest{Tags: tags}); err != nil {
+			resp.Diagnostics.AddError("Failed to Update S3 Credential Tags", err.Error())
+			return
+		}
+	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+
+	cred, err := r.get(ctx, id)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read S3 Credential After Update", err.Error())
+		return
+	}
+	secretKey := state.SecretAccessKey // pragma: allowlist secret
+	resp.Diagnostics.Append(plan.fromAPI(ctx, cred)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	plan.SecretAccessKey = secretKey // pragma: allowlist secret
+	plan.tagsFromAPI(ctx, cred, &resp.Diagnostics)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 func (r *s3CredentialResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -294,4 +376,5 @@ func (r *s3CredentialResource) ImportState(ctx context.Context, req resource.Imp
 		return
 	}
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }

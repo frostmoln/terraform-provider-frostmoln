@@ -3,21 +3,24 @@
 page_title: "frostmoln_s3_credential Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages an S3 credential in the Frostmoln platform. Credentials are immutable: changing the name, description, or any scope attribute (allowed_buckets/allowed_actions/ip_whitelist) replaces the credential and issues a new secret_access_key, so update any downstream consumers. Per-credential scoping requires an IAM-capable object-storage backend.
+  Manages an S3 credential in the Frostmoln platform. Credentials are immutable apart from their tags: changing the name, description, or any scope attribute (allowed_buckets/allowed_actions/ip_whitelist) replaces the credential and issues a new secret_access_key, so update any downstream consumers; changing tags updates it in place. Per-credential scoping requires an IAM-capable object-storage backend.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
-  Create-immutable — allowed_actions, allowed_buckets, description, ip_whitelist, name: a credential has no update route — changing what it may do re-mints it and issues a new secret.
-  Observed, not enacted — secret_access_key: returned once at create and never again — a refresh cannot read it back.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — allowed_actions, allowed_buckets, description, ip_whitelist, name: a credential's update route takes its tags alone — changing what it may do re-mints it and issues a new secret.
+  Observed, not enacted — secret_access_key: returned once at create and never again — a refresh cannot read it back. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_s3_credential (Resource)
 
-Manages an S3 credential in the Frostmoln platform. Credentials are immutable: changing the name, description, or any scope attribute (allowed_buckets/allowed_actions/ip_whitelist) replaces the credential and issues a new secret_access_key, so update any downstream consumers. Per-credential scoping requires an IAM-capable object-storage backend.
+Manages an S3 credential in the Frostmoln platform. Credentials are immutable apart from their tags: changing the name, description, or any scope attribute (allowed_buckets/allowed_actions/ip_whitelist) replaces the credential and issues a new secret_access_key, so update any downstream consumers; changing `tags` updates it in place. Per-credential scoping requires an IAM-capable object-storage backend.
 
 **Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
 
-**Create-immutable** — `allowed_actions`, `allowed_buckets`, `description`, `ip_whitelist`, `name`: a credential has no update route — changing what it may do re-mints it and issues a new secret.
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
 
-**Observed, not enacted** — `secret_access_key`: returned once at create and never again — a refresh cannot read it back.
+**Create-immutable** — `allowed_actions`, `allowed_buckets`, `description`, `ip_whitelist`, `name`: a credential's update route takes its tags alone — changing what it may do re-mints it and issues a new secret.
+
+**Observed, not enacted** — `secret_access_key`: returned once at create and never again — a refresh cannot read it back. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -56,6 +59,7 @@ output "s3_secret_key" {
 - `allowed_buckets` (List of String) Buckets this credential may access. Empty/unset = ALL buckets in the tenant's account — set it to apply least privilege. Changing this replaces the credential.
 - `description` (String) A description of the S3 credential.
 - `ip_whitelist` (List of String) Source IPs/CIDRs to restrict this credential to. TEMPORARILY UNAVAILABLE: must be empty or unset (= any source IP). The platform refuses a non-empty list, and so does `terraform plan`, before the credential is replaced. Changing this replaces the credential.
+- `tags` (Map of String) Resource tags on the credential: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI). Labels only — they never reach the S3 endpoint or the credential's access, and changing them updates the credential in place (no new secret). The provider's `default_tags` apply as usual; the tenant's default tags are NOT added by the platform when a credential is created (they reach credentials only through "apply default tags to existing resources"). At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 
 ### Read-Only
 
@@ -63,6 +67,7 @@ output "s3_secret_key" {
 - `id` (String) The access key ID of the S3 credential — the identifier used with secret_access_key when talking to the S3 endpoint, and the value to pass to terraform import.
 - `secret_access_key` (String, Sensitive) The secret access key. Only returned when the credential is first created. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide.
 - `status` (String) The status of the S3 credential.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 
 ## Import
 

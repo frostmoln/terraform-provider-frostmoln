@@ -8,6 +8,7 @@ description: |-
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — cluster_id, namespace, service_account: the binding is identified by its cluster, namespace and service account; changing one is a different binding.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_workload_identity_binding (Resource)
@@ -21,6 +22,8 @@ Manages a Workload Identity Federation binding, mapping a managed Kubernetes (na
 **Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
 
 **Create-immutable** — `cluster_id`, `namespace`, `service_account`: the binding is identified by its cluster, namespace and service account; changing one is a different binding.
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -103,11 +106,13 @@ Notes on the policy-granted path:
 - While a binding carries BOTH scopes and a policy, its scopes stay authoritative and the policy's *additional* authority does not take effect. It goes live only once `scopes` is dropped, so verify after the drop, not after the attach.
 - Dropping `scopes` NARROWS the workload to whatever the policy allows, and the API only checks that *some* grant survives — never that the policy covers what the scopes covered. Enumerate the binding's effective access before dropping them.
 - Removing the LAST grant is rejected outright. A binding whose only grant is an attached policy must therefore be destroyed BEFORE that attachment; a plain `terraform destroy` tries the attachment first and fails. Destroy the binding with `-target` first — that removes its attachments with it.
+- `tags` (Map of String) Resource tags on the binding: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI). Labels only — the token exchange never reads them, and a tags change (its own tags-only update) never touches the binding's scopes. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 
 ### Read-Only
 
 - `created_at` (String) The timestamp when the binding was created.
 - `id` (String) The unique identifier of the binding.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `tenant_id` (String) The owning tenant (server-set; the provider's tenant_id selects it).
 - `updated_at` (String) The timestamp when the binding was last updated.
 
