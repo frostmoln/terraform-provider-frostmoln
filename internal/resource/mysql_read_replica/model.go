@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -20,6 +21,10 @@ type MysqlReadReplicaModel struct {
 	PrivateIP           types.String `tfsdk:"private_ip"`
 	Port                types.Int64  `tfsdk:"port"`
 	ReplicationLagBytes types.Int64  `tfsdk:"replication_lag_bytes"`
+	// Tags / TagsAll are the replica's OWN customer resource tags (internal/tftags),
+	// never copied from or to the primary.
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 
 	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
 	// absent block, which resolves to the resource's hardcoded defaults.
@@ -40,6 +45,8 @@ type apiMysqlReadReplica struct {
 	PrivateIP           string `json:"privateIp,omitempty"`
 	Port                int    `json:"port,omitempty"`
 	ReplicationLagBytes int64  `json:"replicationLagBytes,omitempty"`
+	// Tags are the replica's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 // apiCreateMysqlReadReplicaRequest is the API request to create a read replica.
@@ -48,6 +55,16 @@ type apiCreateMysqlReadReplicaRequest struct {
 	// FlavorID sizes the replica independently of the primary; empty inherits the
 	// primary's flavor (omitempty lets the backend apply that default).
 	FlavorID string `json:"flavorId,omitempty"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+	// merges the tenant's default tags in (the primary's tags are not inherited).
+	Tags map[string]string `json:"tags,omitempty"`
+}
+
+// apiUpdateTagsRequest is PATCH .../replicas/{id}: `tags` is the replica's only
+// editable field (any other field is refused), a row-only write that starts no
+// work on the replica. A POINTER so an empty map is sent as {} (clear).
+type apiUpdateTagsRequest struct {
+	Tags *map[string]string `json:"tags,omitempty"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -59,7 +76,10 @@ func (m *MysqlReadReplicaModel) toCreateRequest(_ context.Context, _ *diag.Diagn
 }
 
 // fromAPI populates the Terraform model from an API response.
-func (m *MysqlReadReplicaModel) fromAPI(_ context.Context, replica *apiMysqlReadReplica, _ *diag.Diagnostics) {
+func (m *MysqlReadReplicaModel) fromAPI(ctx context.Context, replica *apiMysqlReadReplica, diags *diag.Diagnostics) {
+	// Tags: `tags` keeps the keys the prior value (plan or state) names, `tags_all`
+	// every customer key the platform holds.
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(replica.Tags), m.Tags, diags)
 	m.ID = types.StringValue(replica.ID)
 	m.InstanceID = types.StringValue(replica.InstanceID)
 	m.Name = types.StringValue(replica.Name)

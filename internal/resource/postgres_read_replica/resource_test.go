@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags/tftagstest"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -234,15 +235,6 @@ func TestConfigureValid(t *testing.T) {
 	}
 }
 
-func TestUpdateNotSupported(t *testing.T) {
-	r := &postgresReadReplicaResource{}
-	var resp resource.UpdateResponse
-	r.Update(context.Background(), resource.UpdateRequest{}, &resp)
-	if !resp.Diagnostics.HasError() {
-		t.Error("expected error: read replicas are immutable")
-	}
-}
-
 func TestImportState(t *testing.T) {
 	r := NewResource().(resource.ResourceWithImportState)
 	var schemaResp resource.SchemaResponse
@@ -268,6 +260,7 @@ func buildState(t *testing.T, model PostgresReadReplicaModel) tfsdk.State {
 	var schemaResp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 	state := tfsdk.State{Schema: schemaResp.Schema}
+	tftagstest.NullUnsetTags(&model)
 	if diags := state.Set(context.Background(), &model); diags.HasError() {
 		t.Fatalf("failed to set state: %v", diags.Errors())
 	}
@@ -280,6 +273,7 @@ func buildPlan(t *testing.T, model PostgresReadReplicaModel) tfsdk.Plan {
 	var schemaResp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	tftagstest.NullUnsetTags(&model)
 	if diags := plan.Set(context.Background(), &model); diags.HasError() {
 		t.Fatalf("failed to set plan: %v", diags.Errors())
 	}

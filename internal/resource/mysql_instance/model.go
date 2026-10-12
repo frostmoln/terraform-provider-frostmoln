@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -47,6 +48,9 @@ type MysqlInstanceModel struct {
 	CreatedAt           types.String `tfsdk:"created_at"`
 	UpdatedAt           types.String `tfsdk:"updated_at"`
 	TenantID            types.String `tfsdk:"tenant_id"`
+	// Tags / TagsAll are the instance's customer resource tags (internal/tftags).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 	// Timeouts is the customer-tunable `timeouts` block. fromAPI never touches
 	// it: the pointer the practitioner configured rides through every model
 	// copy unchanged, which keeps the block stable in state across refreshes.
@@ -77,6 +81,8 @@ type apiMysqlInstance struct {
 	CreatedAt           string `json:"createdAt"`
 	UpdatedAt           string `json:"updatedAt,omitempty"`
 	TenantID            string `json:"tenantId,omitempty"`
+	// Tags are the instance's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 // apiCreateMysqlInstanceRequest is the API request to create a managed MySQL instance.
@@ -93,6 +99,16 @@ type apiCreateMysqlInstanceRequest struct {
 	BackupSchedule      string `json:"backupSchedule,omitempty"`
 	BackupRetentionDays *int   `json:"backupRetentionDays,omitempty"`
 	ParameterGroupID    string `json:"parameterGroupId,omitempty"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+	// merges the tenant's default tags in.
+	Tags map[string]string `json:"tags,omitempty"`
+}
+
+// apiUpdateTagsRequest is the tags-only PUT .../databases/{id}: an instance PUT
+// carrying `tags` alone is a row-only write — no command, no transition guard.
+// Tags is a POINTER so an empty map is sent as {} (clear).
+type apiUpdateTagsRequest struct {
+	Tags *map[string]string `json:"tags,omitempty"`
 }
 
 // apiUpdateMysqlInstanceRequest is the API request to update a managed MySQL
@@ -195,7 +211,10 @@ func (m *MysqlInstanceModel) toUpdateRequest(state *MysqlInstanceModel) apiUpdat
 }
 
 // fromAPI populates the Terraform model from an API response.
-func (m *MysqlInstanceModel) fromAPI(_ context.Context, inst *apiMysqlInstance, _ *diag.Diagnostics) {
+func (m *MysqlInstanceModel) fromAPI(ctx context.Context, inst *apiMysqlInstance, diags *diag.Diagnostics) {
+	// Tags: `tags` keeps the keys the prior value (plan or state) names, `tags_all`
+	// every customer key the platform holds.
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(inst.Tags), m.Tags, diags)
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
 	m.Version = types.StringValue(inst.TypeVersion)

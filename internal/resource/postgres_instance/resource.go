@@ -32,6 +32,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/unenacted"
 )
@@ -568,6 +569,11 @@ func (r *postgresInstanceResource) Schema(_ context.Context, _ resource.SchemaRe
 			"timeouts": timeouts.Schema(),
 		},
 	}
+	resp.Schema.Attributes["tags"] = tftags.OfferTagsAttribute("Resource tags on the instance: your own key/value " +
+		"metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the " +
+		"platform only and never applied to the database server. Changing them updates the instance in place " +
+		"and does not restart or reconfigure it. A restore target (`restore_from`) is created with these tags.")
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
 }
 
 // ModifyPlan is where the declared `extensions` set meets the LIVE platform
@@ -580,6 +586,13 @@ func (r *postgresInstanceResource) Schema(_ context.Context, _ resource.SchemaRe
 // separate PlanResourceChange with a null prior state. The platform re-checks
 // everything at execution time, fail-closed.
 func (r *postgresInstanceResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// tags_all: a default_tags change, or a managed key's drift, plans an in-place
+	// update (it handles the destroy plan itself).
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	// Destroy: no plan to judge.
 	if req.Plan.Raw.IsNull() {
 		return
@@ -908,6 +921,8 @@ func (r *postgresInstanceResource) Create(ctx context.Context, req resource.Crea
 	}
 
 	apiReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
+	defaults := r.client.DefaultTags()
+	apiReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -917,6 +932,7 @@ func (r *postgresInstanceResource) Create(ctx context.Context, req resource.Crea
 		resp.Diagnostics.AddError("Failed to create PostgreSQL instance", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// The backend may answer either synchronously (201 with the instance body)
 	// or asynchronously (202 with an Operation). Tolerate both: resolve the
@@ -1302,6 +1318,9 @@ func keepPlannedValues(planned PostgresInstanceModel, m *PostgresInstanceModel) 
 	if !planned.RestoreFrom.IsUnknown() {
 		m.RestoreFrom = planned.RestoreFrom
 	}
+	if !planned.Tags.IsUnknown() {
+		m.Tags = planned.Tags
+	}
 }
 
 // checkPITREnactment compares what the configuration asked for against what the
@@ -1432,7 +1451,15 @@ func (r *postgresInstanceResource) createFromRestore(
 	// before this POST. Tightening it trades that away for false refusals on
 	// exactly the bad day when this path runs.
 	postStartedAt := time.Now().UTC().Add(-2 * time.Minute)
-	apiResp, err := r.client.Post(ctx, restorePath, rf.toRestoreRequest(plan.Name.ValueString()))
+	defaults := r.client.DefaultTags()
+	restoreTags := tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	apiResp, err := r.client.Post(ctx, restorePath, rf.toRestoreRequest(plan.Name.ValueString(), restoreTags))
+	// Recorded whatever the answer: a restore that may have created the target
+	// (an ambiguous failure is recovered below) carried these defaults.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	var target *apiPostgresInstance
 	switch {
@@ -1957,6 +1984,7 @@ func (r *postgresInstanceResource) Read(ctx context.Context, req resource.ReadRe
 	// The extension ledger is a separate read: project the recorded enabled
 	// entries into the attribute so out-of-band changes surface as drift.
 	r.readExtensionsIntoModel(ctx, state.ID.ValueString(), &state, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -2041,6 +2069,35 @@ func (r *postgresInstanceResource) Update(ctx context.Context, req resource.Upda
 			return
 		}
 	}
+
+	// TAGS: a tags-only PUT .../databases/{id} (a row-only write: no command, no
+	// restart), sent only when the platform's set would change — computed against the
+	// tags the instance holds right now, so a key added outside Terraform is kept.
+	defaults := r.client.DefaultTags()
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := r.getInstance(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(cur.Tags), nil
+		}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if tags != nil {
+		if _, err := r.client.Put(ctx, r.client.TenantPath("/databases/"+id), apiUpdateTagsRequest{Tags: tags}); err != nil {
+			resp.Diagnostics.AddError("Failed to update PostgreSQL instance tags", withRetryAfter(err))
+			return
+		}
+	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// In-place field updates (name, backups, parameter group) via PUT. Skip the
 	// call entirely when nothing PUT-able changed (e.g. a storage-only resize).
@@ -2170,6 +2227,7 @@ func (r *postgresInstanceResource) Delete(ctx context.Context, req resource.Dele
 
 func (r *postgresInstanceResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }
 
 // UpgradeState migrates prior state across the HCL-surface rename:

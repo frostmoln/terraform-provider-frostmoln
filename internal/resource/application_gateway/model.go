@@ -3,8 +3,12 @@
 package application_gateway
 
 import (
+	"context"
+
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -34,6 +38,10 @@ type GatewayModel struct {
 
 	CreatedAt types.String `tfsdk:"created_at"`
 	UpdatedAt types.String `tfsdk:"updated_at"`
+
+	// Tags / TagsAll are the gateway's customer resource tags (internal/tftags).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 
 	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
 	// absent block, which resolves to the resource's hardcoded defaults.
@@ -72,6 +80,9 @@ type apiGateway struct {
 
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
+
+	// Tags are the gateway's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 // apiCreateGatewayRequest is the API create body.
@@ -82,12 +93,19 @@ type apiCreateGatewayRequest struct {
 	SubnetID     string `json:"subnetId"`
 	PublicIPMode string `json:"publicIpMode"`
 	PublicIPID   string `json:"publicIpId,omitempty"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+	// merges the tenant's default tags in.
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
-// apiUpdateGatewayRequest is the API PATCH body. Only the name is mutable in
-// place; everything else forces a replacement.
+// apiUpdateGatewayRequest is the API PATCH body (partial: an omitted field is
+// kept). The name and the tags are mutable in place; everything else forces a
+// replacement. Tags is a POINTER so an empty map is sent as {} (clear); a
+// tags-only PATCH writes the row only — it never moves config_generation, so it
+// needs no config apply and pushes nothing to the appliance.
 type apiUpdateGatewayRequest struct {
-	Name *string `json:"name,omitempty"`
+	Name *string            `json:"name,omitempty"`
+	Tags *map[string]string `json:"tags,omitempty"`
 }
 
 // apiCreateGatewayResponse is the 202 body: the row as created, plus the
@@ -135,6 +153,13 @@ func (m *GatewayModel) fromAPI(g *apiGateway) {
 
 	m.CreatedAt = types.StringValue(g.CreatedAt)
 	m.UpdatedAt = types.StringValue(g.UpdatedAt)
+}
+
+// tagsFromAPI renders the API's tags into `tags` (the keys the prior value names)
+// and `tags_all` (every customer key). m.Tags must hold the prior value: the
+// configuration on a create or update, the state on a refresh.
+func (m *GatewayModel) tagsFromAPI(ctx context.Context, g *apiGateway, diags *diag.Diagnostics) {
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(g.Tags), m.Tags, diags)
 }
 
 // optionalString maps "" to null for an attribute the practitioner may legally

@@ -7,4 +7,10 @@ resource "frostmoln_messaging_instance" "broker" {
   subnet_id = frostmoln_subnet.private.id
 
   persistence_mode = "persistent"
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }

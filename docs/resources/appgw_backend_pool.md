@@ -10,6 +10,7 @@ description: |-
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — gateway_id: the pool belongs to its gateway; moving it is a different pool.
   Create-immutable — name: the pool's name is its identity on the gateway.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_appgw_backend_pool (Resource)
@@ -28,6 +29,8 @@ Changes are authored, not live: they reach the appliance on the gateway's next c
 
 **Create-immutable** — `name`: the pool's name is its identity on the gateway.
 
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
+
 ## Example Usage
 
 ```terraform
@@ -36,6 +39,12 @@ resource "frostmoln_appgw_backend_pool" "web" {
   name       = "web"
   protocol   = "http"
   algorithm  = "round_robin"
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 # Re-encrypt to the backend. tls_verify_backend is left to the platform default
@@ -102,6 +111,7 @@ Worth turning on for a mail server behind a `tcp` listener: without it every con
 ~> **After `terraform import`, set this explicitly if the pool has it on.** It carries a `false` default, so a pool whose header is already enabled — set through the portal, the CLI or the API — plans `proxy_protocol = true -> false` against a configuration that omits it. That is the change described above, in the direction that breaks every connection to a backend now expecting the header. The plan says so; read it.
 - `session_affinity` (String) Pin a client to one backend: `none`, `cookie` or `source_ip`.
 - `session_cookie_name` (String) The cookie used for affinity. Required when `session_affinity` is `cookie`. Removing it from your configuration clears it on the pool.
+- `tags` (Map of String) Resource tags on the backend pool: your own key/value metadata for search and filtering, stored by the platform only and never pushed to the appliance. Changing them updates the pool in place: no config apply, no `config_generation` change. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeout_connect_ms` (Number) Connect timeout in milliseconds.
 - `timeout_response_ms` (Number) Response timeout in milliseconds.
 - `tls_ca_certificate` (String) PEM CA bundle used to verify backend certificates. Removing it from your configuration clears it on the pool.
@@ -114,4 +124,5 @@ Leave this unset to keep the platform default. It is deliberately **not** defaul
 
 - `created_at` (String) The creation timestamp.
 - `id` (String) The unique identifier of the backend pool.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `updated_at` (String) The last update timestamp.

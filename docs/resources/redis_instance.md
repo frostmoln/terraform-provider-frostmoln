@@ -8,7 +8,7 @@ description: |-
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — subnet_id, version, vpc_id: the platform has no in-place migration for it — a change re-creates the instance.
   Create-only, change refused (not replaced) — eviction_policy, persistence_mode: the value reaches the running server only in the create render and no workflow re-renders it — a change is validated, stored and echoed while the running server keeps its previous behaviour, so it is warned about at plan and refused at apply; replace the instance to change it.
-  Observed, not enacted — private_ip: platform-assigned from the subnet at create.
+  Observed, not enacted — private_ip: platform-assigned from the subnet at create. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_redis_instance (Resource)
@@ -23,7 +23,7 @@ Manages a managed Redis instance in the Frostmoln platform.
 
 **Create-only, change refused (not replaced)** — `eviction_policy`, `persistence_mode`: the value reaches the running server only in the create render and no workflow re-renders it — a change is validated, stored and echoed while the running server keeps its previous behaviour, so it is warned about at plan and refused at apply; replace the instance to change it.
 
-**Observed, not enacted** — `private_ip`: platform-assigned from the subnet at create.
+**Observed, not enacted** — `private_ip`: platform-assigned from the subnet at create. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -42,6 +42,12 @@ resource "frostmoln_redis_instance" "cache" {
   backup_enabled        = true
   backup_schedule       = "0 2 * * *"
   backup_retention_days = 35
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 ```
 
@@ -64,6 +70,7 @@ resource "frostmoln_redis_instance" "cache" {
 - `eviction_policy` (String) The eviction policy for the Redis instance (e.g. "noeviction", "allkeys-lru"). Defaults to "noeviction", rendered into the instance at creation only — changing it later is refused, because no platform workflow re-renders a running instance (replace the instance to change it).
 - `persistence_mode` (String) The persistence mode for the Redis instance ("rdb", "aof", or "none"). Defaults to "rdb". Rendered into the instance at creation only — changing it later is refused, because no platform workflow re-renders a running instance (replace the instance to change it).
 - `storage_gb` (Number) The storage size in gigabytes (defaults to 10 if unset). Can only be increased (grow-only); volumes cannot be shrunk.
+- `tags` (Map of String) Resource tags on the instance: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only and never applied to the cache server. Changing them updates the instance in place and does not restart or reconfigure it. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
@@ -74,6 +81,7 @@ resource "frostmoln_redis_instance" "cache" {
 - `port` (Number) The port number the Redis instance is listening on.
 - `private_ip` (String) The private IP address of the Redis instance.
 - `status` (String) The current status of the Redis instance.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `updated_at` (String) The timestamp when the instance was last updated.
 
 <a id="nestedblock--timeouts"></a>

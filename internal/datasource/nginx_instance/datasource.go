@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 var _ datasource.DataSource = &nginxInstanceDataSource{}
@@ -44,6 +45,7 @@ type nginxInstanceModel struct {
 	Port            types.Int64  `tfsdk:"port"`
 	CreatedAt       types.String `tfsdk:"created_at"`
 	UpdatedAt       types.String `tfsdk:"updated_at"`
+	Tags            types.Map    `tfsdk:"tags"`
 	TenantID        types.String `tfsdk:"tenant_id"`
 	SecurityGroupID types.String `tfsdk:"security_group_id"`
 }
@@ -71,7 +73,9 @@ type apiWebserverInstance struct {
 	Port        int               `json:"port,omitempty"`
 	CreatedAt   string            `json:"createdAt"`
 	UpdatedAt   string            `json:"updatedAt,omitempty"`
-	TenantID    string            `json:"tenantId,omitempty"`
+	// Tags are the resource's customer resource tags ({} when untagged).
+	Tags     map[string]string `json:"tags"`
+	TenantID string            `json:"tenantId,omitempty"`
 	// Platform-managed SG built by the create saga and attached to the instance
 	// port; read-only to the customer (network refuses customer-plane writes).
 	SecurityGroupID string `json:"securityGroupId,omitempty"`
@@ -168,6 +172,12 @@ func (d *nginxInstanceDataSource) Schema(_ context.Context, _ datasource.SchemaR
 			},
 		},
 	}
+	resp.Schema.Attributes["tags"] = schema.MapAttribute{
+		Description: "Every resource tag on the Nginx instance — the same set as the resource's `tags_all`: your " +
+			"own key/value metadata, never applied to the service itself. An empty map when it has none.",
+		Computed:    true,
+		ElementType: types.StringType,
+	}
 }
 
 func (d *nginxInstanceDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
@@ -249,6 +259,9 @@ func (d *nginxInstanceDataSource) Read(ctx context.Context, req datasource.ReadR
 		state.Port = types.Int64Null()
 	}
 
+	// The platform's reserved namespace is filtered as on the resource read-back,
+	// so `tags` means the same thing on every surface.
+	state.Tags = tftags.OfferTagsValue(inst.Tags)
 	if inst.UpdatedAt != "" {
 		state.UpdatedAt = types.StringValue(inst.UpdatedAt)
 	} else {

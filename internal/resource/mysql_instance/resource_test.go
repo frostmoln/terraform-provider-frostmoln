@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags/tftagstest"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -420,6 +421,7 @@ func buildMysqlInstanceState(t *testing.T, model MysqlInstanceModel) tfsdk.State
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 
 	state := tfsdk.State{Schema: schemaResp.Schema}
+	tftagstest.NullUnsetTags(&model)
 	diags := state.Set(context.Background(), &model)
 	if diags.HasError() {
 		t.Fatalf("failed to set state: %v", diags.Errors())
@@ -435,6 +437,7 @@ func buildMysqlInstancePlan(t *testing.T, model MysqlInstanceModel) tfsdk.Plan {
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 
 	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	tftagstest.NullUnsetTags(&model)
 	diags := plan.Set(context.Background(), &model)
 	if diags.HasError() {
 		t.Fatalf("failed to set plan: %v", diags.Errors())

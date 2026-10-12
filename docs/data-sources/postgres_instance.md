@@ -88,6 +88,7 @@ output "billing_pitr" {
 - `status` (String) The current status of the instance.
 - `storage_gb` (Number) The storage size in gigabytes.
 - `subnet_id` (String) The subnet ID where the instance is deployed.
+- `tags` (Map of String) Every resource tag on the PostgreSQL instance — the same set as the resource's `tags_all`: your own key/value metadata, never applied to the service itself. An empty map when it has none.
 - `tenant_id` (String) The tenant ID that owns this instance.
 - `type` (String) The database type. Always `postgresql` on this data source — the type is checked on every path, so the value is platform-verified, not a restatement of the configuration.
 - `updated_at` (String) The timestamp when the instance was last updated, null when the platform has not recorded one.

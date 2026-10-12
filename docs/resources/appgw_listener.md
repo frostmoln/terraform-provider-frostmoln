@@ -10,7 +10,9 @@ description: |-
   A listener is authored, not live: its ROUTING starts serving on the gateway's next configuration apply. Its port is the one exception on this whole API: it is opened on the gateway's public ingress when the listener is created and closed when it is destroyed, without an apply. So replacing a listener on the same port leaves that port closed between the destroy and the create, and traffic to it is dropped for that window — create_before_destroy where you can.
   Two listeners on one gateway may not overlap in port space; a second one claiming a port an existing listener binds is refused with LISTENER_PORT_IN_USE. A few ports belong to the gateway appliance itself and are refused for every protocol.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — allowed_cidrs, backend_pool_id, default_certificate_id, denied_cidrs, gateway_id, geo_block_mode, geo_countries, max_connections, name, port, port_range_end, protocol, rate_limit_burst, rate_limit_rps, redirect_to_https, sni_certificate_ids, tls_cipher_profile, tls_min_version: the API has no update route for a listener — the server registers POST, GET and DELETE and nothing else — so any change destroys and re-creates it.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_appgw_listener (Resource)
@@ -30,7 +32,11 @@ Two listeners on one gateway may not overlap in port space; a second one claimin
 
 **Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
 
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
 **Create-immutable** — `allowed_cidrs`, `backend_pool_id`, `default_certificate_id`, `denied_cidrs`, `gateway_id`, `geo_block_mode`, `geo_countries`, `max_connections`, `name`, `port`, `port_range_end`, `protocol`, `rate_limit_burst`, `rate_limit_rps`, `redirect_to_https`, `sni_certificate_ids`, `tls_cipher_profile`, `tls_min_version`: the API has no update route for a listener — the server registers POST, GET and DELETE and nothing else — so any change destroys and re-creates it.
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -44,6 +50,12 @@ resource "frostmoln_appgw_listener" "http" {
   port       = 80
 
   redirect_to_https = true
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 resource "frostmoln_appgw_listener" "https" {
@@ -147,6 +159,7 @@ A ranged listener forwards each connection to the **same** port on the backend t
 ~> **The unit depends on `protocol`.** On `http`/`https` it counts **requests** per second; on `tcp` it counts **connections** per second, because layer 4 has no request to count. For a protocol where one connection carries a whole session — SMTP, IMAP, MQTT — the same number is a far tighter limit than it is for HTTP, so set it against the connections you expect rather than reusing an HTTP figure.
 - `redirect_to_https` (Boolean) Redirect requests to the https listener instead of serving them.
 - `sni_certificate_ids` (List of String) Additional certificates selected by SNI. `https` listeners only.
+- `tags` (Map of String) Resource tags on the listener: your own key/value metadata for search and filtering, stored by the platform only and never pushed to the appliance. Changing them updates the listener in place (every other attribute replaces it): no config apply, no `config_generation` change. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `tls_cipher_profile` (String) The cipher profile: `modern` or `intermediate`. `https` listeners only — a `tcp` listener terminates no TLS and reports none, so this reads null on one.
 - `tls_min_version` (String) The minimum TLS version accepted: `1.2` or `1.3`. `https` listeners only — a `tcp` listener terminates no TLS and reports none, so this reads null on one.
 
@@ -155,5 +168,6 @@ A ranged listener forwards each connection to the **same** port on the backend t
 - `created_at` (String) The creation timestamp.
 - `enabled` (Boolean) Whether the listener is serving.
 - `id` (String) The unique identifier of the listener.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `updated_at` (String) The last update timestamp.
 - `waf_policy_id` (String) The WAF policy applied to this listener, if any — an `overlay`-scoped policy. Read-only here: attach one with `frostmoln_appgw_waf_policy_attachment`, which is where the attachment's lifecycle lives.

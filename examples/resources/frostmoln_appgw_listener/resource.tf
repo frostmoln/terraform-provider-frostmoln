@@ -7,6 +7,12 @@ resource "frostmoln_appgw_listener" "http" {
   port       = 80
 
   redirect_to_https = true
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 resource "frostmoln_appgw_listener" "https" {

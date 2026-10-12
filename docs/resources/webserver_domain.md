@@ -3,21 +3,27 @@
 page_title: "frostmoln_webserver_domain Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a domain binding for a webserver instance in the Frostmoln platform. This resource is create/delete only — domains cannot be updated in place.
+  Manages a domain binding for a webserver instance in the Frostmoln platform. Every attribute except tags is fixed: changing one replaces the binding.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — domain_name, instance_id, is_default: the domain binding is identified by its name on its instance; changing one is a different binding.
   Create-immutable — tls_enabled: the binding row is stored but nothing consumes it — no vhost is rendered from it and no certificate path exists, so tls_enabled = true promises TLS the platform does not serve on create or on update; the provider refuses it at plan time (leaving or clearing the flag plans fine, and a change that plans re-creates the inert row).
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_webserver_domain (Resource)
 
-Manages a domain binding for a webserver instance in the Frostmoln platform. This resource is create/delete only — domains cannot be updated in place.
+Manages a domain binding for a webserver instance in the Frostmoln platform. Every attribute except `tags` is fixed: changing one replaces the binding.
 
 **Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
+
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
 
 **Create-immutable** — `domain_name`, `instance_id`, `is_default`: the domain binding is identified by its name on its instance; changing one is a different binding.
 
 **Create-immutable** — `tls_enabled`: the binding row is stored but nothing consumes it — no vhost is rendered from it and no certificate path exists, so `tls_enabled = true` promises TLS the platform does not serve on create or on update; the provider refuses it at plan time (leaving or clearing the flag plans fine, and a change that plans re-creates the inert row).
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -29,6 +35,12 @@ resource "frostmoln_webserver_domain" "apex" {
   instance_id = frostmoln_nginx_instance.site.id
   domain_name = "example.com"
   is_default  = true
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 resource "frostmoln_webserver_domain" "www" {
@@ -48,9 +60,23 @@ resource "frostmoln_webserver_domain" "www" {
 ### Optional
 
 - `is_default` (Boolean) Whether this is the default domain for the webserver instance.
+- `tags` (Map of String) Resource tags on the domain binding: your own key/value metadata for search and filtering, stored by the platform only. Changing them updates the binding in place. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `tls_enabled` (Boolean) Whether TLS is enabled for this domain. Setting `true` is refused at plan time: the binding is stored but never consumed — no vhost is rendered from it and no certificate path exists — so no TLS is provisioned on create or update. Serve HTTPS through an `frostmoln_application_gateway` meanwhile.
 
 ### Read-Only
 
 - `created_at` (String) The timestamp when the domain binding was created.
 - `id` (String) The unique identifier of the domain binding.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
+
+## Import
+
+Import is supported using the following syntax:
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+# Import with the composite ID {instance_id}/{domain_id}: a binding is read from
+# its webserver instance's domain list.
+terraform import frostmoln_webserver_domain.apex 51455a51-db3d-4231-ac27-4fee2553c15f/9f6b1a7e-9a30-4a6a-8f2e-1f1c9be2b6d1
+```

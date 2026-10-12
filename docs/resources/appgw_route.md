@@ -11,7 +11,9 @@ description: |-
   For the same reason terraform import cannot recover header values once the platform returns only names. An imported route that sets headers then plans one REPLACEMENT, which re-creates it with the values from your configuration — the provider warns when this happens rather than adopting values nobody has seen. Hold the replacement off with lifecycle { ignore_changes = [request_headers_set, response_headers_set] } until you can take it.
   ~> Only on an http or https listener. A tcp listener has no routes at all — routing is host, path and header matching, which needs bytes the gateway does not parse at layer 4 — so it names its one pool with backend_pool_id instead, and a route pointed at one is refused.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — action, backend_pool_id, gateway_id, host, listener_id, name, path, path_match_type, priority, request_headers_remove, request_headers_set, response_headers_set, rewrite_path_prefix: the API has no update route for a route — the server registers POST, GET and DELETE and nothing else — so any change destroys and re-creates it.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_appgw_route (Resource)
@@ -32,7 +34,11 @@ For the same reason **`terraform import` cannot recover header values** once the
 
 **Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
 
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
 **Create-immutable** — `action`, `backend_pool_id`, `gateway_id`, `host`, `listener_id`, `name`, `path`, `path_match_type`, `priority`, `request_headers_remove`, `request_headers_set`, `response_headers_set`, `rewrite_path_prefix`: the API has no update route for a route — the server registers POST, GET and DELETE and nothing else — so any change destroys and re-creates it.
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -58,6 +64,12 @@ resource "frostmoln_appgw_route" "api" {
     "X-Forwarded-Host" = "api.example.com"
   }
   request_headers_remove = ["X-Internal-Token"]
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 # The catch-all, deliberately last.
@@ -94,12 +106,14 @@ resource "frostmoln_appgw_route" "spa" {
 - `request_headers_set` (Map of String, Sensitive) Headers to set on requests forwarded to the backend. Names are HTTP tokens and additionally may not contain `#` or an apostrophe, which the gateway cannot render. Values must be non-empty, at most 1024 bytes, and free of control characters. Checked at plan time. Values are secrets — this is where an upstream credential usually lives — so the map is `sensitive`, and where the API returns only the header names the provider keeps the values from state and compares the names alone; `terraform import` cannot recover a value the API does not return. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide.
 - `response_headers_set` (Map of String, Sensitive) Headers to set on responses returned to the client. Same name and value rules as `request_headers_set`, checked at plan time, and handled the same way: `sensitive`, kept from state where the API returns only the header names, and not recoverable by `terraform import`. A response header is sent to every client that reaches the route, so it is no place for a credential. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide.
 - `rewrite_path_prefix` (String) Replace the matched path prefix with this before forwarding.
+- `tags` (Map of String) Resource tags on the route: your own key/value metadata for search and filtering, stored by the platform only and never pushed to the appliance. Changing them updates the route in place (every other attribute replaces it): no config apply, no `config_generation` change. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 
 ### Read-Only
 
 - `created_at` (String) The creation timestamp.
 - `enabled` (Boolean) Whether the route is serving.
 - `id` (String) The unique identifier of the route.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `updated_at` (String) The last update timestamp.
 - `waf_policy_id` (String) The WAF policy applied to this route, if any — an `overlay`-scoped policy. Read-only here: attach one with `frostmoln_appgw_waf_policy_attachment`, which is where the attachment's lifecycle lives.
 

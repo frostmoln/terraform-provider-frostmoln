@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -32,6 +33,9 @@ type RedisInstanceModel struct {
 	AdminUsername types.String `tfsdk:"admin_username"`
 	CreatedAt     types.String `tfsdk:"created_at"`
 	UpdatedAt     types.String `tfsdk:"updated_at"`
+	// Tags / TagsAll are the instance's customer resource tags (internal/tftags).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 	// Timeouts is the customer-tunable `timeouts` block. fromAPI never touches
 	// it: the pointer the practitioner configured rides through every model
 	// copy unchanged, which keeps the block stable in state across refreshes.
@@ -60,6 +64,8 @@ type apiRedisInstance struct {
 	AdminUsername string `json:"adminUsername,omitempty"`
 	CreatedAt     string `json:"createdAt"`
 	UpdatedAt     string `json:"updatedAt,omitempty"`
+	// Tags are the instance's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 // apiCreateRedisInstanceRequest is the API request to create a managed Redis instance.
@@ -77,6 +83,9 @@ type apiCreateRedisInstanceRequest struct {
 	BackupEnabled       *bool  `json:"backupEnabled,omitempty"`
 	BackupSchedule      string `json:"backupSchedule,omitempty"`
 	BackupRetentionDays *int   `json:"backupRetentionDays,omitempty"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+	// merges the tenant's default tags in.
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
 // apiUpdateRedisInstanceRequest is the API request to update a managed Redis instance
@@ -183,7 +192,10 @@ func (m *RedisInstanceModel) toUpdateRequest(state *RedisInstanceModel) apiUpdat
 }
 
 // fromAPI populates the Terraform model from an API response.
-func (m *RedisInstanceModel) fromAPI(_ context.Context, inst *apiRedisInstance, _ *diag.Diagnostics) {
+func (m *RedisInstanceModel) fromAPI(ctx context.Context, inst *apiRedisInstance, diags *diag.Diagnostics) {
+	// Tags: `tags` keeps the keys the prior value (plan or state) names, `tags_all`
+	// every customer key the platform holds.
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(inst.Tags), m.Tags, diags)
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
 	m.Version = types.StringValue(inst.TypeVersion)
@@ -248,4 +260,11 @@ type apiInstanceRef struct {
 // apiRedisInstanceList is the GET /caches listing response.
 type apiRedisInstanceList struct {
 	Instances []apiInstanceRef `json:"instances"`
+}
+
+// apiUpdateTagsRequest is the tags-only PUT of the instance: carrying `tags` alone it is
+// a row-only write — no command, no restart, no configuration change. A POINTER
+// so an empty map is sent as {} (clear).
+type apiUpdateTagsRequest struct {
+	Tags *map[string]string `json:"tags,omitempty"`
 }

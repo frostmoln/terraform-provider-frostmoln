@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags/tftagstest"
 )
 
 // --- Model unit tests ---
@@ -166,6 +167,7 @@ func buildMysqlBackupState(t *testing.T, model MysqlBackupModel) tfsdk.State {
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 
 	state := tfsdk.State{Schema: schemaResp.Schema}
+	tftagstest.NullUnsetTags(&model)
 	diags := state.Set(context.Background(), &model)
 	if diags.HasError() {
 		t.Fatalf("failed to set state: %v", diags.Errors())
@@ -180,6 +182,7 @@ func buildMysqlBackupPlan(t *testing.T, model MysqlBackupModel) tfsdk.Plan {
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 
 	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	tftagstest.NullUnsetTags(&model)
 	diags := plan.Set(context.Background(), &model)
 	if diags.HasError() {
 		t.Fatalf("failed to set plan: %v", diags.Errors())
@@ -340,14 +343,5 @@ func TestDelete(t *testing.T) {
 
 	if deleteResp.Diagnostics.HasError() {
 		t.Fatalf("delete failed: %v", deleteResp.Diagnostics.Errors())
-	}
-}
-
-func TestUpdateNotSupported(t *testing.T) {
-	r := &mysqlBackupResource{}
-	var resp resource.UpdateResponse
-	r.Update(context.Background(), resource.UpdateRequest{}, &resp)
-	if !resp.Diagnostics.HasError() {
-		t.Error("expected error for update on immutable resource")
 	}
 }

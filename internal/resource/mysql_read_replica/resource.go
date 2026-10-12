@@ -14,12 +14,14 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
 	_ resource.Resource                = &mysqlReadReplicaResource{}
 	_ resource.ResourceWithImportState = &mysqlReadReplicaResource{}
+	_ resource.ResourceWithModifyPlan  = &mysqlReadReplicaResource{}
 )
 
 // NewResource returns a new mysql_read_replica resource factory.
@@ -108,7 +110,7 @@ func (r *mysqlReadReplicaResource) Metadata(_ context.Context, req resource.Meta
 
 func (r *mysqlReadReplicaResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a read replica of a managed MySQL instance. Read replicas are immutable after creation." + "\n\n" + scopedecl.Summary("frostmoln_mysql_read_replica"),
+		Description: "Manages a read replica of a managed MySQL instance. Every attribute except `tags` (and `timeouts`) is fixed at creation; changing one replaces the replica." + "\n\n" + scopedecl.Summary("frostmoln_mysql_read_replica"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the read replica.",
@@ -170,6 +172,18 @@ func (r *mysqlReadReplicaResource) Schema(_ context.Context, _ resource.SchemaRe
 			"timeouts": timeouts.Schema(),
 		},
 	}
+	resp.Schema.Attributes["tags"] = tftags.OfferTagsAttribute("Resource tags on the read replica itself: your own " +
+		"key/value metadata for search and filtering, stored by the platform only. A replica's tags are its own: " +
+		"they are not copied from the primary instance, and the primary's are not changed. Changing them updates " +
+		"the replica in place and starts no work on it.")
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
+}
+
+// ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,
+// plans an in-place update of the replica's tags.
+func (r *mysqlReadReplicaResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
 }
 
 func (r *mysqlReadReplicaResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -202,6 +216,8 @@ func (r *mysqlReadReplicaResource) Create(ctx context.Context, req resource.Crea
 	}
 
 	apiReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
+	defaults := r.client.DefaultTags()
+	apiReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -213,6 +229,9 @@ func (r *mysqlReadReplicaResource) Create(ctx context.Context, req resource.Crea
 	instanceID := plan.InstanceID.ValueString()
 
 	apiResp, err := r.client.Post(ctx, r.replicaPath(instanceID, ""), apiReq)
+	if err == nil {
+		tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create MySQL read replica", err.Error())
 		return
@@ -369,14 +388,62 @@ func (r *mysqlReadReplicaResource) Read(ctx context.Context, req resource.ReadRe
 	}
 
 	state.fromAPI(ctx, replica, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-func (r *mysqlReadReplicaResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError(
-		"Update Not Supported",
-		"MySQL read replicas are immutable and cannot be updated. All attribute changes require resource replacement.",
-	)
+// Update changes the replica's tags — its only in-place attribute besides
+// `timeouts` — with a tags-only PATCH, sent only when the platform's set would
+// change (computed against the tags the replica holds right now, so a key added
+// outside Terraform is kept). It starts no work on the replica.
+func (r *mysqlReadReplicaResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state MysqlReadReplicaModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	memberPath := r.replicaPath(state.InstanceID.ValueString(), state.ID.ValueString())
+	get := func(ctx context.Context) (*apiMysqlReadReplica, error) {
+		apiResp, err := r.client.Get(ctx, memberPath, nil)
+		if err != nil {
+			return nil, err
+		}
+		return client.ParseResponse[apiMysqlReadReplica](apiResp)
+	}
+	defaults := r.client.DefaultTags()
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := get(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(cur.Tags), nil
+		}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if tags != nil {
+		if _, err := r.client.Patch(ctx, memberPath, apiUpdateTagsRequest{Tags: tags}); err != nil {
+			resp.Diagnostics.AddError("Failed to update MySQL read replica tags", err.Error())
+			return
+		}
+	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+
+	replica, err := get(ctx)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to read MySQL read replica after update", err.Error())
+		return
+	}
+	plan.fromAPI(ctx, replica, &resp.Diagnostics)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 func (r *mysqlReadReplicaResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -433,4 +500,5 @@ func (r *mysqlReadReplicaResource) Delete(ctx context.Context, req resource.Dele
 
 func (r *mysqlReadReplicaResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }

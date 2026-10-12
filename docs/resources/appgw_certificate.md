@@ -10,6 +10,7 @@ description: |-
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — chain_pem, gateway_id, name, private_key_pem, private_key_pem_wo_version: certificate material and its name are fixed once uploaded — changing one uploads a new certificate.
   Not enacted state — private_key_pem_wo: write-only: sent, never stored or read back — the private_key_pem_wo_version companion carries change detection.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_appgw_certificate (Resource)
@@ -28,6 +29,8 @@ The certificate API has no update operation, so every attribute forces a new res
 
 **Not enacted state** — `private_key_pem_wo`: write-only: sent, never stored or read back — the `private_key_pem_wo_version` companion carries change detection.
 
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
+
 ## Example Usage
 
 ```terraform
@@ -44,6 +47,12 @@ resource "frostmoln_appgw_certificate" "www" {
 
   chain_pem       = var.www_certificate_chain
   private_key_pem = var.www_certificate_key
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 # The write-only form. private_key_pem_wo never reaches the plan or state; it
@@ -119,6 +128,7 @@ variable "api_certificate_version" {
 - `private_key_pem` (String, Sensitive) The PEM private key for `chain_pem`. The provider preserves it from prior state on every refresh and never adopts one from an API response. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide. Prefer `private_key_pem_wo`, which carries the same key but is never written to state; exactly one of the two must be set.
 - `private_key_pem_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) The PEM private key for `chain_pem`, as a [write-only argument](https://developer.hashicorp.com/terraform/language/resources/ephemeral/write-only): the key reaches the provider on apply and is never written to the plan or to state. Requires Terraform 1.11 or later. Exactly one of `private_key_pem` or `private_key_pem_wo` must be set, and `private_key_pem_wo_version` is required whenever this one is. The key must be at least one character — omitting it is not a way to upload a certificate without one. Terraform cannot see a write-only value, so it cannot detect a change to the key: changing `private_key_pem_wo_version` is what makes the next apply send the current key, and it does so by REPLACING the certificate, because the certificate API has no update operation. Editing the key without touching the version does nothing.
 - `private_key_pem_wo_version` (String) Change tracker for `private_key_pem_wo`, required whenever that attribute is set. Changing this value REPLACES the certificate and uploads the current `private_key_pem_wo` — the same lifecycle a change to `private_key_pem` has, since the certificate API has no update operation. Leaving it alone leaves the uploaded certificate untouched however much the write-only key changes. Its content is arbitrary — a counter or a date is typical — and unlike the key it is stored in state, so do not derive it from the key or from anything in it: a digest of the key is printed verbatim in `terraform plan` output, CI job logs and PR plan comments, and a digest is an offline confirmation oracle — it lets anyone holding it test a guessed key and correlate the same key across environments. `terraform import` leaves this unset, so the first apply against an imported certificate plans a REPLACEMENT.
+- `tags` (Map of String) Resource tags on the certificate: your own key/value metadata for search and filtering, stored by the platform only and never pushed to the appliance. Changing them updates the certificate in place (every other attribute replaces it): no config apply, no `config_generation` change. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 
 ### Read-Only
 
@@ -135,4 +145,5 @@ variable "api_certificate_version" {
 - `serial_number` (String) The certificate's serial number.
 - `source` (String) How the platform obtained the certificate: `uploaded` or `acmeDns01`.
 - `status` (String) The certificate's lifecycle state.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `updated_at` (String) The last update timestamp.

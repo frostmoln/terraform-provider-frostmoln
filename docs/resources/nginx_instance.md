@@ -13,7 +13,7 @@ description: |-
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — php_enabled, php_version, subnet_id, version, vpc_id: the managed offer has no in-place migration for it — a change re-creates the instance.
-  Observed, not enacted — private_ip: platform-assigned from the subnet at create. public_ip: platform-allocated and attached when public is true. security_group_id: the platform creates and owns the managed group; reads succeed but every write is refused (409 resource_in_use), permanently.
+  Observed, not enacted — private_ip: platform-assigned from the subnet at create. public_ip: platform-allocated and attached when public is true. security_group_id: the platform creates and owns the managed group; reads succeed but every write is refused (409 resource_in_use), permanently. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
   Platform-invented default — security group provisioned for the managed web server: keep-with-docs. Platform-provisioned and platform-owned; do not import it as a frostmoln_security_group — applies including destroy are refused.
 ---
 
@@ -39,7 +39,7 @@ It changes ORDER only: nothing is created and nothing is released. It does not a
 
 **Create-immutable** — `php_enabled`, `php_version`, `subnet_id`, `version`, `vpc_id`: the managed offer has no in-place migration for it — a change re-creates the instance.
 
-**Observed, not enacted** — `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-allocated and attached when `public` is true. `security_group_id`: the platform creates and owns the managed group; reads succeed but every write is refused (`409 resource_in_use`), permanently.
+**Observed, not enacted** — `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-allocated and attached when `public` is true. `security_group_id`: the platform creates and owns the managed group; reads succeed but every write is refused (`409 resource_in_use`), permanently. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 **Platform-invented default** — security group provisioned for the managed web server: **keep-with-docs**. Platform-provisioned and platform-owned; do not import it as a `frostmoln_security_group` — applies including destroy are refused.
 
@@ -69,6 +69,12 @@ resource "frostmoln_nginx_instance" "site" {
   # Allocate and attach a public IP so the site is reachable from the internet.
   # A public IP is billed for as long as it is held.
   public = true
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 output "nginx_site_public_ip" {
@@ -96,6 +102,7 @@ output "nginx_site_public_ip" {
 - `public` (Boolean) Whether the instance is publicly exposed: when true a Public IP is associated to the instance's service port so the deployed site is reachable on the public internet, and public_ip is populated. Set at create to expose immediately; toggling it afterwards runs the platform's expose (true) or unexpose (false) action.
 
 Setting it true makes this instance depend on the VPC having a gateway, which Terraform cannot see — see the ordering note on this resource above.
+- `tags` (Map of String) Resource tags on the instance: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only and never applied to the web server. Changing them updates the instance in place and does not restart or reconfigure it. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `tls_enabled` (Boolean) Whether TLS is enabled for the webserver.
 
@@ -108,6 +115,7 @@ Setting it true makes this instance depend on the VPC having a gateway, which Te
 - `public_ip` (String) The public IP address associated with the instance while it is exposed (empty when not public).
 - `security_group_id` (String) The platform-managed security group attached to this instance. The platform creates and owns it: the group is not intended for customer modification, and changes to it are normally rejected. Do not import it as a frostmoln_security_group -- reads succeed, but applies including destroy are refused. It allows inbound tcp/80 and tcp/443 from any source (0.0.0.0/0), and outbound is unrestricted. Empty until the instance has finished provisioning.
 - `status` (String) The current status of the Nginx instance.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `tenant_id` (String) The tenant ID that owns this instance.
 - `updated_at` (String) The timestamp when the instance was last updated.
 

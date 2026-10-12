@@ -21,8 +21,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/appgwvalidate"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 var (
@@ -55,6 +57,10 @@ type PoolModel struct {
 
 	CreatedAt types.String `tfsdk:"created_at"`
 	UpdatedAt types.String `tfsdk:"updated_at"`
+
+	// Tags / TagsAll are the pool's customer resource tags (internal/tftags).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 }
 
 type apiPool struct {
@@ -81,6 +87,9 @@ type apiPool struct {
 
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
+
+	// Tags are the pool's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 type apiCreatePoolRequest struct {
@@ -109,6 +118,10 @@ type apiCreatePoolRequest struct {
 	// leaves the backend seeing the gateway's address, while an accidental true
 	// breaks every connection to a backend that is not parsing the header.
 	ProxyProtocol bool `json:"proxyProtocol,omitempty"`
+
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+	// merges the tenant's default tags in.
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
 // apiUpdatePoolRequest is the PATCH body: EVERY field is a pointer and every
@@ -135,6 +148,11 @@ type apiUpdatePoolRequest struct {
 	TimeoutConnectMS  *int  `json:"timeoutConnectMs,omitempty"`
 	TimeoutResponseMS *int  `json:"timeoutResponseMs,omitempty"`
 	ProxyProtocol     *bool `json:"proxyProtocol,omitempty"`
+
+	// Tags REPLACES the pool's tags when present ({} clears). A patch carrying
+	// only tags writes the row alone: it never moves config_generation, so it
+	// needs no config apply and pushes nothing to the appliance.
+	Tags *map[string]string `json:"tags,omitempty"`
 }
 
 // isEmpty reports whether this patch would change nothing, so the call can be
@@ -143,7 +161,7 @@ func (r *apiUpdatePoolRequest) isEmpty() bool {
 	return r.Protocol == nil && r.Algorithm == nil && r.SessionAffinity == nil &&
 		r.SessionCookieName == nil && r.TLSCACertificate == nil && r.TLSServerName == nil &&
 		r.TLSVerifyBackend == nil && r.TimeoutConnectMS == nil && r.TimeoutResponseMS == nil &&
-		r.ProxyProtocol == nil
+		r.ProxyProtocol == nil && r.Tags == nil
 }
 
 type poolResource struct {
@@ -336,6 +354,10 @@ func (r *poolResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			},
 		},
 	}
+	resp.Schema.Attributes["tags"] = tftags.OfferTagsAttribute("Resource tags on the backend pool: your own " +
+		"key/value metadata for search and filtering, stored by the platform only and never pushed to the " +
+		"appliance. Changing them updates the pool in place: no config apply, no `config_generation` change.")
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
 }
 
 // ValidateConfig mirrors the server's cookie rules at plan time.
@@ -403,7 +425,11 @@ func (r *poolResource) ValidateConfig(ctx context.Context, req resource.Validate
 // no way out but to edit the HCL. TestNoErrorDiagnosticsWhilePlanning pins the
 // rule provider-wide; the refusal lives in Update, which a destroy never reaches.
 func (r *poolResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	if req.Plan.Raw.IsNull() {
+	// tags_all: a default_tags change, or a managed key's drift, plans an in-place
+	// update (it handles the destroy plan itself).
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
+	if resp.Diagnostics.HasError() || req.Plan.Raw.IsNull() {
 		return
 	}
 	var plan PoolModel
@@ -492,6 +518,13 @@ func (m *PoolModel) fromAPI(p *apiPool) {
 	m.UpdatedAt = types.StringValue(p.UpdatedAt)
 }
 
+// tagsFromAPI renders the API's tags into `tags` (the keys the prior value names)
+// and `tags_all` (every customer key). m.Tags must hold the prior value: the
+// configuration on a create or update, the state on a refresh.
+func (m *PoolModel) tagsFromAPI(ctx context.Context, p *apiPool, diags *diag.Diagnostics) {
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(p.Tags), m.Tags, diags)
+}
+
 func (r *poolResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan PoolModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -514,6 +547,11 @@ func (r *poolResource) Create(ctx context.Context, req resource.CreateRequest, r
 		v := plan.TLSVerifyBackend.ValueBool()
 		createReq.TLSVerifyBackend = &v
 	}
+	defaults := r.client.DefaultTags()
+	createReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath(fmt.Sprintf(
 		"/application-gateways/%s/backend-pools", plan.GatewayID.ValueString(),
@@ -522,12 +560,14 @@ func (r *poolResource) Create(ctx context.Context, req resource.CreateRequest, r
 		resp.Diagnostics.AddError("Failed to Create Backend Pool", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	p, err := client.ParseResponse[apiPool](apiResp)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Parse Backend Pool Response", err.Error())
 		return
 	}
 	plan.fromAPI(p)
+	plan.tagsFromAPI(ctx, p, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -555,6 +595,8 @@ func (r *poolResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 	state.fromAPI(p)
+	state.tagsFromAPI(ctx, p, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -589,29 +631,64 @@ func (r *poolResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
-	patch := buildPatch(&plan, &state)
-	if patch.isEmpty() {
-		// Nothing on the wire to change. Terraform does not normally call
-		// Update in this case; carrying the plan through rather than sending an
-		// empty body keeps it a no-op if it ever does.
-		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-		return
-	}
-
-	apiResp, err := r.client.Patch(ctx, r.client.TenantPath(fmt.Sprintf(
+	poolPath := r.client.TenantPath(fmt.Sprintf(
 		"/application-gateways/%s/backend-pools/%s",
 		state.GatewayID.ValueString(), state.ID.ValueString(),
-	)), patch)
+	))
+	get := func(ctx context.Context) (*apiPool, error) {
+		apiResp, err := r.client.Get(ctx, poolPath, nil)
+		if err != nil {
+			return nil, err
+		}
+		return client.ParseResponse[apiPool](apiResp)
+	}
+
+	patch := buildPatch(&plan, &state)
+	// Tags ride the same PATCH, sent only when the platform's set would change —
+	// computed against the tags the pool holds right now, so a key added outside
+	// Terraform is kept.
+	defaults := r.client.DefaultTags()
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := get(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(cur.Tags), nil
+		}, &resp.Diagnostics)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to Update Backend Pool", err.Error())
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
 		return
 	}
-	p, err := client.ParseResponse[apiPool](apiResp)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to Parse Backend Pool Response", err.Error())
+	if resp.Diagnostics.HasError() {
 		return
 	}
+	patch.Tags = tags
+
+	var p *apiPool
+	if patch.isEmpty() {
+		// Nothing on the wire to change (a timeouts-only or tags-already-converged
+		// update): re-read so tags_all reflects the platform.
+		if p, err = get(ctx); err != nil {
+			resp.Diagnostics.AddError("Failed to Read Backend Pool After Update", err.Error())
+			return
+		}
+	} else {
+		apiResp, err := r.client.Patch(ctx, poolPath, patch)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to Update Backend Pool", err.Error())
+			return
+		}
+		if p, err = client.ParseResponse[apiPool](apiResp); err != nil {
+			resp.Diagnostics.AddError("Failed to Parse Backend Pool Response", err.Error())
+			return
+		}
+	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	plan.fromAPI(p)
+	plan.tagsFromAPI(ctx, p, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -705,6 +782,7 @@ func (r *poolResource) ImportState(ctx context.Context, req resource.ImportState
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("gateway_id"), parts[0])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[1])...)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }
 
 func str(s types.String) string {

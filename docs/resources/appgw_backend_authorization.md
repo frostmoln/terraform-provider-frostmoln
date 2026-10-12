@@ -8,8 +8,10 @@ description: |-
   ~> The rule is per (security group, protocol, port), not per backend. Two backends behind the same security group and port share one authorization. If you declare this resource for both, the second reports adopted = true and destroying either one closes the path for both. Declare it once per (security group, port), not once per backend.
   Every authorize and revoke is recorded in the gateway's audit trail.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — adopt_existing: it decides whether this resource may take over an ingress rule that already exists — changing it changes what a destroy will do to other backends, so it is create-only.
   Create-immutable — backend_id, gateway_id, pool_id, security_group_id: the authorization is identified by its backend, pool, gateway and security group; changing one is a different authorization.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_appgw_backend_authorization (Resource)
@@ -24,9 +26,13 @@ Every authorize and revoke is recorded in the gateway's audit trail.
 
 **Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
 
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
 **Create-immutable** — `adopt_existing`: it decides whether this resource may take over an ingress rule that already exists — changing it changes what a destroy will do to other backends, so it is create-only.
 
 **Create-immutable** — `backend_id`, `gateway_id`, `pool_id`, `security_group_id`: the authorization is identified by its backend, pool, gateway and security group; changing one is a different authorization.
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -43,6 +49,12 @@ resource "frostmoln_appgw_backend_authorization" "web" {
   pool_id           = frostmoln_appgw_backend_pool.web.id
   backend_id        = frostmoln_appgw_backend.web_1.id
   security_group_id = frostmoln_security_group.web.id
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 ```
 
@@ -61,6 +73,7 @@ resource "frostmoln_appgw_backend_authorization" "web" {
 - `adopt_existing` (Boolean) Permit this resource to take over an ingress rule that already exists for the same (security group, protocol, port). Defaults to `false`.
 
 ~> **Adopting is destructive on destroy.** The platform keys one rule per (group, protocol, port) and returns the SAME authorization id for a second request, so an adopted resource shares its id with whatever created the rule first. Destroying it — including the destroy half of a `create_before_destroy` replacement — removes the rule for **every** backend behind that group and port. Leave this `false` and declare one authorization per (group, port).
+- `tags` (Map of String) Resource tags on the authorization record: your own key/value metadata for search and filtering, stored by the platform only and never placed on the security-group rule. Changing them updates the authorization in place (every other attribute replaces it) and changes no rule. An adopted rule (`adopt_existing`) keeps the tags it already carries and gets these added. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 
 ### Read-Only
 
@@ -71,3 +84,4 @@ resource "frostmoln_appgw_backend_authorization" "web" {
 - `port_max` (Number) The last port the rule permits.
 - `port_min` (Number) The first port the rule permits.
 - `protocol` (String) The protocol the rule permits, derived from the backend.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.

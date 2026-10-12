@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 var _ datasource.DataSource = &messagingInstanceDataSource{}
@@ -41,6 +42,7 @@ type messagingInstanceModel struct {
 	ManagementPort  types.Int64  `tfsdk:"management_port"`
 	CreatedAt       types.String `tfsdk:"created_at"`
 	UpdatedAt       types.String `tfsdk:"updated_at"`
+	Tags            types.Map    `tfsdk:"tags"`
 }
 
 // apiMessagingInstance is the API representation of a managed messaging instance.
@@ -60,6 +62,8 @@ type apiMessagingInstance struct {
 	ManagementPort  int    `json:"managementPort,omitempty"`
 	CreatedAt       string `json:"createdAt"`
 	UpdatedAt       string `json:"updatedAt,omitempty"`
+	// Tags are the resource's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 func (d *messagingInstanceDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -132,6 +136,12 @@ func (d *messagingInstanceDataSource) Schema(_ context.Context, _ datasource.Sch
 			},
 		},
 	}
+	resp.Schema.Attributes["tags"] = schema.MapAttribute{
+		Description: "Every resource tag on the messaging instance — the same set as the resource's `tags_all`: your " +
+			"own key/value metadata, never applied to the service itself. An empty map when it has none.",
+		Computed:    true,
+		ElementType: types.StringType,
+	}
 }
 
 func (d *messagingInstanceDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
@@ -203,6 +213,9 @@ func (d *messagingInstanceDataSource) Read(ctx context.Context, req datasource.R
 		state.ManagementPort = types.Int64Null()
 	}
 
+	// The platform's reserved namespace is filtered as on the resource read-back,
+	// so `tags` means the same thing on every surface.
+	state.Tags = tftags.OfferTagsValue(inst.Tags)
 	if inst.UpdatedAt != "" {
 		state.UpdatedAt = types.StringValue(inst.UpdatedAt)
 	} else {

@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 var _ datasource.DataSource = &valkeyInstanceDataSource{}
@@ -40,6 +41,7 @@ type valkeyInstanceModel struct {
 	AdminUsername   types.String `tfsdk:"admin_username"`
 	CreatedAt       types.String `tfsdk:"created_at"`
 	UpdatedAt       types.String `tfsdk:"updated_at"`
+	Tags            types.Map    `tfsdk:"tags"`
 }
 
 // apiValkeyInstance is the API representation of a managed Valkey instance.
@@ -59,6 +61,8 @@ type apiValkeyInstance struct {
 	AdminUsername   string `json:"adminUsername,omitempty"`
 	CreatedAt       string `json:"createdAt"`
 	UpdatedAt       string `json:"updatedAt,omitempty"`
+	// Tags are the resource's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 func (d *valkeyInstanceDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -127,6 +131,12 @@ func (d *valkeyInstanceDataSource) Schema(_ context.Context, _ datasource.Schema
 			},
 		},
 	}
+	resp.Schema.Attributes["tags"] = schema.MapAttribute{
+		Description: "Every resource tag on the Valkey instance — the same set as the resource's `tags_all`: your " +
+			"own key/value metadata, never applied to the service itself. An empty map when it has none.",
+		Computed:    true,
+		ElementType: types.StringType,
+	}
 }
 
 func (d *valkeyInstanceDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
@@ -192,6 +202,9 @@ func (d *valkeyInstanceDataSource) Read(ctx context.Context, req datasource.Read
 		state.AdminUsername = types.StringNull()
 	}
 
+	// The platform's reserved namespace is filtered as on the resource read-back,
+	// so `tags` means the same thing on every surface.
+	state.Tags = tftags.OfferTagsValue(inst.Tags)
 	if inst.UpdatedAt != "" {
 		state.UpdatedAt = types.StringValue(inst.UpdatedAt)
 	} else {

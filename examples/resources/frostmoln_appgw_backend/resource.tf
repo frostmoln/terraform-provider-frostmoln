@@ -5,6 +5,12 @@ resource "frostmoln_appgw_backend" "web_1" {
   address    = "10.0.1.10"
   port       = 8080
   weight     = 1
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 # By instance: the platform resolves the VPC address itself, so `address` must

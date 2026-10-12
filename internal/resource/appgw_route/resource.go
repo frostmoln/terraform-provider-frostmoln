@@ -26,6 +26,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 var (
@@ -33,6 +34,7 @@ var (
 	_ resource.ResourceWithImportState    = &routeResource{}
 	_ resource.ResourceWithConfigure      = &routeResource{}
 	_ resource.ResourceWithValidateConfig = &routeResource{}
+	_ resource.ResourceWithModifyPlan     = &routeResource{}
 )
 
 type routeResource struct {
@@ -202,6 +204,8 @@ func (r *routeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			},
 		},
 	}
+	resp.Schema.Attributes["tags"] = tftags.OfferTagsAttribute("Resource tags on the route: your own key/value metadata for search and filtering, stored by the platform only and never pushed to the appliance. Changing them updates the route in place (every other attribute replaces it): no config apply, no `config_generation` change.")
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
 }
 
 // ValidateConfig catches the REGEX and HEADER problems at PLAN time.
@@ -403,8 +407,16 @@ func (r *routeResource) Create(ctx context.Context, req resource.CreateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	defaults := r.client.DefaultTags()
+	createReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	apiResp, err := r.client.Post(ctx,
 		r.basePath(plan.GatewayID.ValueString(), plan.ListenerID.ValueString()), createReq)
+	if err == nil {
+		tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Create Route", err.Error())
 		return
@@ -446,15 +458,64 @@ func (r *routeResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	gwID := state.GatewayID
 	state.fromAPI(ctx, rt, &resp.Diagnostics)
 	state.GatewayID = gwID
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-// Update cannot be reached: every attribute carries RequiresReplace.
-func (r *routeResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError("Routes Cannot Be Updated In Place",
-		"The Application Gateway API has no route update operation, so every attribute of this "+
-			"resource forces a replacement. Reaching this code means an attribute was added to the "+
-			"schema without RequiresReplace.")
+// Update changes the route's tags with a tags-only PATCH, sent only when the
+// platform's set would change (computed against the tags the route holds right
+// now, so a key added outside Terraform is kept). It starts no work on the route.
+func (r *routeResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state RouteModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	memberPath := fmt.Sprintf("%s/%s", r.basePath(state.GatewayID.ValueString(), state.ListenerID.ValueString()), state.ID.ValueString())
+	get := func(ctx context.Context) (*apiRoute, error) {
+		apiResp, err := r.client.Get(ctx, memberPath, nil)
+		if err != nil {
+			return nil, err
+		}
+		return client.ParseResponse[apiRoute](apiResp)
+	}
+	defaults := r.client.DefaultTags()
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := get(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(cur.Tags), nil
+		}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if tags != nil {
+		if _, err := r.client.Patch(ctx, memberPath, apiUpdateTagsRequest{Tags: tags}); err != nil {
+			resp.Diagnostics.AddError("Failed to update Route tags", err.Error())
+			return
+		}
+	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+
+	current, err := get(ctx)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to read Route after update", err.Error())
+		return
+	}
+	// fromAPI does not set gateway_id (the route payload does not carry it).
+	gwID := plan.GatewayID
+	plan.fromAPI(ctx, current, &resp.Diagnostics)
+	plan.GatewayID = gwID
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 func (r *routeResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -478,5 +539,13 @@ func (r *routeResource) ImportState(ctx context.Context, req resource.ImportStat
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("gateway_id"), parts[0])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("listener_id"), parts[1])...)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[2])...)
+}
+
+// ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,
+// plans an in-place update of the route's tags.
+func (r *routeResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
 }

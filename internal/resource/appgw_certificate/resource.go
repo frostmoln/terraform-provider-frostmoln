@@ -17,9 +17,11 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/writeonly"
 )
 
@@ -28,6 +30,7 @@ var (
 	_ resource.ResourceWithImportState      = &certificateResource{}
 	_ resource.ResourceWithConfigure        = &certificateResource{}
 	_ resource.ResourceWithConfigValidators = &certificateResource{}
+	_ resource.ResourceWithModifyPlan       = &certificateResource{}
 )
 
 // CertificateModel is the Terraform state model for a gateway certificate.
@@ -54,6 +57,10 @@ type CertificateModel struct {
 	DNSZoneID         types.String `tfsdk:"dns_zone_id"`
 	CreatedAt         types.String `tfsdk:"created_at"`
 	UpdatedAt         types.String `tfsdk:"updated_at"`
+
+	// Tags / TagsAll are the certificate's customer resource tags (internal/tftags).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 }
 
 type apiCertificate struct {
@@ -77,6 +84,9 @@ type apiCertificate struct {
 	DNSZoneID string `json:"dnsZoneId,omitempty"`
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
+
+	// Tags are the certificate's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 // apiUploadCertificateRequest is the create body.
@@ -88,6 +98,16 @@ type apiUploadCertificateRequest struct {
 	Name          string `json:"name"`
 	ChainPEM      string `json:"chainPem"`
 	PrivateKeyPEM string `json:"privateKeyPem"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+	// merges the tenant's default tags in.
+	Tags map[string]string `json:"tags,omitempty"`
+}
+
+// apiUpdateTagsRequest is PATCH .../certificates/{id}: `tags` is the
+// certificate's only editable field (any other is refused), a row-only write
+// that never moves config_generation. A POINTER so an empty map is sent as {}.
+type apiUpdateTagsRequest struct {
+	Tags *map[string]string `json:"tags,omitempty"`
 }
 
 type certificateResource struct {
@@ -249,6 +269,11 @@ func (r *certificateResource) Schema(_ context.Context, _ resource.SchemaRequest
 			"updated_at": schema.StringAttribute{Description: "The last update timestamp.", Computed: true},
 		},
 	}
+	resp.Schema.Attributes["tags"] = tftags.OfferTagsAttribute("Resource tags on the certificate: your own " +
+		"key/value metadata for search and filtering, stored by the platform only and never pushed to the " +
+		"appliance. Changing them updates the certificate in place (every other attribute replaces it): no " +
+		"config apply, no `config_generation` change.")
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
 }
 
 func (r *certificateResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -309,6 +334,13 @@ func (m *CertificateModel) fromAPI(ctx context.Context, c *apiCertificate) {
 	m.UpdatedAt = types.StringValue(c.UpdatedAt)
 }
 
+// tagsFromAPI renders the API's tags into `tags` (the keys the prior value names)
+// and `tags_all` (every customer key). m.Tags must hold the prior value: the
+// configuration on a create or update, the state on a refresh.
+func (m *CertificateModel) tagsFromAPI(ctx context.Context, c *apiCertificate, diags *diag.Diagnostics) {
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(c.Tags), m.Tags, diags)
+}
+
 func (r *certificateResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan CertificateModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -331,6 +363,11 @@ func (r *certificateResource) Create(ctx context.Context, req resource.CreateReq
 	if !keyWO.IsNull() {
 		upload.PrivateKeyPEM = keyWO.ValueString()
 	}
+	defaults := r.client.DefaultTags()
+	upload.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath(fmt.Sprintf(
 		"/application-gateways/%s/certificates", plan.GatewayID.ValueString(),
@@ -339,12 +376,14 @@ func (r *certificateResource) Create(ctx context.Context, req resource.CreateReq
 		resp.Diagnostics.AddError("Failed to Upload Certificate", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	c, err := client.ParseResponse[apiCertificate](apiResp)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Parse Certificate Response", err.Error())
 		return
 	}
 	plan.fromAPI(ctx, c)
+	plan.tagsFromAPI(ctx, c, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -374,15 +413,74 @@ func (r *certificateResource) Read(ctx context.Context, req resource.ReadRequest
 	// chain_pem and private_key_pem are deliberately preserved from state; see
 	// fromAPI.
 	state.fromAPI(ctx, c)
+	state.tagsFromAPI(ctx, c, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-// Update cannot be reached: every configurable attribute carries RequiresReplace.
-func (r *certificateResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError("Certificates Cannot Be Updated In Place",
-		"The Application Gateway API has no certificate update operation, so every attribute of "+
-			"this resource forces a replacement. Reaching this code means an attribute was added to "+
-			"the schema without RequiresReplace.")
+// Update changes the certificate's tags — its only in-place attribute — with a
+// tags-only PATCH, sent only when the platform's set would change (computed
+// against the tags the certificate holds right now, so a key added outside
+// Terraform is kept). It never moves config_generation. chain_pem and the key
+// stay as state holds them (fromAPI never reads them).
+func (r *certificateResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state CertificateModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	certPath := r.client.TenantPath(fmt.Sprintf(
+		"/application-gateways/%s/certificates/%s", state.GatewayID.ValueString(), state.ID.ValueString(),
+	))
+	get := func(ctx context.Context) (*apiCertificate, error) {
+		apiResp, err := r.client.Get(ctx, certPath, nil)
+		if err != nil {
+			return nil, err
+		}
+		return client.ParseResponse[apiCertificate](apiResp)
+	}
+	defaults := r.client.DefaultTags()
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := get(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(cur.Tags), nil
+		}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if tags != nil {
+		if _, err := r.client.Patch(ctx, certPath, apiUpdateTagsRequest{Tags: tags}); err != nil {
+			resp.Diagnostics.AddError("Failed to Update Certificate Tags", err.Error())
+			return
+		}
+	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+
+	c, err := get(ctx)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Certificate After Update", err.Error())
+		return
+	}
+	plan.fromAPI(ctx, c)
+	plan.tagsFromAPI(ctx, c, &resp.Diagnostics)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,
+// plans an in-place update of the certificate's tags.
+func (r *certificateResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
 }
 
 func (r *certificateResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -410,6 +508,7 @@ func (r *certificateResource) ImportState(ctx context.Context, req resource.Impo
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("gateway_id"), parts[0])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[1])...)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 	resp.Diagnostics.AddWarning("Private Key Cannot Be Imported",
 		"private_key_pem is empty in the imported state, so the next plan will show a "+
 			"replacement. A refresh cannot fill it in: Read has no access to your configuration, "+

@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags/tftagstest"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -538,6 +539,7 @@ func withExtensionSetDefaults(m PostgresInstanceModel) PostgresInstanceModel {
 	if reflect.DeepEqual(m.RestoreFrom, types.Object{}) {
 		m.RestoreFrom = types.ObjectNull(restoreFromAttrTypes)
 	}
+	tftagstest.NullUnsetTags(&m)
 	return m
 }
 

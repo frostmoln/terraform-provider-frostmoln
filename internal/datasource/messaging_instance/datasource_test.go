@@ -125,6 +125,7 @@ func configVal(t *testing.T, id string) tftypes.Value {
 		"management_port":  tftypes.NewValue(tftypes.Number, nil),
 		"created_at":       tftypes.NewValue(tftypes.String, nil),
 		"updated_at":       tftypes.NewValue(tftypes.String, nil),
+		"tags":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 }
 

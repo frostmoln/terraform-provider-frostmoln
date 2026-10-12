@@ -38,6 +38,12 @@ resource "frostmoln_postgres_instance" "main" {
     update = "30m"
     delete = "30m"
   }
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 output "postgres_endpoint" {

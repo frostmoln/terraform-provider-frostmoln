@@ -4,6 +4,12 @@ resource "frostmoln_postgres_read_replica" "reader" {
 
   # Optional — omit to inherit the primary's flavor.
   flavor_id = "db.gp1.small"
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 output "postgres_reader_endpoint" {

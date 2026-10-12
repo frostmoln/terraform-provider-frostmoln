@@ -45,6 +45,7 @@ output "redis_port" {
 - `private_ip` (String) The private IP address of the Redis instance.
 - `status` (String) The current status of the Redis instance.
 - `subnet_id` (String) The subnet ID where the Redis instance is deployed.
+- `tags` (Map of String) Every resource tag on the Redis instance — the same set as the resource's `tags_all`: your own key/value metadata, never applied to the service itself. An empty map when it has none.
 - `updated_at` (String) The timestamp when the instance was last updated.
 - `version` (String) The Redis version.
 - `vpc_id` (String) The VPC ID where the Redis instance is deployed.

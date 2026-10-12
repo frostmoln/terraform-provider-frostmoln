@@ -176,6 +176,7 @@ func TestTFSDK_ReadRedisInstanceByID(t *testing.T) {
 		"admin_username":   tftypes.NewValue(tftypes.String, nil),
 		"created_at":       tftypes.NewValue(tftypes.String, nil),
 		"updated_at":       tftypes.NewValue(tftypes.String, nil),
+		"tags":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	readReq := datasource.ReadRequest{
@@ -250,6 +251,7 @@ func TestTFSDK_ReadRedisInstanceNotFound(t *testing.T) {
 		"admin_username":   tftypes.NewValue(tftypes.String, nil),
 		"created_at":       tftypes.NewValue(tftypes.String, nil),
 		"updated_at":       tftypes.NewValue(tftypes.String, nil),
+		"tags":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 
 	readReq := datasource.ReadRequest{

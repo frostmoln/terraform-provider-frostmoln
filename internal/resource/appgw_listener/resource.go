@@ -21,6 +21,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 var (
@@ -28,6 +29,7 @@ var (
 	_ resource.ResourceWithImportState    = &listenerResource{}
 	_ resource.ResourceWithConfigure      = &listenerResource{}
 	_ resource.ResourceWithValidateConfig = &listenerResource{}
+	_ resource.ResourceWithModifyPlan     = &listenerResource{}
 )
 
 // maxPortRangeSpan is the most ports one `tcp` listener may bind, and it
@@ -338,6 +340,8 @@ func (r *listenerResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			},
 		},
 	}
+	resp.Schema.Attributes["tags"] = tftags.OfferTagsAttribute("Resource tags on the listener: your own key/value metadata for search and filtering, stored by the platform only and never pushed to the appliance. Changing them updates the listener in place (every other attribute replaces it): no config apply, no `config_generation` change.")
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
 }
 
 // ValidateConfig mirrors the server's cross-field rules at plan time, so a
@@ -531,10 +535,18 @@ func (r *listenerResource) Create(ctx context.Context, req resource.CreateReques
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	defaults := r.client.DefaultTags()
+	createReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	gwID := plan.GatewayID.ValueString()
 	apiResp, err := r.client.Post(ctx,
 		r.client.TenantPath(fmt.Sprintf("/application-gateways/%s/listeners", gwID)), createReq)
+	if err == nil {
+		tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Create Listener", err.Error())
 		return
@@ -575,18 +587,61 @@ func (r *listenerResource) Read(ctx context.Context, req resource.ReadRequest, r
 		return
 	}
 	state.fromAPI(ctx, listener, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-// Update cannot be reached: every attribute carries RequiresReplace. It exists
-// because the Resource interface requires it, and it reports rather than
-// silently doing nothing -- a no-op Update is how a provider tells Terraform a
-// change succeeded when it did not happen.
-func (r *listenerResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError("Listeners Cannot Be Updated In Place",
-		"The Application Gateway API has no listener update operation, so every attribute of this "+
-			"resource forces a replacement. Reaching this code means an attribute was added to the "+
-			"schema without RequiresReplace.")
+// Update changes the listener's tags with a tags-only PATCH, sent only when the
+// platform's set would change (computed against the tags the listener holds right
+// now, so a key added outside Terraform is kept). It starts no work on the listener.
+func (r *listenerResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state ListenerModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	memberPath := r.client.TenantPath(fmt.Sprintf("/application-gateways/%s/listeners/%s", state.GatewayID.ValueString(), state.ID.ValueString()))
+	get := func(ctx context.Context) (*apiListener, error) {
+		apiResp, err := r.client.Get(ctx, memberPath, nil)
+		if err != nil {
+			return nil, err
+		}
+		return client.ParseResponse[apiListener](apiResp)
+	}
+	defaults := r.client.DefaultTags()
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := get(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(cur.Tags), nil
+		}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if tags != nil {
+		if _, err := r.client.Patch(ctx, memberPath, apiUpdateTagsRequest{Tags: tags}); err != nil {
+			resp.Diagnostics.AddError("Failed to update Listener tags", err.Error())
+			return
+		}
+	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+
+	current, err := get(ctx)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to read Listener after update", err.Error())
+		return
+	}
+	plan.fromAPI(ctx, current, &resp.Diagnostics)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 func (r *listenerResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -611,4 +666,12 @@ func (r *listenerResource) ImportState(ctx context.Context, req resource.ImportS
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("gateway_id"), parts[0])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[1])...)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
+}
+
+// ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,
+// plans an in-place update of the listener's tags.
+func (r *listenerResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
 }

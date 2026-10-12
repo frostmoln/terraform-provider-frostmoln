@@ -9,7 +9,7 @@ description: |-
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — ha_enabled, subnet_id, version, vpc_id: the platform has no in-place migration for it — a change re-creates the instance.
   Create-only, change refused (not replaced) — parameter_group_id: the platform stores the parameter group reference but its parameter-apply is an unimplemented stub — the values never reach the running server on create or on update, so any value is refused outright at plan and apply instead of recorded as intent that is not enacted.
-  Observed, not enacted — private_ip: platform-assigned from the subnet at create. public_ip: platform-assigned where the offer exposes one.
+  Observed, not enacted — private_ip: platform-assigned from the subnet at create. public_ip: platform-assigned where the offer exposes one. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_mysql_instance (Resource)
@@ -26,7 +26,7 @@ Destroying an instance is refused while a restore FROM it to another instance is
 
 **Create-only, change refused (not replaced)** — `parameter_group_id`: the platform stores the parameter group reference but its parameter-apply is an unimplemented stub — the values never reach the running server on create or on update, so any value is refused outright at plan and apply instead of recorded as intent that is not enacted.
 
-**Observed, not enacted** — `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-assigned where the offer exposes one.
+**Observed, not enacted** — `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-assigned where the offer exposes one. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -42,6 +42,12 @@ resource "frostmoln_mysql_instance" "main" {
   backup_enabled        = true
   backup_schedule       = "0 2 * * *"
   backup_retention_days = 35
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 output "mysql_endpoint" {
@@ -68,6 +74,7 @@ output "mysql_endpoint" {
 - `backup_schedule` (String) Cron expression for the backup schedule. Defaults to "0 2 * * *" server-side.
 - `ha_enabled` (Boolean, Deprecated) Not supported for MySQL. High availability is available for PostgreSQL only; setting this to true is rejected.
 - `parameter_group_id` (String) The ID of the parameter group to reference on the instance. The platform stores the reference but never applies it — its parameter-apply endpoint is an unimplemented stub, so the group's values never reach the running server on create or on update. Setting it is refused at plan time, with the constraint and remedy in the refusal terraform prints; leave it unset until the platform ships a working apply path.
+- `tags` (Map of String) Resource tags on the instance: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only and never applied to the database server. Changing them updates the instance in place and does not restart or reconfigure it. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
@@ -80,6 +87,7 @@ output "mysql_endpoint" {
 - `private_ip` (String) The private IP address of the MySQL instance.
 - `public_ip` (String) The public IP address, if assigned.
 - `status` (String) The current status of the MySQL instance.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `tenant_id` (String) The tenant ID that owns this instance.
 - `updated_at` (String) The timestamp when the instance was last updated.
 

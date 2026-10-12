@@ -7,7 +7,7 @@ description: |-
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — instance_id: the deployment belongs to its instance.
-  Observed, not enacted — deploy_id: platform-issued for each deploy the pipeline runs. status: the platform's deploy pipeline moves it.
+  Observed, not enacted — deploy_id: platform-issued for each deploy the pipeline runs. status: the platform's deploy pipeline moves it. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_webserver_deployment (Resource)
@@ -20,7 +20,7 @@ Deploys static/PHP site content to a managed Apache or Nginx webserver instance.
 
 **Create-immutable** — `instance_id`: the deployment belongs to its instance.
 
-**Observed, not enacted** — `deploy_id`: platform-issued for each deploy the pipeline runs. `status`: the platform's deploy pipeline moves it.
+**Observed, not enacted** — `deploy_id`: platform-issued for each deploy the pipeline runs. `status`: the platform's deploy pipeline moves it. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -39,6 +39,12 @@ Deploys static/PHP site content to a managed Apache or Nginx webserver instance.
 resource "frostmoln_webserver_deployment" "site" {
   instance_id    = frostmoln_nginx_instance.site.id
   source_archive = "${path.module}/site.tar.gz"
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 ```
 
@@ -52,6 +58,7 @@ resource "frostmoln_webserver_deployment" "site" {
 
 ### Optional
 
+- `tags` (Map of String) Resource tags on the deploy record this resource tracks (`deploy_id`): your own key/value metadata for search and filtering, stored by the platform only and never applied to the content or the instance. A new deploy (a changed archive) is created with them; changing only the tags updates the tracked deploy in place and deploys nothing. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
@@ -60,6 +67,7 @@ resource "frostmoln_webserver_deployment" "site" {
 - `id` (String) Synthetic resource identifier (equal to instance_id — one deployment per instance).
 - `source_hash` (String) SHA-256 hex digest of source_archive, computed by the provider at plan time. It is the change driver: when the archive's bytes change, this hash changes and a new deploy runs. It is also sent to the deploy's start call so the in-guest agent can verify the upload.
 - `status` (String) Terminal status of the most recent deploy (succeeded once applied).
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 
 <a id="nestedblock--timeouts"></a>
 ### Nested Schema for `timeouts`

@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags/tftagstest"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -229,6 +230,7 @@ func buildMysqlReplicaState(t *testing.T, model MysqlReadReplicaModel) tfsdk.Sta
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 
 	state := tfsdk.State{Schema: schemaResp.Schema}
+	tftagstest.NullUnsetTags(&model)
 	diags := state.Set(context.Background(), &model)
 	if diags.HasError() {
 		t.Fatalf("failed to set state: %v", diags.Errors())
@@ -243,6 +245,7 @@ func buildMysqlReplicaPlan(t *testing.T, model MysqlReadReplicaModel) tfsdk.Plan
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 
 	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	tftagstest.NullUnsetTags(&model)
 	diags := plan.Set(context.Background(), &model)
 	if diags.HasError() {
 		t.Fatalf("failed to set plan: %v", diags.Errors())
@@ -520,14 +523,5 @@ func TestDeleteConflictTimeoutSurfaces(t *testing.T) {
 	}
 	if got := deleteCalls.Load(); got < 2 {
 		t.Errorf("expected multiple DELETE attempts before giving up, got %d", got)
-	}
-}
-
-func TestUpdateNotSupported(t *testing.T) {
-	r := &mysqlReadReplicaResource{}
-	var resp resource.UpdateResponse
-	r.Update(context.Background(), resource.UpdateRequest{}, &resp)
-	if !resp.Diagnostics.HasError() {
-		t.Error("expected error for update on immutable resource")
 	}
 }

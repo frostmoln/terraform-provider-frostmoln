@@ -53,6 +53,7 @@ output "messaging_management_port" {
 - `private_ip` (String) The private IP address of the messaging instance.
 - `status` (String) The current status of the messaging instance.
 - `subnet_id` (String) The subnet ID where the messaging instance is deployed.
+- `tags` (Map of String) Every resource tag on the messaging instance — the same set as the resource's `tags_all`: your own key/value metadata, never applied to the service itself. An empty map when it has none.
 - `type` (String) The messaging type (e.g. "lavinmq").
 - `updated_at` (String) The timestamp when the instance was last updated.
 - `version` (String) The version.

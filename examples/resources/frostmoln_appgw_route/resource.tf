@@ -19,6 +19,12 @@ resource "frostmoln_appgw_route" "api" {
     "X-Forwarded-Host" = "api.example.com"
   }
   request_headers_remove = ["X-Internal-Token"]
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 # The catch-all, deliberately last.

@@ -93,6 +93,7 @@ locals {
 - `public_ip_mode` (String) Where the gateway's public address comes from: `allocated` (the platform draws one from the pool and releases it with the gateway) or `selected` (an address you hold, named by `public_ip_id`, never released).
 - `status` (String) The gateway's lifecycle state. A `deleted` row never satisfies this data source.
 - `subnet_id` (String) The subnet the gateway's appliance attaches to.
+- `tags` (Map of String) Every resource tag on the application gateway — the same set as the resource's `tags_all`: your own key/value metadata, never applied to the service itself. An empty map when it has none.
 - `tenant_id` (String) The tenant ID that owns this gateway.
 - `updated_at` (String) The timestamp when the gateway was last updated, null when the platform has not recorded one.
 - `version` (String) The appliance version the gateway runs. Platform-managed and chosen by the server at create.

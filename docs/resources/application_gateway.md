@@ -14,7 +14,7 @@ description: |-
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — flavor_id, public_ip_id, public_ip_mode, subnet_id, vpc_id: the platform has no in-place migration for it — a change destroys and re-creates the gateway.
-  Observed, not enacted — public_ip: pool-allocated by the platform when the configuration names no public_ip_id. version: platform-managed: chosen by the server at create and upgraded by the platform, never by configuration.
+  Observed, not enacted — public_ip: pool-allocated by the platform when the configuration names no public_ip_id. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed. version: platform-managed: chosen by the server at create and upgraded by the platform, never by configuration.
 ---
 
 # frostmoln_application_gateway (Resource)
@@ -41,7 +41,7 @@ It changes ORDER only: nothing is created and nothing is released. It does not a
 
 **Create-immutable** — `flavor_id`, `public_ip_id`, `public_ip_mode`, `subnet_id`, `vpc_id`: the platform has no in-place migration for it — a change destroys and re-creates the gateway.
 
-**Observed, not enacted** — `public_ip`: pool-allocated by the platform when the configuration names no `public_ip_id`. `version`: platform-managed: chosen by the server at create and upgraded by the platform, never by configuration.
+**Observed, not enacted** — `public_ip`: pool-allocated by the platform when the configuration names no `public_ip_id`. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed. `version`: platform-managed: chosen by the server at create and upgraded by the platform, never by configuration.
 
 ## Example Usage
 
@@ -63,6 +63,12 @@ resource "frostmoln_application_gateway" "edge" {
   # The default. The platform draws an address from the pool and RELEASES it
   # when the gateway is destroyed.
   public_ip_mode = "allocated"
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 # Bring your own address instead. It is used as-is and is NEVER released when
@@ -101,6 +107,7 @@ See the gateway ordering note on this resource: an Application Gateway attaches 
 * `selected` — use an address you already hold, named by `public_ip_id`. It is used as-is and is **never released** when the gateway is destroyed.
 
 Changing this forces a new resource.
+- `tags` (Map of String) Resource tags on the gateway: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only and never pushed to the appliance. Changing them updates the gateway in place: no config apply, no `config_generation` change. The gateway's listeners, routes, pools and other children carry their own tags. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
@@ -114,6 +121,7 @@ Changing this forces a new resource.
 - `private_ip` (String) The appliance's address inside your VPC.
 - `public_ip` (String) The gateway's public address.
 - `status` (String) The gateway's lifecycle state.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `updated_at` (String) The last update timestamp.
 - `version` (String) The appliance version this gateway runs. Read-only: the version is platform-managed and chosen by the server at create. You author routes, backends and WAF rules, never the data-plane configuration, so there is no version contract to pin here. WAF ruleset versions, which you do control, are on the WAF policy.
 - `vpc_cidr` (String) The gateway's VPC range. Backend addresses are validated against it.

@@ -12,4 +12,10 @@ resource "frostmoln_redis_instance" "cache" {
   backup_enabled        = true
   backup_schedule       = "0 2 * * *"
   backup_retention_days = 35
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }

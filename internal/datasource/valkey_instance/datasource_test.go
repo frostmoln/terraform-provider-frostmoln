@@ -124,6 +124,7 @@ func configVal(t *testing.T, id string) tftypes.Value {
 		"admin_username":   tftypes.NewValue(tftypes.String, nil),
 		"created_at":       tftypes.NewValue(tftypes.String, nil),
 		"updated_at":       tftypes.NewValue(tftypes.String, nil),
+		"tags":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 }
 

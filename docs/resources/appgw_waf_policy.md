@@ -14,6 +14,7 @@ description: |-
   Create-immutable — gateway_id: the policy belongs to its gateway; moving it is a different policy.
   Create-immutable — name: the policy's name is its identity on the gateway.
   Create-immutable — scope: scope decides what the policy is COMPILED FROM — a gateway policy carries the managed ruleset, an overlay does not; the server's update body has no scope field at all.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_appgw_waf_policy (Resource)
@@ -39,6 +40,8 @@ Settings are part of what a dry-run is taken against, so changing one invalidate
 **Create-immutable** — `name`: the policy's name is its identity on the gateway.
 
 **Create-immutable** — `scope`: scope decides what the policy is COMPILED FROM — a gateway policy carries the managed ruleset, an overlay does not; the server's update body has no scope field at all.
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -83,6 +86,12 @@ resource "frostmoln_appgw_waf_policy" "main" {
   # apply performs it. An empty list is refused rather than accepted as a way to
   # say the same thing -- it is not a narrowing to nothing, and it could not be
   # kept in state.
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 # An OVERLAY policy: your own rules on one listener or one route. It is compiled
@@ -206,6 +215,7 @@ The gateway's flavor may bound this below the range above: the appliance buffers
 A `gateway` policy carries the managed ruleset and the dials that tune it. An `overlay` policy carries only your own rules and attaches to a listener or a route; `mode = "inherit"` is available to it, and the managed-ruleset dials are not.
 
 Changing this forces a new resource: scope decides what the policy is compiled from, and the API has no field for it on an update.
+- `tags` (Map of String) Resource tags on the WAF policy: your own key/value metadata for search and filtering, stored by the platform only. Tags are not part of the ruleset: changing them updates the policy in place with nothing to publish or apply. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 
 ### Read-Only
 
@@ -228,4 +238,5 @@ This is the attribute to key on. An overlay whose `mode` is `inherit` under a bl
 
 It is **`null`** when the mode in force cannot be determined — the policy inherits and the server did not resolve it. It is never the literal string `inherit`: resolving that needs the gateway policy's mode, and this provider surfaces an absent value rather than guessing one. Use `try()` or `coalesce()` if your configuration must tolerate that.
 - `id` (String) The unique identifier of the WAF policy.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `updated_at` (String) The last update timestamp.

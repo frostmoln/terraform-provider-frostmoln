@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags/tftagstest"
 )
 
 // schemaOf returns this resource's schema, which every plan and state in these
@@ -34,6 +35,7 @@ func schemaOf(t *testing.T) tfsdk.Plan {
 func planOf(t *testing.T, m AuthorizationModel) tfsdk.Plan {
 	t.Helper()
 	p := schemaOf(t)
+	tftagstest.NullUnsetTags(&m)
 	if d := p.Set(context.Background(), &m); d.HasError() {
 		t.Fatalf("plan: %v", d.Errors())
 	}
@@ -44,6 +46,7 @@ func stateOf(t *testing.T, m AuthorizationModel) tfsdk.State {
 	t.Helper()
 	p := schemaOf(t)
 	s := tfsdk.State{Schema: p.Schema}
+	tftagstest.NullUnsetTags(&m)
 	if d := s.Set(context.Background(), &m); d.HasError() {
 		t.Fatalf("state: %v", d.Errors())
 	}
@@ -262,14 +265,6 @@ func TestAuthorizationReadRemovesOneClosedElsewhere(t *testing.T) {
 	ar.Read(context.Background(), resource.ReadRequest{State: stateOf(t, m)}, &resp)
 	if resp.Diagnostics.HasError() || !resp.State.Raw.IsNull() {
 		t.Fatal("an authorization absent from the listing must be removed from state")
-	}
-}
-
-func TestAuthorizationUpdateIsRefused(t *testing.T) {
-	var resp resource.UpdateResponse
-	(&authorizationResource{}).Update(context.Background(), resource.UpdateRequest{}, &resp)
-	if !resp.Diagnostics.HasError() {
-		t.Fatal("Update must refuse: changing what a rule permits means revoking and re-opening")
 	}
 }
 

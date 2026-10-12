@@ -170,6 +170,7 @@ func readWith(t *testing.T, serverURL string, id, name *string) readResult {
 		"admin_username":        tftypes.NewValue(tftypes.String, nil),
 		"created_at":            tftypes.NewValue(tftypes.String, nil),
 		"updated_at":            tftypes.NewValue(tftypes.String, nil),
+		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"tenant_id":             tftypes.NewValue(tftypes.String, nil),
 	})
 

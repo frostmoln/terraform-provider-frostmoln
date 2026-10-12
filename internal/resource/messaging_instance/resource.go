@@ -20,12 +20,14 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
 	_ resource.Resource                = &messagingInstanceResource{}
 	_ resource.ResourceWithImportState = &messagingInstanceResource{}
+	_ resource.ResourceWithModifyPlan  = &messagingInstanceResource{}
 )
 
 // NewResource returns a new messaging_instance resource factory.
@@ -204,6 +206,8 @@ func (r *messagingInstanceResource) Schema(_ context.Context, _ resource.SchemaR
 			"timeouts": timeouts.Schema(),
 		},
 	}
+	resp.Schema.Attributes["tags"] = tftags.OfferTagsAttribute("Resource tags on the instance: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only and never applied to the broker. Changing them updates the instance in place and does not restart or reconfigure it.")
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
 }
 
 // UpgradeState migrates prior state across the HCL-surface rename `engine` -> `type`.
@@ -254,6 +258,11 @@ func (r *messagingInstanceResource) Create(ctx context.Context, req resource.Cre
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	defaults := r.client.DefaultTags()
+	apiReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	// The customer's timeouts block, falling back to this resource's
 	// defaults (see resolveBudgets above for what each default is now).
@@ -267,6 +276,9 @@ func (r *messagingInstanceResource) Create(ctx context.Context, req resource.Cre
 	subject := fmt.Sprintf("the messaging instance %q", plan.Name.ValueString())
 
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/messaging"), apiReq)
+	if err == nil {
+		tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create messaging instance", err.Error())
 		return
@@ -490,6 +502,7 @@ func (r *messagingInstanceResource) Read(ctx context.Context, req resource.ReadR
 	}
 
 	state.fromAPI(ctx, inst, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -520,6 +533,40 @@ func (r *messagingInstanceResource) Update(ctx context.Context, req resource.Upd
 		)
 		return
 	}
+
+	// TAGS: a tags-only PUT of the instance (a row-only write: no command, no
+	// restart), sent only when the platform's set would change — computed against the
+	// tags the instance holds right now, so a key added outside Terraform is kept.
+	tagsPath := r.client.TenantPath("/messaging/" + id)
+	defaults := r.client.DefaultTags()
+	tags, tagsErr := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := r.client.Get(ctx, tagsPath, nil)
+			if err != nil {
+				return nil, err
+			}
+			current, err := client.ParseResponse[apiMessagingInstance](cur)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(current.Tags), nil
+		}, &resp.Diagnostics)
+	if tagsErr != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+tagsErr.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if tags != nil {
+		if _, err := r.client.Put(ctx, tagsPath, apiUpdateTagsRequest{Tags: tags}); err != nil {
+			resp.Diagnostics.AddError("Failed to update messaging instance tags", err.Error())
+			return
+		}
+	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// In-place field updates (name, persistence mode) via PUT. flavor_id changes
 	// are refused above, so nothing here can change size. Skip the call
@@ -621,6 +668,7 @@ func (r *messagingInstanceResource) Delete(ctx context.Context, req resource.Del
 
 func (r *messagingInstanceResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }
 
 // pollRunning waits until the instance reads `running` (an `error`/`failed`
@@ -644,4 +692,11 @@ func (r *messagingInstanceResource) pollRunning(ctx context.Context, id string, 
 			return current.Status, nil
 		},
 	})
+}
+
+// ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,
+// plans an in-place update of the instance's tags.
+func (r *messagingInstanceResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
 }

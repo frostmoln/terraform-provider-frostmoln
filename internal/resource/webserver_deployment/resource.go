@@ -20,6 +20,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -162,6 +163,11 @@ func (r *webserverDeploymentResource) Schema(_ context.Context, _ resource.Schem
 			"timeouts": timeouts.Schema(),
 		},
 	}
+	resp.Schema.Attributes["tags"] = tftags.OfferTagsAttribute("Resource tags on the deploy record this resource " +
+		"tracks (`deploy_id`): your own key/value metadata for search and filtering, stored by the platform only " +
+		"and never applied to the content or the instance. A new deploy (a changed archive) is created with " +
+		"them; changing only the tags updates the tracked deploy in place and deploys nothing.")
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
 }
 
 func (r *webserverDeploymentResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -184,6 +190,13 @@ func (r *webserverDeploymentResource) Configure(_ context.Context, req resource.
 // drives a new deploy. When the hash changes on an existing resource, deploy_id
 // and status are marked unknown so their post-apply values are accepted.
 func (r *webserverDeploymentResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// tags_all: a default_tags change, or a managed key's drift, plans an in-place
+	// update (it handles the destroy plan itself).
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	// Destroy: no plan to modify.
 	if req.Plan.Raw.IsNull() {
 		return
@@ -258,13 +271,22 @@ func (r *webserverDeploymentResource) Create(ctx context.Context, req resource.C
 		resp.Diagnostics.AddError("Failed to read source_archive", err.Error())
 		return
 	}
+	defaults := r.client.DefaultTags()
+	tags := tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
-	outcome, err := r.runDeploy(ctx, instanceID, archivePath, hash, budgets.Create)
+	outcome, err := r.runDeploy(ctx, instanceID, archivePath, hash, budgets.Create, tags)
+	if outcome.DeployID != "" {
+		tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+	}
 	if err == nil {
 		plan.ID = types.StringValue(instanceID)
 		plan.SourceHash = types.StringValue(hash)
 		plan.DeployID = types.StringValue(outcome.DeployID)
 		plan.Status = types.StringValue(outcome.Status)
+		plan.tagsFromAPI(ctx, outcome.Final, &resp.Diagnostics)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 		return
 	}
@@ -288,8 +310,12 @@ func (r *webserverDeploymentResource) Create(ctx context.Context, req resource.C
 		plan.SourceHash = types.StringValue(hash)
 		plan.DeployID = types.StringValue(outcome.DeployID)
 		plan.Status = types.StringNull()
+		// tags_all is planned unknown and must be known in state: the honest read
+		// supplies it, else the set this create asked for.
+		plan.Tags, plan.TagsAll = tftags.ReadBack(ctx, tags, plan.Tags, &resp.Diagnostics)
 		if d, readErr := r.getDeploy(ctx, instanceID, outcome.DeployID); readErr == nil {
 			plan.fromAPI(d)
+			plan.tagsFromAPI(ctx, d, &resp.Diagnostics)
 		}
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 		// Whether or not the state write landed, the outcome error must
@@ -356,6 +382,8 @@ func (r *webserverDeploymentResource) Read(ctx context.Context, req resource.Rea
 	// Refresh deploy_id/status; preserve the write-only source_archive/source_hash
 	// and the create-time id/instance_id the API never returns.
 	state.fromAPI(d)
+	state.tagsFromAPI(ctx, d, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -390,12 +418,56 @@ func (r *webserverDeploymentResource) Update(ctx context.Context, req resource.U
 	plan.ID = state.ID
 	plan.SourceHash = types.StringValue(hash)
 
+	defaults := r.client.DefaultTags()
+
 	// Redeploy only when the archive's bytes actually changed. A pure path rename
 	// to identical content just refreshes state without touching the instance.
-	if hash == state.SourceHash.ValueString() {
+	// Tags, then, are the TRACKED deploy's: a tags-only PATCH of it, sent only when
+	// the platform's set would change (computed against the tags it holds right
+	// now, so a key added outside Terraform is kept). It touches neither the
+	// deploy's status nor the instance.
+	// (With no deploy tracked — nothing to tag — the archive is deployed.)
+	if hash == state.SourceHash.ValueString() && state.DeployID.ValueString() != "" {
 		plan.DeployID = state.DeployID
 		plan.Status = state.Status
+		deployID := state.DeployID.ValueString()
+		tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+			func(ctx context.Context) (map[string]string, error) {
+				d, err := r.getDeploy(ctx, instanceID, deployID)
+				if err != nil {
+					return nil, err
+				}
+				return tftags.OfferCustomerTags(d.Tags), nil
+			}, &resp.Diagnostics)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+			return
+		}
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if tags != nil {
+			if _, err := r.client.Patch(ctx, r.client.TenantPath("/webservers/"+instanceID+"/deploys/"+deployID),
+				apiUpdateTagsRequest{Tags: tags}); err != nil {
+				resp.Diagnostics.AddError("Failed to update the deploy's tags", err.Error())
+				return
+			}
+		}
+		tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+		d, err := r.getDeploy(ctx, instanceID, deployID)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to read webserver deploy after update", err.Error())
+			return
+		}
+		plan.tagsFromAPI(ctx, d, &resp.Diagnostics)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		return
+	}
+
+	// A NEW deploy is a new record: it is created with the configured set
+	// (default_tags ∪ tags; the platform merges the tenant's defaults in).
+	tags := tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
 		return
 	}
 
@@ -403,7 +475,7 @@ func (r *webserverDeploymentResource) Update(ctx context.Context, req resource.U
 	// defaults (see resolveBudgets above for what each default is now).
 	budgets := r.resolveBudgets(plan.Timeouts)
 
-	outcome, err := r.runDeploy(ctx, instanceID, archivePath, hash, budgets.Update)
+	outcome, err := r.runDeploy(ctx, instanceID, archivePath, hash, budgets.Update, tags)
 	if err != nil {
 		// The framework keeps the PRIOR state on an update error, so nothing
 		// here needs surgery — but the deploy's observability handle must be
@@ -424,8 +496,10 @@ func (r *webserverDeploymentResource) Update(ctx context.Context, req resource.U
 		return
 	}
 
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	plan.DeployID = types.StringValue(outcome.DeployID)
 	plan.Status = types.StringValue(outcome.Status)
+	plan.tagsFromAPI(ctx, outcome.Final, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -442,6 +516,7 @@ func (r *webserverDeploymentResource) Delete(_ context.Context, _ resource.Delet
 func (r *webserverDeploymentResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("instance_id"), req.ID)...)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }
 
 // deployOutcome carries what a deploy flow established when the provider
@@ -455,6 +530,8 @@ type deployOutcome struct {
 	DeployID   string
 	Status     string
 	Unresolved bool
+	// Final is the deploy's last read on success (its tags included).
+	Final *apiDeploy
 }
 
 // runDeploy executes the ADR-0091 content-deploy flow against a webserver
@@ -466,9 +543,15 @@ type deployOutcome struct {
 // runs a fresh deploy). The deploy-status poll runs on the timeouts block's
 // budget for the running operation (create or update); the upload's HTTP client
 // timeout is a separate wire timeout, not a wait budget.
-func (r *webserverDeploymentResource) runDeploy(ctx context.Context, instanceID, archivePath, sha256 string, budget time.Duration) (deployOutcome, error) {
-	// 1. Create the deploy — the response carries the presigned POST policy.
-	createResp, err := r.client.Post(ctx, r.client.TenantPath("/webservers/"+instanceID+"/deploys"), nil)
+func (r *webserverDeploymentResource) runDeploy(ctx context.Context, instanceID, archivePath, sha256 string, budget time.Duration,
+	tags map[string]string) (deployOutcome, error) {
+	// 1. Create the deploy — the response carries the presigned POST policy. The
+	// body is optional: it carries the deploy's tags, and is omitted without any.
+	var body any
+	if len(tags) > 0 {
+		body = apiCreateDeployRequest{Tags: tags}
+	}
+	createResp, err := r.client.Post(ctx, r.client.TenantPath("/webservers/"+instanceID+"/deploys"), body)
 	if err != nil {
 		return deployOutcome{}, fmt.Errorf("create deploy: %w", err)
 	}
@@ -503,6 +586,7 @@ func (r *webserverDeploymentResource) runDeploy(ctx context.Context, instanceID,
 		return outcome, err
 	}
 	outcome.Status = final.Status
+	outcome.Final = final
 	return outcome, nil
 }
 

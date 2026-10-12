@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags/tftagstest"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -254,7 +255,7 @@ func TestRunDeployFlow(t *testing.T) {
 	c.SetTenantIDForTest("t-1")
 	r := newTestDeploymentResource(c, server.Client())
 
-	outcome, err := r.runDeploy(context.Background(), "inst-1", archive, sum, r.getPollTimeout())
+	outcome, err := r.runDeploy(context.Background(), "inst-1", archive, sum, r.getPollTimeout(), nil)
 	if err != nil {
 		t.Fatalf("runDeploy: %v", err)
 	}
@@ -317,7 +318,7 @@ func TestRunDeployFailed(t *testing.T) {
 	c.SetTenantIDForTest("t-1")
 	r := newTestDeploymentResource(c, server.Client())
 
-	outcome, err := r.runDeploy(context.Background(), "inst-1", archive, "abc", r.getPollTimeout())
+	outcome, err := r.runDeploy(context.Background(), "inst-1", archive, "abc", r.getPollTimeout(), nil)
 	if err == nil {
 		t.Fatal("expected an error for a failed deploy")
 	}
@@ -342,6 +343,7 @@ func buildDeploymentPlan(t *testing.T, model WebserverDeploymentModel) tfsdk.Pla
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 
 	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	tftagstest.NullUnsetTags(&model)
 	if diags := plan.Set(context.Background(), &model); diags.HasError() {
 		t.Fatalf("failed to set plan: %v", diags.Errors())
 	}
@@ -405,7 +407,7 @@ func TestRunDeployWaitTimeoutIsUnresolved(t *testing.T) {
 	r := newTestDeploymentResource(c, server.Client())
 	r.pollTimeout = 150 * time.Millisecond
 
-	outcome, err := r.runDeploy(context.Background(), "inst-1", archive, sum, r.getPollTimeout())
+	outcome, err := r.runDeploy(context.Background(), "inst-1", archive, sum, r.getPollTimeout(), nil)
 	if err == nil {
 		t.Fatal("a wait that never resolves must error")
 	}
@@ -445,7 +447,7 @@ func TestRunDeployUploadFailureIsDefinite(t *testing.T) {
 	c.SetTenantIDForTest("t-1")
 	r := newTestDeploymentResource(c, &http.Client{Timeout: 2 * time.Second})
 
-	outcome, err := r.runDeploy(context.Background(), "inst-1", archive, sum, r.getPollTimeout())
+	outcome, err := r.runDeploy(context.Background(), "inst-1", archive, sum, r.getPollTimeout(), nil)
 	if err == nil {
 		t.Fatal("a rejected upload must error")
 	}

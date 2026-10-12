@@ -58,6 +58,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 var _ datasource.DataSource = &applicationGatewayDataSource{}
@@ -97,6 +98,7 @@ type applicationGatewayModel struct {
 	ConfigAppliedAt   types.String `tfsdk:"config_applied_at"`
 	CreatedAt         types.String `tfsdk:"created_at"`
 	UpdatedAt         types.String `tfsdk:"updated_at"`
+	Tags              types.Map    `tfsdk:"tags"`
 	TenantID          types.String `tfsdk:"tenant_id"`
 }
 
@@ -139,7 +141,9 @@ type apiGateway struct {
 	ConfigAppliedAt *string `json:"configAppliedAt,omitempty"`
 	CreatedAt       string  `json:"createdAt"`
 	UpdatedAt       string  `json:"updatedAt,omitempty"`
-	DeletedAt       *string `json:"deletedAt,omitempty"`
+	// Tags are the resource's customer resource tags ({} when untagged).
+	Tags      map[string]string `json:"tags"`
+	DeletedAt *string           `json:"deletedAt,omitempty"`
 }
 
 type apiGatewayList struct {
@@ -278,6 +282,12 @@ func (d *applicationGatewayDataSource) Schema(_ context.Context, _ datasource.Sc
 				Computed:    true,
 			},
 		},
+	}
+	resp.Schema.Attributes["tags"] = schema.MapAttribute{
+		Description: "Every resource tag on the application gateway — the same set as the resource's `tags_all`: your " +
+			"own key/value metadata, never applied to the service itself. An empty map when it has none.",
+		Computed:    true,
+		ElementType: types.StringType,
 	}
 }
 
@@ -569,6 +579,9 @@ func setInstanceState(state *applicationGatewayModel, gw *apiGateway) {
 	state.ConfigDetail = stringFromWire(gw.ConfigDetail)
 	state.ConfigAppliedAt = stringPtrFromWire(gw.ConfigAppliedAt)
 	state.CreatedAt = stringFromWire(gw.CreatedAt)
+	// The platform's reserved namespace is filtered as on the resource read-back,
+	// so `tags` means the same thing on every surface.
+	state.Tags = tftags.OfferTagsValue(gw.Tags)
 	state.UpdatedAt = stringFromWire(gw.UpdatedAt)
 	state.TenantID = stringFromWire(gw.TenantID)
 }

@@ -11,6 +11,12 @@ resource "frostmoln_appgw_certificate" "www" {
 
   chain_pem       = var.www_certificate_chain
   private_key_pem = var.www_certificate_key
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 # The write-only form. private_key_pem_wo never reaches the plan or state; it

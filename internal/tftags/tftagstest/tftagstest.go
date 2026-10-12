@@ -6,15 +6,19 @@
 package tftagstest
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 )
 
@@ -48,6 +52,11 @@ type Profile struct {
 	// Config are attribute values a create configuration needs beyond the
 	// schema-derived placeholders.
 	Config map[string]tftypes.Value
+	// CreateOnly are attribute values the create configuration needs that a
+	// configuration rebuilt after an import must NOT get back: a value the
+	// platform never returns, whose absence after an import the resource itself
+	// documents (a certificate's private key).
+	CreateOnly map[string]tftypes.Value
 	// Extra are response fields a read-back needs.
 	Extra map[string]any
 	// Async: the real create answers 202 with an operation (provisioning), so
@@ -55,13 +64,44 @@ type Profile struct {
 	Async bool
 	// AsyncUpdate: the same for the update.
 	AsyncUpdate bool
+	// ListKey: the resource reads itself from the collection listing (no GET by
+	// id), so a GET of ListPath (default: the Create path) answers
+	// {ListKey: [the object]}.
+	ListKey  string
+	ListPath string
+	// CreateWrap: the create answers 202 with the object under this key beside
+	// the operation to poll (the application gateway's {gateway, operationId}).
+	CreateWrap string
 	// Routes are further tenant-relative GET paths the resource reads (a cluster's
 	// node-pool list and kubeconfig), answered with the given body.
 	Routes map[string]any
+	// TagsOnly: the update route takes `tags` and nothing else (a managed offer's
+	// child PATCH answers 400 field_not_updatable to any other field), so the fake
+	// refuses an update body carrying another field the same way.
+	TagsOnly bool
+	// NoTouch is why the resource has no in-place attribute besides tags to drive
+	// an update for another reason (every other attribute replaces it); the matrix
+	// then skips that step. Exactly one of Touch and NoTouch is set.
+	NoTouch string
+	// NoImport is why the resource's import cannot recover the object the tags
+	// live on; the matrix then skips its import steps.
+	NoImport string
+	// Handle answers requests the generic fake does not model (a multi-step
+	// create); it returns false to leave a request to the fake. It runs with the
+	// fake locked and may call f.create to record the create.
+	Handle func(f *Fake, w http.ResponseWriter, r *http.Request, body map[string]json.RawMessage) bool
 	// Touch is an in-place change to one attribute that is not about tags —
 	// a string, int or bool value, or for the `timeouts` block the `update`
 	// budget — used to drive an update for another reason.
 	Touch map[string]any
+}
+
+// listPath is where the listing a ListKey resource reads itself from is served.
+func (p Profile) listPath() string {
+	if p.ListPath != "" {
+		return p.ListPath
+	}
+	return p.Create
 }
 
 // Field returns the tag field for a verb, defaulting to "tags".
@@ -111,6 +151,113 @@ func Str(s string) tftypes.Value { return tftypes.NewValue(tftypes.String, s) }
 // for a resource with `tags` and no entry here, so a new taggable resource
 // cannot ship without running the default_tags matrix.
 var Profiles = map[string]Profile{
+	"frostmoln_apache_instance": {
+		Create: "/webservers", Member: "/webservers/" + ObjectID, Update: http.MethodPut,
+		Reserved: offerReserved,
+		// The six Required attributes read back verbatim (placeholders "x" and 1).
+		Extra: map[string]any{
+			"name": "x", "type": "apache", "typeVersion": "x", "flavorId": "x", "storageGb": 1,
+			"vpcId": "x", "subnetId": "x", "status": "running",
+		},
+		// A rename reads back from the platform, which the fake does not model; a
+		// timeouts change drives an update with no tag change instead.
+		Touch: map[string]any{"timeouts": "7m"},
+	},
+	"frostmoln_appgw_backend": {
+		Create:  "/application-gateways/gw-1/backend-pools/p-1/backends",
+		Member:  "/application-gateways/gw-1/backend-pools/p-1/backends/" + ObjectID,
+		ListKey: "backends",
+		Update:  http.MethodPatch, TagsOnly: true, ImportID: "gw-1/p-1/" + ObjectID, Reserved: offerReserved,
+		Config: map[string]tftypes.Value{"gateway_id": Str("gw-1"), "pool_id": Str("p-1")},
+		// port reads back verbatim (placeholder 1).
+		Extra:   map[string]any{"poolId": "p-1", "sourceKind": "address", "address": "10.0.0.1", "port": 1, "weight": 100, "status": "unknown", "enabled": true},
+		NoTouch: "every other attribute replaces a backend, and it has no timeouts block",
+	},
+	"frostmoln_appgw_backend_authorization": {
+		Create:   "/application-gateways/gw-1/backend-pools/p-1/backends/b-1/authorize",
+		Member:   "/application-gateways/gw-1/authorizations/" + ObjectID,
+		ListKey:  "items",
+		ListPath: "/application-gateways/gw-1/authorizations",
+		Update:   http.MethodPatch, TagsOnly: true, ImportID: "gw-1/p-1/b-1/" + ObjectID, Reserved: offerReserved,
+		Config: map[string]tftypes.Value{
+			"gateway_id": Str("gw-1"), "pool_id": Str("p-1"), "backend_id": Str("b-1"),
+		},
+		// security_group_id reads back verbatim (placeholder "x").
+		Extra:   map[string]any{"gatewayId": "gw-1", "targetSecurityGroupId": "x", "protocol": "tcp", "portMin": 80, "portMax": 80},
+		NoTouch: "every other attribute replaces an authorization, and it has no timeouts block",
+	},
+	"frostmoln_appgw_backend_pool": {
+		Create: "/application-gateways/gw-1/backend-pools", Member: "/application-gateways/gw-1/backend-pools/" + ObjectID,
+		Update: http.MethodPatch, ImportID: "gw-1/" + ObjectID, Reserved: offerReserved,
+		Config: map[string]tftypes.Value{"gateway_id": Str("gw-1")},
+		// name reads back verbatim (placeholder "x"); the Optional+Computed settings
+		// read back as the platform's defaults.
+		Extra: map[string]any{
+			"gatewayId": "gw-1", "name": "x", "protocol": "http", "algorithm": "round_robin",
+			"sessionAffinity": "none", "tlsVerifyBackend": true, "timeoutConnectMs": 5000, "timeoutResponseMs": 60000,
+		},
+		// A settings change rides the same PATCH as a tags change.
+		Touch: map[string]any{"timeout_connect_ms": 7000},
+	},
+	"frostmoln_appgw_certificate": {
+		Create: "/application-gateways/gw-1/certificates", Member: "/application-gateways/gw-1/certificates/" + ObjectID,
+		Update: http.MethodPatch, TagsOnly: true, ImportID: "gw-1/" + ObjectID, Reserved: offerReserved,
+		Config: map[string]tftypes.Value{"gateway_id": Str("gw-1")},
+		// The key only at create: an imported certificate has none in state (the
+		// import warns that its next plan replaces it), so a configuration that
+		// named one after the import would replace it here too.
+		CreateOnly: map[string]tftypes.Value{"private_key_pem": Str("k")},
+		// name reads back verbatim (placeholder "x"); chain_pem is kept from state,
+		// never read back.
+		Extra:   map[string]any{"gatewayId": "gw-1", "name": "x", "source": "upload", "status": "active", "sans": []string{}},
+		NoTouch: "every other attribute replaces a certificate, and it has no timeouts block",
+	},
+	"frostmoln_appgw_listener": {
+		Create: "/application-gateways/gw-1/listeners", Member: "/application-gateways/gw-1/listeners/" + ObjectID,
+		Update: http.MethodPatch, TagsOnly: true, ImportID: "gw-1/" + ObjectID, Reserved: offerReserved,
+		Config: map[string]tftypes.Value{"gateway_id": Str("gw-1")},
+		// The Required attributes read back verbatim (placeholders "x" and 1).
+		Extra:   map[string]any{"gatewayId": "gw-1", "name": "x", "protocol": "x", "port": 1, "geoBlockMode": "none", "enabled": true},
+		NoTouch: "every other attribute replaces a listener, and it has no timeouts block",
+	},
+	"frostmoln_appgw_route": {
+		Create: "/application-gateways/gw-1/listeners/l-1/routes", Member: "/application-gateways/gw-1/listeners/l-1/routes/" + ObjectID,
+		Update: http.MethodPatch, TagsOnly: true, ImportID: "gw-1/l-1/" + ObjectID, Reserved: offerReserved,
+		Config: map[string]tftypes.Value{"gateway_id": Str("gw-1"), "listener_id": Str("l-1")},
+		// The Required attributes read back verbatim (placeholder "x").
+		Extra: map[string]any{
+			"listenerId": "l-1", "name": "x", "backendPoolId": "x", "priority": 100,
+			"pathMatchType": "prefix", "path": "/", "action": "forward", "enabled": true,
+		},
+		NoTouch: "every other attribute replaces a route, and it has no timeouts block",
+	},
+	"frostmoln_appgw_waf_policy": {
+		Create: "/application-gateways/gw-1/waf-policies", Member: "/application-gateways/gw-1/waf-policies/" + ObjectID,
+		Update: http.MethodPatch, ImportID: "gw-1/" + ObjectID, Reserved: offerReserved,
+		Config: map[string]tftypes.Value{"gateway_id": Str("gw-1")},
+		// name reads back verbatim (placeholder "x"); the settings read back as the
+		// platform's defaults.
+		Extra: map[string]any{
+			"gatewayId": "gw-1", "name": "x", "scope": "gateway", "mode": "detect", "effectiveMode": "detect",
+			"paranoiaLevel": 1, "anomalyScoreThreshold": 5, "crsVersion": "4", "failMode": "open",
+			"requestBodyLimitBytes": 131072,
+		},
+		// A settings change rides the same PATCH as a tags change.
+		Touch: map[string]any{"paranoia_level": 2},
+	},
+	"frostmoln_application_gateway": {
+		Create: "/application-gateways", Member: "/application-gateways/" + ObjectID, Update: http.MethodPatch,
+		CreateWrap: "gateway", Reserved: offerReserved,
+		// The Required attributes read back verbatim (placeholder "x"); public_ip_mode
+		// has a schema default the read-back must echo.
+		Extra: map[string]any{
+			"name": "x", "vpcId": "x", "subnetId": "x", "status": "active", "publicIpMode": "allocated",
+			"flavorId": "f", "version": "v", "configStatus": "applied",
+		},
+		// A rename reads back from the platform, which the fake does not model; a
+		// timeouts change drives an update with no tag change instead.
+		Touch: map[string]any{"timeouts": "7m"},
+	},
 	"frostmoln_bucket": {
 		Create: "/buckets", Member: "/buckets/" + ObjectID, IDField: "name", Update: http.MethodPut,
 		Config: map[string]tftypes.Value{"name": Str(ObjectID)},
@@ -183,9 +330,132 @@ var Profiles = map[string]Profile{
 		Create: "/load-balancers", Member: "/load-balancers/" + ObjectID, Update: http.MethodPut, Reserved: networkReserved,
 		Async: true, Touch: map[string]any{"description": "touched"},
 	},
+	"frostmoln_messaging_instance": {
+		Create: "/messaging", Member: "/messaging/" + ObjectID, Update: http.MethodPut,
+		Reserved: offerReserved,
+		// The Required attributes read back verbatim (placeholder "x"); type has a
+		// schema default the read-back must echo.
+		Extra: map[string]any{
+			"name": "x", "type": "lavinmq", "typeVersion": "x", "flavorId": "x", "vpcId": "x", "subnetId": "x",
+			"status": "running", "persistenceMode": "persistent",
+		},
+		// A rename reads back from the platform, which the fake does not model; a
+		// timeouts change drives an update with no tag change instead.
+		Touch: map[string]any{"timeouts": "7m"},
+	},
+	"frostmoln_mysql_backup": {
+		Create: "/databases/db-1/backups", Member: "/databases/db-1/backups/" + ObjectID,
+		Update: http.MethodPatch, TagsOnly: true, Reserved: offerReserved,
+		Config: map[string]tftypes.Value{"instance_id": Str("db-1")},
+		// name reads back verbatim (placeholder "x").
+		Extra: map[string]any{"instanceId": "db-1", "name": "x", "type": "full", "status": "completed"},
+		// The import takes the bare backup id, so its first Read asks for
+		// /databases//backups/{id} (instance_id is not known yet), which the client
+		// collapses to this — a path no database route serves. A defect of the
+		// backup import itself (it predates tags); the fake answers it so this
+		// matrix still exercises the import's tag handling.
+		ImportMember: "/databases/backups/" + ObjectID,
+		// Every other attribute replaces a backup; a timeouts change updates in place.
+		Touch: map[string]any{"timeouts": "7m"},
+	},
+	"frostmoln_mysql_instance": {
+		Create: "/databases", Member: "/databases/" + ObjectID, Update: http.MethodPut,
+		Reserved: offerReserved,
+		// The six Required attributes read back verbatim (placeholders "x" and 1).
+		Extra: map[string]any{
+			"name": "x", "type": "mysql", "typeVersion": "x", "flavorId": "x", "storageGb": 1,
+			"vpcId": "x", "subnetId": "x", "status": "running", "backupRetentionDays": 35,
+		},
+		// A rename reads back from the platform, which the fake does not model; a
+		// timeouts change drives an update with no tag change instead.
+		Touch: map[string]any{"timeouts": "7m"},
+	},
+	"frostmoln_mysql_read_replica": {
+		Create: "/databases/db-1/replicas", Member: "/databases/db-1/replicas/" + ObjectID,
+		Update: http.MethodPatch, TagsOnly: true, Reserved: offerReserved,
+		Config: map[string]tftypes.Value{"instance_id": Str("db-1")},
+		// name reads back verbatim (placeholder "x").
+		Extra: map[string]any{"primaryId": "db-1", "name": "x", "flavorId": "f", "status": "running", "port": 5432},
+		// The import takes the bare replica id, so its first Read asks for
+		// /databases//replicas/{id} (instance_id is not known yet), which the client
+		// collapses to this — a path no database route serves. That is a defect of the replica import itself
+		// (it predates tags); the fake answers it so this matrix still exercises
+		// the import's tag handling.
+		ImportMember: "/databases/replicas/" + ObjectID,
+		// Every other attribute replaces a replica; a timeouts change updates in place.
+		Touch: map[string]any{"timeouts": "7m"},
+	},
+	"frostmoln_nginx_instance": {
+		Create: "/webservers", Member: "/webservers/" + ObjectID, Update: http.MethodPut,
+		Reserved: offerReserved,
+		// The six Required attributes read back verbatim (placeholders "x" and 1).
+		Extra: map[string]any{
+			"name": "x", "type": "nginx", "typeVersion": "x", "flavorId": "x", "storageGb": 1,
+			"vpcId": "x", "subnetId": "x", "status": "running",
+		},
+		// A rename reads back from the platform, which the fake does not model; a
+		// timeouts change drives an update with no tag change instead.
+		Touch: map[string]any{"timeouts": "7m"},
+	},
+	"frostmoln_postgres_backup": {
+		Create: "/databases/db-1/backups", Member: "/databases/db-1/backups/" + ObjectID,
+		Update: http.MethodPatch, TagsOnly: true, Reserved: offerReserved,
+		Config: map[string]tftypes.Value{"instance_id": Str("db-1")},
+		// name reads back verbatim (placeholder "x").
+		Extra: map[string]any{"instanceId": "db-1", "name": "x", "type": "full", "status": "completed"},
+		// The import takes the bare backup id, so its first Read asks for
+		// /databases//backups/{id} (instance_id is not known yet), which the client
+		// collapses to this — a path no database route serves. A defect of the
+		// backup import itself (it predates tags); the fake answers it so this
+		// matrix still exercises the import's tag handling.
+		ImportMember: "/databases/backups/" + ObjectID,
+		// Every other attribute replaces a backup; a timeouts change updates in place.
+		Touch: map[string]any{"timeouts": "7m"},
+	},
+	"frostmoln_postgres_instance": {
+		Create: "/databases", Member: "/databases/" + ObjectID, Update: http.MethodPut,
+		Reserved: offerReserved,
+		// The six Required attributes read back verbatim (placeholders "x" and 1).
+		Extra: map[string]any{
+			"name": "x", "type": "postgresql", "typeVersion": "x", "flavorId": "x", "storageGb": 1,
+			"vpcId": "x", "subnetId": "x", "status": "running", "backupRetentionDays": 35,
+		},
+		// A rename reads back from the platform, which the fake does not model; a
+		// timeouts change drives an update with no tag change instead.
+		Touch: map[string]any{"timeouts": "7m"},
+	},
+	"frostmoln_postgres_read_replica": {
+		Create: "/databases/db-1/replicas", Member: "/databases/db-1/replicas/" + ObjectID,
+		Update: http.MethodPatch, TagsOnly: true, Reserved: offerReserved,
+		Config: map[string]tftypes.Value{"instance_id": Str("db-1")},
+		// name reads back verbatim (placeholder "x").
+		Extra: map[string]any{"primaryId": "db-1", "name": "x", "flavorId": "f", "status": "running", "port": 5432},
+		// The import takes the bare replica id, so its first Read asks for
+		// /databases//replicas/{id} (instance_id is not known yet), which the client
+		// collapses to this — a path no database route serves. That is a defect of the replica import itself
+		// (it predates tags); the fake answers it so this matrix still exercises
+		// the import's tag handling.
+		ImportMember: "/databases/replicas/" + ObjectID,
+		// Every other attribute replaces a replica; a timeouts change updates in place.
+		Touch: map[string]any{"timeouts": "7m"},
+	},
 	"frostmoln_public_ip": {
 		Create: "/public-ips", Member: "/public-ips/" + ObjectID, Update: http.MethodPut, Reserved: networkReserved,
 		Async: true, Touch: map[string]any{"acknowledge_address_loss": true},
+	},
+	"frostmoln_redis_instance": {
+		Create: "/caches", Member: "/caches/" + ObjectID, Update: http.MethodPut,
+		Reserved: offerReserved,
+		// The five Required attributes read back verbatim (placeholder "x").
+		Extra: map[string]any{
+			"name": "x", "type": "redis", "typeVersion": "x", "flavorId": "x", "vpcId": "x", "subnetId": "x",
+			"status": "running", "storageGb": 1, "persistenceMode": "rdb", "evictionPolicy": "noeviction",
+			// backup_schedule has a schema default the read-back must echo.
+			"backupSchedule": "0 2 * * *", "backupRetentionDays": 35,
+		},
+		// A rename reads back from the platform, which the fake does not model; a
+		// timeouts change drives an update with no tag change instead.
+		Touch: map[string]any{"timeouts": "7m"},
 	},
 	"frostmoln_scale_group": {
 		Create: "/scale-groups", Member: "/scale-groups/" + ObjectID, Update: http.MethodPatch,
@@ -231,6 +501,18 @@ var Profiles = map[string]Profile{
 		Create: "/subnets", Member: "/subnets/" + ObjectID, Update: http.MethodPut, Reserved: networkReserved,
 		Async: true, Touch: map[string]any{"description": "touched"},
 	},
+	"frostmoln_valkey_instance": {
+		Create: "/caches", Member: "/caches/" + ObjectID, Update: http.MethodPut,
+		Reserved: offerReserved,
+		// The five Required attributes read back verbatim (placeholder "x").
+		Extra: map[string]any{
+			"name": "x", "type": "valkey", "typeVersion": "x", "flavorId": "x", "vpcId": "x", "subnetId": "x",
+			"status": "running", "storageGb": 1, "persistenceMode": "rdb", "evictionPolicy": "noeviction",
+		},
+		// A rename reads back from the platform, which the fake does not model; a
+		// timeouts change drives an update with no tag change instead.
+		Touch: map[string]any{"timeouts": "7m"},
+	},
 	"frostmoln_volume": {
 		Create: "/volumes", Member: "/volumes/" + ObjectID, Update: http.MethodPatch,
 		CreateField: "metadata", UpdateField: "metadata", ReadField: "metadata",
@@ -241,6 +523,28 @@ var Profiles = map[string]Profile{
 	"frostmoln_vpc": {
 		Create: "/vpcs", Member: "/vpcs/" + ObjectID, Update: http.MethodPut, Reserved: networkReserved,
 		Async: true, Touch: map[string]any{"description": "touched"},
+	},
+	"frostmoln_webserver_deployment": {
+		// The deploy record the resource tracks. The create runs the whole deploy
+		// flow (create, presigned upload, start; webserverDeploy), and the record
+		// it creates is the object the fake holds.
+		Create: "/webservers/w-1/deploys", Member: "/webservers/w-1/deploys/" + ObjectID,
+		Update: http.MethodPatch, TagsOnly: true, Reserved: offerReserved,
+		Handle: webserverDeploy,
+		Config: map[string]tftypes.Value{"instance_id": Str("w-1"), "source_archive": Str(deployArchive)},
+		Extra:  map[string]any{"instanceId": "w-1", "status": "succeeded"},
+		NoImport: "the import takes the instance id and cannot know which deploy record to track, so " +
+			"there is nothing to read tags from until the next deploy",
+		// A timeouts change updates in place and deploys nothing.
+		Touch: map[string]any{"timeouts": "7m"},
+	},
+	"frostmoln_webserver_domain": {
+		Create: "/webservers/w-1/domains", Member: "/webservers/w-1/domains/" + ObjectID, ListKey: "domains",
+		Update: http.MethodPatch, TagsOnly: true, ImportID: "w-1/" + ObjectID, Reserved: offerReserved,
+		Config: map[string]tftypes.Value{"instance_id": Str("w-1")},
+		// domain_name reads back verbatim (placeholder "x").
+		Extra:   map[string]any{"instanceId": "w-1", "domainName": "x", "tlsEnabled": false, "isDefault": false},
+		NoTouch: "every other attribute replaces a domain binding, and it has no timeouts block",
 	},
 }
 
@@ -266,6 +570,9 @@ type Fake struct {
 	tags   map[string]string
 	writes []Write
 	polls  int
+	// fields are the non-tag fields updates carried, read back over Extra, so an
+	// in-place change of another attribute (Touch) reads back as written.
+	fields map[string]json.RawMessage
 }
 
 // updatedAt is the object's updatedAt: like the platform, the fake bumps it on
@@ -334,6 +641,11 @@ func (f *Fake) Object() map[string]any {
 	obj[idField] = ObjectID
 	obj["createdAt"] = "2026-09-13T00:00:00Z"
 	obj["updatedAt"] = f.updatedAt()
+	for k, raw := range f.fields {
+		var v any
+		_ = json.Unmarshal(raw, &v)
+		obj[k] = v
+	}
 	obj[f.Profile.Field(f.Profile.ReadField)] = Merge(f.tags, f.Profile.Reserved)
 	return obj
 }
@@ -355,15 +667,18 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	isMember := r.URL.Path == tenant+f.Profile.Member ||
 		(f.Profile.ImportMember != "" && r.URL.Path == tenant+f.Profile.ImportMember)
 
+	if f.Profile.Handle != nil && f.Profile.Handle(f, w, r, body) {
+		return
+	}
 	switch {
 	case r.Method == http.MethodPost && r.URL.Path == tenant+f.Profile.Create:
-		f.writes = append(f.writes, Write{r.Method, r.URL.Path, body})
-		f.tags = map[string]string{}
-		if raw, ok := body[f.Profile.Field(f.Profile.CreateField)]; ok {
-			_ = json.Unmarshal(raw, &f.tags)
-		}
-		for k, v := range f.Stamp {
-			f.tags[k] = v
+		f.create(r, body)
+		if f.Profile.CreateWrap != "" {
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				f.Profile.CreateWrap: f.Object(), "operationId": operationID, "status": "pending",
+			})
+			return
 		}
 		if f.Profile.Async {
 			w.WriteHeader(http.StatusAccepted)
@@ -377,12 +692,31 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"operationId": operationID, "status": "completed", "resourceId": ObjectID,
 		})
+	case r.Method == http.MethodGet && f.Profile.ListKey != "" && r.URL.Path == tenant+f.Profile.listPath():
+		_ = json.NewEncoder(w).Encode(map[string]any{f.Profile.ListKey: []any{f.Object()}})
 	case r.Method == http.MethodGet && isMember:
 		_ = json.NewEncoder(w).Encode(f.Object())
 	case r.Method == http.MethodGet && f.Profile.Routes[strings.TrimPrefix(r.URL.Path, tenant)] != nil:
 		_ = json.NewEncoder(w).Encode(f.Profile.Routes[strings.TrimPrefix(r.URL.Path, tenant)])
 	case r.Method == f.Profile.Update && isMember:
+		if f.Profile.TagsOnly {
+			for k := range body {
+				if k != f.Profile.Field(f.Profile.UpdateField) {
+					w.WriteHeader(http.StatusBadRequest)
+					_ = json.NewEncoder(w).Encode(map[string]string{"code": "field_not_updatable", "message": k + " cannot be updated"})
+					return
+				}
+			}
+		}
 		f.writes = append(f.writes, Write{r.Method, r.URL.Path, body})
+		for k, raw := range body {
+			if k != f.Profile.Field(f.Profile.UpdateField) && k != f.Profile.ClearFlag {
+				if f.fields == nil {
+					f.fields = map[string]json.RawMessage{}
+				}
+				f.fields[k] = raw
+			}
+		}
 		if raw, ok := body[f.Profile.Field(f.Profile.UpdateField)]; ok && string(raw) != "null" {
 			next := map[string]string{}
 			_ = json.Unmarshal(raw, &next)
@@ -402,6 +736,56 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": r.Method + " " + r.URL.Path})
 	}
 }
+
+// create records a create: its write, and the object's tags — the create body's,
+// plus Stamp as the platform stamps tenant default tags. Called with f locked.
+func (f *Fake) create(r *http.Request, body map[string]json.RawMessage) {
+	f.writes = append(f.writes, Write{r.Method, r.URL.Path, body})
+	f.tags = map[string]string{}
+	if raw, ok := body[f.Profile.Field(f.Profile.CreateField)]; ok {
+		_ = json.Unmarshal(raw, &f.tags)
+	}
+	for k, v := range f.Stamp {
+		f.tags[k] = v
+	}
+}
+
+// webserverDeploy is the frostmoln_webserver_deployment flow beyond the deploy
+// record itself: create the deploy (answering the presigned upload this fake
+// also serves), the upload, and the start.
+func webserverDeploy(f *Fake, w http.ResponseWriter, r *http.Request, body map[string]json.RawMessage) bool {
+	const tenant = "/v1/tenants/t-1"
+	switch {
+	case r.Method == http.MethodPost && r.URL.Path == tenant+f.Profile.Create:
+		f.create(r, body)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"deployId": ObjectID, "uploadUrl": "http://" + r.Host + "/upload",
+			"uploadFields": map[string]string{"key": "k"}, "status": "pending_upload",
+		})
+		return true
+	case r.Method == http.MethodPost && r.URL.Path == "/upload":
+		w.WriteHeader(http.StatusNoContent)
+		return true
+	case r.Method == http.MethodPost && r.URL.Path == tenant+f.Profile.Member+"/start":
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(f.Object())
+		return true
+	}
+	return false
+}
+
+// deployArchive is a small file standing in for a site archive: the deployment
+// hashes it at plan and apply time.
+var deployArchive = func() string {
+	f, err := os.CreateTemp("", "tftagstest-site-*.tar.gz")
+	if err != nil {
+		return ""
+	}
+	_, _ = f.WriteString("site archive bytes")
+	_ = f.Close()
+	return f.Name()
+}()
 
 // SentTags decodes the tag map a recorded write carried in field; ok is false
 // when the field was absent.
@@ -460,6 +844,9 @@ func CreateConfig(t *testing.T, s schema.Schema, p Profile, tags map[string]stri
 		}
 	}
 	for name, v := range p.Config {
+		vals[name] = v
+	}
+	for name, v := range p.CreateOnly {
 		vals[name] = v
 	}
 	vals["tags"] = Tags(tags)
@@ -551,4 +938,22 @@ func placeholder(t tftypes.Type) tftypes.Value {
 		return tftypes.NewValue(t, map[string]tftypes.Value{})
 	}
 	return tftypes.NewValue(t, nil)
+}
+
+// NullUnsetTags gives a test fixture model that predates tags (a zero types.Map,
+// which has no element type and cannot be set) the null maps an untagged
+// configuration holds: every types.Map field of the struct ptr points at that has
+// no element type becomes MapNull(StringType).
+func NullUnsetTags(ptr any) {
+	v := reflect.ValueOf(ptr).Elem()
+	mapType := reflect.TypeOf(types.Map{})
+	for i := 0; i < v.NumField(); i++ {
+		f := v.Field(i)
+		if f.Type() != mapType || !f.CanSet() {
+			continue
+		}
+		if m := f.Interface().(types.Map); m.ElementType(context.Background()) == nil {
+			f.Set(reflect.ValueOf(types.MapNull(types.StringType)))
+		}
+	}
 }

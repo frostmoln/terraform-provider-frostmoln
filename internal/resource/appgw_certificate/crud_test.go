@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags/tftagstest"
 )
 
 // resourceSchema returns this resource's schema as declared, so a test can read
@@ -45,6 +46,7 @@ func schemaOf(t *testing.T) tfsdk.Plan {
 func planOf(t *testing.T, m CertificateModel) tfsdk.Plan {
 	t.Helper()
 	p := schemaOf(t)
+	tftagstest.NullUnsetTags(&m)
 	if d := p.Set(context.Background(), &m); d.HasError() {
 		t.Fatalf("plan: %v", d.Errors())
 	}
@@ -55,6 +57,7 @@ func stateOf(t *testing.T, m CertificateModel) tfsdk.State {
 	t.Helper()
 	p := schemaOf(t)
 	s := tfsdk.State{Schema: p.Schema}
+	tftagstest.NullUnsetTags(&m)
 	if d := s.Set(context.Background(), &m); d.HasError() {
 		t.Fatalf("state: %v", d.Errors())
 	}
@@ -226,7 +229,7 @@ func TestCertificateReadRemovesAVanishedResource(t *testing.T) {
 	}
 }
 
-func TestCertificateDeleteAndUpdate(t *testing.T) {
+func TestCertificateDelete(t *testing.T) {
 	c, _ := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete && r.URL.Path == certBase+"/c-1" {
 			w.WriteHeader(http.StatusNoContent)
@@ -244,11 +247,6 @@ func TestCertificateDeleteAndUpdate(t *testing.T) {
 		t.Fatalf("delete: %v", del.Diagnostics.Errors())
 	}
 
-	var upd resource.UpdateResponse
-	cr.Update(context.Background(), resource.UpdateRequest{}, &upd)
-	if !upd.Diagnostics.HasError() {
-		t.Fatal("Update must refuse: the API has no certificate update")
-	}
 }
 
 // TestImportState pins the composite id format.
@@ -353,11 +351,11 @@ func TestCertificateSchemaWriteOnlyAttributes(t *testing.T) {
 // TestPrivateKeyPEMWOVersionForcesReplacement is the assertion this resource
 // cannot inherit from anywhere.
 //
-// 🔴 Update() on this resource is a hard error — the certificate API has no
-// update operation. Without RequiresReplace on the version companion, a version
-// bump is the only diff in the plan, Terraform plans an IN-PLACE update, and the
-// apply fails: the rotation path the write-only pair exists to provide never
-// works at all. The right modifier is a function of the resource's own update
+// 🔴 Update() on this resource writes tags and nothing else — the certificate
+// API updates no other field. Without RequiresReplace on the version companion,
+// a version bump is the only diff in the plan, Terraform plans an IN-PLACE
+// update, and the apply silently rotates nothing: the rotation path the
+// write-only pair exists to provide never works at all. The right modifier is a function of the resource's own update
 // capability, which the schema does not express, so the provider-level contract
 // asserts nothing about it — launch_template's companion must NOT replace.
 func TestPrivateKeyPEMWOVersionForcesReplacement(t *testing.T) {
@@ -573,6 +571,11 @@ func TestCertificateEveryConfigurableAttributeReplaces(t *testing.T) {
 		if (a.IsComputed() && !a.IsOptional()) || a.IsWriteOnly() {
 			continue
 		}
+		// tags is the one attribute updated in place: a tags-only PATCH
+		// (TestDefaultTags drives it).
+		if name == "tags" {
+			continue
+		}
 		sa, ok := a.(schema.StringAttribute)
 		if !ok {
 			t.Errorf("%s: not a StringAttribute — extend this walk", name)
@@ -592,8 +595,8 @@ func TestCertificateEveryConfigurableAttributeReplaces(t *testing.T) {
 		}
 		if !resp.RequiresReplace {
 			t.Errorf("%s is configurable but a change to it does not force a replacement. The "+
-				"certificate API has no update operation, so it would plan an in-place update that "+
-				"Update() refuses — an apply-time hard error with nothing in the plan to warn "+
+				"certificate API updates nothing but tags, so it would plan an in-place update that "+
+				"the tags-only PATCH refuses — an apply-time hard error with nothing in the plan to warn "+
 				"about it", name)
 		}
 	}

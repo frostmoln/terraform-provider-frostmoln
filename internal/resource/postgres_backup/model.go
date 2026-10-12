@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -26,6 +27,9 @@ type PostgresBackupModel struct {
 	SizeBytes   types.Int64  `tfsdk:"size_bytes"`
 	StartedAt   types.String `tfsdk:"started_at"`
 	CompletedAt types.String `tfsdk:"completed_at"`
+	// Tags / TagsAll are the backup's customer resource tags (internal/tftags).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 
 	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
 	// absent block, which resolves to the resource's hardcoded defaults.
@@ -42,12 +46,17 @@ type apiPostgresBackup struct {
 	SizeBytes   int64  `json:"sizeBytes,omitempty"`
 	StartedAt   string `json:"startedAt,omitempty"`
 	CompletedAt string `json:"completedAt,omitempty"`
+	// Tags are the backup's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 // apiCreatePostgresBackupRequest is the API request to create a PostgreSQL backup.
 type apiCreatePostgresBackupRequest struct {
 	Name string `json:"name"`
 	Type string `json:"type,omitempty"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+	// merges the tenant's default tags in.
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -64,7 +73,10 @@ func (m *PostgresBackupModel) toCreateRequest(_ context.Context, _ *diag.Diagnos
 }
 
 // fromAPI populates the Terraform model from an API response.
-func (m *PostgresBackupModel) fromAPI(_ context.Context, backup *apiPostgresBackup, _ *diag.Diagnostics) {
+func (m *PostgresBackupModel) fromAPI(ctx context.Context, backup *apiPostgresBackup, diags *diag.Diagnostics) {
+	// Tags: `tags` keeps the keys the prior value (plan or state) names, `tags_all`
+	// every customer key the platform holds.
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(backup.Tags), m.Tags, diags)
 	m.ID = types.StringValue(backup.ID)
 	m.InstanceID = types.StringValue(backup.InstanceID)
 	m.Name = types.StringValue(backup.Name)
@@ -93,4 +105,11 @@ func (m *PostgresBackupModel) fromAPI(_ context.Context, backup *apiPostgresBack
 	} else {
 		m.CompletedAt = types.StringNull()
 	}
+}
+
+// apiUpdateTagsRequest is the tags-only PATCH of the backup: `tags` is the only field
+// it takes (any other field is refused), a row-only write that starts no work. A
+// POINTER so an empty map is sent as {} (clear).
+type apiUpdateTagsRequest struct {
+	Tags *map[string]string `json:"tags,omitempty"`
 }

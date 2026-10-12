@@ -10,4 +10,10 @@ resource "frostmoln_appgw_backend_authorization" "web" {
   pool_id           = frostmoln_appgw_backend_pool.web.id
   backend_id        = frostmoln_appgw_backend.web_1.id
   security_group_id = frostmoln_security_group.web.id
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }

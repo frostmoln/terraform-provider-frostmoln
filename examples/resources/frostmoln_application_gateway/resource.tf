@@ -15,6 +15,12 @@ resource "frostmoln_application_gateway" "edge" {
   # The default. The platform draws an address from the pool and RELEASES it
   # when the gateway is destroyed.
   public_ip_mode = "allocated"
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 # Bring your own address instead. It is used as-is and is NEVER released when

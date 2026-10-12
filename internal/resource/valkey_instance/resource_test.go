@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags/tftagstest"
 )
 
 // --- Model unit tests ---
@@ -311,6 +312,7 @@ func buildValkeyInstanceState(t *testing.T, model ValkeyInstanceModel) tfsdk.Sta
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 
 	state := tfsdk.State{Schema: schemaResp.Schema}
+	tftagstest.NullUnsetTags(&model)
 	diags := state.Set(context.Background(), &model)
 	if diags.HasError() {
 		t.Fatalf("failed to set state: %v", diags.Errors())
@@ -325,6 +327,7 @@ func buildValkeyInstancePlan(t *testing.T, model ValkeyInstanceModel) tfsdk.Plan
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 
 	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	tftagstest.NullUnsetTags(&model)
 	diags := plan.Set(context.Background(), &model)
 	if diags.HasError() {
 		t.Fatalf("failed to set plan: %v", diags.Errors())

@@ -20,6 +20,12 @@ resource "frostmoln_apache_instance" "site" {
   # Allocate and attach a public IP so the site is reachable from the internet.
   # A public IP is billed for as long as it is held.
   public = true
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 output "apache_site_public_ip" {

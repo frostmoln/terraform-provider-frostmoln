@@ -3,18 +3,24 @@
 page_title: "frostmoln_postgres_backup Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a backup of a managed PostgreSQL instance. Backups are immutable after creation.
+  Manages a backup of a managed PostgreSQL instance. Every attribute except tags (and timeouts) is fixed at creation; changing one replaces the backup.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — instance_id, name, type: a backup is a point-in-time artefact of its instance; changing one is a different backup.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_postgres_backup (Resource)
 
-Manages a backup of a managed PostgreSQL instance. Backups are immutable after creation.
+Manages a backup of a managed PostgreSQL instance. Every attribute except `tags` (and `timeouts`) is fixed at creation; changing one replaces the backup.
 
 **Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
 
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
 **Create-immutable** — `instance_id`, `name`, `type`: a backup is a point-in-time artefact of its instance; changing one is a different backup.
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -23,6 +29,12 @@ resource "frostmoln_postgres_backup" "pre_upgrade" {
   instance_id = frostmoln_postgres_instance.main.id
   name        = "pre-upgrade"
   type        = "full"
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 # Only "full" backups are yours to create. The platform also takes `base`
@@ -41,6 +53,7 @@ resource "frostmoln_postgres_backup" "pre_upgrade" {
 
 ### Optional
 
+- `tags` (Map of String) Resource tags on the backup: your own key/value metadata for search and filtering, stored by the platform only. A backup's tags are its own, never copied from the instance. Changing them updates the backup in place. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `type` (String) The type of backup. Only "full" is supported (every backup you create is a full dump). Defaults to "full".
 
@@ -53,6 +66,7 @@ resource "frostmoln_postgres_backup" "pre_upgrade" {
 - `size_bytes` (Number) The size of the backup in bytes.
 - `started_at` (String) The timestamp when the backup started.
 - `status` (String) The current status of the backup.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 
 <a id="nestedblock--timeouts"></a>
 ### Nested Schema for `timeouts`

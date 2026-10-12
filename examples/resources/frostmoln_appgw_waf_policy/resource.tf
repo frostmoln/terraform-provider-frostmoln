@@ -38,6 +38,12 @@ resource "frostmoln_appgw_waf_policy" "main" {
   # apply performs it. An empty list is refused rather than accepted as a way to
   # say the same thing -- it is not a narrowing to nothing, and it could not be
   # kept in state.
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 # An OVERLAY policy: your own rules on one listener or one route. It is compiled

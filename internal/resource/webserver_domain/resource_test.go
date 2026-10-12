@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags/tftagstest"
 )
 
 // --- Resource unit tests ---
@@ -66,15 +67,6 @@ func TestConfigureWrongType(t *testing.T) {
 	}
 }
 
-func TestUpdateNotSupported(t *testing.T) {
-	r := &webserverDomainResource{}
-	var resp resource.UpdateResponse
-	r.Update(context.Background(), resource.UpdateRequest{}, &resp)
-	if !resp.Diagnostics.HasError() {
-		t.Error("expected update to be unsupported")
-	}
-}
-
 // --- tfsdk helpers ---
 
 func buildDomainState(t *testing.T, model webserverDomainModel) tfsdk.State {
@@ -83,6 +75,7 @@ func buildDomainState(t *testing.T, model webserverDomainModel) tfsdk.State {
 	var schemaResp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 	state := tfsdk.State{Schema: schemaResp.Schema}
+	tftagstest.NullUnsetTags(&model)
 	if diags := state.Set(context.Background(), &model); diags.HasError() {
 		t.Fatalf("failed to set state: %v", diags.Errors())
 	}
@@ -95,6 +88,7 @@ func buildDomainPlan(t *testing.T, model webserverDomainModel) tfsdk.Plan {
 	var schemaResp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	tftagstest.NullUnsetTags(&model)
 	if diags := plan.Set(context.Background(), &model); diags.HasError() {
 		t.Fatalf("failed to set plan: %v", diags.Errors())
 	}

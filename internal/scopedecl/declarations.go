@@ -23,6 +23,7 @@ var Declarations = map[string]Decl{
 		ImmutableWhy: "the managed offer has no in-place migration for it — a change re-creates the instance",
 		Immutable:    fields("php_enabled", "php_version", "subnet_id", "version", "vpc_id"),
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
 			{Path: "public_ip", Why: "platform-allocated and attached when `public` is true"},
 			{Path: "security_group_id", Why: "the platform creates and owns the managed group; reads succeed but every write is refused (`409 resource_in_use`), permanently"},
@@ -43,12 +44,12 @@ var Declarations = map[string]Decl{
 		},
 	},
 	"frostmoln_appgw_backend": {
-		EnactsNone:   true,
+		Observes:     []Field{tagsAllObserved},
 		ImmutableWhy: "the API has no update route for a backend — a change destroys and re-creates it",
 		Immutable:    fields("address", "gateway_id", "pool_id", "port", "source_id", "source_kind", "weight"),
 	},
 	"frostmoln_appgw_backend_authorization": {
-		EnactsNone: true,
+		Observes: []Field{tagsAllObserved},
 		Immutable: []Field{
 			{Path: "adopt_existing", Why: "it decides whether this resource may take over an ingress rule that already exists — changing it changes what a destroy will do to other backends, so it is create-only"},
 			{Path: "backend_id", Why: "the authorization is identified by its backend, pool, gateway and security group; changing one is a different authorization"},
@@ -58,12 +59,14 @@ var Declarations = map[string]Decl{
 		},
 	},
 	"frostmoln_appgw_backend_pool": {
+		Observes: []Field{tagsAllObserved},
 		Immutable: []Field{
 			{Path: "gateway_id", Why: "the pool belongs to its gateway; moving it is a different pool"},
 			{Path: "name", Why: "the pool's name is its identity on the gateway"},
 		},
 	},
 	"frostmoln_appgw_certificate": {
+		Observes:     []Field{tagsAllObserved},
 		ImmutableWhy: "certificate material and its name are fixed once uploaded — changing one uploads a new certificate",
 		Immutable:    fields("chain_pem", "gateway_id", "name", "private_key_pem", "private_key_pem_wo_version"),
 		EnactsExcept: []Field{
@@ -79,7 +82,7 @@ var Declarations = map[string]Decl{
 		Immutable:    fields("gateway_id", "pool_id"),
 	},
 	"frostmoln_appgw_listener": {
-		EnactsNone:   true,
+		Observes:     []Field{tagsAllObserved},
 		ImmutableWhy: "the API has no update route for a listener — the server registers POST, GET and DELETE and nothing else — so any change destroys and re-creates it",
 		Immutable: fields("allowed_cidrs", "backend_pool_id", "default_certificate_id", "denied_cidrs",
 			"gateway_id", "geo_block_mode", "geo_countries", "max_connections", "name", "port",
@@ -87,7 +90,7 @@ var Declarations = map[string]Decl{
 			"sni_certificate_ids", "tls_cipher_profile", "tls_min_version"),
 	},
 	"frostmoln_appgw_route": {
-		EnactsNone:   true,
+		Observes:     []Field{tagsAllObserved},
 		ImmutableWhy: "the API has no update route for a route — the server registers POST, GET and DELETE and nothing else — so any change destroys and re-creates it",
 		Immutable: fields("action", "backend_pool_id", "gateway_id", "host", "listener_id", "name",
 			"path", "path_match_type", "priority", "request_headers_remove", "request_headers_set",
@@ -98,6 +101,7 @@ var Declarations = map[string]Decl{
 		Immutable:    fields("gateway_id", "policy_id", "rule_key"),
 	},
 	"frostmoln_appgw_waf_policy": {
+		Observes: []Field{tagsAllObserved},
 		Immutable: []Field{
 			{Path: "gateway_id", Why: "the policy belongs to its gateway; moving it is a different policy"},
 			{Path: "name", Why: "the policy's name is its identity on the gateway"},
@@ -120,6 +124,7 @@ var Declarations = map[string]Decl{
 		ImmutableWhy: "the platform has no in-place migration for it — a change destroys and re-creates the gateway",
 		Immutable:    fields("flavor_id", "public_ip_id", "public_ip_mode", "subnet_id", "vpc_id"),
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "public_ip", Why: "pool-allocated by the platform when the configuration names no `public_ip_id`"},
 			{Path: "version", Why: "platform-managed: chosen by the server at create and upgraded by the platform, never by configuration"},
 		},
@@ -302,11 +307,12 @@ var Declarations = map[string]Decl{
 			{Path: "vpc_id"},
 		},
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
 		},
 	},
 	"frostmoln_mysql_backup": {
-		EnactsNone:   true,
+		Observes:     []Field{tagsAllObserved},
 		ImmutableWhy: "a backup is a point-in-time artefact of its instance; changing one is a different backup",
 		Immutable:    fields("instance_id", "name", "type"),
 	},
@@ -317,15 +323,16 @@ var Declarations = map[string]Decl{
 			{Path: "parameter_group_id", Why: "the platform stores the parameter group reference but its parameter-apply is an unimplemented stub — the values never reach the running server on create or on update, so any value is refused outright at plan and apply instead of recorded as intent that is not enacted"},
 		},
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
 			{Path: "public_ip", Why: "platform-assigned where the offer exposes one"},
 		},
 	},
 	"frostmoln_mysql_read_replica": {
-		EnactsNone:   true,
 		ImmutableWhy: "a replica's source, name and flavor are fixed at create — a change re-creates the replica",
 		Immutable:    fields("flavor_id", "instance_id", "name"),
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "replication_lag_bytes", Why: "the live replication position as the platform reports it — it moves continuously"},
 		},
 	},
@@ -333,6 +340,7 @@ var Declarations = map[string]Decl{
 		ImmutableWhy: "the managed offer has no in-place migration for it — a change re-creates the instance",
 		Immutable:    fields("php_enabled", "php_version", "subnet_id", "version", "vpc_id"),
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
 			{Path: "public_ip", Why: "platform-allocated and attached when `public` is true"},
 			{Path: "security_group_id", Why: "the platform creates and owns the managed group; reads succeed but every write is refused (`409 resource_in_use`), permanently"},
@@ -346,7 +354,7 @@ var Declarations = map[string]Decl{
 		},
 	},
 	"frostmoln_postgres_backup": {
-		EnactsNone:   true,
+		Observes:     []Field{tagsAllObserved},
 		ImmutableWhy: "a backup is a point-in-time artefact of its instance; changing one is a different backup",
 		Immutable:    fields("instance_id", "name", "type"),
 	},
@@ -368,6 +376,7 @@ var Declarations = map[string]Decl{
 			{Path: "restore_from.backup_id", Why: "create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards"},
 		},
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
 			{Path: "public_ip", Why: "platform-assigned where the offer exposes one"},
 			{Path: "pitr_capable", Why: "stamped by the platform when the instance is created and never changed afterwards — it says whether point-in-time recovery can ever be turned on, which no configuration can grant"},
@@ -377,10 +386,10 @@ var Declarations = map[string]Decl{
 		},
 	},
 	"frostmoln_postgres_read_replica": {
-		EnactsNone:   true,
 		ImmutableWhy: "a replica's source, name and flavor are fixed at create — a change re-creates the replica",
 		Immutable:    fields("flavor_id", "instance_id", "name"),
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "replication_lag_bytes", Why: "the live replication position as the platform reports it — it moves continuously"},
 		},
 	},
@@ -409,6 +418,7 @@ var Declarations = map[string]Decl{
 			{Path: "persistence_mode", Why: "the value reaches the running server only in the create render and no workflow re-renders it — a change is validated, stored and echoed while the running server keeps its previous behaviour, so it is warned about at plan and refused at apply; replace the instance to change it"},
 		},
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
 		},
 	},
@@ -515,6 +525,7 @@ var Declarations = map[string]Decl{
 			{Path: "persistence_mode", Why: "the value reaches the running server only in the create render and no workflow re-renders it — a change is validated, stored and echoed while the running server keeps its previous behaviour, so it is warned about at plan and refused at apply; replace the instance to change it"},
 		},
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
 		},
 	},
@@ -559,7 +570,7 @@ var Declarations = map[string]Decl{
 		},
 	},
 	"frostmoln_webserver_domain": {
-		EnactsNone:   true,
+		Observes:     []Field{tagsAllObserved},
 		ImmutableWhy: "the domain binding is identified by its name on its instance; changing one is a different binding",
 		Immutable: []Field{
 			{Path: "domain_name"},
@@ -572,6 +583,7 @@ var Declarations = map[string]Decl{
 		ImmutableWhy: "the deployment belongs to its instance",
 		Immutable:    fields("instance_id"),
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "deploy_id", Why: "platform-issued for each deploy the pipeline runs"},
 			{Path: "status", Why: "the platform's deploy pipeline moves it"},
 		},

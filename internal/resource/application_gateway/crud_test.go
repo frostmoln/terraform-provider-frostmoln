@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags/tftagstest"
 )
 
 // schemaOf returns this resource's schema, which every plan and state in these
@@ -32,6 +33,7 @@ func schemaOf(t *testing.T) tfsdk.Plan {
 func planOf(t *testing.T, m GatewayModel) tfsdk.Plan {
 	t.Helper()
 	p := schemaOf(t)
+	tftagstest.NullUnsetTags(&m)
 	if d := p.Set(context.Background(), &m); d.HasError() {
 		t.Fatalf("plan: %v", d.Errors())
 	}
@@ -42,6 +44,7 @@ func stateOf(t *testing.T, m GatewayModel) tfsdk.State {
 	t.Helper()
 	p := schemaOf(t)
 	s := tfsdk.State{Schema: p.Schema}
+	tftagstest.NullUnsetTags(&m)
 	if d := s.Set(context.Background(), &m); d.HasError() {
 		t.Fatalf("state: %v", d.Errors())
 	}

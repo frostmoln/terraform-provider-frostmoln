@@ -18,6 +18,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -26,6 +27,7 @@ var (
 	_ resource.ResourceWithImportState    = &gatewayResource{}
 	_ resource.ResourceWithConfigure      = &gatewayResource{}
 	_ resource.ResourceWithValidateConfig = &gatewayResource{}
+	_ resource.ResourceWithModifyPlan     = &gatewayResource{}
 )
 
 type gatewayResource struct {
@@ -257,6 +259,19 @@ func (r *gatewayResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			"timeouts": timeouts.Schema(),
 		},
 	}
+	resp.Schema.Attributes["tags"] = tftags.OfferTagsAttribute("Resource tags on the gateway: your own key/value " +
+		"metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the " +
+		"platform only and never pushed to the appliance. Changing them updates the gateway in place: no config " +
+		"apply, no `config_generation` change. The gateway's listeners, routes, pools and other children carry " +
+		"their own tags.")
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
+}
+
+// ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,
+// plans an in-place update of the gateway's tags.
+func (r *gatewayResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
 }
 
 // ValidateConfig refuses the two public-IP combinations that are wrong before
@@ -330,12 +345,18 @@ func (r *gatewayResource) Create(ctx context.Context, req resource.CreateRequest
 	if !plan.PublicIPID.IsNull() && !plan.PublicIPID.IsUnknown() {
 		createReq.PublicIPID = plan.PublicIPID.ValueString()
 	}
+	defaults := r.client.DefaultTags()
+	createReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/application-gateways"), createReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Create Application Gateway", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	created, err := client.ParseResponse[apiCreateGatewayResponse](apiResp)
 	if err != nil {
@@ -355,6 +376,7 @@ func (r *gatewayResource) Create(ctx context.Context, req resource.CreateRequest
 	// that Terraform has never heard of and will never destroy.
 	budgets := r.resolveBudgets(plan.Timeouts)
 	plan.fromAPI(created.Gateway)
+	plan.tagsFromAPI(ctx, created.Gateway, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -378,6 +400,7 @@ func (r *gatewayResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 	plan.fromAPI(gw)
+	plan.tagsFromAPI(ctx, gw, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -404,6 +427,8 @@ func (r *gatewayResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 	state.fromAPI(gw)
+	state.tagsFromAPI(ctx, gw, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 
 	// 🔴 SAY SO WHEN THE GATEWAY IS NOT SERVING WHAT WAS AUTHORED.
 	//
@@ -450,23 +475,55 @@ func (r *gatewayResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	// Name is the only in-place change; every other attribute carries
+	// Name and tags are the only in-place changes; every other attribute carries
 	// RequiresReplace, so reaching here with anything else changed is not
-	// possible.
-	name := plan.Name.ValueString()
-	apiResp, err := r.client.Patch(ctx,
-		r.client.TenantPath(fmt.Sprintf("/application-gateways/%s", state.ID.ValueString())),
-		apiUpdateGatewayRequest{Name: &name})
+	// possible. ONE PATCH carries only what changed (the PATCH is partial). Tags are
+	// sent when the platform's set would change — computed against the tags the
+	// gateway holds right now, so a key added outside Terraform is kept.
+	id := state.ID.ValueString()
+	var patch apiUpdateGatewayRequest
+	if !plan.Name.Equal(state.Name) {
+		name := plan.Name.ValueString()
+		patch.Name = &name
+	}
+	defaults := r.client.DefaultTags()
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := r.read(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(cur.Tags), nil
+		}, &resp.Diagnostics)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to Update Application Gateway", err.Error())
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
 		return
 	}
-	gw, err := client.ParseResponse[apiGateway](apiResp)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to Parse Application Gateway Response", err.Error())
+	if resp.Diagnostics.HasError() {
 		return
 	}
+	patch.Tags = tags
+	var gw *apiGateway
+	if patch.Name != nil || patch.Tags != nil {
+		apiResp, err := r.client.Patch(ctx,
+			r.client.TenantPath(fmt.Sprintf("/application-gateways/%s", id)), patch)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to Update Application Gateway", err.Error())
+			return
+		}
+		if gw, err = client.ParseResponse[apiGateway](apiResp); err != nil {
+			resp.Diagnostics.AddError("Failed to Parse Application Gateway Response", err.Error())
+			return
+		}
+	} else if gw, err = r.read(ctx, id); err != nil {
+		resp.Diagnostics.AddError("Failed to Read Application Gateway After Update", err.Error())
+		return
+	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	plan.fromAPI(gw)
+	plan.tagsFromAPI(ctx, gw, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -536,6 +593,7 @@ func (r *gatewayResource) ImportState(ctx context.Context, req resource.ImportSt
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[0])...)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }
 
 func (r *gatewayResource) read(ctx context.Context, id string) (*apiGateway, error) {

@@ -15,14 +15,18 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
+	"net/http"
 )
 
 var (
 	_ resource.Resource                = &authorizationResource{}
 	_ resource.ResourceWithImportState = &authorizationResource{}
 	_ resource.ResourceWithConfigure   = &authorizationResource{}
+	_ resource.ResourceWithModifyPlan  = &authorizationResource{}
 )
 
 // AuthorizationModel is the Terraform state model for a backend authorization.
@@ -41,6 +45,10 @@ type AuthorizationModel struct {
 	Adopted      types.Bool   `tfsdk:"adopted"`
 	AuthorizedBy types.String `tfsdk:"authorized_by"`
 	CreatedAt    types.String `tfsdk:"created_at"`
+
+	// Tags / TagsAll are the authorization's customer resource tags (internal/tftags).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 }
 
 type apiAuthorization struct {
@@ -53,6 +61,8 @@ type apiAuthorization struct {
 	Adopted               bool   `json:"adopted,omitempty"`
 	AuthorizedBy          string `json:"authorizedBy,omitempty"`
 	CreatedAt             string `json:"createdAt"`
+	// Tags are the authorization's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 type apiAuthorizationListResponse struct {
@@ -61,6 +71,18 @@ type apiAuthorizationListResponse struct {
 
 type apiAuthorizeRequest struct {
 	SecurityGroupID string `json:"securityGroupId"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+	// merges the tenant's default tags in on the authorization's FIRST creation.
+	// An authorize that adopts an existing rule keeps that rule's tags (Create
+	// then writes the configured ones itself).
+	Tags map[string]string `json:"tags,omitempty"`
+}
+
+// apiUpdateTagsRequest is PATCH .../authorizations/{id}: `tags` is the
+// authorization's only editable field (any other is refused), a row-only write
+// that changes no ingress rule. A POINTER so an empty map is sent as {}.
+type apiUpdateTagsRequest struct {
+	Tags *map[string]string `json:"tags,omitempty"`
 }
 
 type authorizationResource struct {
@@ -162,6 +184,12 @@ func (r *authorizationResource) Schema(_ context.Context, _ resource.SchemaReque
 			},
 		},
 	}
+	resp.Schema.Attributes["tags"] = tftags.OfferTagsAttribute("Resource tags on the authorization record: your " +
+		"own key/value metadata for search and filtering, stored by the platform only and never placed on the " +
+		"security-group rule. Changing them updates the authorization in place (every other attribute replaces " +
+		"it) and changes no rule. An adopted rule (`adopt_existing`) keeps the tags it already carries and gets " +
+		"these added.")
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
 }
 
 func (r *authorizationResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -199,9 +227,47 @@ func (m *AuthorizationModel) fromAPI(a *apiAuthorization) {
 	m.CreatedAt = types.StringValue(a.CreatedAt)
 }
 
+// tagsFromAPI renders the API's tags into `tags` (the keys the prior value names)
+// and `tags_all` (every customer key). m.Tags must hold the prior value: the
+// configuration on a create or update, the state on a refresh.
+func (m *AuthorizationModel) tagsFromAPI(ctx context.Context, a *apiAuthorization, diags *diag.Diagnostics) {
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(a.Tags), m.Tags, diags)
+}
+
+// authorizationPath is one authorization's member path.
+func (r *authorizationResource) authorizationPath(gwID, id string) string {
+	return r.client.TenantPath(fmt.Sprintf("/application-gateways/%s/authorizations/%s", gwID, id))
+}
+
+// find reads one authorization by listing the gateway's open paths (there is no
+// GET by id). One missing from the list is reported as a 404.
+func (r *authorizationResource) find(ctx context.Context, gwID, id string) (*apiAuthorization, error) {
+	apiResp, err := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf(
+		"/application-gateways/%s/authorizations", gwID,
+	)), nil)
+	if err != nil {
+		return nil, err
+	}
+	list, err := client.ParseResponse[apiAuthorizationListResponse](apiResp)
+	if err != nil {
+		return nil, err
+	}
+	for i := range list.Items {
+		if list.Items[i].ID == id {
+			return &list.Items[i], nil
+		}
+	}
+	return nil, &client.APIError{StatusCode: http.StatusNotFound, Code: "NOT_FOUND", Message: "authorization " + id + " is not open"}
+}
+
 func (r *authorizationResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan AuthorizationModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	defaults := r.client.DefaultTags()
+	createTags := tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -209,18 +275,43 @@ func (r *authorizationResource) Create(ctx context.Context, req resource.CreateR
 		"/application-gateways/%s/backend-pools/%s/backends/%s/authorize",
 		plan.GatewayID.ValueString(), plan.PoolID.ValueString(), plan.BackendID.ValueString(),
 	)),
-		apiAuthorizeRequest{SecurityGroupID: plan.SecurityGroupID.ValueString()})
+		apiAuthorizeRequest{SecurityGroupID: plan.SecurityGroupID.ValueString(), Tags: createTags})
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Authorize Backend", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	a, err := client.ParseResponse[apiAuthorization](apiResp)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Parse Authorization Response", err.Error())
 		return
 	}
 	poolID, backendID, adopt := plan.PoolID, plan.BackendID, plan.AdoptExisting
+	// An ADOPTED rule keeps its own tags: the authorize does not touch them. When
+	// the adoption is wanted, the configured set is written onto it now (keys the
+	// rule already carries that this configuration does not set are kept), so
+	// the result is what the plan promised.
+	if a.Adopted && adopt.ValueBool() {
+		merged := tftags.OfferCustomerTags(a.Tags)
+		for k, v := range createTags {
+			merged[k] = v
+		}
+		if !tftags.Equal(merged, tftags.OfferCustomerTags(a.Tags)) {
+			if _, err := r.client.Patch(ctx, r.authorizationPath(a.GatewayID, a.ID),
+				apiUpdateTagsRequest{Tags: &merged}); err != nil {
+				resp.Diagnostics.AddError("Failed to Tag The Adopted Authorization", err.Error())
+				// Tracked anyway: the rule is open and adopted.
+				plan.fromAPI(a)
+				plan.PoolID, plan.BackendID, plan.AdoptExisting = poolID, backendID, adopt
+				plan.tagsFromAPI(ctx, a, &resp.Diagnostics)
+				resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+				return
+			}
+			a.Tags = merged
+		}
+	}
 	plan.fromAPI(a)
+	plan.tagsFromAPI(ctx, a, &resp.Diagnostics)
 	// The authorization payload does not carry the pool, the backend or the
 	// opt-in: the rule is scoped to none of them. They are Terraform's own
 	// addressing and configuration, carried over.
@@ -270,8 +361,8 @@ func portRange(min, max int) string {
 
 // Read finds the authorization by listing the gateway's open paths.
 //
-// There is no get-by-id: the server registers POST (authorize), GET (list) and
-// DELETE. Not finding it means the path was closed outside Terraform.
+// There is no get-by-id: the server registers POST (authorize), GET (list), PATCH (tags only)
+// and DELETE. Not finding it means the path was closed outside Terraform.
 func (r *authorizationResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var state AuthorizationModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -306,6 +397,8 @@ func (r *authorizationResource) Read(ctx context.Context, req resource.ReadReque
 			// column), so the server's silence would otherwise read as "this
 			// rule is exclusive" for one that is shared.
 			state.Adopted = wasAdopted
+			state.tagsFromAPI(ctx, &list.Items[i], &resp.Diagnostics)
+			tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 			resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 			return
 		}
@@ -313,11 +406,62 @@ func (r *authorizationResource) Read(ctx context.Context, req resource.ReadReque
 	resp.State.RemoveResource(ctx)
 }
 
-// Update cannot be reached: every attribute carries RequiresReplace.
-func (r *authorizationResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError("Authorizations Cannot Be Updated In Place",
-		"An authorization is a single ingress rule; changing what it permits means revoking it and "+
-			"opening a new one. Every attribute of this resource forces a replacement.")
+// Update changes the authorization's tags — its only in-place attribute — with
+// a tags-only PATCH, sent only when the platform's set would change (computed
+// against the tags it holds right now, so a key added outside Terraform is
+// kept). It changes no ingress rule.
+func (r *authorizationResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state AuthorizationModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	gwID, id := state.GatewayID.ValueString(), state.ID.ValueString()
+	defaults := r.client.DefaultTags()
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := r.find(ctx, gwID, id)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(cur.Tags), nil
+		}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if tags != nil {
+		if _, err := r.client.Patch(ctx, r.authorizationPath(gwID, id), apiUpdateTagsRequest{Tags: tags}); err != nil {
+			resp.Diagnostics.AddError("Failed to Update Authorization Tags", err.Error())
+			return
+		}
+	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+
+	a, err := r.find(ctx, gwID, id)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Authorization After Update", err.Error())
+		return
+	}
+	poolID, backendID := plan.PoolID, plan.BackendID
+	adopt, wasAdopted := plan.AdoptExisting, state.Adopted
+	plan.fromAPI(a)
+	plan.PoolID, plan.BackendID, plan.AdoptExisting, plan.Adopted = poolID, backendID, adopt, wasAdopted
+	plan.tagsFromAPI(ctx, a, &resp.Diagnostics)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,
+// plans an in-place update of the authorization's tags.
+func (r *authorizationResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
 }
 
 func (r *authorizationResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -352,4 +496,10 @@ func (r *authorizationResource) ImportState(ctx context.Context, req resource.Im
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("pool_id"), parts[1])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("backend_id"), parts[2])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[3])...)
+	// adopt_existing is configuration, never read back, and RequiresReplace: left
+	// null by the import, its Default (false) planned a replacement of every
+	// imported authorization. Importing an existing rule is not an adoption by a
+	// create, so the default is the honest value.
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("adopt_existing"), false)...)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }

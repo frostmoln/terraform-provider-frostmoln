@@ -3,6 +3,12 @@ resource "frostmoln_appgw_backend_pool" "web" {
   name       = "web"
   protocol   = "http"
   algorithm  = "round_robin"
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 # Re-encrypt to the backend. tls_verify_backend is left to the platform default

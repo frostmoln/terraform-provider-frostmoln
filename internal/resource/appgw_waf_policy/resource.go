@@ -19,8 +19,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 var (
@@ -109,6 +111,10 @@ type PolicyModel struct {
 
 	CreatedAt types.String `tfsdk:"created_at"`
 	UpdatedAt types.String `tfsdk:"updated_at"`
+
+	// Tags / TagsAll are the policy's customer resource tags (internal/tftags).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 }
 
 type apiPolicy struct {
@@ -147,6 +153,9 @@ type apiPolicy struct {
 	ConfigGeneration int64  `json:"configGeneration"`
 	CreatedAt        string `json:"createdAt"`
 	UpdatedAt        string `json:"updatedAt,omitempty"`
+
+	// Tags are the policy's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 type apiCreatePolicyRequest struct {
@@ -163,6 +172,10 @@ type apiCreatePolicyRequest struct {
 	// The tri-state belongs to the PATCH below.
 	AllowedMethods             []string `json:"allowedMethods,omitempty"`
 	AllowedRequestContentTypes []string `json:"allowedRequestContentTypes,omitempty"`
+
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+	// merges the tenant's default tags in.
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
 // apiUpdatePolicyRequest has NO scope and NO effectiveMode, and that mirrors the
@@ -189,6 +202,11 @@ type apiUpdatePolicyRequest struct {
 	// only spelling of a reset the API has. See allowlists.go.
 	AllowedMethods             *[]string `json:"allowedMethods,omitempty"`
 	AllowedRequestContentTypes *[]string `json:"allowedRequestContentTypes,omitempty"`
+
+	// Tags REPLACES the policy's tags when present ({} clears). Tags are not part
+	// of the ruleset: a patch carrying only tags writes the row alone — no new
+	// draft, nothing to publish or apply.
+	Tags *map[string]string `json:"tags,omitempty"`
 }
 
 type policyResource struct {
@@ -449,6 +467,10 @@ func (r *policyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			"updated_at": schema.StringAttribute{Description: "The last update timestamp.", Computed: true},
 		},
 	}
+	resp.Schema.Attributes["tags"] = tftags.OfferTagsAttribute("Resource tags on the WAF policy: your own " +
+		"key/value metadata for search and filtering, stored by the platform only. Tags are not part of the " +
+		"ruleset: changing them updates the policy in place with nothing to publish or apply.")
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
 }
 
 // ValidateConfig refuses at PLAN time what the server refuses at write time.
@@ -550,6 +572,13 @@ func (r *policyResource) ValidateConfig(ctx context.Context, req resource.Valida
 // policy's mode flipped, the platform default was widened) has already been
 // read back before this runs.
 func (r *policyResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// tags_all: a default_tags change, or a managed key's drift, plans an in-place
+	// update (it handles the destroy plan itself).
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	// Create (no prior state) and destroy (no plan) have nothing to decide: the
 	// framework already marks every computed attribute unknown on a create.
 	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
@@ -700,6 +729,13 @@ func (m *PolicyModel) fromAPI(p *apiPolicy) {
 	m.UpdatedAt = types.StringValue(p.UpdatedAt)
 }
 
+// tagsFromAPI renders the API's tags into `tags` (the keys the prior value names)
+// and `tags_all` (every customer key). m.Tags must hold the prior value: the
+// configuration on a create or update, the state on a refresh.
+func (m *PolicyModel) tagsFromAPI(ctx context.Context, p *apiPolicy, diags *diag.Diagnostics) {
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(p.Tags), m.Tags, diags)
+}
+
 func (r *policyResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan PolicyModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -713,6 +749,8 @@ func (r *policyResource) Create(ctx context.Context, req resource.CreateRequest,
 	resp.Diagnostics.Append(d...)
 	contentTypes, d := stringSliceFrom(ctx, plan.AllowedRequestContentTypes)
 	resp.Diagnostics.Append(d...)
+	defaults := r.client.DefaultTags()
+	createTags := tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -731,17 +769,20 @@ func (r *policyResource) Create(ctx context.Context, req resource.CreateRequest,
 			RequestBodyLimitBytes:      int(plan.RequestBodyLimitBytes.ValueInt64()),
 			AllowedMethods:             methods,
 			AllowedRequestContentTypes: contentTypes,
+			Tags:                       createTags,
 		})
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Create WAF Policy", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	p, err := client.ParseResponse[apiPolicy](apiResp)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Parse WAF Policy Response", err.Error())
 		return
 	}
 	plan.fromAPI(p)
+	plan.tagsFromAPI(ctx, p, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -766,6 +807,8 @@ func (r *policyResource) Read(ctx context.Context, req resource.ReadRequest, res
 		return
 	}
 	state.fromAPI(p)
+	state.tagsFromAPI(ctx, p, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -832,7 +875,36 @@ func (r *policyResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	apiResp, err := r.client.Patch(ctx, r.policyPath(state.GatewayID.ValueString(), state.ID.ValueString()), body)
+	// Tags ride the same PATCH, sent only when the platform's set would change —
+	// computed against the tags the policy holds right now, so a key added outside
+	// Terraform is kept.
+	policyPath := r.policyPath(state.GatewayID.ValueString(), state.ID.ValueString())
+	get := func(ctx context.Context) (*apiPolicy, error) {
+		apiResp, err := r.client.Get(ctx, policyPath, nil)
+		if err != nil {
+			return nil, err
+		}
+		return client.ParseResponse[apiPolicy](apiResp)
+	}
+	defaults := r.client.DefaultTags()
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := get(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(cur.Tags), nil
+		}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	body.Tags = tags
+
+	apiResp, err := r.client.Patch(ctx, policyPath, body)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Update WAF Policy", err.Error())
 		return
@@ -842,7 +914,11 @@ func (r *policyResource) Update(ctx context.Context, req resource.UpdateRequest,
 		resp.Diagnostics.AddError("Failed to Parse WAF Policy Response", err.Error())
 		return
 	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	plan.fromAPI(p)
+	plan.tagsFromAPI(ctx, p, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 
 	// 🔴 SAY WHAT THE POLICY NOW DOES, NOT WHAT WAS WRITTEN. Setting an overlay
@@ -891,6 +967,7 @@ func (r *policyResource) ImportState(ctx context.Context, req resource.ImportSta
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("gateway_id"), parts[0])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[1])...)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }
 
 func (r *policyResource) policyPath(gwID, policyID string) string {

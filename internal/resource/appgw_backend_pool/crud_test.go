@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags/tftagstest"
 )
 
 // schemaOf returns this resource's schema, which every plan and state in these
@@ -34,6 +35,7 @@ func schemaOf(t *testing.T) tfsdk.Plan {
 func planOf(t *testing.T, m PoolModel) tfsdk.Plan {
 	t.Helper()
 	p := schemaOf(t)
+	tftagstest.NullUnsetTags(&m)
 	if d := p.Set(context.Background(), &m); d.HasError() {
 		t.Fatalf("plan: %v", d.Errors())
 	}
@@ -44,6 +46,7 @@ func stateOf(t *testing.T, m PoolModel) tfsdk.State {
 	t.Helper()
 	p := schemaOf(t)
 	s := tfsdk.State{Schema: p.Schema}
+	tftagstest.NullUnsetTags(&m)
 	if d := s.Set(context.Background(), &m); d.HasError() {
 		t.Fatalf("state: %v", d.Errors())
 	}
@@ -191,6 +194,12 @@ func patchPool(t *testing.T, plan, state PoolModel, echo apiPool) (map[string]an
 	var body map[string]any
 	var calls int
 	c, _ := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		// An update with nothing to PATCH re-reads the pool (tags_all is planned
+		// unknown on every update); that read is not a change.
+		if r.Method == http.MethodGet && r.URL.Path == poolBase+"/pool-1" {
+			_ = json.NewEncoder(w).Encode(echo)
+			return
+		}
 		calls++
 		if r.Method != http.MethodPatch || r.URL.Path != poolBase+"/pool-1" {
 			t.Errorf("unexpected request %s %s; the settings endpoint is PATCH %s",
@@ -320,10 +329,10 @@ func TestPoolUpdateClearsAFreeTextFieldWithAnEmptyString(t *testing.T) {
 	}
 }
 
-// TestPoolUpdateWithNothingChangedSendsNoRequest. Terraform does not normally
-// call Update in this case; if it ever does, an empty PATCH body is not a
-// request worth making.
-func TestPoolUpdateWithNothingChangedSendsNoRequest(t *testing.T) {
+// TestPoolUpdateWithNothingChangedSendsNoPatch. Terraform does not normally
+// call Update in this case (a timeouts-only change aside); if it ever does, an
+// empty PATCH body is not a request worth making.
+func TestPoolUpdateWithNothingChangedSendsNoPatch(t *testing.T) {
 	state := poolModel()
 	state.ID = types.StringValue("pool-1")
 	state.Protocol = types.StringValue("http")

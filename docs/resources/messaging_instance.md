@@ -8,7 +8,7 @@ description: |-
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — type: the type is chosen at create — one type's instance does not become another's in place.
   Create-immutable — subnet_id, version, vpc_id: the platform has no in-place migration for it — a change re-creates the instance.
-  Observed, not enacted — private_ip: platform-assigned from the subnet at create.
+  Observed, not enacted — private_ip: platform-assigned from the subnet at create. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_messaging_instance (Resource)
@@ -23,7 +23,7 @@ Manages a managed messaging (LavinMQ) instance in the Frostmoln platform.
 
 **Create-immutable** — `subnet_id`, `version`, `vpc_id`: the platform has no in-place migration for it — a change re-creates the instance.
 
-**Observed, not enacted** — `private_ip`: platform-assigned from the subnet at create.
+**Observed, not enacted** — `private_ip`: platform-assigned from the subnet at create. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -37,6 +37,12 @@ resource "frostmoln_messaging_instance" "broker" {
   subnet_id = frostmoln_subnet.private.id
 
   persistence_mode = "persistent"
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 ```
 
@@ -53,6 +59,7 @@ resource "frostmoln_messaging_instance" "broker" {
 ### Optional
 
 - `persistence_mode` (String) The persistence mode for the messaging instance ("none" or "persistent"). Defaults to "persistent".
+- `tags` (Map of String) Resource tags on the instance: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only and never applied to the broker. Changing them updates the instance in place and does not restart or reconfigure it. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `type` (String) The messaging type. Only "lavinmq" is currently supported. Defaults to "lavinmq".
 - `version` (String) The version (e.g. "2.3"). Defaults to the recommended version when omitted.
@@ -66,6 +73,7 @@ resource "frostmoln_messaging_instance" "broker" {
 - `port` (Number) The AMQP port number the messaging instance is listening on.
 - `private_ip` (String) The private IP address of the messaging instance.
 - `status` (String) The current status of the messaging instance.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `updated_at` (String) The timestamp when the instance was last updated.
 
 <a id="nestedblock--timeouts"></a>

@@ -3,6 +3,7 @@
 package webserver_deployment
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -27,6 +30,10 @@ type WebserverDeploymentModel struct {
 	SourceHash    types.String `tfsdk:"source_hash"`
 	DeployID      types.String `tfsdk:"deploy_id"`
 	Status        types.String `tfsdk:"status"`
+	// Tags / TagsAll are the customer resource tags of the deploy record this
+	// resource tracks (deploy_id); a new deploy is created with them.
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 
 	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
 	// absent block, which resolves to the resource's hardcoded defaults.
@@ -50,6 +57,21 @@ type apiCreateDeployResponse struct {
 	Status       string            `json:"status"`
 }
 
+// apiCreateDeployRequest mirrors webserver domain.CreateDeployRequest, the
+// OPTIONAL body of POST .../deploys: the deploy's own tags (default_tags ∪ tags,
+// tftags.ForCreate); the API merges the tenant's default tags in.
+type apiCreateDeployRequest struct {
+	Tags map[string]string `json:"tags,omitempty"`
+}
+
+// apiUpdateTagsRequest is PATCH .../deploys/{id}: `tags` is a deploy's only
+// editable field (any other is refused), a row-only write that never touches the
+// deploy's status, its archive or the instance. A POINTER so an empty map is sent
+// as {} (clear).
+type apiUpdateTagsRequest struct {
+	Tags *map[string]string `json:"tags,omitempty"`
+}
+
 // apiStartDeployRequest mirrors webserver domain.StartDeployRequest: the SHA-256
 // of the uploaded archive, which the in-guest agent verifies before unpacking.
 type apiStartDeployRequest struct {
@@ -67,6 +89,8 @@ type apiDeploy struct {
 	ErrorMessage string `json:"errorMessage,omitempty"`
 	CreatedAt    string `json:"createdAt"`
 	UpdatedAt    string `json:"updatedAt"`
+	// Tags are the deploy's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 // sha256Hex returns the lowercase hex SHA-256 digest of data.
@@ -98,10 +122,18 @@ func hashArchiveFile(path string) (string, error) {
 // preserved from plan/state. Overwriting them here would trigger Terraform's
 // "provider produced inconsistent result after apply" error.
 func (m *WebserverDeploymentModel) fromAPI(d *apiDeploy) {
+	// Tags are read by tagsFromAPI, which needs the prior value.
 	m.DeployID = types.StringValue(d.ID)
 	if d.Status != "" {
 		m.Status = types.StringValue(d.Status)
 	} else {
 		m.Status = types.StringNull()
 	}
+}
+
+// tagsFromAPI renders the deploy's tags into `tags` (the keys the prior value
+// names) and `tags_all` (every customer key). m.Tags must hold the prior value:
+// the configuration on a create or update, the state on a refresh.
+func (m *WebserverDeploymentModel) tagsFromAPI(ctx context.Context, d *apiDeploy, diags *diag.Diagnostics) {
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(d.Tags), m.Tags, diags)
 }

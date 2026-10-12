@@ -15,12 +15,18 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/unenacted"
 )
 
-var _ resource.Resource = &webserverDomainResource{}
+var (
+	_ resource.Resource                = &webserverDomainResource{}
+	_ resource.ResourceWithModifyPlan  = &webserverDomainResource{}
+	_ resource.ResourceWithImportState = &webserverDomainResource{}
+)
 
 // NewResource returns a new webserver_domain resource factory.
 func NewResource() resource.Resource {
@@ -68,6 +74,9 @@ type webserverDomainModel struct {
 	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
 	IsDefault  types.Bool   `tfsdk:"is_default"`
 	CreatedAt  types.String `tfsdk:"created_at"`
+	// Tags / TagsAll are the binding's customer resource tags (internal/tftags).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 }
 
 // apiWebserverDomain is the API representation of a webserver domain binding.
@@ -81,6 +90,8 @@ type apiWebserverDomain struct {
 	TLSEnabled bool   `json:"tlsEnabled"`
 	IsDefault  bool   `json:"isDefault"`
 	CreatedAt  string `json:"createdAt"`
+	// Tags are the binding's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 // apiWebserverDomainList is the list response for a webserver instance's domains.
@@ -93,6 +104,28 @@ type apiCreateWebserverDomainRequest struct {
 	DomainName string `json:"domainName"`
 	TLSEnabled *bool  `json:"tlsEnabled,omitempty"`
 	IsDefault  *bool  `json:"isDefault,omitempty"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+	// merges the tenant's default tags in.
+	Tags map[string]string `json:"tags,omitempty"`
+}
+
+// apiUpdateTagsRequest is PATCH .../domains/{id}: `tags` is the binding's only
+// editable field (any other is refused), a row-only write. A POINTER so an empty
+// map is sent as {} (clear).
+type apiUpdateTagsRequest struct {
+	Tags *map[string]string `json:"tags,omitempty"`
+}
+
+// fromAPI copies a binding into the model; m.Tags must hold the prior value (the
+// configuration on a create or update, the state on a refresh).
+func (m *webserverDomainModel) fromAPI(ctx context.Context, d *apiWebserverDomain, diags *diag.Diagnostics) {
+	m.ID = types.StringValue(d.ID)
+	m.InstanceID = types.StringValue(d.InstanceID)
+	m.DomainName = types.StringValue(d.DomainName)
+	m.TLSEnabled = types.BoolValue(d.TLSEnabled)
+	m.IsDefault = types.BoolValue(d.IsDefault)
+	m.CreatedAt = types.StringValue(d.CreatedAt)
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(d.Tags), m.Tags, diags)
 }
 
 func (r *webserverDomainResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -101,7 +134,7 @@ func (r *webserverDomainResource) Metadata(_ context.Context, req resource.Metad
 
 func (r *webserverDomainResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a domain binding for a webserver instance in the Frostmoln platform. This resource is create/delete only — domains cannot be updated in place." + "\n\n" + scopedecl.Summary("frostmoln_webserver_domain"),
+		Description: "Manages a domain binding for a webserver instance in the Frostmoln platform. Every attribute except `tags` is fixed: changing one replaces the binding." + "\n\n" + scopedecl.Summary("frostmoln_webserver_domain"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the domain binding.",
@@ -154,6 +187,10 @@ func (r *webserverDomainResource) Schema(_ context.Context, _ resource.SchemaReq
 			},
 		},
 	}
+	resp.Schema.Attributes["tags"] = tftags.OfferTagsAttribute("Resource tags on the domain binding: your own " +
+		"key/value metadata for search and filtering, stored by the platform only. Changing them updates the " +
+		"binding in place.")
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
 }
 
 func (r *webserverDomainResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -208,12 +245,18 @@ func (r *webserverDomainResource) Create(ctx context.Context, req resource.Creat
 		v := plan.IsDefault.ValueBool()
 		apiReq.IsDefault = &v
 	}
+	defaults := r.client.DefaultTags()
+	apiReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	apiResp, err := r.client.Post(ctx, r.domainsPath(plan.InstanceID.ValueString()), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create webserver domain", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	var domain apiWebserverDomain
 	if err := json.Unmarshal(apiResp.Body, &domain); err != nil {
@@ -223,12 +266,7 @@ func (r *webserverDomainResource) Create(ctx context.Context, req resource.Creat
 
 	// The Add endpoint is synchronous and returns the created binding directly
 	// (there is no status field to poll on, and no get-single endpoint).
-	plan.ID = types.StringValue(domain.ID)
-	plan.InstanceID = types.StringValue(domain.InstanceID)
-	plan.DomainName = types.StringValue(domain.DomainName)
-	plan.TLSEnabled = types.BoolValue(domain.TLSEnabled)
-	plan.IsDefault = types.BoolValue(domain.IsDefault)
-	plan.CreatedAt = types.StringValue(domain.CreatedAt)
+	plan.fromAPI(ctx, &domain, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -274,23 +312,84 @@ func (r *webserverDomainResource) Read(ctx context.Context, req resource.ReadReq
 		return
 	}
 
-	state.ID = types.StringValue(domain.ID)
-	state.InstanceID = types.StringValue(domain.InstanceID)
-	state.DomainName = types.StringValue(domain.DomainName)
-	state.TLSEnabled = types.BoolValue(domain.TLSEnabled)
-	state.IsDefault = types.BoolValue(domain.IsDefault)
-	state.CreatedAt = types.StringValue(domain.CreatedAt)
+	state.fromAPI(ctx, domain, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-func (r *webserverDomainResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	// This resource is create/delete only. All mutable attributes have RequiresReplace(),
-	// so Terraform will never call Update — it will destroy and recreate instead.
-	resp.Diagnostics.AddError(
-		"Update Not Supported",
-		"Webserver domain bindings cannot be updated in place. Terraform should destroy and recreate the resource.",
-	)
+// Update changes the binding's tags — its only in-place attribute — with a
+// tags-only PATCH, sent only when the platform's set would change (computed
+// against the tags the binding holds right now, so a key added outside Terraform
+// is kept).
+func (r *webserverDomainResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state webserverDomainModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	instanceID, id := state.InstanceID.ValueString(), state.ID.ValueString()
+	find := func(ctx context.Context) (*apiWebserverDomain, error) {
+		d, err := r.findDomain(ctx, instanceID, id)
+		if err == nil && d == nil {
+			err = fmt.Errorf("domain binding %s is no longer bound to instance %s", id, instanceID)
+		}
+		return d, err
+	}
+	defaults := r.client.DefaultTags()
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := find(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(cur.Tags), nil
+		}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if tags != nil {
+		if _, err := r.client.Patch(ctx, r.domainPath(instanceID, id), apiUpdateTagsRequest{Tags: tags}); err != nil {
+			resp.Diagnostics.AddError("Failed to update webserver domain tags", err.Error())
+			return
+		}
+	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+
+	domain, err := find(ctx)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to read webserver domain after update", err.Error())
+		return
+	}
+	plan.fromAPI(ctx, domain, &resp.Diagnostics)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,
+// plans an in-place update of the binding's tags.
+func (r *webserverDomainResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
+}
+
+// ImportState takes "<instance_id>/<domain_id>": the binding is read from its
+// instance's domain list, so both are needed.
+func (r *webserverDomainResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	parts, err := client.ParseImportID(req.ID, "instance_id", "domain_id")
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Import ID", err.Error())
+		return
+	}
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("instance_id"), parts[0])...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[1])...)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }
 
 func (r *webserverDomainResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

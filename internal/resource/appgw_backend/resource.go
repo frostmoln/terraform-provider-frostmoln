@@ -18,8 +18,11 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
+	"net/http"
 )
 
 var (
@@ -27,6 +30,7 @@ var (
 	_ resource.ResourceWithImportState    = &backendResource{}
 	_ resource.ResourceWithConfigure      = &backendResource{}
 	_ resource.ResourceWithValidateConfig = &backendResource{}
+	_ resource.ResourceWithModifyPlan     = &backendResource{}
 )
 
 // BackendModel is the Terraform state model for a backend.
@@ -46,6 +50,10 @@ type BackendModel struct {
 	Enabled   types.Bool   `tfsdk:"enabled"`
 	CreatedAt types.String `tfsdk:"created_at"`
 	UpdatedAt types.String `tfsdk:"updated_at"`
+
+	// Tags / TagsAll are the backend's customer resource tags (internal/tftags).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 }
 
 type apiBackend struct {
@@ -67,6 +75,9 @@ type apiBackend struct {
 	Enabled   bool   `json:"enabled"`
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
+
+	// Tags are the backend's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 type apiBackendListResponse struct {
@@ -79,6 +90,17 @@ type apiCreateBackendRequest struct {
 	Address    string `json:"address,omitempty"`
 	Port       int    `json:"port"`
 	Weight     int    `json:"weight,omitempty"`
+
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+	// merges the tenant's default tags in.
+	Tags map[string]string `json:"tags,omitempty"`
+}
+
+// apiUpdateTagsRequest is PATCH .../backends/{id}: `tags` is the backend's only
+// editable field (any other is refused), a row-only write that never moves
+// config_generation. A POINTER so an empty map is sent as {} (clear).
+type apiUpdateTagsRequest struct {
+	Tags *map[string]string `json:"tags,omitempty"`
 }
 
 type backendResource struct {
@@ -206,6 +228,11 @@ func (r *backendResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			},
 		},
 	}
+	resp.Schema.Attributes["tags"] = tftags.OfferTagsAttribute("Resource tags on the backend: your own key/value " +
+		"metadata for search and filtering, stored by the platform only and never pushed to the appliance. " +
+		"Changing them updates the backend in place (every other attribute replaces it): no config apply, no " +
+		"`config_generation` change.")
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
 }
 
 // ValidateConfig mirrors the server's discriminated-union rules at plan time.
@@ -305,6 +332,13 @@ func (m *BackendModel) fromAPI(b *apiBackend) {
 	m.UpdatedAt = types.StringValue(b.UpdatedAt)
 }
 
+// tagsFromAPI renders the API's tags into `tags` (the keys the prior value names)
+// and `tags_all` (every customer key). m.Tags must hold the prior value: the
+// configuration on a create or update, the state on a refresh.
+func (m *BackendModel) tagsFromAPI(ctx context.Context, b *apiBackend, diags *diag.Diagnostics) {
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(b.Tags), m.Tags, diags)
+}
+
 func (r *backendResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan BackendModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -318,11 +352,17 @@ func (r *backendResource) Create(ctx context.Context, req resource.CreateRequest
 		Port:       int(plan.Port.ValueInt64()),
 		Weight:     int(plan.Weight.ValueInt64()),
 	}
+	defaults := r.client.DefaultTags()
+	createReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	apiResp, err := r.client.Post(ctx, r.basePath(plan.GatewayID.ValueString(), plan.PoolID.ValueString()), createReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Create Backend", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	b, err := client.ParseResponse[apiBackend](apiResp)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Parse Backend Response", err.Error())
@@ -330,14 +370,16 @@ func (r *backendResource) Create(ctx context.Context, req resource.CreateRequest
 	}
 	gwID := plan.GatewayID
 	plan.fromAPI(b)
+	plan.tagsFromAPI(ctx, b, &resp.Diagnostics)
 	plan.GatewayID = gwID
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 // Read finds the backend by listing the pool.
 //
-// 🔴 THERE IS NO GET-BY-ID FOR A BACKEND. The server registers POST, GET (list)
-// and DELETE only, so a refresh has to scan the pool. Not finding it is
+// 🔴 A REFRESH SCANS THE POOL. Until the tags release the server registered POST,
+// GET (list) and DELETE only, so there was no GET by id; the list keeps a
+// refresh working against either release. Not finding it is
 // deletion-outside-Terraform, which is the same outcome a 404 would be.
 func (r *backendResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var state BackendModel
@@ -366,6 +408,8 @@ func (r *backendResource) Read(ctx context.Context, req resource.ReadRequest, re
 			gwID := state.GatewayID
 			state.fromAPI(&list.Backends[i])
 			state.GatewayID = gwID
+			state.tagsFromAPI(ctx, &list.Backends[i], &resp.Diagnostics)
+			tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 			resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 			return
 		}
@@ -373,12 +417,82 @@ func (r *backendResource) Read(ctx context.Context, req resource.ReadRequest, re
 	resp.State.RemoveResource(ctx)
 }
 
-// Update cannot be reached: every attribute carries RequiresReplace.
-func (r *backendResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError("Backends Cannot Be Updated In Place",
-		"The Application Gateway API has no backend update operation, so every attribute of this "+
-			"resource forces a replacement. Reaching this code means an attribute was added to the "+
-			"schema without RequiresReplace.")
+// find reads one backend by listing its pool (there was no GET by id before the
+// tags release, so the list keeps every refresh working against either). A
+// backend missing from the list is reported as a 404.
+func (r *backendResource) find(ctx context.Context, gwID, poolID, id string) (*apiBackend, error) {
+	apiResp, err := r.client.Get(ctx, r.basePath(gwID, poolID), nil)
+	if err != nil {
+		return nil, err
+	}
+	list, err := client.ParseResponse[apiBackendListResponse](apiResp)
+	if err != nil {
+		return nil, err
+	}
+	for i := range list.Backends {
+		if list.Backends[i].ID == id {
+			return &list.Backends[i], nil
+		}
+	}
+	return nil, &client.APIError{StatusCode: http.StatusNotFound, Code: "NOT_FOUND", Message: "backend " + id + " is not in its pool"}
+}
+
+// Update changes the backend's tags — its only in-place attribute — with a
+// tags-only PATCH, sent only when the platform's set would change (computed
+// against the tags the backend holds right now, so a key added outside Terraform
+// is kept). It never moves config_generation.
+func (r *backendResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state BackendModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	gwID, poolID, id := state.GatewayID.ValueString(), state.PoolID.ValueString(), state.ID.ValueString()
+	defaults := r.client.DefaultTags()
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := r.find(ctx, gwID, poolID, id)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(cur.Tags), nil
+		}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if tags != nil {
+		if _, err := r.client.Patch(ctx, fmt.Sprintf("%s/%s", r.basePath(gwID, poolID), id),
+			apiUpdateTagsRequest{Tags: tags}); err != nil {
+			resp.Diagnostics.AddError("Failed to Update Backend Tags", err.Error())
+			return
+		}
+	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+
+	b, err := r.find(ctx, gwID, poolID, id)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Backend After Update", err.Error())
+		return
+	}
+	gw := plan.GatewayID
+	plan.fromAPI(b)
+	plan.GatewayID = gw
+	plan.tagsFromAPI(ctx, b, &resp.Diagnostics)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,
+// plans an in-place update of the backend's tags.
+func (r *backendResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
 }
 
 func (r *backendResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -411,6 +525,7 @@ func (r *backendResource) ImportState(ctx context.Context, req resource.ImportSt
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("gateway_id"), parts[0])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("pool_id"), parts[1])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[2])...)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }
 
 func str(s types.String) string {

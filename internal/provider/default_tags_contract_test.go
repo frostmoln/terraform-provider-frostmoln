@@ -185,9 +185,20 @@ func runDefaultTagsMatrix(t *testing.T, typeName string, s rschema.Schema, prof 
 
 	// --- an update for a reason that is not tags plans tags_all unknown, so a
 	// key added before its apply is read back without an inconsistent result.
-	st, priv = h.applyChange(srv1, st, priv, h.touchConfig(st, own), "update for another reason", func() { h.fake.Set("late2", "x") })
-	if got := mapOf(t, attrOf(st, "tags_all")); got["late2"] != "x" {
-		t.Errorf("update for another reason: tags_all = %v, want the key added before the apply", got)
+	// A resource with no other in-place attribute (prof.NoTouch) has no such
+	// update; the key is added outside Terraform and refreshed instead, so the
+	// steps below see the same platform set.
+	if prof.NoTouch == "" {
+		st, priv = h.applyChange(srv1, st, priv, h.touchConfig(st, own), "update for another reason", func() { h.fake.Set("late2", "x") })
+		if got := mapOf(t, attrOf(st, "tags_all")); got["late2"] != "x" {
+			t.Errorf("update for another reason: tags_all = %v, want the key added before the apply", got)
+		}
+	} else {
+		if len(prof.Touch) > 0 {
+			t.Fatalf("the profile sets both Touch and NoTouch (%s)", prof.NoTouch)
+		}
+		h.fake.Set("late2", "x")
+		st, priv = h.read(srv1, st, priv)
 	}
 	h.converge(srv1, st, priv, own, "update for another reason")
 
@@ -232,7 +243,13 @@ func runDefaultTagsMatrix(t *testing.T, typeName string, s rschema.Schema, prof 
 	}
 	want = tftagstest.Merge(map[string]string{"env": "staging", "team": "web", "app": "c", "gone": "portal"}, unmanaged)
 
-	// --- import: tags = tags_all minus every pair a default supplies.
+	// --- import: tags = tags_all minus every pair a default supplies. A
+	// resource whose import cannot recover the object its tags live on
+	// (prof.NoImport) skips the import steps.
+	if prof.NoImport != "" {
+		runClearStep(t, typeName, s, prof)
+		return
+	}
 	imported, importedPriv := h.importState(srv2)
 	wantImported := tftagstest.Merge(map[string]string{"team": "web", "app": "c", "gone": "portal"}, unmanaged)
 	h.assertTags(imported, wantImported, "import")
@@ -275,7 +292,12 @@ func runDefaultTagsMatrix(t *testing.T, typeName string, s rschema.Schema, prof 
 	h.assertTagsAll(st, want, "import, own keys only")
 	h.converge(srv2, st, priv, importOwn, "import, own keys only")
 
-	// --- clear: with no defaults and no tags, the write empties the set, on every backend spelling.
+	runClearStep(t, typeName, s, prof)
+}
+
+// runClearStep: with no defaults and no tags, the write empties the set, on
+// every backend spelling.
+func runClearStep(t *testing.T, typeName string, s rschema.Schema, prof tagProfile) {
 	c := newTagHarness(t, typeName, s, prof)
 	cSrv := c.server(map[string]string{"env": "prod"})
 	cCfg := c.createConfig(map[string]string{"app": "a"})

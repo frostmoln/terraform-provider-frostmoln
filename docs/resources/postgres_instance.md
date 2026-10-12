@@ -11,7 +11,7 @@ description: |-
   Create-immutable — restore_from: (maintainer note: if TestScopeDeclarations reports this path is "not an attribute of this resource", the plan modifier was deleted, not the attribute renamed — the walk only records a nested object that carries its own modifiers) a restore is how the instance came into existence, not a setting on it — the platform never reports one back and nothing can re-run it in place, so changing it from one source or point in time to another can only mean a different database. Removing it clears the record in a single in-place update, and importing an instance that was restored records nothing — neither is a replacement.
   Create-only, change refused (not replaced) — parameter_group_id: the platform stores the parameter group reference but its parameter-apply is an unimplemented stub — the values never reach the running server on create or on update, so any value is refused outright at plan and apply instead of recorded as intent that is not enacted.
   Not enacted state — restore_from.backup_id: create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards. restore_from.point_in_time: create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards. restore_from.source_instance_id: create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards.
-  Observed, not enacted — earliest_restorable_time: the platform moves it as write-ahead log is reaped and as newer base backups supersede older ones. latest_restorable_time: the platform advances it with every archived write-ahead log segment, continuously, whether or not anything is being applied. pitr_archive_paused_reason: the platform pauses write-ahead log archiving under the customer (a tenant storage cap, or a fleet-wide pause) and clears it again on its own. pitr_capable: stamped by the platform when the instance is created and never changed afterwards — it says whether point-in-time recovery can ever be turned on, which no configuration can grant. private_ip: platform-assigned from the subnet at create. public_ip: platform-assigned where the offer exposes one.
+  Observed, not enacted — earliest_restorable_time: the platform moves it as write-ahead log is reaped and as newer base backups supersede older ones. latest_restorable_time: the platform advances it with every archived write-ahead log segment, continuously, whether or not anything is being applied. pitr_archive_paused_reason: the platform pauses write-ahead log archiving under the customer (a tenant storage cap, or a fleet-wide pause) and clears it again on its own. pitr_capable: stamped by the platform when the instance is created and never changed afterwards — it says whether point-in-time recovery can ever be turned on, which no configuration can grant. private_ip: platform-assigned from the subnet at create. public_ip: platform-assigned where the offer exposes one. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_postgres_instance (Resource)
@@ -32,7 +32,7 @@ Destroying an instance is refused while a restore FROM it to another instance is
 
 **Not enacted state** — `restore_from.backup_id`: create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards. `restore_from.point_in_time`: create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards. `restore_from.source_instance_id`: create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards.
 
-**Observed, not enacted** — `earliest_restorable_time`: the platform moves it as write-ahead log is reaped and as newer base backups supersede older ones. `latest_restorable_time`: the platform advances it with every archived write-ahead log segment, continuously, whether or not anything is being applied. `pitr_archive_paused_reason`: the platform pauses write-ahead log archiving under the customer (a tenant storage cap, or a fleet-wide pause) and clears it again on its own. `pitr_capable`: stamped by the platform when the instance is created and never changed afterwards — it says whether point-in-time recovery can ever be turned on, which no configuration can grant. `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-assigned where the offer exposes one.
+**Observed, not enacted** — `earliest_restorable_time`: the platform moves it as write-ahead log is reaped and as newer base backups supersede older ones. `latest_restorable_time`: the platform advances it with every archived write-ahead log segment, continuously, whether or not anything is being applied. `pitr_archive_paused_reason`: the platform pauses write-ahead log archiving under the customer (a tenant storage cap, or a fleet-wide pause) and clears it again on its own. `pitr_capable`: stamped by the platform when the instance is created and never changed afterwards — it says whether point-in-time recovery can ever be turned on, which no configuration can grant. `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-assigned where the offer exposes one. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -76,6 +76,12 @@ resource "frostmoln_postgres_instance" "main" {
     create = "30m"
     update = "30m"
     delete = "30m"
+  }
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
   }
 }
 
@@ -150,6 +156,7 @@ resource "frostmoln_postgres_instance" "recovered" {
     The platform builds the target from the source's own shape, so the source must be a PostgreSQL instance and this resource's `version`, `flavor_id`, `vpc_id`, `subnet_id` and `ha_enabled` must equal the source's. Terraform reads the source first and refuses with the mismatch named, rather than quietly creating a plain empty database instead. `storage_gb` may be larger than the source's and is grown in place after the restore; it may not be smaller.
 
     Create-only, and it records what Terraform asked for rather than anything the platform reports — there is no API field that says how an instance came to exist. Removing it afterwards clears that record in a single in-place update that changes nothing on the platform, and the plan then stays clean. Importing a restored instance records nothing, and plans nothing. Changing it to a DIFFERENT source or instant REPLACES this resource, which destroys the database it created — treat it as you would `vpc_id`. Adding it to an instance that already exists is refused: an instance cannot be un-created into a restore. (see [below for nested schema](#nestedatt--restore_from))
+- `tags` (Map of String) Resource tags on the instance: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only and never applied to the database server. Changing them updates the instance in place and does not restart or reconfigure it. A restore target (`restore_from`) is created with these tags. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
@@ -166,6 +173,7 @@ resource "frostmoln_postgres_instance" "recovered" {
 - `private_ip` (String) The private IP address of the PostgreSQL instance.
 - `public_ip` (String) The public IP address, if assigned.
 - `status` (String) The current status of the PostgreSQL instance.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `tenant_id` (String) The tenant ID that owns this instance.
 - `updated_at` (String) The timestamp when the instance was last updated.
 

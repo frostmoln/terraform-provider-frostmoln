@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // RouteModel is the Terraform state model for an Application Gateway route.
@@ -36,6 +37,9 @@ type RouteModel struct {
 	Enabled     types.Bool   `tfsdk:"enabled"`
 	CreatedAt   types.String `tfsdk:"created_at"`
 	UpdatedAt   types.String `tfsdk:"updated_at"`
+	// Tags / TagsAll are the route's customer resource tags (internal/tftags).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 }
 
 type apiRoute struct {
@@ -68,6 +72,8 @@ type apiRoute struct {
 	Enabled     bool   `json:"enabled"`
 	CreatedAt   string `json:"createdAt"`
 	UpdatedAt   string `json:"updatedAt,omitempty"`
+	// Tags are the route's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 type apiCreateRouteRequest struct {
@@ -88,6 +94,9 @@ type apiCreateRouteRequest struct {
 	RequestHeadersSet    map[string]string `json:"requestHeadersSet,omitempty"`
 	RequestHeadersRemove []string          `json:"requestHeadersRemove,omitempty"`
 	ResponseHeadersSet   map[string]string `json:"responseHeadersSet,omitempty"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+	// merges the tenant's default tags in.
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
 func (m *RouteModel) toCreateRequest(ctx context.Context, diags *diag.Diagnostics) apiCreateRouteRequest {
@@ -124,6 +133,9 @@ func (m *RouteModel) toCreateRequest(ctx context.Context, diags *diag.Diagnostic
 // plans a REPLACEMENT of every header route, on every apply, forever. That is
 // why this provider has to ship before the platform stops returning values.
 func (m *RouteModel) fromAPI(ctx context.Context, rt *apiRoute, diags *diag.Diagnostics) {
+	// Tags: `tags` keeps the keys the prior value (plan or state) names, `tags_all`
+	// every customer key the platform holds.
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(rt.Tags), m.Tags, diags)
 	m.ID = types.StringValue(rt.ID)
 	m.ListenerID = types.StringValue(rt.ListenerID)
 	m.Name = types.StringValue(rt.Name)
@@ -288,4 +300,11 @@ func optionalString(s string) types.String {
 		return types.StringNull()
 	}
 	return types.StringValue(s)
+}
+
+// apiUpdateTagsRequest is the tags-only PATCH of the route: `tags` is the only field
+// it takes (any other field is refused), a row-only write that starts no work. A
+// POINTER so an empty map is sent as {} (clear).
+type apiUpdateTagsRequest struct {
+	Tags *map[string]string `json:"tags,omitempty"`
 }

@@ -5,6 +5,12 @@ resource "frostmoln_webserver_domain" "apex" {
   instance_id = frostmoln_nginx_instance.site.id
   domain_name = "example.com"
   is_default  = true
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 resource "frostmoln_webserver_domain" "www" {

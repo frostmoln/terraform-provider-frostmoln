@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -27,6 +28,9 @@ type MessagingInstanceModel struct {
 	ManagementPort  types.Int64  `tfsdk:"management_port"`
 	CreatedAt       types.String `tfsdk:"created_at"`
 	UpdatedAt       types.String `tfsdk:"updated_at"`
+	// Tags / TagsAll are the instance's customer resource tags (internal/tftags).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 
 	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
 	// absent block, which resolves to the resource's hardcoded defaults.
@@ -50,6 +54,8 @@ type apiMessagingInstance struct {
 	ManagementPort  int    `json:"managementPort,omitempty"`
 	CreatedAt       string `json:"createdAt"`
 	UpdatedAt       string `json:"updatedAt,omitempty"`
+	// Tags are the instance's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 // apiCreateMessagingInstanceRequest is the API request to create a managed messaging instance.
@@ -61,6 +67,9 @@ type apiCreateMessagingInstanceRequest struct {
 	VPCID           string `json:"vpcId"`
 	SubnetID        string `json:"subnetId"`
 	PersistenceMode string `json:"persistenceMode,omitempty"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+	// merges the tenant's default tags in.
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
 // apiUpdateMessagingInstanceRequest is the API request to update a managed
@@ -113,7 +122,10 @@ func (m *MessagingInstanceModel) toUpdateRequest(state *MessagingInstanceModel) 
 }
 
 // fromAPI populates the Terraform model from an API response.
-func (m *MessagingInstanceModel) fromAPI(_ context.Context, inst *apiMessagingInstance, _ *diag.Diagnostics) {
+func (m *MessagingInstanceModel) fromAPI(ctx context.Context, inst *apiMessagingInstance, diags *diag.Diagnostics) {
+	// Tags: `tags` keeps the keys the prior value (plan or state) names, `tags_all`
+	// every customer key the platform holds.
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(inst.Tags), m.Tags, diags)
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
 	m.Type = types.StringValue(inst.Type)
@@ -170,4 +182,11 @@ type apiInstanceRef struct {
 // apiMessagingInstanceList is the GET /messaging listing response.
 type apiMessagingInstanceList struct {
 	Instances []apiInstanceRef `json:"instances"`
+}
+
+// apiUpdateTagsRequest is the tags-only PUT of the instance: carrying `tags` alone it is
+// a row-only write — no command, no restart, no configuration change. A POINTER
+// so an empty map is sent as {} (clear).
+type apiUpdateTagsRequest struct {
+	Tags *map[string]string `json:"tags,omitempty"`
 }

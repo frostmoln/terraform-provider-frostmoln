@@ -19,6 +19,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -264,6 +265,8 @@ func (r *valkeyInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 			"timeouts": timeouts.Schema(),
 		},
 	}
+	resp.Schema.Attributes["tags"] = tftags.OfferTagsAttribute("Resource tags on the instance: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only and never applied to the cache server. Changing them updates the instance in place and does not restart or reconfigure it.")
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
 }
 
 func (r *valkeyInstanceResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -292,6 +295,11 @@ func (r *valkeyInstanceResource) Create(ctx context.Context, req resource.Create
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	defaults := r.client.DefaultTags()
+	apiReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	// The customer's timeouts block, falling back to this resource's
 	// defaults (see resolveBudgets above for what each default is now).
@@ -305,6 +313,9 @@ func (r *valkeyInstanceResource) Create(ctx context.Context, req resource.Create
 	subject := fmt.Sprintf("the Valkey instance %q", plan.Name.ValueString())
 
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/caches"), apiReq)
+	if err == nil {
+		tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create Valkey instance", err.Error())
 		return
@@ -527,6 +538,7 @@ func (r *valkeyInstanceResource) Read(ctx context.Context, req resource.ReadRequ
 	}
 
 	state.fromAPI(ctx, inst, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -590,6 +602,40 @@ func (r *valkeyInstanceResource) Update(ctx context.Context, req resource.Update
 			return
 		}
 	}
+
+	// TAGS: a tags-only PUT of the instance (a row-only write: no command, no
+	// restart), sent only when the platform's set would change — computed against the
+	// tags the instance holds right now, so a key added outside Terraform is kept.
+	tagsPath := r.client.TenantPath("/caches/" + id)
+	defaults := r.client.DefaultTags()
+	tags, tagsErr := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := r.client.Get(ctx, tagsPath, nil)
+			if err != nil {
+				return nil, err
+			}
+			current, err := client.ParseResponse[apiValkeyInstance](cur)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(current.Tags), nil
+		}, &resp.Diagnostics)
+	if tagsErr != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+tagsErr.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if tags != nil {
+		if _, err := r.client.Put(ctx, tagsPath, apiUpdateTagsRequest{Tags: tags}); err != nil {
+			resp.Diagnostics.AddError("Failed to update Valkey instance tags", err.Error())
+			return
+		}
+	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// In-place field updates (name/persistence/eviction) via PUT — skip an empty PUT when only
 	// storage/flavor changed.
@@ -671,6 +717,7 @@ func (r *valkeyInstanceResource) Delete(ctx context.Context, req resource.Delete
 
 func (r *valkeyInstanceResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }
 
 // cacheConfigAttr is one setting the platform renders into a Valkey instance
@@ -754,6 +801,13 @@ func warnCacheConfigRefusals(diags *diag.Diagnostics, refused []cacheConfigAttr)
 // plan) skip comparison entirely — on create the values ARE rendered, and a
 // destroy must stay unblocked (see warnCacheConfigRefusals above).
 func (r *valkeyInstanceResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// tags_all: a default_tags change, or a managed key's drift, plans an in-place
+	// update (it handles the destroy plan itself).
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
 		return // Create or destroy: nothing to compare.
 	}

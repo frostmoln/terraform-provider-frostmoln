@@ -37,6 +37,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 var _ datasource.DataSource = &postgresInstanceDataSource{}
@@ -79,6 +80,7 @@ type postgresInstanceModel struct {
 	AdminUsername       types.String `tfsdk:"admin_username"`
 	CreatedAt           types.String `tfsdk:"created_at"`
 	UpdatedAt           types.String `tfsdk:"updated_at"`
+	Tags                types.Map    `tfsdk:"tags"`
 	TenantID            types.String `tfsdk:"tenant_id"`
 	// Point-in-time recovery. The same five attributes the resource exposes,
 	// so a data-source read can be fed straight into a check block or an
@@ -116,7 +118,9 @@ type apiDatabaseInstance struct {
 	AdminUsername       string `json:"adminUsername,omitempty"`
 	CreatedAt           string `json:"createdAt"`
 	UpdatedAt           string `json:"updatedAt,omitempty"`
-	TenantID            string `json:"tenantId,omitempty"`
+	// Tags are the resource's customer resource tags ({} when untagged).
+	Tags     map[string]string `json:"tags"`
+	TenantID string            `json:"tenantId,omitempty"`
 	// Point-in-time recovery. The booleans are POINTERS because absent is not
 	// false: a database service older than the release that added the feature
 	// omits them, and reporting that as "recovery: off" would be an assertion
@@ -298,6 +302,12 @@ func (d *postgresInstanceDataSource) Schema(_ context.Context, _ datasource.Sche
 				Computed: true,
 			},
 		},
+	}
+	resp.Schema.Attributes["tags"] = schema.MapAttribute{
+		Description: "Every resource tag on the PostgreSQL instance — the same set as the resource's `tags_all`: your " +
+			"own key/value metadata, never applied to the service itself. An empty map when it has none.",
+		Computed:    true,
+		ElementType: types.StringType,
 	}
 }
 
@@ -592,6 +602,9 @@ func setInstanceState(state *postgresInstanceModel, inst *apiDatabaseInstance) {
 	state.SecurityGroupID = stringFromWire(inst.SecurityGroupID)
 	state.AdminUsername = stringFromWire(inst.AdminUsername)
 	state.CreatedAt = stringFromWire(inst.CreatedAt)
+	// The platform's reserved namespace is filtered as on the resource read-back,
+	// so `tags` means the same thing on every surface.
+	state.Tags = tftags.OfferTagsValue(inst.Tags)
 	state.UpdatedAt = stringFromWire(inst.UpdatedAt)
 	state.TenantID = stringFromWire(inst.TenantID)
 	state.PITREnabled = boolFromWire(inst.PITREnabled)

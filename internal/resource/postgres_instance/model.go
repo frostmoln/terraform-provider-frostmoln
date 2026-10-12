@@ -8,6 +8,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
+
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -91,6 +93,9 @@ type PostgresInstanceModel struct {
 	CreatedAt     types.String `tfsdk:"created_at"`
 	UpdatedAt     types.String `tfsdk:"updated_at"`
 	TenantID      types.String `tfsdk:"tenant_id"`
+	// Tags / TagsAll are the instance's customer resource tags (internal/tftags).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 	// Timeouts is the customer-tunable `timeouts` block. fromAPI never touches
 	// it: the pointer the practitioner configured rides through every
 	// model copy (plan -> early -> state) unchanged, which is what keeps the
@@ -125,6 +130,9 @@ type apiPostgresInstance struct {
 	CreatedAt           string `json:"createdAt"`
 	UpdatedAt           string `json:"updatedAt,omitempty"`
 	TenantID            string `json:"tenantId,omitempty"`
+	// Tags are the instance's customer resource tags; the backend always sends an
+	// object ({} when untagged).
+	Tags map[string]string `json:"tags"`
 
 	// PITR. The two booleans are POINTERS because absent and false are
 	// different answers here, and reading one as the other is the whole bug
@@ -158,6 +166,9 @@ type apiCreatePostgresInstanceRequest struct {
 	BackupRetentionDays *int   `json:"backupRetentionDays,omitempty"`
 	ParameterGroupID    string `json:"parameterGroupId,omitempty"`
 	PITREnabled         *bool  `json:"pitrEnabled,omitempty"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+	// merges the tenant's default tags in.
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
 // apiRestorePostgresInstanceRequest is the body for
@@ -169,6 +180,16 @@ type apiRestorePostgresInstanceRequest struct {
 	TargetName    string `json:"targetName"`
 	BackupID      string `json:"backupId,omitempty"`
 	PITRTimestamp string `json:"pitrTimestamp,omitempty"`
+	// Tags are the restore TARGET's tags (default_tags ∪ tags); the API merges the
+	// tenant's default tags in.
+	Tags map[string]string `json:"tags,omitempty"`
+}
+
+// apiUpdateTagsRequest is the tags-only PUT .../databases/{id}: an instance PUT
+// carrying `tags` alone is a row-only write — no command, no transition guard.
+// Tags is a POINTER so an empty map is sent as {} (clear).
+type apiUpdateTagsRequest struct {
+	Tags *map[string]string `json:"tags,omitempty"`
 }
 
 // apiUpdatePostgresInstanceRequest is the API request to update a managed
@@ -315,7 +336,10 @@ func (m *PostgresInstanceModel) toUpdateRequest(state *PostgresInstanceModel) ap
 }
 
 // fromAPI populates the Terraform model from an API response.
-func (m *PostgresInstanceModel) fromAPI(_ context.Context, inst *apiPostgresInstance, _ *diag.Diagnostics) {
+func (m *PostgresInstanceModel) fromAPI(ctx context.Context, inst *apiPostgresInstance, diags *diag.Diagnostics) {
+	// Tags: `tags` keeps the keys the prior value (plan or state) names, `tags_all`
+	// every customer key the platform holds.
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(inst.Tags), m.Tags, diags)
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
 	m.Version = types.StringValue(inst.PostgresVersion)
@@ -479,9 +503,10 @@ func decodeRestoreFrom(o types.Object) *restoreFrom {
 // toRestoreRequest builds the POST body. The caller has already established
 // that exactly one of the two selectors is set (schema validators, re-checked
 // in Create).
-func (rf *restoreFrom) toRestoreRequest(targetName string) apiRestorePostgresInstanceRequest {
+func (rf *restoreFrom) toRestoreRequest(targetName string, tags map[string]string) apiRestorePostgresInstanceRequest {
 	return apiRestorePostgresInstanceRequest{
 		TargetName:    targetName,
+		Tags:          tags,
 		BackupID:      rf.BackupID,
 		PITRTimestamp: rf.PointInTime,
 	}

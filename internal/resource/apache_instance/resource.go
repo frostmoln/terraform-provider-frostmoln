@@ -25,6 +25,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -411,6 +412,13 @@ func (r *apacheInstanceResource) pollPublicExposed(ctx context.Context, id strin
 // public_ip attribute's UseStateForUnknown would pin the plan to the stale value
 // and Terraform would reject the post-apply value as an inconsistent result.
 func (r *apacheInstanceResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// tags_all: a default_tags change, or a managed key's drift, plans an in-place
+	// update (it handles the destroy plan itself).
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	// Only the in-place update case matters (create marks computed attrs unknown
 	// already; destroy has no plan).
 	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
@@ -610,6 +618,8 @@ func (r *apacheInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 			"timeouts": timeouts.Schema(),
 		},
 	}
+	resp.Schema.Attributes["tags"] = tftags.OfferTagsAttribute("Resource tags on the instance: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only and never applied to the web server. Changing them updates the instance in place and does not restart or reconfigure it.")
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
 }
 
 func (r *apacheInstanceResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -642,6 +652,11 @@ func (r *apacheInstanceResource) Create(ctx context.Context, req resource.Create
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	defaults := r.client.DefaultTags()
+	apiReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	// The customer's timeouts block, falling back to this resource's
 	// defaults (see resolveBudgets above for what each default is now).
@@ -655,6 +670,9 @@ func (r *apacheInstanceResource) Create(ctx context.Context, req resource.Create
 	subject := fmt.Sprintf("the Apache instance %q", plan.Name.ValueString())
 
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/webservers"), apiReq)
+	if err == nil {
+		tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create Apache instance", err.Error())
 		return
@@ -893,6 +911,7 @@ func (r *apacheInstanceResource) Read(ctx context.Context, req resource.ReadRequ
 	}
 
 	state.fromAPI(ctx, inst, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -943,6 +962,40 @@ func (r *apacheInstanceResource) Update(ctx context.Context, req resource.Update
 			return
 		}
 	}
+
+	// TAGS: a tags-only PUT of the instance (a row-only write: no command, no
+	// restart), sent only when the platform's set would change — computed against the
+	// tags the instance holds right now, so a key added outside Terraform is kept.
+	tagsPath := r.client.TenantPath("/webservers/" + id)
+	defaults := r.client.DefaultTags()
+	tags, tagsErr := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := r.client.Get(ctx, tagsPath, nil)
+			if err != nil {
+				return nil, err
+			}
+			current, err := client.ParseResponse[apiWebserverInstance](cur)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(current.Tags), nil
+		}, &resp.Diagnostics)
+	if tagsErr != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+tagsErr.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if tags != nil {
+		if _, err := r.client.Put(ctx, tagsPath, apiUpdateTagsRequest{Tags: tags}); err != nil {
+			resp.Diagnostics.AddError("Failed to update Apache instance tags", err.Error())
+			return
+		}
+	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// In-place field updates (name, TLS) via PUT. Skip the call entirely when nothing
 	// PUT-able changed (e.g. a storage-only resize). Type config is NOT part of this
@@ -1057,6 +1110,7 @@ func (r *apacheInstanceResource) Delete(ctx context.Context, req resource.Delete
 
 func (r *apacheInstanceResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }
 
 // UpgradeState migrates v0 state (HCL attribute `flavor`) to v1 (`flavor_id`).

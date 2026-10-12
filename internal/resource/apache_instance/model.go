@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -32,6 +33,9 @@ type ApacheInstanceModel struct {
 	UpdatedAt       types.String `tfsdk:"updated_at"`
 	TenantID        types.String `tfsdk:"tenant_id"`
 	SecurityGroupID types.String `tfsdk:"security_group_id"`
+	// Tags / TagsAll are the instance's customer resource tags (internal/tftags).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 	// Timeouts is the customer-tunable `timeouts` block. fromAPI never touches
 	// it: the pointer the practitioner configured rides through every model
 	// copy unchanged, which keeps the block stable in state across refreshes.
@@ -72,6 +76,8 @@ type apiWebserverInstance struct {
 	// attaches to its port. Surfaced read-only: the customer may inspect it, but
 	// network refuses every customer-plane write against a platform-managed group.
 	SecurityGroupID string `json:"securityGroupId,omitempty"`
+	// Tags are the instance's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
 }
 
 // apiCreateWebserverInstanceRequest is the API request to create a managed
@@ -92,6 +98,9 @@ type apiCreateWebserverInstanceRequest struct {
 	// the create saga associates a Public IP and surfaces publicIp. Post-create,
 	// exposure toggles via the POST /expose and /unexpose actions, never here.
 	Public *bool `json:"public,omitempty"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+	// merges the tenant's default tags in.
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
 // apiUpdateWebserverInstanceRequest is the API request to update a managed
@@ -213,6 +222,9 @@ func (m *ApacheInstanceModel) typeConfigChange(ctx context.Context, state *Apach
 
 // fromAPI populates the Terraform model from an API response.
 func (m *ApacheInstanceModel) fromAPI(ctx context.Context, inst *apiWebserverInstance, diags *diag.Diagnostics) {
+	// Tags: `tags` keeps the keys the prior value (plan or state) names, `tags_all`
+	// every customer key the platform holds.
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(inst.Tags), m.Tags, diags)
 	m.ID = types.StringValue(inst.ID)
 	m.Name = types.StringValue(inst.Name)
 	m.Version = types.StringValue(inst.TypeVersion)
@@ -297,4 +309,11 @@ type apiInstanceRef struct {
 // webserver types; the sweep filters server-side items by type client-side).
 type apiWebserverInstanceList struct {
 	Instances []apiInstanceRef `json:"instances"`
+}
+
+// apiUpdateTagsRequest is the tags-only PUT of the instance: carrying `tags` alone it is
+// a row-only write — no command, no restart, no configuration change. A POINTER
+// so an empty map is sent as {} (clear).
+type apiUpdateTagsRequest struct {
+	Tags *map[string]string `json:"tags,omitempty"`
 }

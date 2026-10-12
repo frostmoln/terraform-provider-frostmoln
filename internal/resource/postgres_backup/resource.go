@@ -16,12 +16,14 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
 	_ resource.Resource                = &postgresBackupResource{}
 	_ resource.ResourceWithImportState = &postgresBackupResource{}
+	_ resource.ResourceWithModifyPlan  = &postgresBackupResource{}
 )
 
 // NewResource returns a new postgres_backup resource factory.
@@ -64,7 +66,7 @@ func (r *postgresBackupResource) getPollTimeout() time.Duration {
 // Routing the defaults through the accessor keeps the test-injection seam
 // intact: a test that shrinks pollTimeout shrinks every wait that does not
 // carry an explicit timeouts override, exactly as before. Only the create
-// wait uses a budget — update is refused (backups are immutable) and delete
+// wait uses a budget — an update writes tags only (no wait) and delete
 // is a plain DELETE with no wait.
 func (r *postgresBackupResource) resolveBudgets(m *timeouts.Model) timeouts.Budgets {
 	budgets, err := m.Resolve(timeouts.Uniform(r.getPollTimeout()))
@@ -82,7 +84,7 @@ func (r *postgresBackupResource) Metadata(_ context.Context, req resource.Metada
 
 func (r *postgresBackupResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages a backup of a managed PostgreSQL instance. Backups are immutable after creation." + "\n\n" + scopedecl.Summary("frostmoln_postgres_backup"),
+		Description: "Manages a backup of a managed PostgreSQL instance. Every attribute except `tags` (and `timeouts`) is fixed at creation; changing one replaces the backup." + "\n\n" + scopedecl.Summary("frostmoln_postgres_backup"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the backup.",
@@ -150,7 +152,7 @@ func (r *postgresBackupResource) Schema(_ context.Context, _ resource.SchemaRequ
 			// for this workflow is 2h, agent job TTL + presigned-URL TTL).
 			// Create is the
 			// only verb with a wait to bound — the poll to "completed" —
-			// while update is refused (backups are immutable after creation)
+			// while an update writes tags only, with no wait,
 			// and delete is a plain DELETE answered synchronously, so
 			// budgets.Update / budgets.Delete go unused. A timeouts change
 			// is an in-place no-op on real infrastructure — verified by the
@@ -158,6 +160,8 @@ func (r *postgresBackupResource) Schema(_ context.Context, _ resource.SchemaRequ
 			"timeouts": timeouts.Schema(),
 		},
 	}
+	resp.Schema.Attributes["tags"] = tftags.OfferTagsAttribute("Resource tags on the backup: your own key/value metadata for search and filtering, stored by the platform only. A backup's tags are its own, never copied from the instance. Changing them updates the backup in place.")
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
 }
 
 func (r *postgresBackupResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -193,6 +197,11 @@ func (r *postgresBackupResource) Create(ctx context.Context, req resource.Create
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	defaults := r.client.DefaultTags()
+	apiReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	instanceID := plan.InstanceID.ValueString()
 
@@ -203,6 +212,9 @@ func (r *postgresBackupResource) Create(ctx context.Context, req resource.Create
 	budgets := r.resolveBudgets(plan.Timeouts)
 
 	apiResp, err := r.client.Post(ctx, r.backupPath(instanceID, ""), apiReq)
+	if err == nil {
+		tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create PostgreSQL backup", err.Error())
 		return
@@ -314,14 +326,61 @@ func (r *postgresBackupResource) Read(ctx context.Context, req resource.ReadRequ
 	}
 
 	state.fromAPI(ctx, backup, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-func (r *postgresBackupResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError(
-		"Update Not Supported",
-		"PostgreSQL backups are immutable and cannot be updated. All attribute changes require resource replacement.",
-	)
+// Update changes the backup's tags with a tags-only PATCH, sent only when the
+// platform's set would change (computed against the tags the backup holds right
+// now, so a key added outside Terraform is kept). It starts no work on the backup.
+func (r *postgresBackupResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state PostgresBackupModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	memberPath := r.backupPath(state.InstanceID.ValueString(), state.ID.ValueString())
+	get := func(ctx context.Context) (*apiPostgresBackup, error) {
+		apiResp, err := r.client.Get(ctx, memberPath, nil)
+		if err != nil {
+			return nil, err
+		}
+		return client.ParseResponse[apiPostgresBackup](apiResp)
+	}
+	defaults := r.client.DefaultTags()
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := get(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(cur.Tags), nil
+		}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if tags != nil {
+		if _, err := r.client.Patch(ctx, memberPath, apiUpdateTagsRequest{Tags: tags}); err != nil {
+			resp.Diagnostics.AddError("Failed to update PostgreSQL backup tags", err.Error())
+			return
+		}
+	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+
+	current, err := get(ctx)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to read PostgreSQL backup after update", err.Error())
+		return
+	}
+	plan.fromAPI(ctx, current, &resp.Diagnostics)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 func (r *postgresBackupResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -342,4 +401,12 @@ func (r *postgresBackupResource) Delete(ctx context.Context, req resource.Delete
 
 func (r *postgresBackupResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
+}
+
+// ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,
+// plans an in-place update of the backup's tags.
+func (r *postgresBackupResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
 }

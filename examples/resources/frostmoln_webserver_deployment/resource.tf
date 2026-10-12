@@ -12,4 +12,10 @@
 resource "frostmoln_webserver_deployment" "site" {
   instance_id    = frostmoln_nginx_instance.site.id
   source_archive = "${path.module}/site.tar.gz"
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }

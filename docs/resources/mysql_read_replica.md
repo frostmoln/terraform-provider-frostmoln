@@ -3,21 +3,24 @@
 page_title: "frostmoln_mysql_read_replica Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a read replica of a managed MySQL instance. Read replicas are immutable after creation.
+  Manages a read replica of a managed MySQL instance. Every attribute except tags (and timeouts) is fixed at creation; changing one replaces the replica.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — flavor_id, instance_id, name: a replica's source, name and flavor are fixed at create — a change re-creates the replica.
-  Observed, not enacted — replication_lag_bytes: the live replication position as the platform reports it — it moves continuously.
+  Observed, not enacted — replication_lag_bytes: the live replication position as the platform reports it — it moves continuously. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_mysql_read_replica (Resource)
 
-Manages a read replica of a managed MySQL instance. Read replicas are immutable after creation.
+Manages a read replica of a managed MySQL instance. Every attribute except `tags` (and `timeouts`) is fixed at creation; changing one replaces the replica.
 
 **Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
 
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
 **Create-immutable** — `flavor_id`, `instance_id`, `name`: a replica's source, name and flavor are fixed at create — a change re-creates the replica.
 
-**Observed, not enacted** — `replication_lag_bytes`: the live replication position as the platform reports it — it moves continuously.
+**Observed, not enacted** — `replication_lag_bytes`: the live replication position as the platform reports it — it moves continuously. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -25,6 +28,12 @@ Manages a read replica of a managed MySQL instance. Read replicas are immutable 
 resource "frostmoln_mysql_read_replica" "reader" {
   instance_id = frostmoln_mysql_instance.main.id
   name        = "mysql-reader-1"
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 output "mysql_reader_endpoint" {
@@ -43,6 +52,7 @@ output "mysql_reader_endpoint" {
 ### Optional
 
 - `flavor_id` (String) Flavor ID sizing the replica (e.g. db.gp1.small). Optional; when omitted the replica inherits the primary's flavor, which is returned as the computed value. Immutable — changing it replaces the replica.
+- `tags` (Map of String) Resource tags on the read replica itself: your own key/value metadata for search and filtering, stored by the platform only. A replica's tags are its own: they are not copied from the primary instance, and the primary's are not changed. Changing them updates the replica in place and starts no work on it. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
@@ -52,6 +62,7 @@ output "mysql_reader_endpoint" {
 - `private_ip` (String) The private IP address of the read replica.
 - `replication_lag_bytes` (Number) The replication lag in bytes between primary and replica.
 - `status` (String) The current status of the read replica.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 
 <a id="nestedblock--timeouts"></a>
 ### Nested Schema for `timeouts`

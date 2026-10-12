@@ -8,7 +8,9 @@ description: |-
   The address must lie inside the gateway's own VPC range. Anything else is refused — without that check the gateway would be an open proxy.Creating a backend does not open the path to it. The platform never edits your security groups implicitly. Use frostmoln_appgw_backend_authorization to add the one ingress rule, which is audited.
   The backend API has no update operation, so every attribute forces a new resource.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — address, gateway_id, pool_id, port, source_id, source_kind, weight: the API has no update route for a backend — a change destroys and re-creates it.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_appgw_backend (Resource)
@@ -24,7 +26,11 @@ The backend API has no update operation, so every attribute forces a new resourc
 
 **Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
 
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
 **Create-immutable** — `address`, `gateway_id`, `pool_id`, `port`, `source_id`, `source_kind`, `weight`: the API has no update route for a backend — a change destroys and re-creates it.
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -36,6 +42,12 @@ resource "frostmoln_appgw_backend" "web_1" {
   address    = "10.0.1.10"
   port       = 8080
   weight     = 1
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
 }
 
 # By instance: the platform resolves the VPC address itself, so `address` must
@@ -68,6 +80,7 @@ resource "frostmoln_appgw_backend" "web_2" {
 - `source_kind` (String) How the destination is named. `address` is the only value available: `address` is an IP inside your VPC.
 
 `instance` and `load_balancer` are reserved for naming a backend by an instance or load balancer id and letting the platform resolve its address. The platform **refuses** them today, so they are not offered here rather than being accepted and failing partway through an apply that has already built the gateway.
+- `tags` (Map of String) Resource tags on the backend: your own key/value metadata for search and filtering, stored by the platform only and never pushed to the appliance. Changing them updates the backend in place (every other attribute replaces it): no config apply, no `config_generation` change. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `weight` (Number) Relative share of traffic among the pool's backends. Omit to use the platform default.
 
 ### Read-Only
@@ -79,4 +92,5 @@ resource "frostmoln_appgw_backend" "web_2" {
 
 ~> **It reads `unknown` for every backend today.** The ingest that reports observations is separate work that has not shipped, so nothing writes `status` or `status_observed_at` yet and every backend reads `unknown` whatever its real state. Do not build a health display, an alert or a `lifecycle` condition on this field until that lands.
 - `status_observed_at` (String) When `status` was last observed, or null if it never has been. Null for every backend today — see `status`.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `updated_at` (String) The last update timestamp.

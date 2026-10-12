@@ -21,6 +21,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/unenacted"
 )
@@ -29,6 +30,7 @@ var (
 	_ resource.Resource                 = &mysqlInstanceResource{}
 	_ resource.ResourceWithImportState  = &mysqlInstanceResource{}
 	_ resource.ResourceWithUpgradeState = &mysqlInstanceResource{}
+	_ resource.ResourceWithModifyPlan   = &mysqlInstanceResource{}
 )
 
 // NewResource returns a new mysql_instance resource factory.
@@ -403,6 +405,18 @@ func (r *mysqlInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 			"timeouts": timeouts.Schema(),
 		},
 	}
+	resp.Schema.Attributes["tags"] = tftags.OfferTagsAttribute("Resource tags on the instance: your own key/value " +
+		"metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the " +
+		"platform only and never applied to the database server. Changing them updates the instance in place " +
+		"and does not restart or reconfigure it.")
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
+}
+
+// ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,
+// plans an in-place update of the instance's tags.
+func (r *mysqlInstanceResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
 }
 
 func (r *mysqlInstanceResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -439,6 +453,8 @@ func (r *mysqlInstanceResource) Create(ctx context.Context, req resource.CreateR
 	}
 
 	apiReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
+	defaults := r.client.DefaultTags()
+	apiReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -452,6 +468,7 @@ func (r *mysqlInstanceResource) Create(ctx context.Context, req resource.CreateR
 		resp.Diagnostics.AddError("Failed to create MySQL instance", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// The backend may answer either synchronously (201 with the instance body)
 	// or asynchronously (202 with an Operation). Tolerate both: resolve the
@@ -618,6 +635,7 @@ func (r *mysqlInstanceResource) Read(ctx context.Context, req resource.ReadReque
 	}
 
 	state.fromAPI(ctx, inst, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -683,6 +701,39 @@ func (r *mysqlInstanceResource) Update(ctx context.Context, req resource.UpdateR
 			return
 		}
 	}
+
+	// TAGS: a tags-only PUT .../databases/{id} (a row-only write: no command, no
+	// restart), sent only when the platform's set would change — computed against the
+	// tags the instance holds right now, so a key added outside Terraform is kept.
+	defaults := r.client.DefaultTags()
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := r.client.Get(ctx, r.client.TenantPath("/databases/"+id), nil)
+			if err != nil {
+				return nil, err
+			}
+			inst, err := client.ParseResponse[apiMysqlInstance](cur)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(inst.Tags), nil
+		}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if tags != nil {
+		if _, err := r.client.Put(ctx, r.client.TenantPath("/databases/"+id), apiUpdateTagsRequest{Tags: tags}); err != nil {
+			resp.Diagnostics.AddError("Failed to update MySQL instance tags", err.Error())
+			return
+		}
+	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// In-place field updates (name, backups, parameter group) via PUT. Skip the
 	// call entirely when nothing PUT-able changed (e.g. a storage-only resize).
@@ -772,6 +823,7 @@ func (r *mysqlInstanceResource) Delete(ctx context.Context, req resource.DeleteR
 
 func (r *mysqlInstanceResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }
 
 // UpgradeState migrates prior state across the HCL-surface rename:
