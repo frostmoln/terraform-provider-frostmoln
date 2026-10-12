@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.0] - 2026-10-12
+
+### 🚀 Features
+
+- Tags on API keys, IAM, WIF bindings, SSH keys, images, snapshots, S3 credentials (#661)
+- Tags on container registry, caches and credentials (#663)
+
 ## [0.83.0] - 2026-10-12
 
 ### 🚀 Features
