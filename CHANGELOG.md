@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.0] - 2026-10-12
+
+### 🚀 Features
+
+- Tags and tags_all on managed database, cache, messaging, webserver and appgw resources (#657)
+
 ## [0.81.0] - 2026-10-11
 
 ### 🚀 Features
