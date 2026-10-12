@@ -8,6 +8,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // ContainerRegistryCredentialModel is the Terraform state model for a registry
@@ -24,6 +26,9 @@ type ContainerRegistryCredentialModel struct {
 	Endpoint   types.String `tfsdk:"endpoint"`
 	Namespaces types.List   `tfsdk:"namespaces"`
 	CreatedAt  types.String `tfsdk:"created_at"`
+	// Tags / TagsAll are the credential's customer resource tags (internal/tftags).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 }
 
 // apiCredential is the API representation of a registry credential.
@@ -43,12 +48,41 @@ type apiCredential struct {
 	Namespaces []string `json:"namespaces"`
 	CreatedAt  string   `json:"createdAt"`
 	Secret     string   `json:"secret,omitempty"`
+	// Tags are the credential's customer resource tags ({} when untagged). nil
+	// together with TagsUnavailable when the registry could not read its tag
+	// store; the credential itself is then still real and current.
+	Tags            map[string]string `json:"tags"`
+	TagsUnavailable bool              `json:"tagsUnavailable,omitempty"`
 }
 
 // apiCreateCredentialRequest is the API request to mint a credential.
 type apiCreateCredentialRequest struct {
 	Name       string `json:"name"`
 	Capability string `json:"capability"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+	// merges the tenant's default tags in.
+	Tags map[string]string `json:"tags,omitempty"`
+}
+
+// apiUpdateTagsRequest is the credential's tags-only PATCH: a row-only write
+// that never touches the credential's robot account, so the secret, the
+// capability and the namespaces it reaches are all unchanged. A POINTER so an
+// empty map is sent as {} (clear) — the route refuses a body without `tags`.
+type apiUpdateTagsRequest struct {
+	Tags *map[string]string `json:"tags"`
+}
+
+// readTags renders the response's tags into the model: `tags` keeps the keys
+// the prior value (plan or state) names, `tags_all` every customer key the
+// registry holds. When the registry could not read its tag store it keeps the
+// prior values and warns; sent is what a create or update wrote, the fallback
+// for a tags_all not yet known.
+func (m *ContainerRegistryCredentialModel) readTags(ctx context.Context, cred *apiCredential, sent map[string]string, diags *diag.Diagnostics) {
+	if cred.TagsUnavailable {
+		m.Tags, m.TagsAll = tftags.KeepOfferTagsWhenUnavailable(ctx, "the container registry credential", m.Tags, m.TagsAll, sent, diags)
+		return
+	}
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(cred.Tags), m.Tags, diags)
 }
 
 // fromAPI populates the Terraform model from an API response.

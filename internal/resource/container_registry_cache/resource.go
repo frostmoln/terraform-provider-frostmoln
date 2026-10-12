@@ -20,12 +20,14 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/writeonly"
 )
 
 var (
 	_ resource.Resource                = &cacheResource{}
 	_ resource.ResourceWithImportState = &cacheResource{}
+	_ resource.ResourceWithModifyPlan  = &cacheResource{}
 )
 
 // cachesPath is the tenant-scoped collection. It stays TWO-SEGMENT
@@ -68,8 +70,8 @@ func (r *cacheResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"CACHED BYTES COUNT AGAINST YOUR STORAGE ALLOWANCE. A cache is your storage: one quota, " +
 			"one meter, shared with your repository namespace. It fills on PULL, so it can consume " +
 			"the allowance with no push from you.\n\n" +
-			"THERE IS NO UPDATE ROUTE. Every argument here is replace-only, including `password`: " +
-			"changing credentials means destroying the cache and creating it again. DESTROYING A " +
+			"Every argument except `tags` is replace-only, including `password`: changing credentials " +
+			"means destroying the cache and creating it again. Only `tags` update in place. DESTROYING A " +
 			"CACHE DELETES ITS CACHED IMAGES, and does not ask — every byte in it is a copy of " +
 			"something still at the upstream, so a later pull simply re-fetches, but your stored-bytes " +
 			"figure falls as the content goes.\n\n" +
@@ -134,7 +136,7 @@ func (r *cacheResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"password": schema.StringAttribute{
 				Description: "Your own password or access token at the upstream registry. Required for " +
 					"upstreams whose catalog entry says `requires_credentials`, together with `username`. " +
-					"Never echoed back by the API and there is no update route, so " +
+					"Never echoed back by the API and the upstream credentials cannot be changed in place, so " +
 					"changing it REPLACES the cache and deletes what it had cached. NOT VALIDATED at " +
 					"creation — a wrong password surfaces as a failed pull, never as an error from " +
 					"`terraform apply`. " + docs.StateSecretNote +
@@ -160,7 +162,7 @@ func (r *cacheResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 					"write-only value, so it cannot detect a change to it: changing " +
 					"`password_wo_version` is what makes the next apply send the current value, and it " +
 					"does so by REPLACING the cache — deleting what it had cached — because the cache " +
-					"API has no update route. Editing the password without touching the version does " +
+					"API cannot change the upstream credentials in place. Editing the password without touching the version does " +
 					"nothing at all.",
 				Optional:  true,
 				Sensitive: true,
@@ -181,7 +183,7 @@ func (r *cacheResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Description: "Change tracker for `password_wo`, required whenever that attribute is set. " +
 					"Changing this value REPLACES the cache — deleting every image it had cached — and " +
 					"sends the current `password_wo`, which is the same lifecycle a change to " +
-					"`password` has, since the cache API has no update route. Leaving it alone leaves " +
+					"`password` has, since the cache API cannot change them in place. Leaving it alone leaves " +
 					"the stored credential untouched however much the write-only value changes. Its " +
 					"content is arbitrary — a counter or a date is typical — and unlike the password it " +
 					"IS stored in state, so do not derive it from the password or from anything in it: " +
@@ -246,6 +248,11 @@ func (r *cacheResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			},
 		},
 	}
+	resp.Schema.Attributes["tags"] = tftags.OfferTagsAttribute("Resource tags on the cache: your own key/value " +
+		"metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform " +
+		"only. They are NOT the image tags of what the cache mirrors. Changing them updates the cache in place: its " +
+		"cached images and stored upstream credentials are untouched.")
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
 }
 
 func (r *cacheResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -304,15 +311,22 @@ func (r *cacheResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
+	defaults := r.client.DefaultTags()
+	sent := tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath(cachesPath), apiCreateCacheRequest{
 		Upstream: upstream,
 		Username: username,
 		Password: password,
+		Tags:     sent,
 	})
 	if err != nil {
 		addCreateRefusal(&resp.Diagnostics, upstream, err)
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	cache, err := client.ParseResponse[apiCache](apiResp)
 	if err != nil {
@@ -355,6 +369,7 @@ func (r *cacheResource) Create(ctx context.Context, req resource.CreateRequest, 
 	// Username and Password are carried across from the plan untouched: fromAPI
 	// never writes them, because no response contains them.
 	plan.fromAPI(r.client.TenantID(), cache)
+	plan.readTags(ctx, cache, sent, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -409,18 +424,114 @@ func (r *cacheResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	// replace on the next refresh — destroying the cache and its images with no
 	// configuration change at all.
 	state.fromAPI(r.client.TenantID(), found)
+	state.readTags(ctx, found, nil, &resp.Diagnostics)
+	if !found.TagsUnavailable {
+		tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-// Update cannot be reached: every configurable attribute is RequiresReplace,
-// because the API has no update route for a cache.
-func (r *cacheResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError(
-		"Update Not Supported",
-		"A container registry cache is immutable: there is no update route, so changing the upstream "+
-			"or the upstream credentials replaces the cache and deletes what it had cached. "+
-			"Reaching this is a provider bug; please report it.",
-	)
+// Update writes the tags — the only attribute that changes in place; every
+// other argument is RequiresReplace, because the upstream and its credentials
+// are fixed at create. The write is a tags-only PATCH (`?upstream=<key>`, a
+// row-only write: the namespace, its cached images and the stored upstream
+// credentials are untouched), sent only when the platform's set would change,
+// and computed against the tags the cache holds right now so a key added
+// outside Terraform is kept.
+func (r *cacheResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state ContainerRegistryCacheModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	upstream := state.Upstream.ValueString()
+	if upstream == "" {
+		resp.Diagnostics.AddError(
+			"Container registry cache is missing its upstream",
+			"Terraform cannot address this cache. Find it with `fm registry cache list` and re-import "+
+				"it with `terraform import <address> <upstream>`.",
+		)
+		return
+	}
+	// The listing is the only read surface; a cache missing from an answered
+	// listing is gone, which an update must not paper over.
+	get := func(ctx context.Context) (*apiCache, error) {
+		list, err := r.list(ctx)
+		if err != nil {
+			return nil, err
+		}
+		found := findCache(list.Data, upstream)
+		if found == nil {
+			return nil, fmt.Errorf("the %q cache is no longer in the registry's listing", upstream)
+		}
+		return found, nil
+	}
+
+	defaults := r.client.DefaultTags()
+	tags, tagsErr := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			current, err := get(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if current.TagsUnavailable {
+				return nil, tftags.ErrOfferTagsUnavailable
+			}
+			return tftags.OfferCustomerTags(current.Tags), nil
+		}, &resp.Diagnostics)
+	if tagsErr != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+tagsErr.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	var cache *apiCache
+	var sent map[string]string
+	if tags != nil {
+		query := url.Values{"upstream": []string{upstream}}
+		apiResp, err := r.client.Do(ctx, http.MethodPatch, r.client.TenantPath(cachesPath), query, apiUpdateTagsRequest{Tags: tags})
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to update the container registry cache's tags", err.Error())
+			return
+		}
+		if cache, err = client.ParseResponse[apiCache](apiResp); err != nil {
+			resp.Diagnostics.AddError("Failed to parse the container registry cache response", err.Error())
+			return
+		}
+		if cache.Upstream != upstream {
+			resp.Diagnostics.AddError(
+				"Unexpected container registry cache in the update response",
+				fmt.Sprintf("Updated upstream %q but the API answered with %q.", upstream, cache.Upstream),
+			)
+			return
+		}
+		sent = *tags
+	} else {
+		var err error
+		if cache, err = get(ctx); err != nil {
+			resp.Diagnostics.AddError("Failed to read the container registry cache", err.Error())
+			return
+		}
+	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+
+	// Username and the passwords are carried across from the plan untouched:
+	// fromAPI never writes them, because no response contains them.
+	plan.fromAPI(r.client.TenantID(), cache)
+	plan.readTags(ctx, cache, sent, &resp.Diagnostics)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,
+// plans an in-place update of the cache's tags.
+func (r *cacheResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
 }
 
 func (r *cacheResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -491,6 +602,7 @@ func (r *cacheResource) ImportState(ctx context.Context, req resource.ImportStat
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), upstream)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("upstream"), upstream)...)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }
 
 // cachePasswordWO is the write-only triple for the upstream password.

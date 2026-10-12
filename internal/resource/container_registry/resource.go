@@ -13,9 +13,13 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
-var _ resource.Resource = &containerRegistryResource{}
+var (
+	_ resource.Resource               = &containerRegistryResource{}
+	_ resource.ResourceWithModifyPlan = &containerRegistryResource{}
+)
 
 // settingsPath is the tenant-scoped opt-in route. It stays TWO-SEGMENT
 // (`/registry/settings`, never a bare `/registry`): the api-gateway's feature
@@ -47,9 +51,10 @@ func (r *containerRegistryResource) Schema(_ context.Context, _ resource.SchemaR
 	resp.Schema = schema.Schema{
 		Description: "Enables this tenant's container registry — the explicit opt-in that creates the " +
 			"tenant's namespace and the billable state that comes with it.\n\n" +
-			"Nothing about a registry is configurable, so this resource has no arguments and can never " +
-			"produce a diff. Applying it against a tenant that already opted in (through the portal, the " +
-			"fm CLI, or another Terraform state) ADOPTS the existing registry rather than failing.\n\n" +
+			"Nothing about the registry itself is configurable: its only argument is `tags`, the resource " +
+			"tags on the registry, which update in place. Applying it against a tenant that already opted " +
+			"in (through the portal, the fm CLI, or another Terraform state) ADOPTS the existing registry " +
+			"rather than failing, and adds this configuration's tags to the ones it already holds.\n\n" +
 			"DESTROYING THIS RESOURCE DOES NOT DELETE THE REGISTRY. There is no teardown endpoint: " +
 			"registry teardown belongs to tenant closure. `terraform destroy` removes it from state and " +
 			"warns; the namespace, its images and its billable state all survive." +
@@ -87,6 +92,11 @@ func (r *containerRegistryResource) Schema(_ context.Context, _ resource.SchemaR
 			},
 		},
 	}
+	resp.Schema.Attributes["tags"] = tftags.OfferTagsAttribute("Resource tags on the registry: your own key/value " +
+		"metadata for search and filtering, stored by the platform only. They are NOT image tags — the `:tag` of an " +
+		"image you push is part of the image reference and is unrelated. Changing them updates the registry in place " +
+		"and never touches its namespace, images or credentials.")
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
 }
 
 func (r *containerRegistryResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -111,9 +121,19 @@ func (r *containerRegistryResource) Create(ctx context.Context, req resource.Cre
 		return
 	}
 
-	// No request body: the namespace is derived from the verified tenant id, so
-	// there is nothing a request could say that would change what is created.
-	apiResp, err := r.client.Post(ctx, r.client.TenantPath(settingsPath), nil)
+	// The body carries the tags and nothing else: the namespace is derived from
+	// the verified tenant id, so there is nothing a request could say that would
+	// change what is created. Without tags it stays empty, as it always was.
+	defaults := r.client.DefaultTags()
+	sent := tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	var body any
+	if sent != nil {
+		body = apiEnableRequest{Tags: sent}
+	}
+	apiResp, err := r.client.Post(ctx, r.client.TenantPath(settingsPath), body)
 	if err != nil {
 		if !isAlreadyEnabled(err) {
 			// No special-casing for other refusals: the gateway's own message
@@ -139,10 +159,17 @@ func (r *containerRegistryResource) Create(ctx context.Context, req resource.Cre
 			resp.Diagnostics.Append(d)
 			return
 		}
+		settings, sent = r.adoptTags(ctx, settings, sent, &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 		plan.fromAPI(r.client.TenantID(), settings)
+		plan.readTags(ctx, settings, sent, &resp.Diagnostics)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	settings, err := client.ParseResponse[apiRegistrySettings](apiResp)
 	if err != nil {
@@ -155,7 +182,55 @@ func (r *containerRegistryResource) Create(ctx context.Context, req resource.Cre
 		return
 	}
 	plan.fromAPI(r.client.TenantID(), settings)
+	plan.readTags(ctx, settings, sent, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// adoptTags puts the configured tags on a registry this Create ADOPTED: the
+// opt-in that would have carried them was refused as already done. They are
+// added to the tags the registry already holds — set in the portal, by the fm
+// CLI, or merged from the tenant's defaults when it was enabled — never in
+// place of them, the same rule every later update follows. It returns the
+// settings to record and the set written (nil when no write was due).
+func (r *containerRegistryResource) adoptTags(ctx context.Context, settings *apiRegistrySettings, desired map[string]string, diags *diag.Diagnostics) (*apiRegistrySettings, map[string]string) {
+	if len(desired) == 0 {
+		return settings, nil
+	}
+	if settings.TagsUnavailable {
+		diags.AddError("Failed to tag the adopted container registry",
+			"This tenant's registry already existed, so it was adopted — but its current tags could not be "+
+				"read, so the configured tags were not written and nothing was recorded in state. Apply "+
+				"again shortly.\n\nError: "+tftags.ErrOfferTagsUnavailable.Error())
+		return nil, nil
+	}
+	current := tftags.OfferCustomerTags(settings.Tags)
+	merged := make(map[string]string, len(current)+len(desired))
+	for k, v := range current {
+		merged[k] = v
+	}
+	for k, v := range desired {
+		merged[k] = v
+	}
+	if tftags.Equal(merged, current) {
+		return settings, nil
+	}
+	apiResp, err := r.client.Patch(ctx, r.client.TenantPath(settingsPath), apiUpdateTagsRequest{Tags: &merged})
+	if err != nil {
+		diags.AddError("Failed to tag the adopted container registry",
+			"This tenant's registry already existed, so it was adopted — but writing the configured tags "+
+				"failed, so nothing was recorded in state. Apply again.\n\nError: "+err.Error())
+		return nil, nil
+	}
+	updated, err := client.ParseResponse[apiRegistrySettings](apiResp)
+	if err != nil {
+		diags.AddError("Failed to parse container registry response", err.Error())
+		return nil, nil
+	}
+	if d := assertUsable(updated); d != nil {
+		diags.Append(d)
+		return nil, nil
+	}
+	return updated, merged
 }
 
 // assertUsable refuses to record a create that did not produce a usable
@@ -220,18 +295,84 @@ func (r *containerRegistryResource) Read(ctx context.Context, req resource.ReadR
 	}
 
 	state.fromAPI(r.client.TenantID(), settings)
+	state.readTags(ctx, settings, nil, &resp.Diagnostics)
+	if !settings.TagsUnavailable {
+		tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-// Update cannot be reached: every attribute is Computed, so no configuration
-// change can produce an update plan. It is implemented only to satisfy the
-// interface, and says so rather than silently succeeding.
-func (r *containerRegistryResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError(
-		"Update Not Supported",
-		"A container registry has nothing configurable, so there is nothing to update. "+
-			"Reaching this is a provider bug; please report it.",
-	)
+// Update writes the tags — the only thing about a registry that changes in
+// place. The write is a tags-only PATCH of the settings (a row-only write: the
+// namespace, its images and its credentials are untouched), sent only when the
+// platform's set would change, and computed against the tags the registry holds
+// right now so a key added outside Terraform is kept.
+func (r *containerRegistryResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state ContainerRegistryModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	defaults := r.client.DefaultTags()
+	tags, tagsErr := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			current, err := r.read(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if current.TagsUnavailable {
+				return nil, tftags.ErrOfferTagsUnavailable
+			}
+			return tftags.OfferCustomerTags(current.Tags), nil
+		}, &resp.Diagnostics)
+	if tagsErr != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+tagsErr.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	var settings *apiRegistrySettings
+	var sent map[string]string
+	if tags != nil {
+		apiResp, err := r.client.Patch(ctx, r.client.TenantPath(settingsPath), apiUpdateTagsRequest{Tags: tags})
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to update container registry tags", err.Error())
+			return
+		}
+		if settings, err = client.ParseResponse[apiRegistrySettings](apiResp); err != nil {
+			resp.Diagnostics.AddError("Failed to parse container registry response", err.Error())
+			return
+		}
+		sent = *tags
+	} else {
+		var err error
+		if settings, err = r.read(ctx); err != nil {
+			resp.Diagnostics.AddError("Failed to read container registry", err.Error())
+			return
+		}
+	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+
+	if d := assertUsable(settings); d != nil {
+		resp.Diagnostics.Append(d)
+		return
+	}
+	plan.fromAPI(r.client.TenantID(), settings)
+	plan.readTags(ctx, settings, sent, &resp.Diagnostics)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,
+// plans an in-place update of the registry's tags.
+func (r *containerRegistryResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
 }
 
 // Delete removes the resource from state WITHOUT deleting anything, and says so.

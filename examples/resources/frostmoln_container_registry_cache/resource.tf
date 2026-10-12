@@ -11,6 +11,12 @@ data "frostmoln_container_registry_cache_upstreams" "available" {
 resource "frostmoln_container_registry_cache" "ghcr" {
   upstream = "ghcr"
 
+  # Resource tags: your own metadata for search and filtering — not the image
+  # tags of what the cache mirrors. The one argument that updates in place.
+  tags = {
+    env = "prod"
+  }
+
   # A cache cannot be created before the registry exists.
   depends_on = [frostmoln_container_registry.example]
 }
@@ -21,9 +27,9 @@ resource "frostmoln_container_registry_cache" "ghcr" {
 # read the flag, do not special-case the key.
 #
 # These are WRITE-ONLY. No endpoint returns them, so Terraform reports whatever
-# it last wrote and cannot detect a change made elsewhere. There is no update
-# route either: changing the password REPLACES the cache and deletes what it had
-# cached.
+# it last wrote and cannot detect a change made elsewhere. They cannot be
+# changed in place either: changing the password REPLACES the cache and deletes
+# what it had cached.
 resource "frostmoln_container_registry_cache" "dockerhub" {
   upstream = "dockerhub"
   username = var.dockerhub_username

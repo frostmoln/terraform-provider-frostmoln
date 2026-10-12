@@ -6,12 +6,13 @@ description: |-
   A pull-through cache in this tenant's container registry — a namespace that mirrors ONE public registry on demand. One upstream per cache: a tenant wanting three upstreams creates three of these.
   Pull through it with the SAME credential that reaches your repository namespace — docker login is per host, so one credential spans both, and existing credentials are extended onto a new cache automatically.
   CACHED BYTES COUNT AGAINST YOUR STORAGE ALLOWANCE. A cache is your storage: one quota, one meter, shared with your repository namespace. It fills on PULL, so it can consume the allowance with no push from you.
-  THERE IS NO UPDATE ROUTE. Every argument here is replace-only, including password: changing credentials means destroying the cache and creating it again. DESTROYING A CACHE DELETES ITS CACHED IMAGES, and does not ask — every byte in it is a copy of something still at the upstream, so a later pull simply re-fetches, but your stored-bytes figure falls as the content goes.
+  Every argument except tags is replace-only, including password: changing credentials means destroying the cache and creating it again. Only tags update in place. DESTROYING A CACHE DELETES ITS CACHED IMAGES, and does not ask — every byte in it is a copy of something still at the upstream, so a later pull simply re-fetches, but your stored-bytes figure falls as the content goes.
   The registry must already exist: a cache cannot be created before the tenant has opted in with a frostmoln_container_registry resource.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — password, password_wo_version, upstream, username: the cache's upstream and its credentials are fixed at create — a change re-creates the cache.
   Not enacted state — password_wo: write-only: sent, never stored or read back — the password_wo_version companion carries change detection.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_container_registry_cache (Resource)
@@ -22,7 +23,7 @@ Pull through it with the SAME credential that reaches your repository namespace 
 
 CACHED BYTES COUNT AGAINST YOUR STORAGE ALLOWANCE. A cache is your storage: one quota, one meter, shared with your repository namespace. It fills on PULL, so it can consume the allowance with no push from you.
 
-THERE IS NO UPDATE ROUTE. Every argument here is replace-only, including `password`: changing credentials means destroying the cache and creating it again. DESTROYING A CACHE DELETES ITS CACHED IMAGES, and does not ask — every byte in it is a copy of something still at the upstream, so a later pull simply re-fetches, but your stored-bytes figure falls as the content goes.
+Every argument except `tags` is replace-only, including `password`: changing credentials means destroying the cache and creating it again. Only `tags` update in place. DESTROYING A CACHE DELETES ITS CACHED IMAGES, and does not ask — every byte in it is a copy of something still at the upstream, so a later pull simply re-fetches, but your stored-bytes figure falls as the content goes.
 
 The registry must already exist: a cache cannot be created before the tenant has opted in with a `frostmoln_container_registry` resource.
 
@@ -33,6 +34,8 @@ The registry must already exist: a cache cannot be created before the tenant has
 **Create-immutable** — `password`, `password_wo_version`, `upstream`, `username`: the cache's upstream and its credentials are fixed at create — a change re-creates the cache.
 
 **Not enacted state** — `password_wo`: write-only: sent, never stored or read back — the `password_wo_version` companion carries change detection.
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -50,6 +53,12 @@ data "frostmoln_container_registry_cache_upstreams" "available" {
 resource "frostmoln_container_registry_cache" "ghcr" {
   upstream = "ghcr"
 
+  # Resource tags: your own metadata for search and filtering — not the image
+  # tags of what the cache mirrors. The one argument that updates in place.
+  tags = {
+    env = "prod"
+  }
+
   # A cache cannot be created before the registry exists.
   depends_on = [frostmoln_container_registry.example]
 }
@@ -60,9 +69,9 @@ resource "frostmoln_container_registry_cache" "ghcr" {
 # read the flag, do not special-case the key.
 #
 # These are WRITE-ONLY. No endpoint returns them, so Terraform reports whatever
-# it last wrote and cannot detect a change made elsewhere. There is no update
-# route either: changing the password REPLACES the cache and deletes what it had
-# cached.
+# it last wrote and cannot detect a change made elsewhere. They cannot be
+# changed in place either: changing the password REPLACES the cache and deletes
+# what it had cached.
 resource "frostmoln_container_registry_cache" "dockerhub" {
   upstream = "dockerhub"
   username = var.dockerhub_username
@@ -134,9 +143,10 @@ output "registry_storage_used_bytes" {
 
 > **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
 
-- `password` (String, Sensitive) Your own password or access token at the upstream registry. Required for upstreams whose catalog entry says `requires_credentials`, together with `username`. Never echoed back by the API and there is no update route, so changing it REPLACES the cache and deletes what it had cached. NOT VALIDATED at creation — a wrong password surfaces as a failed pull, never as an error from `terraform apply`. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide. Prefer `password_wo`, which carries the same value but is never written to state; the two are mutually exclusive.
-- `password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Your own password or access token at the upstream registry, as a [write-only argument](https://developer.hashicorp.com/terraform/language/resources/ephemeral/write-only): the value reaches the provider on apply and is never written to the plan or to state. Requires Terraform 1.11 or later. Mutually exclusive with `password`, and `password_wo_version` is required whenever this one is set. Terraform cannot see a write-only value, so it cannot detect a change to it: changing `password_wo_version` is what makes the next apply send the current value, and it does so by REPLACING the cache — deleting what it had cached — because the cache API has no update route. Editing the password without touching the version does nothing at all.
-- `password_wo_version` (String) Change tracker for `password_wo`, required whenever that attribute is set. Changing this value REPLACES the cache — deleting every image it had cached — and sends the current `password_wo`, which is the same lifecycle a change to `password` has, since the cache API has no update route. Leaving it alone leaves the stored credential untouched however much the write-only value changes. Its content is arbitrary — a counter or a date is typical — and unlike the password it IS stored in state, so do not derive it from the password or from anything in it: a digest of a secret is printed verbatim in `terraform plan` output, CI job logs and PR plan comments, and a digest is an offline confirmation oracle. `terraform import` leaves this unset, so the first apply against an imported cache that uses `password_wo` plans a REPLACEMENT.
+- `password` (String, Sensitive) Your own password or access token at the upstream registry. Required for upstreams whose catalog entry says `requires_credentials`, together with `username`. Never echoed back by the API and the upstream credentials cannot be changed in place, so changing it REPLACES the cache and deletes what it had cached. NOT VALIDATED at creation — a wrong password surfaces as a failed pull, never as an error from `terraform apply`. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide. Prefer `password_wo`, which carries the same value but is never written to state; the two are mutually exclusive.
+- `password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Your own password or access token at the upstream registry, as a [write-only argument](https://developer.hashicorp.com/terraform/language/resources/ephemeral/write-only): the value reaches the provider on apply and is never written to the plan or to state. Requires Terraform 1.11 or later. Mutually exclusive with `password`, and `password_wo_version` is required whenever this one is set. Terraform cannot see a write-only value, so it cannot detect a change to it: changing `password_wo_version` is what makes the next apply send the current value, and it does so by REPLACING the cache — deleting what it had cached — because the cache API cannot change the upstream credentials in place. Editing the password without touching the version does nothing at all.
+- `password_wo_version` (String) Change tracker for `password_wo`, required whenever that attribute is set. Changing this value REPLACES the cache — deleting every image it had cached — and sends the current `password_wo`, which is the same lifecycle a change to `password` has, since the cache API cannot change them in place. Leaving it alone leaves the stored credential untouched however much the write-only value changes. Its content is arbitrary — a counter or a date is typical — and unlike the password it IS stored in state, so do not derive it from the password or from anything in it: a digest of a secret is printed verbatim in `terraform plan` output, CI job logs and PR plan comments, and a digest is an offline confirmation oracle. `terraform import` leaves this unset, so the first apply against an imported cache that uses `password_wo` plans a REPLACEMENT.
+- `tags` (Map of String) Resource tags on the cache: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only. They are NOT the image tags of what the cache mirrors. Changing them updates the cache in place: its cached images and stored upstream credentials are untouched. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `username` (String) Your own username at the upstream registry. Required for upstreams whose catalog entry says `requires_credentials` (Docker Hub today — read the flag, do not special-case the key); the server enforces it either way. Never echoed back by the API: no endpoint returns it, so Terraform reports whatever it last wrote and cannot detect a change made elsewhere. Changing it replaces the cache.
 
 ### Read-Only
@@ -145,6 +155,7 @@ output "registry_storage_used_bytes" {
 - `id` (String) The upstream key. A tenant holds at most one cache per upstream and the API addresses a cache by that key, so the key is the identifier.
 - `namespace` (String) The namespace this cache occupies, `<tenant-namespace>-cache-<upstream>`. Derived from the immutable tenant id and the upstream key, so it never changes under a cache that is not being replaced.
 - `pull_path` (String) What to prefix an image with to pull it through this cache — the whole point of the resource: `docker pull <pull_path>/<the upstream's own path for that image>`. USE THE UPSTREAM'S PATH EXACTLY, do not shorten it. Docker Hub keeps its OFFICIAL images under `library/`, so `docker pull <pull_path>/alpine` asks Hub for a repository that does not exist and comes back a bare 401 naming nothing — `docker pull <pull_path>/library/alpine:3` is the working form (measured 2026-09-05, nine failed pulls before the cause was found). The portal and the `fm` CLI render a working example per cache from the platform's own catalog; this provider does not read that catalog, which is why the rule is stated here instead.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `tenant_id` (String) The owning tenant (server-set; the provider's tenant_id selects it).
 - `used_bytes` (Number) Storage stored in THIS cache namespace, in bytes, against this namespace's own cap — the cap whose crossing makes a cached pull fail. `frostmoln_container_registry.storage_used_bytes` is the tenant aggregate and the figure you are metered on; this is the per-namespace detail that says which cache is close to refusing. Do not sum these and expect the aggregate: both skip a namespace whose quota could not be read. OBSERVATIONAL: a cache fills on PULL, so this moves without anyone pushing and will differ on each refresh. Null for two causes with the same result — a cache that has mirrored nothing yet, and a quota read that failed; on a failure it is null for EVERY cache rather than some, so a partial picture never reads as a complete one. Deduplicated bytes as the registry measures them, which does not equal the sum of your local image sizes.
 

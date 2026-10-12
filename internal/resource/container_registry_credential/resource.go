@@ -20,9 +20,13 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
-var _ resource.Resource = &credentialResource{}
+var (
+	_ resource.Resource               = &credentialResource{}
+	_ resource.ResourceWithModifyPlan = &credentialResource{}
+)
 
 // credentialsPath is the tenant-scoped collection. It stays TWO-SEGMENT
 // (`/registry/credentials`, never a bare `/registry`): the api-gateway's feature
@@ -57,8 +61,9 @@ func (r *credentialResource) Schema(_ context.Context, _ resource.SchemaRequest,
 			"expects it on read. A secret lost outside Terraform is recovered by revoking the " +
 			"credential and minting a new one — `terraform taint` or changing `name`/`capability` " +
 			"both do exactly that.\n\n" +
-			"Credentials are immutable: there is no update route, so changing any argument replaces " +
-			"the credential and issues a new secret. Update your downstream consumers.\n\n" +
+			"A credential's name and capability are fixed when it is minted: changing either replaces " +
+			"the credential and issues a new secret, so update your downstream consumers. Only `tags` " +
+			"updates in place, and a tag change never touches the secret.\n\n" +
 			"This resource cannot be imported: an imported credential's `secret` could never be " +
 			"populated, and every subsequent plan would show it as unknown. Revoke and mint instead." +
 			"\n\n" + scopedecl.Summary("frostmoln_container_registry_credential"),
@@ -138,6 +143,10 @@ func (r *credentialResource) Schema(_ context.Context, _ resource.SchemaRequest,
 			},
 		},
 	}
+	resp.Schema.Attributes["tags"] = tftags.OfferTagsAttribute("Resource tags on the credential: your own key/value " +
+		"metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform " +
+		"only. They are NOT image tags. Changing them updates the credential in place: no new secret, no replacement.")
+	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
 }
 
 func (r *credentialResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -162,14 +171,21 @@ func (r *credentialResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
+	defaults := r.client.DefaultTags()
+	sent := tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath(credentialsPath), apiCreateCredentialRequest{
 		Name:       plan.Name.ValueString(),
 		Capability: plan.Capability.ValueString(),
+		Tags:       sent,
 	})
 	if err != nil {
 		addCreateRefusal(&resp.Diagnostics, err)
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	cred, err := client.ParseResponse[apiCredential](apiResp)
 	if err != nil {
@@ -198,6 +214,7 @@ func (r *credentialResource) Create(ctx context.Context, req resource.CreateRequ
 	}
 
 	resp.Diagnostics.Append(plan.fromAPI(ctx, cred)...)
+	plan.readTags(ctx, cred, sent, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -260,6 +277,10 @@ func (r *credentialResource) Read(ctx context.Context, req resource.ReadRequest,
 	// rule is what preserves it; a second copy-it-back step here would be
 	// redundant and, being unreachable, could not be tested.
 	resp.Diagnostics.Append(state.fromAPI(ctx, found)...)
+	state.readTags(ctx, found, nil, &resp.Diagnostics)
+	if !found.TagsUnavailable {
+		tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -267,14 +288,111 @@ func (r *credentialResource) Read(ctx context.Context, req resource.ReadRequest,
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-// Update cannot be reached: every settable attribute is RequiresReplace, because
-// the API has no update route.
-func (r *credentialResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError(
-		"Update Not Supported",
-		"Container registry credentials are immutable. Every attribute change replaces the credential "+
-			"and issues a new secret.",
-	)
+// Update writes the tags — the only attribute that changes in place; name and
+// capability are RequiresReplace, because the credential's robot account is
+// fixed when minted. The write is a tags-only PATCH (a row-only write: the
+// secret, capability and namespaces are untouched), sent only when the
+// platform's set would change, and computed against the tags the credential
+// holds right now so a key added outside Terraform is kept.
+func (r *credentialResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state ContainerRegistryCredentialModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	id := state.ID.ValueString()
+	if id == "" {
+		resp.Diagnostics.AddError(
+			"Container registry credential is missing its id",
+			"Terraform cannot address this credential. Find it with `fm registry credential list`, "+
+				"revoke it, and remove it from state with `terraform state rm <address>`.",
+		)
+		return
+	}
+	memberPath := r.client.TenantPath(credentialsPath + "/" + url.PathEscape(id))
+	get := func(ctx context.Context) (*apiCredential, error) {
+		apiResp, err := r.client.Get(ctx, memberPath, nil)
+		if err != nil {
+			return nil, err
+		}
+		cred, err := client.ParseResponse[apiCredential](apiResp)
+		if err != nil {
+			return nil, err
+		}
+		if got := strconv.FormatInt(cred.ID, 10); got != id {
+			return nil, fmt.Errorf("requested credential %q but the API answered with %q", id, got)
+		}
+		return cred, nil
+	}
+
+	defaults := r.client.DefaultTags()
+	tags, tagsErr := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			current, err := get(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if current.TagsUnavailable {
+				return nil, tftags.ErrOfferTagsUnavailable
+			}
+			return tftags.OfferCustomerTags(current.Tags), nil
+		}, &resp.Diagnostics)
+	if tagsErr != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+tagsErr.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	var cred *apiCredential
+	var sent map[string]string
+	if tags != nil {
+		apiResp, err := r.client.Patch(ctx, memberPath, apiUpdateTagsRequest{Tags: tags})
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to update the container registry credential's tags", err.Error())
+			return
+		}
+		if cred, err = client.ParseResponse[apiCredential](apiResp); err != nil {
+			resp.Diagnostics.AddError("Failed to parse the container registry credential response", err.Error())
+			return
+		}
+		if got := strconv.FormatInt(cred.ID, 10); got != id {
+			resp.Diagnostics.AddError(
+				"Unexpected container registry credential in update response",
+				fmt.Sprintf("Updated %q but the API answered with %q.", id, got),
+			)
+			return
+		}
+		sent = *tags
+	} else {
+		var err error
+		if cred, err = get(ctx); err != nil {
+			resp.Diagnostics.AddError("Failed to read the container registry credential", err.Error())
+			return
+		}
+	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+
+	// The secret is carried across from state: no response after the create
+	// carries it, and fromAPI leaves Secret alone when the body has none.
+	plan.Secret = state.Secret // pragma: allowlist secret
+	resp.Diagnostics.Append(plan.fromAPI(ctx, cred)...)
+	plan.readTags(ctx, cred, sent, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,
+// plans an in-place update of the credential's tags.
+func (r *credentialResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
 }
 
 func (r *credentialResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

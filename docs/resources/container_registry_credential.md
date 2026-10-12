@@ -5,11 +5,12 @@ subcategory: ""
 description: |-
   Mints a container registry credential — the username and secret used to docker login to the registry endpoint.
   THE SECRET IS RETURNED ONCE, AT CREATION, and there is no rotation endpoint. Terraform persists it to state (so keep your state encrypted and access-controlled) and never expects it on read. A secret lost outside Terraform is recovered by revoking the credential and minting a new one — terraform taint or changing name/capability both do exactly that.
-  Credentials are immutable: there is no update route, so changing any argument replaces the credential and issues a new secret. Update your downstream consumers.
+  A credential's name and capability are fixed when it is minted: changing either replaces the credential and issues a new secret, so update your downstream consumers. Only tags updates in place, and a tag change never touches the secret.
   This resource cannot be imported: an imported credential's secret could never be populated, and every subsequent plan would show it as unknown. Revoke and mint instead.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
-  Create-immutable — capability, name: a registry credential has no update route at all — its capability is fixed when minted, so a change replaces the credential and issues a new secret.
-  Observed, not enacted — secret: returned once at create and never again — a refresh cannot read it back.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — capability, name: a registry credential's name and capability are fixed when minted — a change replaces the credential and issues a new secret.
+  Observed, not enacted — secret: returned once at create and never again — a refresh cannot read it back. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_container_registry_credential (Resource)
@@ -18,15 +19,17 @@ Mints a container registry credential — the username and secret used to `docke
 
 THE SECRET IS RETURNED ONCE, AT CREATION, and there is no rotation endpoint. Terraform persists it to state (so keep your state encrypted and access-controlled) and never expects it on read. A secret lost outside Terraform is recovered by revoking the credential and minting a new one — `terraform taint` or changing `name`/`capability` both do exactly that.
 
-Credentials are immutable: there is no update route, so changing any argument replaces the credential and issues a new secret. Update your downstream consumers.
+A credential's name and capability are fixed when it is minted: changing either replaces the credential and issues a new secret, so update your downstream consumers. Only `tags` updates in place, and a tag change never touches the secret.
 
 This resource cannot be imported: an imported credential's `secret` could never be populated, and every subsequent plan would show it as unknown. Revoke and mint instead.
 
 **Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
 
-**Create-immutable** — `capability`, `name`: a registry credential has no update route at all — its capability is fixed when minted, so a change replaces the credential and issues a new secret.
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
 
-**Observed, not enacted** — `secret`: returned once at create and never again — a refresh cannot read it back.
+**Create-immutable** — `capability`, `name`: a registry credential's name and capability are fixed when minted — a change replaces the credential and issues a new secret.
+
+**Observed, not enacted** — `secret`: returned once at create and never again — a refresh cannot read it back. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -41,6 +44,12 @@ resource "frostmoln_container_registry" "example" {}
 resource "frostmoln_container_registry_credential" "ci" {
   name       = "ci-pipeline"
   capability = "push" # "pull" (the default) or "push"; push implies pull
+
+  # Resource tags: your own metadata for search and filtering. Changing them
+  # updates the credential in place — no new secret.
+  tags = {
+    team = "platform"
+  }
 
   # The credential cannot be minted before the registry exists.
   depends_on = [frostmoln_container_registry.example]
@@ -74,6 +83,7 @@ output "registry_password" {
 ### Optional
 
 - `capability` (String) What the credential may do at the registry endpoint: `pull` or `push` (push implies pull). Changing it replaces the credential and issues a new secret.
+- `tags` (Map of String) Resource tags on the credential: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only. They are NOT image tags. Changing them updates the credential in place: no new secret, no replacement. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 
 ### Read-Only
 
@@ -83,4 +93,5 @@ output "registry_password" {
 - `id` (String) The credential's id.
 - `namespaces` (List of String) The namespaces this credential reaches — the tenant's repository namespace and each of its pull-through caches (`frostmoln_container_registry_cache`). One credential covers all of them, because `docker login` is per host. A cache created AFTER this credential is extended onto it by the platform, so pulling through a new cache needs no new credential and no replacement of this one — but the list is read at refresh, so it lags a cache created in the same apply until the next one.
 - `secret` (String, Sensitive) The `docker login` password. Returned only when the credential is first created, and it cannot be fetched again. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `username` (String) The `docker login` username, including its `robot$` prefix.

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	fwattr "github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -19,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags/tftagstest"
 )
 
 func newMeAndCacheServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
@@ -65,6 +67,9 @@ func cacheStateValue(t *testing.T, upstream, username, password string) tftypes.
 		return tftypes.NewValue(tftypes.String, s)
 	}
 	return tftypes.NewValue(cacheTFType(t), map[string]tftypes.Value{
+		// Untagged: null, as an untagged configuration holds them.
+		"tags":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"id":        str(upstream),
 		"tenant_id": tftypes.NewValue(tftypes.String, "tenant-456"),
 		"upstream":  str(upstream),
@@ -286,6 +291,7 @@ func createCache(t *testing.T, r *cacheResource, cfg ContainerRegistryCacheModel
 	s := cacheSchema(t)
 
 	raw := func(m ContainerRegistryCacheModel) tftypes.Value {
+		tftagstest.NullUnsetTags(&m)
 		p := tfsdk.Plan{Schema: s}
 		if diags := p.Set(context.Background(), &m); diags.HasError() {
 			t.Fatalf("building value: %v", diags)
@@ -595,6 +601,29 @@ func TestEveryConfigurableAttributeRequiresReplace(t *testing.T) {
 		if !attr.IsRequired() && !attr.IsOptional() {
 			continue
 		}
+		// `tags` is the one attribute that updates in place: a tags-only PATCH
+		// (TestTagsChangeUpdatesInPlace asserts the write). It must NOT replace
+		// the cache — that would delete every cached image for a label edit.
+		if name == "tags" {
+			mapAttr, ok := attr.(schema.MapAttribute)
+			if !ok {
+				t.Fatalf("tags is not a MapAttribute (%T)", attr)
+			}
+			old := types.MapValueMust(types.StringType, map[string]fwattr.Value{"env": types.StringValue("old")})
+			nu := types.MapValueMust(types.StringType, map[string]fwattr.Value{"env": types.StringValue("new")})
+			mreq := planmodifier.MapRequest{
+				Path: path.Root(name), State: tfsdk.State{Schema: s, Raw: stateRaw}, Plan: tfsdk.Plan{Schema: s, Raw: planRaw},
+				StateValue: old, PlanValue: nu, ConfigValue: nu,
+			}
+			mresp := &planmodifier.MapResponse{PlanValue: nu}
+			for _, m := range mapAttr.PlanModifiers {
+				m.PlanModifyMap(ctx, mreq, mresp)
+			}
+			if mresp.RequiresReplace {
+				t.Error("a tags change requires replacement; it must update the cache in place")
+			}
+			continue
+		}
 		configurable++
 		strAttr, ok := attr.(schema.StringAttribute)
 		if !ok {
@@ -810,14 +839,6 @@ func TestConfigureRefusesTheWrongProviderData(t *testing.T) {
 // Update is unreachable — every configurable attribute is RequiresReplace — and
 // must SAY so rather than silently succeed, which would report an applied change
 // the API has no route to make.
-func TestUpdateRefusesRatherThanSilentlySucceeding(t *testing.T) {
-	var resp resource.UpdateResponse
-	(&cacheResource{}).Update(context.Background(), resource.UpdateRequest{}, &resp)
-	if !resp.Diagnostics.HasError() {
-		t.Fatal("Update must refuse: there is no update route, so a success would be a lie")
-	}
-}
-
 // Both guards exist because the address is the only thing standing between a
 // destroy and either a no-op reported as success (Read) or a DELETE on the
 // COLLECTION path (Delete).

@@ -15,9 +15,11 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 var _ datasource.DataSource = &containerRegistryDataSource{}
@@ -52,6 +54,7 @@ type containerRegistryModel struct {
 	// nulls any non-positive before it reaches state.
 	StorageLimitBytes types.Int64 `tfsdk:"storage_limit_bytes"`
 	StorageUsedBytes  types.Int64 `tfsdk:"storage_used_bytes"`
+	Tags              types.Map   `tfsdk:"tags"`
 }
 
 // apiRegistrySettings mirrors the resource's decoding, including the pointer on
@@ -62,6 +65,10 @@ type apiRegistrySettings struct {
 	Namespace         string `json:"namespace,omitempty"`
 	StorageLimitBytes int64  `json:"storageLimitBytes,omitempty"`
 	StorageUsedBytes  int64  `json:"storageUsedBytes,omitempty"`
+	// Tags are the registry's customer resource tags ({} when untagged); nil with
+	// TagsUnavailable when the registry could not read its tag store.
+	Tags            map[string]string `json:"tags"`
+	TagsUnavailable bool              `json:"tagsUnavailable,omitempty"`
 }
 
 // storageAttrs maps the reported storage numbers onto Terraform values, with a
@@ -121,6 +128,13 @@ func (d *containerRegistryDataSource) Schema(_ context.Context, _ datasource.Sch
 			},
 		},
 	}
+	resp.Schema.Attributes["tags"] = schema.MapAttribute{
+		Description: "Every resource tag on the registry — the same set as the resource's `tags_all`: your own " +
+			"key/value metadata, never an image tag. An empty map when it has none (and while the registry is " +
+			"not enabled); null, with a warning, when the platform could not read the tags right now.",
+		Computed:    true,
+		ElementType: types.StringType,
+	}
 }
 
 func (d *containerRegistryDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
@@ -173,6 +187,17 @@ func (d *containerRegistryDataSource) Read(ctx context.Context, req datasource.R
 		state.Namespace = types.StringValue(settings.Namespace)
 	}
 	state.StorageLimitBytes, state.StorageUsedBytes = storageAttrs(settings)
+	// The platform's reserved namespace is filtered as on the resource read-back,
+	// so `tags` means the same thing on every surface. Unreadable tags are null —
+	// never {}, which would claim the registry has none.
+	if settings.TagsUnavailable {
+		state.Tags = types.MapNull(types.StringType)
+		resp.Diagnostics.AddAttributeWarning(path.Root("tags"), "Tags Temporarily Unavailable",
+			"The platform answered the container registry but could not read its resource tags right now, so "+
+				"`tags` is null. Nothing about the registry itself is affected; read it again shortly.")
+	} else {
+		state.Tags = tftags.OfferTagsValue(settings.Tags)
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

@@ -4,30 +4,33 @@ page_title: "frostmoln_container_registry Resource - Frostmoln"
 subcategory: ""
 description: |-
   Enables this tenant's container registry — the explicit opt-in that creates the tenant's namespace and the billable state that comes with it.
-  Nothing about a registry is configurable, so this resource has no arguments and can never produce a diff. Applying it against a tenant that already opted in (through the portal, the fm CLI, or another Terraform state) ADOPTS the existing registry rather than failing.
+  Nothing about the registry itself is configurable: its only argument is tags, the resource tags on the registry, which update in place. Applying it against a tenant that already opted in (through the portal, the fm CLI, or another Terraform state) ADOPTS the existing registry rather than failing, and adds this configuration's tags to the ones it already holds.
   DESTROYING THIS RESOURCE DOES NOT DELETE THE REGISTRY. There is no teardown endpoint: registry teardown belongs to tenant closure. terraform destroy removes it from state and warns; the namespace, its images and its billable state all survive.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
-  Observed, not enacted — endpoint: platform-assigned when the registry is provisioned for the tenant. namespace: platform-assigned when the registry is provisioned for the tenant. storage_used_bytes: grows and shrinks as images are pushed and deleted — the platform meters it.
+  Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Observed, not enacted — endpoint: platform-assigned when the registry is provisioned for the tenant. namespace: platform-assigned when the registry is provisioned for the tenant. storage_used_bytes: grows and shrinks as images are pushed and deleted — the platform meters it. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_container_registry (Resource)
 
 Enables this tenant's container registry — the explicit opt-in that creates the tenant's namespace and the billable state that comes with it.
 
-Nothing about a registry is configurable, so this resource has no arguments and can never produce a diff. Applying it against a tenant that already opted in (through the portal, the fm CLI, or another Terraform state) ADOPTS the existing registry rather than failing.
+Nothing about the registry itself is configurable: its only argument is `tags`, the resource tags on the registry, which update in place. Applying it against a tenant that already opted in (through the portal, the fm CLI, or another Terraform state) ADOPTS the existing registry rather than failing, and adds this configuration's tags to the ones it already holds.
 
 DESTROYING THIS RESOURCE DOES NOT DELETE THE REGISTRY. There is no teardown endpoint: registry teardown belongs to tenant closure. `terraform destroy` removes it from state and warns; the namespace, its images and its billable state all survive.
 
 **Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
 
-**Observed, not enacted** — `endpoint`: platform-assigned when the registry is provisioned for the tenant. `namespace`: platform-assigned when the registry is provisioned for the tenant. `storage_used_bytes`: grows and shrinks as images are pushed and deleted — the platform meters it.
+**Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Observed, not enacted** — `endpoint`: platform-assigned when the registry is provisioned for the tenant. `namespace`: platform-assigned when the registry is provisioned for the tenant. `storage_used_bytes`: grows and shrinks as images are pushed and deleted — the platform meters it. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
 ```terraform
-# The explicit opt-in that creates this tenant's registry. It has no arguments:
-# the namespace is derived from the tenant id and nothing about a registry is
-# configurable.
+# The explicit opt-in that creates this tenant's registry. Its only argument is
+# `tags`: the namespace is derived from the tenant id and nothing else about a
+# registry is configurable.
 #
 # Applying this against a tenant that already opted in (through the portal or
 # `fm registry enable`) adopts the existing registry rather than failing.
@@ -35,7 +38,13 @@ DESTROYING THIS RESOURCE DOES NOT DELETE THE REGISTRY. There is no teardown endp
 # NOTE: `terraform destroy` does NOT delete the registry. There is no teardown
 # endpoint — the resource is removed from state with a warning, and the
 # namespace, its images and its billable state all survive.
-resource "frostmoln_container_registry" "example" {}
+resource "frostmoln_container_registry" "example" {
+  # Resource tags: your own metadata for search and filtering — not image tags.
+  # Merged with the provider's default_tags; changing them updates in place.
+  tags = {
+    env = "prod"
+  }
+}
 
 output "registry_endpoint" {
   description = "The host to `docker login` to."
@@ -51,6 +60,10 @@ output "registry_image_prefix" {
 <!-- schema generated by tfplugindocs -->
 ## Schema
 
+### Optional
+
+- `tags` (Map of String) Resource tags on the registry: your own key/value metadata for search and filtering, stored by the platform only. They are NOT image tags — the `:tag` of an image you push is part of the image reference and is unrelated. Changing them updates the registry in place and never touches its namespace, images or credentials. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
+
 ### Read-Only
 
 - `enabled` (Boolean) Whether the registry exists. Always true once this resource is in state — a registry that stops being enabled is treated as gone and removed from state on refresh.
@@ -59,3 +72,4 @@ output "registry_image_prefix" {
 - `namespace` (String) The tenant's namespace at that endpoint — the first path segment of every image reference. Derived from the immutable tenant id and never changes, so a tenant rename does not strand image references you have pinned.
 - `storage_limit_bytes` (Number) The SUM of the hard storage caps enforced across every namespace this tenant owns — the repository namespace and every pull-through cache. Read this before you render it: the registry caps PER NAMESPACE and there is no aggregate cap anywhere, so this is total headroom and not a single enforced threshold. A tenant holding a repository namespace and two caches, each capped at 10 GiB, reports 30 GiB here and can still be refused with 9 GiB of it unused — `frostmoln_container_registry_cache.used_bytes` is what says which namespace is close. The value also MOVES as caches are created and destroyed. A push that would cross ITS OWN namespace's cap is refused with a 403 whose message states the cap, the usage and the size that would not fit — as prose, and only once the push has failed. Null when any one namespace's cap was not usable, which is several causes with the same result: a namespace reports no cap at all; a namespace reports a hard cap of exactly 0, which refuses every push and is the one null that is worse than it looks, not better; or the quota read itself failed. Being disabled is not a reason here — a registry that stops being enabled is removed from state rather than nulled. The platform re-checks and resets caps on a later sweep, which repairs the first two; it never repairs a failed read, so that one can persist for as long as the outage lasts and the value can go null and back between refreshes with no configuration change. A cap of 0 and an unlimited -1 both arrive as null rather than as a value, so null — not a zero or negative number — is the only state to check for. Null means the limit was not reported, and never that it is unlimited.
 - `storage_used_bytes` (Number) Storage stored ACROSS EVERY NAMESPACE this tenant owns — the repository namespace and every pull-through cache, summed. This is the figure the tenant is metered on: the platform's usage meter sums exactly this set, so this attribute and the invoice describe the same set of namespaces. Not, strictly, the same bytes at the same instant: the meter aborts a whole window on any unreadable quota, so a window can be lost while this reports normally. OBSERVATIONAL: it changes with every push and with every cached pull, so expect it to differ on each refresh — a cache fills on PULL, so it moves without anyone pushing. It counts deduplicated bytes per namespace and then adds the namespaces up, so the same layer held in two namespaces is counted twice, and that is also how it is billed. It does not equal the sum of your local image sizes. It is the registry's accounting rather than an audited ledger, so treat it as what you are metered on rather than as an invoice line — billing keeps its own copy of the same reading.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.

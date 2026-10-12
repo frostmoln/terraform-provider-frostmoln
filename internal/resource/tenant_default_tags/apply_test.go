@@ -188,8 +188,17 @@ func TestUpdate_UnchangedTagsWithFlagOnStartsNothing(t *testing.T) {
 	f.Reset()
 	upd := update(t, r, created.State, objFlag(t, str(f.TenantID), str(f.TenantID), tags, flagOn))
 	mustOK(t, "update", upd.Diagnostics)
-	if len(f.Requests()) != 0 {
-		t.Errorf("unchanged tags must not call the platform, got %v", calls(f))
+	// The create's operation wait opens the tenant event stream in the
+	// background; its GET can land after Reset, and it is a wake-up channel,
+	// not a platform call, so it is not counted.
+	var platform []string
+	for _, r := range f.Requests() {
+		if !strings.HasSuffix(r.Path, "/events") {
+			platform = append(platform, r.Method+" "+r.Path)
+		}
+	}
+	if len(platform) != 0 {
+		t.Errorf("unchanged tags must not call the platform, got %v", platform)
 	}
 }
 

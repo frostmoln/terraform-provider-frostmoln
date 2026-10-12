@@ -52,6 +52,9 @@ func registryTFType(t *testing.T) tftypes.Type {
 func registryState(t *testing.T) tftypes.Value {
 	t.Helper()
 	return tftypes.NewValue(registryTFType(t), map[string]tftypes.Value{
+		// Untagged: null, as an untagged configuration holds them.
+		"tags":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"id":        tftypes.NewValue(tftypes.String, "tenant-456"),
 		"enabled":   tftypes.NewValue(tftypes.Bool, true),
 		"endpoint":  tftypes.NewValue(tftypes.String, "registry.sweden.frostmoln.cloud"),

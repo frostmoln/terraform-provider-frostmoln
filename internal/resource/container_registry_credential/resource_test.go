@@ -54,6 +54,9 @@ func credentialTFType(t *testing.T) tftypes.Type {
 func credentialState(t *testing.T, id, secret string) tftypes.Value {
 	t.Helper()
 	return tftypes.NewValue(credentialTFType(t), map[string]tftypes.Value{
+		// Untagged: null, as an untagged configuration holds them.
+		"tags":       tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":   tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"id":         tftypes.NewValue(tftypes.String, id),
 		"name":       tftypes.NewValue(tftypes.String, "ci"),
 		"capability": tftypes.NewValue(tftypes.String, "push"),

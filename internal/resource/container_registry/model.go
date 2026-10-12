@@ -3,14 +3,19 @@
 package container_registry
 
 import (
+	"context"
+
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // ContainerRegistryModel is the Terraform state model for a tenant's registry.
 //
-// There is nothing configurable here: every attribute is Computed. The opt-in
-// takes no request body, because the namespace is derived from the verified
-// tenant id and nothing a request could say would change it.
+// The only configurable attribute is `tags`: the namespace is derived from the
+// verified tenant id and nothing a request could say would change it, so the
+// opt-in's body carries the resource tags and nothing else.
 type ContainerRegistryModel struct {
 	// ID is the tenant id. The settings resource id IS the tenant — there is
 	// exactly one registry per tenant and it has no identifier of its own.
@@ -30,6 +35,10 @@ type ContainerRegistryModel struct {
 	// "unlimited" and never zero, so nothing downstream should default them.
 	StorageLimitBytes types.Int64 `tfsdk:"storage_limit_bytes"`
 	StorageUsedBytes  types.Int64 `tfsdk:"storage_used_bytes"`
+	// Tags / TagsAll are the registry's customer resource tags (internal/tftags)
+	// — never Harbor image tags, which belong to the images pushed into it.
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 }
 
 // apiRegistrySettings is the API representation of the tenant's registry state.
@@ -52,6 +61,39 @@ type apiRegistrySettings struct {
 	// case storageAttrs maps to null.
 	StorageLimitBytes int64 `json:"storageLimitBytes,omitempty"`
 	StorageUsedBytes  int64 `json:"storageUsedBytes,omitempty"`
+	// Tags are the registry's customer resource tags ({} when untagged, and on a
+	// disabled registry). nil together with TagsUnavailable when the registry
+	// could not read its tag store; the settings themselves are then still real.
+	Tags            map[string]string `json:"tags"`
+	TagsUnavailable bool              `json:"tagsUnavailable,omitempty"`
+}
+
+// apiEnableRequest is the opt-in's body: the tags, and nothing else. It is sent
+// only when there are tags; the route takes an empty body too.
+type apiEnableRequest struct {
+	// Tags is default_tags ∪ tags (tftags.ForCreate); the API merges the
+	// tenant's default tags in.
+	Tags map[string]string `json:"tags,omitempty"`
+}
+
+// apiUpdateTagsRequest is the tags-only PATCH of the settings: a row-only write
+// that never touches the registry itself. A POINTER so an empty map is sent as
+// {} (clear) — the route refuses a body without `tags`.
+type apiUpdateTagsRequest struct {
+	Tags *map[string]string `json:"tags"`
+}
+
+// readTags renders the response's tags into the model: `tags` keeps the keys
+// the prior value (plan or state) names, `tags_all` every customer key the
+// registry holds. When the registry could not read its tag store it keeps the
+// prior values and warns (tftags.KeepOfferTagsWhenUnavailable); sent is what a
+// create or update wrote, the fallback for a tags_all not yet known.
+func (m *ContainerRegistryModel) readTags(ctx context.Context, s *apiRegistrySettings, sent map[string]string, diags *diag.Diagnostics) {
+	if s.TagsUnavailable {
+		m.Tags, m.TagsAll = tftags.KeepOfferTagsWhenUnavailable(ctx, "the container registry", m.Tags, m.TagsAll, sent, diags)
+		return
+	}
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(s.Tags), m.Tags, diags)
 }
 
 // isEnabled reports the registry's state. Callers must have rejected a nil

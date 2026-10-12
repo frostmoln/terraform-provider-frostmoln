@@ -4,7 +4,12 @@
 package container_registry_cache
 
 import (
+	"context"
+
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // ContainerRegistryCacheModel is the Terraform state model for one cache.
@@ -42,6 +47,10 @@ type ContainerRegistryCacheModel struct {
 	// life of the cache, this one is not, and pinning a stale reading would be
 	// worse than showing it unknown until the read lands.
 	UsedBytes types.Int64 `tfsdk:"used_bytes"`
+	// Tags / TagsAll are the cache's customer resource tags (internal/tftags) —
+	// never the image tags of what it mirrors.
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 }
 
 // apiCache is the API representation of a pull-through cache.
@@ -70,6 +79,11 @@ type apiCache struct {
 	// nothing and for a quota read it could not make, so a zero here is "no
 	// number", never a measured empty.
 	UsedBytes int64 `json:"usedBytes,omitempty"`
+	// Tags are the cache's customer resource tags ({} when untagged). nil
+	// together with TagsUnavailable when the registry could not read its tag
+	// store; the cache itself is then still real and current.
+	Tags            map[string]string `json:"tags"`
+	TagsUnavailable bool              `json:"tagsUnavailable,omitempty"`
 }
 
 // apiCacheUpstream is one row of the server's upstream catalog.
@@ -104,6 +118,30 @@ type apiCreateCacheRequest struct {
 	Upstream string `json:"upstream"`
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
+	// merges the tenant's default tags in.
+	Tags map[string]string `json:"tags,omitempty"`
+}
+
+// apiUpdateTagsRequest is the cache's tags-only PATCH (`?upstream=<key>`): a
+// row-only write that never touches the cache's namespace, its cached images or
+// its stored upstream credentials. A POINTER so an empty map is sent as {}
+// (clear) — the route refuses a body without `tags`.
+type apiUpdateTagsRequest struct {
+	Tags *map[string]string `json:"tags"`
+}
+
+// readTags renders the response's tags into the model: `tags` keeps the keys
+// the prior value (plan or state) names, `tags_all` every customer key the
+// registry holds. When the registry could not read its tag store it keeps the
+// prior values and warns; sent is what a create or update wrote, the fallback
+// for a tags_all not yet known.
+func (m *ContainerRegistryCacheModel) readTags(ctx context.Context, c *apiCache, sent map[string]string, diags *diag.Diagnostics) {
+	if c.TagsUnavailable {
+		m.Tags, m.TagsAll = tftags.KeepOfferTagsWhenUnavailable(ctx, "the container registry cache", m.Tags, m.TagsAll, sent, diags)
+		return
+	}
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(c.Tags), m.Tags, diags)
 }
 
 // fromAPI populates the Terraform model from an API response.

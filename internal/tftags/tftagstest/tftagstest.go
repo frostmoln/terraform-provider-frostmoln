@@ -32,9 +32,12 @@ const operationID = "op-1"
 // Profile is the handful of wire facts the fake needs to stand in for the
 // service behind one taggable resource.
 type Profile struct {
-	Create      string // tenant-relative POST path
-	Member      string // tenant-relative member path (read and update)
-	IDField     string // the JSON field carrying the object's identity (default "id")
+	Create  string // tenant-relative POST path
+	Member  string // tenant-relative member path (read and update)
+	IDField string // the JSON field carrying the object's identity (default "id")
+	// IDValue is the identity's JSON value when it is not ObjectID — a registry
+	// credential's numeric robot id. Paths then name it in its own spelling.
+	IDValue     any
 	CreateField string // the tag field on create (default "tags")
 	UpdateField string // the tag field on update (default "tags")
 	ReadField   string // the tag field on read (default "tags")
@@ -293,6 +296,48 @@ var Profiles = map[string]Profile{
 		// the matrix touches scalars only; cluster_id/namespace/service_account
 		// replace it.
 		NoTouch: "its only other in-place attribute, scopes, is a list the matrix cannot touch",
+	},
+	// The container registry's three taggable objects (MANAGED-OFFER-TAGS-PLAN
+	// phase 3). Each updates its tags with a tags-only PATCH that refuses any
+	// other field; nothing else about any of them changes in place.
+	"frostmoln_container_registry": {
+		// The tenant's one registry: the settings route is both the opt-in (POST)
+		// and the member (GET, PATCH), and the resource's id is the tenant's.
+		Create: "/registry/settings", Member: "/registry/settings",
+		Update: http.MethodPatch, TagsOnly: true, Reserved: offerReserved,
+		Extra:    map[string]any{"enabled": true, "endpoint": "registry.example", "namespace": "t-1"},
+		NoTouch:  "nothing about a registry but its tags is configurable",
+		NoImport: "a registry has no import — applying the resource adopts the tenant's registry instead",
+	},
+	"frostmoln_container_registry_cache": {
+		// A cache is addressed by its upstream key alone (`?upstream=` on the
+		// PATCH) and read only from the listing, which carries a totalCount the
+		// resource checks against its rows.
+		Create: "/registry/caches", Member: "/registry/caches", IDField: "upstream",
+		Update: http.MethodPatch, TagsOnly: true, Reserved: offerReserved,
+		Config: map[string]tftypes.Value{"upstream": Str(ObjectID)},
+		Extra:  map[string]any{"display": "x", "namespace": "t-1-obj-1", "pullPath": "registry.example/t-1-obj-1"},
+		Handle: func(f *Fake, w http.ResponseWriter, r *http.Request, _ map[string]json.RawMessage) bool {
+			if r.Method != http.MethodGet || r.URL.Path != "/v1/tenants/t-1"+f.Profile.Create {
+				return false
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []any{f.Object()}, "totalCount": 1, "limit": 10})
+			return true
+		},
+		NoTouch: "every other argument replaces a cache, and it has no timeouts block",
+	},
+	"frostmoln_container_registry_credential": {
+		Create: "/registry/credentials", Member: "/registry/credentials/7", IDValue: 7,
+		Update: http.MethodPatch, TagsOnly: true, Reserved: offerReserved,
+		Config: map[string]tftypes.Value{"capability": Str("pull")},
+		// The secret is returned only at creation; the fake answers it on every
+		// read, which the resource ignores (a read never overwrites state's copy).
+		Extra: map[string]any{
+			"name": "x", "capability": "pull", "username": "robot$t-1+x", "endpoint": "registry.example",
+			"namespaces": []string{"t-1"}, "secret": "fake-secret", // pragma: allowlist secret
+		},
+		NoTouch:  "name and capability replace a credential, and it has no timeouts block",
+		NoImport: "a credential cannot be imported — its secret is returned only at creation",
 	},
 	"frostmoln_dns_record": {
 		Create: "/dns/zones/z-1/records", Member: "/dns/zones/z-1/records/" + ObjectID, Update: http.MethodPut,
@@ -758,7 +803,10 @@ func (f *Fake) Object() map[string]any {
 	if idField == "" {
 		idField = "id"
 	}
-	obj[idField] = ObjectID
+	obj[idField] = any(ObjectID)
+	if f.Profile.IDValue != nil {
+		obj[idField] = f.Profile.IDValue
+	}
 	obj["createdAt"] = "2026-09-13T00:00:00Z"
 	obj["updatedAt"] = f.updatedAt()
 	for k, raw := range f.fields {

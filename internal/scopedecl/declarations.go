@@ -147,8 +147,8 @@ var Declarations = map[string]Decl{
 		Immutable:    fields("bucket"),
 	},
 	"frostmoln_container_registry": {
-		EnactsNone: true,
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "endpoint", Why: "platform-assigned when the registry is provisioned for the tenant"},
 			{Path: "namespace", Why: "platform-assigned when the registry is provisioned for the tenant"},
 			{Path: "storage_used_bytes", Why: "grows and shrinks as images are pushed and deleted — the platform meters it"},
@@ -157,15 +157,16 @@ var Declarations = map[string]Decl{
 	"frostmoln_container_registry_cache": {
 		ImmutableWhy: "the cache's upstream and its credentials are fixed at create — a change re-creates the cache",
 		Immutable:    fields("password", "password_wo_version", "upstream", "username"),
+		Observes:     []Field{tagsAllObserved},
 		EnactsExcept: []Field{
 			{Path: "password_wo", Why: "write-only: sent, never stored or read back — the `password_wo_version` companion carries change detection"},
 		},
 	},
 	"frostmoln_container_registry_credential": {
-		EnactsNone:   true,
-		ImmutableWhy: "a registry credential has no update route at all — its capability is fixed when minted, so a change replaces the credential and issues a new secret",
+		ImmutableWhy: "a registry credential's name and capability are fixed when minted — a change replaces the credential and issues a new secret",
 		Immutable:    fields("capability", "name"),
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "secret", Why: "returned once at create and never again — a refresh cannot read it back"},
 		},
 	},

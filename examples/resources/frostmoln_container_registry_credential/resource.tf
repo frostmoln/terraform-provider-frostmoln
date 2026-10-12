@@ -9,6 +9,12 @@ resource "frostmoln_container_registry_credential" "ci" {
   name       = "ci-pipeline"
   capability = "push" # "pull" (the default) or "push"; push implies pull
 
+  # Resource tags: your own metadata for search and filtering. Changing them
+  # updates the credential in place — no new secret.
+  tags = {
+    team = "platform"
+  }
+
   # The credential cannot be minted before the registry exists.
   depends_on = [frostmoln_container_registry.example]
 }
