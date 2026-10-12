@@ -19,6 +19,13 @@
 resource "frostmoln_gateway" "example" {
   vpc_id = frostmoln_vpc.example.id
   mode   = "public_ip"
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates the gateway in place
+  # and never touches its connectivity, so no acknowledgement is needed.
+  tags = {
+    env = "prod"
+  }
 }
 
 resource "frostmoln_public_ip" "egress" {

@@ -52,3 +52,4 @@ output "production_egress_origin" {
 - `origin` (String) Who asked for the gateway: "explicit", "implicit_public_ip", "vpc_create", or "legacy" — which means no stored record exists, so the provenance is UNKNOWN (read it as "unknown", never as "old").
 - `source_address` (String) The public IPv4 address outbound traffic appears to come from. Null while the gateway is detached or the address is not yet known.
 - `status` (String) Observed state, read from the cloud rather than from stored desired state: "active" or "detached". What the platform observes depends on how the mode is realised, so "detached" is a prompt to check the VPC's outbound path rather than proof that anything is wrong.
+- `tags` (Map of String) Every resource tag on the gateway — the same set as the resource's `tags_all`: your own key/value metadata, never applied to the network itself. An empty map when it has none.

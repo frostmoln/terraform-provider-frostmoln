@@ -7,6 +7,7 @@ description: |-
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — load_balancer_id, protocol, protocol_port: the listener's identity is its load balancer, protocol and port; changing one is a different listener.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_lb_listener (Resource)
@@ -18,6 +19,8 @@ Manages a listener on a Frostmoln load balancer.
 **Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
 
 **Create-immutable** — `load_balancer_id`, `protocol`, `protocol_port`: the listener's identity is its load balancer, protocol and port; changing one is a different listener.
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -44,6 +47,12 @@ resource "frostmoln_lb_listener" "https" {
   insert_headers = {
     "X-Forwarded-For" = "true"
   }
+
+  # The listener's own tags, separate from the load balancer's. Merged with
+  # the provider's default_tags; changing them updates the listener in place.
+  tags = {
+    env = "prod"
+  }
 }
 ```
 
@@ -63,6 +72,7 @@ resource "frostmoln_lb_listener" "https" {
 - `connection_limit` (Number) The maximum number of concurrent connections allowed. If omitted, the backend default is used and reflected here.
 - `default_pool_id` (String) The default pool ID requests are forwarded to.
 - `insert_headers` (Map of String) Headers to insert into requests forwarded to backend members (HTTP/terminated_https listeners).
+- `tags` (Map of String) Key-value tags for the listener. These are the listener's own tags, separate from the load balancer's; changing them updates the listener in place. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `tls_certificate_id` (String) The TLS certificate (secret) ID for terminated_https listeners.
 
@@ -71,6 +81,7 @@ resource "frostmoln_lb_listener" "https" {
 - `admin_state_up` (Boolean) Whether the listener is administratively enabled.
 - `created_at` (String) The creation timestamp.
 - `id` (String) The unique identifier of the listener.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `updated_at` (String) The last update timestamp.
 
 <a id="nestedblock--timeouts"></a>

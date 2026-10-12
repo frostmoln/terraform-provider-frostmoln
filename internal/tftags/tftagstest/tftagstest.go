@@ -263,9 +263,32 @@ var Profiles = map[string]Profile{
 		Config: map[string]tftypes.Value{"name": Str(ObjectID)},
 		Touch:  map[string]any{"versioning": "suspended"},
 	},
+	"frostmoln_dns_record": {
+		Create: "/dns/zones/z-1/records", Member: "/dns/zones/z-1/records/" + ObjectID, Update: http.MethodPut,
+		ImportID: "z-1/" + ObjectID, Reserved: offerReserved,
+		Config: map[string]tftypes.Value{"zone_id": Str("z-1")},
+		// The Required attributes read back verbatim (placeholder "x"); records
+		// is a set the placeholder leaves empty.
+		Extra: map[string]any{"zoneId": "z-1", "name": "x", "type": "x", "records": []string{}, "ttl": 300},
+		// A comment change writes the recordset's own fields; tags ride along.
+		Touch: map[string]any{"comment": "touched"},
+	},
 	"frostmoln_dns_zone": {
 		Create: "/dns/zones", Member: "/dns/zones/" + ObjectID, Update: http.MethodPut,
 		Touch: map[string]any{"description": "touched"},
+	},
+	"frostmoln_gateway": {
+		// Read resolves the gateway from the vpcId-filtered listing; an import
+		// (id only) reads GET /gateways/{id}.
+		Create: "/gateways", Member: "/gateways/" + ObjectID, ListKey: "gateways",
+		Update: http.MethodPatch, Reserved: offerReserved,
+		Config: map[string]tftypes.Value{"mode": Str("public_ip")},
+		// vpc_id reads back verbatim (placeholder "x").
+		Extra: map[string]any{"vpcId": "x", "mode": "public_ip", "status": "active", "origin": "explicit"},
+		// The acknowledgement is the one in-place attribute that is not tags (a
+		// mode or address change needs a second address the fake does not model);
+		// toggling it sends no write, so the update reads the platform's set.
+		Touch: map[string]any{"acknowledge_connectivity_loss": true},
 	},
 	"frostmoln_instance": {
 		Create: "/instances", Member: "/instances/" + ObjectID, Update: http.MethodPatch,
@@ -315,6 +338,26 @@ var Profiles = map[string]Profile{
 		Extra:     map[string]any{"poolId": "pool-1"},
 		Async:     true, AsyncUpdate: true,
 		Touch: map[string]any{"delay": 7},
+	},
+	"frostmoln_lb_listener": {
+		Create: "/load-balancers/lb-1/listeners", Member: "/load-balancers/lb-1/listeners/" + ObjectID, Update: http.MethodPut,
+		ClearFlag: "clearTags", ImportID: "lb-1/" + ObjectID, Reserved: networkReserved,
+		Config: map[string]tftypes.Value{"load_balancer_id": Str("lb-1")},
+		// The Required attributes read back verbatim (placeholders "x" and 1).
+		Extra: map[string]any{"loadBalancerId": "lb-1", "name": "x", "protocol": "x", "protocolPort": 1, "adminStateUp": true},
+		Async: true, AsyncUpdate: true,
+		Touch: map[string]any{"name": "touched"},
+	},
+	"frostmoln_lb_member": {
+		Create:    "/load-balancers/lb-1/pools/pool-1/members",
+		Member:    "/load-balancers/lb-1/pools/pool-1/members/" + ObjectID,
+		Update:    http.MethodPut,
+		ClearFlag: "clearTags", ImportID: "lb-1/pool-1/" + ObjectID, Reserved: networkReserved,
+		Config: map[string]tftypes.Value{"load_balancer_id": Str("lb-1"), "pool_id": Str("pool-1")},
+		// The Required attributes read back verbatim (placeholders "x" and 1).
+		Extra: map[string]any{"poolId": "pool-1", "address": "x", "protocolPort": 1, "weight": 1},
+		Async: true, AsyncUpdate: true,
+		Touch: map[string]any{"name": "touched"},
 	},
 	"frostmoln_lb_pool": {
 		Create: "/load-balancers/lb-1/pools", Member: "/load-balancers/lb-1/pools/" + ObjectID, Update: http.MethodPut,

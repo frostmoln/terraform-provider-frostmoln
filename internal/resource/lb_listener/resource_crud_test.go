@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags/tftagstest"
 )
 
 // --- model unit tests ---
@@ -171,6 +172,7 @@ func buildListenerState(t *testing.T, model ListenerModel) tfsdk.State {
 	var schemaResp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 	state := tfsdk.State{Schema: schemaResp.Schema}
+	tftagstest.NullUnsetTags(&model)
 	if diags := state.Set(context.Background(), &model); diags.HasError() {
 		t.Fatalf("failed to set state: %v", diags.Errors())
 	}
@@ -183,6 +185,7 @@ func buildListenerPlan(t *testing.T, model ListenerModel) tfsdk.Plan {
 	var schemaResp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	tftagstest.NullUnsetTags(&model)
 	if diags := plan.Set(context.Background(), &model); diags.HasError() {
 		t.Fatalf("failed to set plan: %v", diags.Errors())
 	}

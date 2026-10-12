@@ -5,4 +5,11 @@ resource "frostmoln_lb_member" "backend_1" {
   address          = "10.0.1.20"
   protocol_port    = 8080
   weight           = 1
+
+  # The member's own tags, separate from its pool's and load balancer's.
+  # Merged with the provider's default_tags; changing them updates the member
+  # in place.
+  tags = {
+    env = "prod"
+  }
 }

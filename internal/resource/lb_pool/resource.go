@@ -229,7 +229,6 @@ func (r *poolResource) Create(ctx context.Context, req resource.CreateRequest, r
 		resp.Diagnostics.AddError("Failed to Create Pool", err.Error())
 		return
 	}
-	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// Pool create routes through provisioning → 202 + an Operation envelope
 	// (operationId only). Poll the operation, then read by its resolved
@@ -250,13 +249,13 @@ func (r *poolResource) Create(ctx context.Context, req resource.CreateRequest, r
 				return
 			}
 			// UNKNOWN: the saga may still land. The sweep decides honestly.
-			r.adoptCreatedObject(ctx, plan, lbID, floor, waitErr, resp)
+			r.adoptCreatedObject(ctx, plan, lbID, floor, defaults, waitErr, resp)
 			return
 		}
 		if done.ResourceID == "" {
 			// The operation COMPLETED without its resourceId (degraded
 			// provisioning). The pool exists; the sweep resolves it by name.
-			r.adoptCreatedObject(ctx, plan, lbID, floor,
+			r.adoptCreatedObject(ctx, plan, lbID, floor, defaults,
 				fmt.Errorf("the pool create operation completed but returned no resource ID"), resp)
 			return
 		}
@@ -278,6 +277,9 @@ func (r *poolResource) Create(ctx context.Context, req resource.CreateRequest, r
 		}
 	}
 
+	// Recorded only now that the platform holds the write: a refused, failed
+	// or timed-out operation must not claim these defaults as applied.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	plan.fromAPI(ctx, pool, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -289,7 +291,7 @@ func (r *poolResource) Create(ctx context.Context, req resource.CreateRequest, r
 // asked for); absent means verified absence; unreadable names the platform's
 // last word and the list path. Never `terraform state rm` (internal/orphan
 // holds the copy).
-func (r *poolResource) adoptCreatedObject(ctx context.Context, plan PoolModel, lbID string, floor time.Time, waitErr error, resp *resource.CreateResponse) {
+func (r *poolResource) adoptCreatedObject(ctx context.Context, plan PoolModel, lbID string, floor time.Time, defaults tftags.Defaults, waitErr error, resp *resource.CreateResponse) {
 	id := orphan.AdoptCreateOnTimeout(ctx, &resp.Diagnostics, orphan.CreateParams{
 		ResourceName: "Pool",
 		FMList:       "`fm lb pool list`",
@@ -324,6 +326,9 @@ func (r *poolResource) adoptCreatedObject(ctx context.Context, plan PoolModel, l
 		resp.Diagnostics.AddError("Failed to Parse Pool Response", err.Error())
 		return
 	}
+	// Adopted: the object exists, created from the body that carried the
+	// defaults, so they are what it holds.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	plan.fromAPI(ctx, adopted, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -389,7 +394,6 @@ func (r *poolResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		resp.Diagnostics.AddError("Failed to Update Pool", err.Error())
 		return
 	}
-	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// Like create, a pool UPDATE routes through provisioning → 202 + an
 	// Operation envelope, never the updated pool. Parsing that envelope as a
@@ -426,6 +430,9 @@ func (r *poolResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		}
 	}
 
+	// Recorded only now that the platform holds the write: a refused, failed
+	// or timed-out operation must not claim these defaults as applied.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	plan.fromAPI(ctx, pool, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }

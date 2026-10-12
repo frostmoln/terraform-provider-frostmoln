@@ -138,6 +138,8 @@ func emptyMember(ctx context.Context, schemaResp resource.SchemaResponse) tftype
 		"cross_vpc":        tftypes.NewValue(tftypes.Bool, nil),
 		"created_at":       tftypes.NewValue(tftypes.String, nil),
 		"updated_at":       tftypes.NewValue(tftypes.String, nil),
+		"tags":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"timeouts":         tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 }
@@ -325,6 +327,8 @@ func memberCreatePlanValue(ctx context.Context, schemaResp resource.SchemaRespon
 		"cross_vpc":        tftypes.NewValue(tftypes.Bool, nil),
 		"created_at":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"updated_at":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"tags":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, tftypes.UnknownValue),
 		"timeouts":         tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 }

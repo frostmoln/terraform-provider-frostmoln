@@ -172,6 +172,7 @@ var Declarations = map[string]Decl{
 	"frostmoln_dns_record": {
 		ImmutableWhy: "a record is identified by its zone, name and type; changing one is a different record",
 		Immutable:    fields("name", "type", "zone_id"),
+		Observes:     []Field{tagsAllObserved},
 	},
 	"frostmoln_dns_zone": {
 		ImmutableWhy: "the zone's name is its identity — the zone IS the name",
@@ -189,6 +190,7 @@ var Declarations = map[string]Decl{
 			{Path: "acknowledge_connectivity_loss", Why: "an acknowledgement flag for a destroy that severs the VPC's connectivity — carried in state, not a platform setting the apply pushes"},
 		},
 		Observes: []Field{
+			tagsAllObserved,
 			{Path: "origin", Why: "records whether the gateway was declared or platform-attached (`implicit_public_ip`) — the platform set it, not the configuration"},
 			{Path: "source_address", Why: "a platform-attached gateway carries whatever address the platform chose for it"},
 		},
@@ -273,6 +275,7 @@ var Declarations = map[string]Decl{
 	"frostmoln_lb_listener": {
 		ImmutableWhy: "the listener's identity is its load balancer, protocol and port; changing one is a different listener",
 		Immutable:    fields("load_balancer_id", "protocol", "protocol_port"),
+		Observes:     []Field{tagsAllObserved},
 	},
 	"frostmoln_lb_member": {
 		ImmutableWhy: "the member is identified by its pool and address:port; changing one is a different member",
@@ -284,6 +287,7 @@ var Declarations = map[string]Decl{
 			{Path: "protocol_port"},
 			{Path: "subnet_id"},
 		},
+		Observes: []Field{tagsAllObserved},
 	},
 	"frostmoln_lb_pool": {
 		ImmutableWhy: "the pool's identity is its listener, load balancer and protocol; changing one is a different pool",

@@ -8,7 +8,7 @@ description: |-
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — vpc_id: a gateway belongs to its VPC; moving it is a new gateway.
   Not enacted state — acknowledge_connectivity_loss: an acknowledgement flag for a destroy that severs the VPC's connectivity — carried in state, not a platform setting the apply pushes.
-  Observed, not enacted — origin: records whether the gateway was declared or platform-attached (implicit_public_ip) — the platform set it, not the configuration. source_address: a platform-attached gateway carries whatever address the platform chose for it.
+  Observed, not enacted — origin: records whether the gateway was declared or platform-attached (implicit_public_ip) — the platform set it, not the configuration. source_address: a platform-attached gateway carries whatever address the platform chose for it. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_gateway (Resource)
@@ -23,7 +23,7 @@ Manages a VPC's outbound internet path. A VPC has at most one gateway; a VPC wit
 
 **Not enacted state** — `acknowledge_connectivity_loss`: an acknowledgement flag for a destroy that severs the VPC's connectivity — carried in state, not a platform setting the apply pushes.
 
-**Observed, not enacted** — `origin`: records whether the gateway was declared or platform-attached (`implicit_public_ip`) — the platform set it, not the configuration. `source_address`: a platform-attached gateway carries whatever address the platform chose for it.
+**Observed, not enacted** — `origin`: records whether the gateway was declared or platform-attached (`implicit_public_ip`) — the platform set it, not the configuration. `source_address`: a platform-attached gateway carries whatever address the platform chose for it. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -49,6 +49,13 @@ Manages a VPC's outbound internet path. A VPC has at most one gateway; a VPC wit
 resource "frostmoln_gateway" "example" {
   vpc_id = frostmoln_vpc.example.id
   mode   = "public_ip"
+
+  # Resource tags: your own metadata for search and filtering. Merged with
+  # the provider's default_tags; changing them updates the gateway in place
+  # and never touches its connectivity, so no acknowledgement is needed.
+  tags = {
+    env = "prod"
+  }
 }
 
 resource "frostmoln_public_ip" "egress" {
@@ -169,6 +176,7 @@ Changing it is applied IN PLACE, never as a destroy/create: the platform re-addr
 REMOVING this attribute from the configuration does not release the address, and does not hand the gateway back to a platform-drawn one. The attribute is Computed as well as Optional, so an absent value resolves to the id already in state: there is no diff, no request is sent, and the gateway goes on egressing from the address you named. The API reads an absent `publicIpId` the same way — as "keep the address this gateway has" — so there is no way back to a platform-drawn address once one is named. To move the gateway to a different address, name the different address.
 
 The public IP must belong to this tenant and must not be attached to anything else. A public IP that is in use by an instance is refused, and so is one already serving another VPC's outbound path.
+- `tags` (Map of String) Resource tags on the gateway: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only. Changing them updates the gateway in place and touches nothing else: no mode change, no re-addressing, and no `acknowledge_connectivity_loss` needed. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 
 ### Read-Only
 
@@ -176,6 +184,7 @@ The public IP must belong to this tenant and must not be attached to anything el
 - `origin` (String) Who asked for the gateway: "explicit" (a client created it directly), "explicit_public_ip" (a client created it and named the public IP it egresses from, via `public_ip_id`), "implicit_public_ip" (the platform attached it because a public IP was associated, which requires a gateway), "vpc_create" (it came with the VPC because a mode was chosen at VPC create), or "legacy" — which means NO STORED RECORD EXISTS, so the provenance is UNKNOWN. "legacy" usually means the VPC predates this resource, but the record write is deliberately non-fatal, so a gateway created minutes ago can report it too. Read it as "unknown", never as "old".
 - `source_address` (String) The public IPv4 address outbound traffic appears to come from. Null while the gateway is detached or the address is not yet known. It is dedicated to this VPC — no other VPC egresses from it — but dedicated is not the same as STABLE. Where `public_ip_id` names an address, this IS that address and it is pinned. Where it does not, this is the address the platform drew for the gateway: nothing pins it, so it may change if the gateway is rebuilt, and it is not an address to publish or hand a partner to allow-list. A `mode` or `public_ip_id` change re-records it, so it plans as "(known after apply)" then and keeps its recorded value otherwise.
 - `status` (String) Observed state of the gateway, read from the cloud rather than from stored desired state: "active" or "detached". It is not configurable — Terraform records whatever the platform reports and produces no plan of its own from it. "detached" is not on its own a verdict that something is broken or that an operator is needed: what the platform observes depends on how the mode is realised. Read it as a prompt to check the VPC's outbound path, not as proof that the platform and the cloud disagree.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 
 ## Import
 

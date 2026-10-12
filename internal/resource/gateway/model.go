@@ -2,10 +2,13 @@
 package gateway
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // Gateway modes, as the network service's enum spells them.
@@ -62,6 +65,10 @@ type GatewayModel struct {
 	// tells the practitioner that DNS resolution and managed-service
 	// connectivity go down with the internet path.
 	AcknowledgeConnectivityLoss types.Bool `tfsdk:"acknowledge_connectivity_loss"`
+
+	// Tags / TagsAll are the gateway's customer resource tags (internal/tftags).
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 }
 
 // apiGateway is the API representation.
@@ -87,6 +94,8 @@ type apiGateway struct {
 	// resource for the API to name, so it omits the field rather than inventing
 	// one. Absent maps to a NULL Terraform value, never "".
 	PublicIPID string `json:"publicIpId,omitempty"`
+	// Tags are the gateway's customer tags, omitted when it has none.
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
 // apiGatewayList is the filtered-list response. A VPC with no gateway
@@ -108,10 +117,17 @@ type apiCreateGatewayRequest struct {
 	// public IP for the tenant — that address has no id, is not listed, and is
 	// not pinned (ADR-0114); only a named id buys a tenant-owned, stable one.
 	PublicIPID string `json:"publicIpId,omitempty"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the
+	// platform merges the tenant's default tags in (a key set here wins).
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
+// apiUpdateGatewayRequest is the PATCH body. At least one of Mode and Tags is
+// set. A body with Tags and no Mode is a TAGS-ONLY update: the platform never
+// touches connectivity for it, so it carries neither a mode nor the
+// acknowledgement — and must not, or a tags edit would read as a mode change.
 type apiUpdateGatewayRequest struct {
-	Mode string `json:"mode"`
+	Mode string `json:"mode,omitempty"`
 	// PublicIPID is omitted unless the practitioner named an address. See the
 	// create request: omitted means "the platform draws the address", not
 	// "detach".
@@ -123,7 +139,17 @@ type apiUpdateGatewayRequest struct {
 	// reachability, so
 	// the intent has to be stated in the configuration rather than inferred
 	// from the fact that an apply was approved.
-	AcknowledgeConnectivityLoss bool `json:"acknowledgeConnectivityLoss"`
+	AcknowledgeConnectivityLoss bool `json:"acknowledgeConnectivityLoss,omitempty"`
+	// Tags, when non-nil, REPLACES the gateway's tags; a pointer so an empty map
+	// is sent as {} (clear). nil leaves them as they are.
+	Tags *map[string]string `json:"tags,omitempty"`
+}
+
+// tagsFromAPI renders the API's tags into `tags` (the keys the prior value names)
+// and `tags_all` (every customer key). m.Tags must hold the prior value: the
+// configuration on a create or update, the state on a refresh.
+func (m *GatewayModel) tagsFromAPI(ctx context.Context, gw *apiGateway, diags *diag.Diagnostics) {
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(gw.Tags), m.Tags, diags)
 }
 
 // noIDDetail explains why an identity-less state row is refused rather than

@@ -48,9 +48,14 @@ func gwObjectType() tftypes.Object {
 			"origin":                        tftypes.String,
 			"public_ip_id":                  tftypes.String,
 			"acknowledge_connectivity_loss": tftypes.Bool,
+			"tags":                          tftypes.Map{ElementType: tftypes.String},
+			"tags_all":                      tftypes.Map{ElementType: tftypes.String},
 		},
 	}
 }
+
+// nullTags is an untagged gateway's tags and tags_all.
+func nullTags() tftypes.Value { return tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil) }
 
 // gwValue builds a whole-resource value. A nil string is a null attribute.
 //
@@ -81,6 +86,8 @@ func gwValue(id, vpcID, mode, sourceAddress, status, origin string, ack *bool, p
 		"origin":                        str(origin),
 		"public_ip_id":                  str(pin),
 		"acknowledge_connectivity_loss": ackVal,
+		"tags":                          nullTags(),
+		"tags_all":                      nullTags(),
 	})
 }
 
@@ -112,6 +119,8 @@ func gwPlanUnknownComputed(vpcID, mode string, ack *bool, publicIPID ...string) 
 		"origin":                        unknown,
 		"public_ip_id":                  pin,
 		"acknowledge_connectivity_loss": ackVal,
+		"tags":                          nullTags(),
+		"tags_all":                      nullTags(),
 	})
 }
 

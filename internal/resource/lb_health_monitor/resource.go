@@ -219,7 +219,6 @@ func (r *healthMonitorResource) Create(ctx context.Context, req resource.CreateR
 		resp.Diagnostics.AddError("Failed to Create Health Monitor", err.Error())
 		return
 	}
-	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// Health-monitor create routes through provisioning → 202 + an Operation
 	// envelope (operationId only). Poll the operation, then re-read the monitor
@@ -240,7 +239,7 @@ func (r *healthMonitorResource) Create(ctx context.Context, req resource.CreateR
 				return
 			}
 			// UNKNOWN: the saga may still land. The sweep decides honestly.
-			r.adoptCreatedObject(ctx, plan, lbID, poolID, floor, waitErr, resp)
+			r.adoptCreatedObject(ctx, plan, lbID, poolID, floor, defaults, waitErr, resp)
 			return
 		}
 		readResp, readErr := r.client.Get(ctx, r.monitorPath(lbID, poolID), nil)
@@ -261,6 +260,9 @@ func (r *healthMonitorResource) Create(ctx context.Context, req resource.CreateR
 		}
 	}
 
+	// Recorded only now that the platform holds the write: a refused, failed
+	// or timed-out operation must not claim these defaults as applied.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	plan.fromAPI(ctx, lbID, hm, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -271,7 +273,7 @@ func (r *healthMonitorResource) Create(ctx context.Context, req resource.CreateR
 // names the platform's last word and the list path — and adopts the result
 // honestly: a fresh read of what the platform HAS, never the configuration's
 // intent. Never `terraform state rm` (internal/orphan holds the copy).
-func (r *healthMonitorResource) adoptCreatedObject(ctx context.Context, plan HealthMonitorModel, lbID, poolID string, floor time.Time, waitErr error, resp *resource.CreateResponse) {
+func (r *healthMonitorResource) adoptCreatedObject(ctx context.Context, plan HealthMonitorModel, lbID, poolID string, floor time.Time, defaults tftags.Defaults, waitErr error, resp *resource.CreateResponse) {
 	id := orphan.AdoptCreateOnTimeout(ctx, &resp.Diagnostics, orphan.CreateParams{
 		ResourceName: "Health Monitor",
 		FMList:       "`fm lb pool list`",
@@ -320,6 +322,9 @@ func (r *healthMonitorResource) adoptCreatedObject(ctx context.Context, plan Hea
 		resp.Diagnostics.AddError("Failed to Parse Health Monitor Response", err.Error())
 		return
 	}
+	// Adopted: the object exists, created from the body that carried the
+	// defaults, so they are what it holds.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	plan.fromAPI(ctx, lbID, adopted, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -384,7 +389,6 @@ func (r *healthMonitorResource) Update(ctx context.Context, req resource.UpdateR
 		resp.Diagnostics.AddError("Failed to Update Health Monitor", err.Error())
 		return
 	}
-	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	// Like create, a health-monitor UPDATE routes through provisioning → 202 +
 	// an Operation envelope, never the updated monitor. Parsing that envelope as
@@ -420,6 +424,9 @@ func (r *healthMonitorResource) Update(ctx context.Context, req resource.UpdateR
 		}
 	}
 
+	// Recorded only now that the platform holds the write: a refused, failed
+	// or timed-out operation must not claim these defaults as applied.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	plan.fromAPI(ctx, lbID, hm, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }

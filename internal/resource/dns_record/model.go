@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 // DNSRecordModel is the Terraform state model for a DNS record (recordset).
@@ -17,23 +19,26 @@ type DNSRecordModel struct {
 	Records   types.Set    `tfsdk:"records"`
 	TTL       types.Int64  `tfsdk:"ttl"`
 	Comment   types.String `tfsdk:"comment"`
+	Tags      types.Map    `tfsdk:"tags"`
+	TagsAll   types.Map    `tfsdk:"tags_all"`
 	CreatedAt types.String `tfsdk:"created_at"`
 	UpdatedAt types.String `tfsdk:"updated_at"`
 }
 
 // apiDNSRecord is the API representation of a DNS recordset. The ID is the stable
-// backend recordset UUID. Tags are not round-tripped by Designate (the system of
-// record, ADR-0073), so they are not modeled.
+// backend recordset UUID. Tags are kept by the network service itself (Designate
+// cannot hold them) and omitted when there are none.
 type apiDNSRecord struct {
-	ID        string   `json:"id"`
-	ZoneID    string   `json:"zoneId"`
-	Name      string   `json:"name"`
-	Type      string   `json:"type"`
-	Records   []string `json:"records"`
-	TTL       int      `json:"ttl"`
-	Comment   string   `json:"comment,omitempty"`
-	CreatedAt string   `json:"createdAt"`
-	UpdatedAt string   `json:"updatedAt,omitempty"`
+	ID        string            `json:"id"`
+	ZoneID    string            `json:"zoneId"`
+	Name      string            `json:"name"`
+	Type      string            `json:"type"`
+	Records   []string          `json:"records"`
+	TTL       int               `json:"ttl"`
+	Comment   string            `json:"comment,omitempty"`
+	Tags      map[string]string `json:"tags,omitempty"`
+	CreatedAt string            `json:"createdAt"`
+	UpdatedAt string            `json:"updatedAt,omitempty"`
 }
 
 // apiCreateDNSRecordRequest is the API request to create a recordset.
@@ -43,14 +48,20 @@ type apiCreateDNSRecordRequest struct {
 	Records []string `json:"records"`
 	TTL     int      `json:"ttl,omitempty"`
 	Comment string   `json:"comment,omitempty"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the
+	// platform merges the tenant's default tags in (a key set here wins).
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
 // apiUpdateDNSRecordRequest is the API request to update a recordset. A non-nil
-// Records fully replaces the value set.
+// Records fully replaces the value set. Tags, when non-nil, REPLACES the
+// recordset's tags — a pointer so an empty map is sent as {} (clear). A request
+// carrying only Tags never writes the DNS backend and never bumps the serial.
 type apiUpdateDNSRecordRequest struct {
-	Records []string `json:"records,omitempty"`
-	TTL     *int     `json:"ttl,omitempty"`
-	Comment *string  `json:"comment,omitempty"`
+	Records []string           `json:"records,omitempty"`
+	TTL     *int               `json:"ttl,omitempty"`
+	Comment *string            `json:"comment,omitempty"`
+	Tags    *map[string]string `json:"tags,omitempty"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -122,4 +133,15 @@ func (m *DNSRecordModel) fromAPI(ctx context.Context, rec *apiDNSRecord, diags *
 	} else {
 		m.UpdatedAt = types.StringNull()
 	}
+
+	// m.Tags holds the prior value: the configuration on a create or update, the
+	// state on a refresh.
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, tftags.OfferCustomerTags(rec.Tags), m.Tags, diags)
+}
+
+// recordFieldsChanged reports whether the plan changes anything the DNS backend
+// holds — the values, the TTL or the comment. When it does not, an update sends
+// tags alone, which the platform applies without touching the zone.
+func (m *DNSRecordModel) recordFieldsChanged(state *DNSRecordModel) bool {
+	return !m.Records.Equal(state.Records) || !m.TTL.Equal(state.TTL) || !m.Comment.Equal(state.Comment)
 }

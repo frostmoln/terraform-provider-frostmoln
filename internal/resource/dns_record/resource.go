@@ -18,11 +18,13 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 var (
 	_ resource.Resource                = &dnsRecordResource{}
 	_ resource.ResourceWithImportState = &dnsRecordResource{}
+	_ resource.ResourceWithModifyPlan  = &dnsRecordResource{}
 )
 
 type dnsRecordResource struct {
@@ -98,6 +100,11 @@ func (r *dnsRecordResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				Description: "A comment for the record.",
 				Optional:    true,
 			},
+			"tags": tftags.OfferTagsAttribute("Resource tags on the recordset: your own key/value metadata for " +
+				"search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), kept by the platform " +
+				"and never published in DNS. Changing only the tags updates the recordset in place without " +
+				"writing the zone: no serial bump, no change to what resolvers see."),
+			"tags_all": tftags.TagsAllAttribute(),
 			"created_at": schema.StringAttribute{
 				Description: "The creation timestamp.",
 				Computed:    true,
@@ -138,7 +145,9 @@ func (r *dnsRecordResource) Create(ctx context.Context, req resource.CreateReque
 	}
 
 	zoneID := plan.ZoneID.ValueString()
+	defaults := r.client.DefaultTags()
 	createReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
+	createReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -150,6 +159,7 @@ func (r *dnsRecordResource) Create(ctx context.Context, req resource.CreateReque
 		resp.Diagnostics.AddError("Failed to Create DNS Record", err.Error())
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	var rec apiDNSRecord
 	if err := json.Unmarshal(apiResp.Body, &rec); err != nil {
@@ -192,6 +202,7 @@ func (r *dnsRecordResource) Read(ctx context.Context, req resource.ReadRequest, 
 	}
 
 	state.fromAPI(ctx, &rec, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -214,30 +225,83 @@ func (r *dnsRecordResource) Update(ctx context.Context, req resource.UpdateReque
 
 	zoneID := state.ZoneID.ValueString()
 	recordID := state.ID.ValueString()
+	recordPath := r.client.TenantPath(fmt.Sprintf("/dns/zones/%s/records/%s", zoneID, recordID))
 
-	updateReq := plan.toUpdateRequest(ctx, &resp.Diagnostics)
+	// The record's own fields go out only when one of them changed, so a tags
+	// change alone never writes the zone.
+	var updateReq apiUpdateDNSRecordRequest
+	if plan.recordFieldsChanged(&state) {
+		updateReq = plan.toUpdateRequest(ctx, &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+	defaults := r.client.DefaultTags()
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, err := r.get(ctx, recordPath)
+			if err != nil {
+				return nil, err
+			}
+			return tftags.OfferCustomerTags(cur.Tags), nil
+		}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	updateReq.Tags = tags
 
-	apiResp, err := r.client.Put(ctx, r.client.TenantPath(fmt.Sprintf("/dns/zones/%s/records/%s", zoneID, recordID)), updateReq)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to Update DNS Record", err.Error())
+	var rec *apiDNSRecord
+	if updateReq.Records != nil || updateReq.TTL != nil || updateReq.Comment != nil || updateReq.Tags != nil {
+		apiResp, err := r.client.Put(ctx, recordPath, updateReq)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to Update DNS Record", err.Error())
+			return
+		}
+		rec = &apiDNSRecord{}
+		if err := json.Unmarshal(apiResp.Body, rec); err != nil {
+			resp.Diagnostics.AddError("Failed to Parse DNS Record Response", err.Error())
+			return
+		}
+	} else if rec, err = r.get(ctx, recordPath); err != nil {
+		// Nothing to write (a default_tags change the platform already matches):
+		// read what it holds.
+		resp.Diagnostics.AddError("Failed to Read DNS Record After Update", err.Error())
 		return
 	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
-	var rec apiDNSRecord
-	if err := json.Unmarshal(apiResp.Body, &rec); err != nil {
-		resp.Diagnostics.AddError("Failed to Parse DNS Record Response", err.Error())
-		return
-	}
-
-	plan.fromAPI(ctx, &rec, &resp.Diagnostics)
+	plan.fromAPI(ctx, rec, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// get reads one recordset.
+func (r *dnsRecordResource) get(ctx context.Context, recordPath string) (*apiDNSRecord, error) {
+	apiResp, err := r.client.Get(ctx, recordPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	var rec apiDNSRecord
+	if err := json.Unmarshal(apiResp.Body, &rec); err != nil {
+		return nil, fmt.Errorf("failed to parse DNS record response: %w", err)
+	}
+	return &rec, nil
+}
+
+// ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,
+// plans an in-place update of the recordset's tags.
+func (r *dnsRecordResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
 }
 
 func (r *dnsRecordResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -270,4 +334,5 @@ func (r *dnsRecordResource) ImportState(ctx context.Context, req resource.Import
 
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("zone_id"), parts[0])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[1])...)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }

@@ -7,6 +7,7 @@ description: |-
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — name, type, zone_id: a record is identified by its zone, name and type; changing one is a different record.
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_dns_record (Resource)
@@ -18,6 +19,8 @@ Manages a DNS record (recordset) within a Frostmoln managed DNS zone. A recordse
 **Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
 
 **Create-immutable** — `name`, `type`, `zone_id`: a record is identified by its zone, name and type; changing one is a different record.
+
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -34,6 +37,13 @@ resource "frostmoln_dns_record" "www" {
   type    = "A"
   records = ["203.0.113.10", "203.0.113.11"]
   ttl     = 300
+
+  # Resource tags: your own metadata for search and filtering, never published
+  # in DNS. Merged with the provider's default_tags; changing only the tags
+  # does not write the zone.
+  tags = {
+    env = "prod"
+  }
 }
 
 # An MX record at the zone apex ("@"); the priority is part of the value.
@@ -58,10 +68,12 @@ resource "frostmoln_dns_record" "mx" {
 ### Optional
 
 - `comment` (String) A comment for the record.
+- `tags` (Map of String) Resource tags on the recordset: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), kept by the platform and never published in DNS. Changing only the tags updates the recordset in place without writing the zone: no serial bump, no change to what resolvers see. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `ttl` (Number) The record TTL in seconds.
 
 ### Read-Only
 
 - `created_at` (String) The creation timestamp.
 - `id` (String) The unique identifier of the recordset. Stable across value and TTL edits.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `updated_at` (String) The last update timestamp.

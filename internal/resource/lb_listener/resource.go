@@ -20,12 +20,14 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
 	_ resource.Resource                = &listenerResource{}
 	_ resource.ResourceWithImportState = &listenerResource{}
+	_ resource.ResourceWithModifyPlan  = &listenerResource{}
 )
 
 type listenerResource struct {
@@ -154,6 +156,12 @@ func (r *listenerResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Description: "Whether the listener is administratively enabled.",
 				Computed:    true,
 			},
+			"tags": schema.MapAttribute{
+				Description: "Key-value tags for the listener. These are the listener's own tags, separate from the load balancer's; changing them updates the listener in place." + tftags.TagsNote,
+				ElementType: types.StringType,
+				Optional:    true,
+			},
+			"tags_all": tftags.TagsAllAttribute(),
 			"created_at": schema.StringAttribute{
 				Description: "The creation timestamp.",
 				Computed:    true,
@@ -199,7 +207,9 @@ func (r *listenerResource) Create(ctx context.Context, req resource.CreateReques
 	}
 
 	lbID := plan.LoadBalancerID.ValueString()
+	defaults := r.client.DefaultTags()
 	createReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
+	createReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -232,13 +242,13 @@ func (r *listenerResource) Create(ctx context.Context, req resource.CreateReques
 				return
 			}
 			// UNKNOWN: the saga may still land. The sweep decides honestly.
-			r.adoptCreatedObject(ctx, plan, lbID, floor, waitErr, resp)
+			r.adoptCreatedObject(ctx, plan, lbID, floor, defaults, waitErr, resp)
 			return
 		}
 		if done.ResourceID == "" {
 			// The operation COMPLETED without its resourceId (degraded
 			// provisioning). The listener exists; the sweep resolves it by name.
-			r.adoptCreatedObject(ctx, plan, lbID, floor,
+			r.adoptCreatedObject(ctx, plan, lbID, floor, defaults,
 				fmt.Errorf("the listener create operation completed but returned no resource ID"), resp)
 			return
 		}
@@ -260,6 +270,9 @@ func (r *listenerResource) Create(ctx context.Context, req resource.CreateReques
 		}
 	}
 
+	// The defaults are recorded only once the platform has the listener: a
+	// refused or failed create must not claim them as applied.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	plan.fromAPI(ctx, listener, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -271,7 +284,7 @@ func (r *listenerResource) Create(ctx context.Context, req resource.CreateReques
 // configuration asked for); absent means verified absence; unreadable names
 // the platform's last word and the list path. Never `terraform state rm`
 // (internal/orphan holds the copy).
-func (r *listenerResource) adoptCreatedObject(ctx context.Context, plan ListenerModel, lbID string, floor time.Time, waitErr error, resp *resource.CreateResponse) {
+func (r *listenerResource) adoptCreatedObject(ctx context.Context, plan ListenerModel, lbID string, floor time.Time, defaults tftags.Defaults, waitErr error, resp *resource.CreateResponse) {
 	id := orphan.AdoptCreateOnTimeout(ctx, &resp.Diagnostics, orphan.CreateParams{
 		ResourceName: "Listener",
 		FMList:       "`fm lb listener list`",
@@ -306,6 +319,9 @@ func (r *listenerResource) adoptCreatedObject(ctx context.Context, plan Listener
 		resp.Diagnostics.AddError("Failed to Parse Listener Response", err.Error())
 		return
 	}
+	// Adopted: the listener exists, created from the body that carried the
+	// defaults, so they are what it holds.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	plan.fromAPI(ctx, adopted, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -337,6 +353,7 @@ func (r *listenerResource) Read(ctx context.Context, req resource.ReadRequest, r
 	}
 
 	state.fromAPI(ctx, listener, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -351,22 +368,69 @@ func (r *listenerResource) Update(ctx context.Context, req resource.UpdateReques
 
 	lbID := state.LoadBalancerID.ValueString()
 	listenerID := state.ID.ValueString()
+	listenerPath := r.client.TenantPath(fmt.Sprintf("/load-balancers/%s/listeners/%s", lbID, listenerID))
+	defaults := r.client.DefaultTags()
 	updateReq := plan.toUpdateRequest(ctx, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// The tag set to write, or nil when the platform's needs no change. Only a
+	// due write costs the fresh read it is computed against, so a key added
+	// outside Terraform since the last refresh is kept.
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) { return r.currentTags(ctx, listenerPath) },
+		&resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if tags != nil {
+		updateReq.setTags(*tags, true)
+	}
 
-	apiResp, err := r.client.Put(ctx, r.client.TenantPath(fmt.Sprintf("/load-balancers/%s/listeners/%s", lbID, listenerID)), updateReq)
+	apiResp, err := r.client.Put(ctx, listenerPath, updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Update Listener", err.Error())
 		return
 	}
 
-	listener, err := client.ParseResponse[apiListener](apiResp)
+	// A listener UPDATE routes through provisioning → 202 + an Operation
+	// envelope, never the updated listener. Parsing that envelope as a listener
+	// yields a zero-valued object that would blank every attribute in state;
+	// poll the operation and re-read instead. A non-202 body is parsed directly
+	// for a sync backend.
+	var listener *apiListener
+	if apiResp.IsAccepted() {
+		op, opErr := client.ParseResponse[client.Operation](apiResp)
+		if opErr != nil {
+			resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
+			return
+		}
+		budgets := r.resolveBudgets(plan.Timeouts)
+		if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Update); waitErr != nil {
+			resp.Diagnostics.AddError("Listener Update Failed", waitErr.Error())
+			return
+		}
+		readResp, readErr := r.client.Get(ctx, listenerPath, nil)
+		if readErr != nil {
+			resp.Diagnostics.AddError("Failed to Read Listener After Update", readErr.Error())
+			return
+		}
+		listener, err = client.ParseResponse[apiListener](readResp)
+	} else {
+		listener, err = client.ParseResponse[apiListener](apiResp)
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Parse Listener Response", err.Error())
 		return
 	}
+	// Recorded only now that the operation succeeded: a failed or timed-out
+	// update keeps the prior state, and its private state must keep the prior
+	// defaults with it.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	plan.fromAPI(ctx, listener, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -431,4 +495,26 @@ func (r *listenerResource) ImportState(ctx context.Context, req resource.ImportS
 
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("load_balancer_id"), parts[0])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[1])...)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
+}
+
+// ModifyPlan predicts tags_all: unknown whenever the next write changes the
+// platform's tag set, including a change to the provider's default_tags.
+func (r *listenerResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+}
+
+// currentTags reads the tags the platform holds right now, at memberPath. An
+// update derives the keys it keeps — the ones this configuration does not
+// manage — from this rather than from state (tftags.Prior.WithCurrent).
+func (r *listenerResource) currentTags(ctx context.Context, memberPath string) (map[string]string, error) {
+	apiResp, err := r.client.Get(ctx, memberPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := client.ParseResponse[apiListener](apiResp)
+	if err != nil {
+		return nil, err
+	}
+	return obj.customerTags(), nil
 }

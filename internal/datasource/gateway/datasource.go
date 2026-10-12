@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 var _ datasource.DataSource = &gatewayDataSource{}
@@ -33,6 +34,7 @@ type gatewayModel struct {
 	SourceAddress types.String `tfsdk:"source_address"`
 	Status        types.String `tfsdk:"status"`
 	Origin        types.String `tfsdk:"origin"`
+	Tags          types.Map    `tfsdk:"tags"`
 }
 
 type apiGateway struct {
@@ -42,6 +44,8 @@ type apiGateway struct {
 	SourceAddress string `json:"sourceAddress,omitempty"`
 	Status        string `json:"status"`
 	Origin        string `json:"origin"`
+	// Tags are the gateway's customer tags, omitted when it has none.
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
 type apiGatewayList struct {
@@ -92,6 +96,12 @@ func (d *gatewayDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 					"\"vpc_create\", or \"legacy\" — which means no stored record exists, so the " +
 					"provenance is UNKNOWN (read it as \"unknown\", never as \"old\").",
 				Computed: true,
+			},
+			"tags": schema.MapAttribute{
+				Description: "Every resource tag on the gateway — the same set as the resource's `tags_all`: your " +
+					"own key/value metadata, never applied to the network itself. An empty map when it has none.",
+				Computed:    true,
+				ElementType: types.StringType,
 			},
 		},
 	}
@@ -175,6 +185,9 @@ func (d *gatewayDataSource) Read(ctx context.Context, req datasource.ReadRequest
 	state.Mode = types.StringValue(gw.Mode)
 	state.Status = types.StringValue(gw.Status)
 	state.Origin = types.StringValue(gw.Origin)
+	// The platform's reserved namespace is filtered as on the resource read-back,
+	// so `tags` means the same thing on every surface.
+	state.Tags = tftags.OfferTagsValue(gw.Tags)
 	if gw.SourceAddress == "" {
 		state.SourceAddress = types.StringNull()
 	} else {

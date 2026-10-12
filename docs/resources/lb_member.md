@@ -8,6 +8,7 @@ description: |-
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — address, load_balancer_id, pool_id, protocol_port, subnet_id: the member is identified by its pool and address:port; changing one is a different member.
   Create-immutable — cross_vpc: an acknowledgement flag carried in state, never returned by the API — changing it between two known values forces a new member (a first apply that supplies it after import reconciles instead).
+  Observed, not enacted — tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_lb_member (Resource)
@@ -22,6 +23,8 @@ Manages a backend member of a Frostmoln load balancer pool.
 
 **Create-immutable** — `cross_vpc`: an acknowledgement flag carried in state, never returned by the API — changing it between two known values forces a new member (a first apply that supplies it after import reconciles instead).
 
+**Observed, not enacted** — `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
+
 ## Example Usage
 
 ```terraform
@@ -32,6 +35,13 @@ resource "frostmoln_lb_member" "backend_1" {
   address          = "10.0.1.20"
   protocol_port    = 8080
   weight           = 1
+
+  # The member's own tags, separate from its pool's and load balancer's.
+  # Merged with the provider's default_tags; changing them updates the member
+  # in place.
+  tags = {
+    env = "prod"
+  }
 }
 ```
 
@@ -50,6 +60,7 @@ resource "frostmoln_lb_member" "backend_1" {
 - `cross_vpc` (Boolean) Whether the member is in a different VPC than the load balancer. Acknowledgement flag: recorded in state but never returned by the API. Changing this between two known values forces a new resource. On import this flag cannot be recovered from the API, so it is left null and reconciled (not destroyed) on the first apply that supplies it.
 - `name` (String) The name of the member.
 - `subnet_id` (String) The subnet ID the member resides in. Changing this forces a new resource.
+- `tags` (Map of String) Key-value tags for the member. These are the member's own tags, separate from its pool's and load balancer's; changing them updates the member in place. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `weight` (Number) The weight of the member for weighted load balancing.
 
@@ -57,6 +68,7 @@ resource "frostmoln_lb_member" "backend_1" {
 
 - `created_at` (String) The creation timestamp.
 - `id` (String) The unique identifier of the member.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `updated_at` (String) The last update timestamp.
 
 <a id="nestedblock--timeouts"></a>

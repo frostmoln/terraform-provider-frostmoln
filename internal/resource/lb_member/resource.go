@@ -18,12 +18,14 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
 var (
 	_ resource.Resource                = &memberResource{}
 	_ resource.ResourceWithImportState = &memberResource{}
+	_ resource.ResourceWithModifyPlan  = &memberResource{}
 )
 
 type memberResource struct {
@@ -159,6 +161,12 @@ func (r *memberResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					),
 				},
 			},
+			"tags": schema.MapAttribute{
+				Description: "Key-value tags for the member. These are the member's own tags, separate from its pool's and load balancer's; changing them updates the member in place." + tftags.TagsNote,
+				ElementType: types.StringType,
+				Optional:    true,
+			},
+			"tags_all": tftags.TagsAllAttribute(),
 			"created_at": schema.StringAttribute{
 				Description: "The creation timestamp.",
 				Computed:    true,
@@ -206,7 +214,12 @@ func (r *memberResource) Create(ctx context.Context, req resource.CreateRequest,
 	lbID := plan.LoadBalancerID.ValueString()
 	poolID := plan.PoolID.ValueString()
 	crossVPC := plan.CrossVPC
+	defaults := r.client.DefaultTags()
 	createReq := plan.toCreateRequest()
+	createReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	// the created-at floor for the discovery sweep
 	applyStarted := time.Now().UTC()
@@ -236,14 +249,14 @@ func (r *memberResource) Create(ctx context.Context, req resource.CreateRequest,
 				return
 			}
 			// UNKNOWN: the saga may still land. The sweep decides honestly.
-			r.adoptCreatedObject(ctx, plan, lbID, poolID, floor, waitErr, resp)
+			r.adoptCreatedObject(ctx, plan, lbID, poolID, floor, defaults, waitErr, resp)
 			return
 		}
 		if done.ResourceID == "" {
 			// The operation COMPLETED without its resourceId (degraded
 			// provisioning). The member exists; the sweep resolves it by the
 			// address:port tuple the plan states.
-			r.adoptCreatedObject(ctx, plan, lbID, poolID, floor,
+			r.adoptCreatedObject(ctx, plan, lbID, poolID, floor, defaults,
 				fmt.Errorf("the member create operation completed but returned no resource ID"), resp)
 			return
 		}
@@ -265,7 +278,11 @@ func (r *memberResource) Create(ctx context.Context, req resource.CreateRequest,
 		}
 	}
 
+	// The defaults are recorded only once the platform has the member: a
+	// refused or failed create must not claim them as applied.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	plan.fromAPI(lbID, member)
+	plan.tagsFromAPI(ctx, member, &resp.Diagnostics)
 	plan.CrossVPC = crossVPC // write-only, not returned by API
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -278,7 +295,7 @@ func (r *memberResource) Create(ctx context.Context, req resource.CreateRequest,
 // HAS (not what the configuration asked for); absent means verified absence;
 // unreadable names the platform's last word and the list path. Never
 // `terraform state rm` (internal/orphan holds the copy).
-func (r *memberResource) adoptCreatedObject(ctx context.Context, plan MemberModel, lbID, poolID string, floor time.Time, waitErr error, resp *resource.CreateResponse) {
+func (r *memberResource) adoptCreatedObject(ctx context.Context, plan MemberModel, lbID, poolID string, floor time.Time, defaults tftags.Defaults, waitErr error, resp *resource.CreateResponse) {
 	address := plan.Address.ValueString()
 	protocolPort := int(plan.ProtocolPort.ValueInt64())
 	id := orphan.AdoptCreateOnTimeout(ctx, &resp.Diagnostics, orphan.CreateParams{
@@ -318,7 +335,11 @@ func (r *memberResource) adoptCreatedObject(ctx context.Context, plan MemberMode
 		resp.Diagnostics.AddError("Failed to Parse Member Response", err.Error())
 		return
 	}
+	// Adopted: the member exists, created from the body that carried the
+	// defaults, so they are what it holds.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	plan.fromAPI(lbID, adopted)
+	plan.tagsFromAPI(ctx, adopted, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -351,6 +372,8 @@ func (r *memberResource) Read(ctx context.Context, req resource.ReadRequest, res
 	}
 
 	state.fromAPI(lbID, member)
+	state.tagsFromAPI(ctx, member, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	state.CrossVPC = crossVPC // write-only, preserved from prior state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -368,21 +391,68 @@ func (r *memberResource) Update(ctx context.Context, req resource.UpdateRequest,
 	poolID := state.PoolID.ValueString()
 	memberID := state.ID.ValueString()
 	crossVPC := plan.CrossVPC
+	memberPath := r.client.TenantPath(fmt.Sprintf("/load-balancers/%s/pools/%s/members/%s", lbID, poolID, memberID))
+	defaults := r.client.DefaultTags()
 	updateReq := plan.toUpdateRequest()
+	// The tag set to write, or nil when the platform's needs no change. Only a
+	// due write costs the fresh read it is computed against, so a key added
+	// outside Terraform since the last refresh is kept.
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) { return r.currentTags(ctx, memberPath) },
+		&resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if tags != nil {
+		updateReq.setTags(*tags)
+	}
 
-	apiResp, err := r.client.Put(ctx, r.client.TenantPath(fmt.Sprintf("/load-balancers/%s/pools/%s/members/%s", lbID, poolID, memberID)), updateReq)
+	apiResp, err := r.client.Put(ctx, memberPath, updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Update Member", err.Error())
 		return
 	}
 
-	member, err := client.ParseResponse[apiMember](apiResp)
+	// A member UPDATE routes through provisioning → 202 + an Operation
+	// envelope, never the updated member. Parsing that envelope as a member
+	// yields a zero-valued object that would blank every attribute in state;
+	// poll the operation and re-read instead. A non-202 body is parsed directly
+	// for a sync backend.
+	var member *apiMember
+	if apiResp.IsAccepted() {
+		op, opErr := client.ParseResponse[client.Operation](apiResp)
+		if opErr != nil {
+			resp.Diagnostics.AddError("Failed to Parse Operation Response", opErr.Error())
+			return
+		}
+		budgets := r.resolveBudgets(plan.Timeouts)
+		if _, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Update); waitErr != nil {
+			resp.Diagnostics.AddError("Member Update Failed", waitErr.Error())
+			return
+		}
+		readResp, readErr := r.client.Get(ctx, memberPath, nil)
+		if readErr != nil {
+			resp.Diagnostics.AddError("Failed to Read Member After Update", readErr.Error())
+			return
+		}
+		member, err = client.ParseResponse[apiMember](readResp)
+	} else {
+		member, err = client.ParseResponse[apiMember](apiResp)
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Parse Member Response", err.Error())
 		return
 	}
+	// Recorded only now that the operation succeeded: a failed or timed-out
+	// update keeps the prior state, and its private state the prior defaults.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	plan.fromAPI(lbID, member)
+	plan.tagsFromAPI(ctx, member, &resp.Diagnostics)
 	plan.CrossVPC = crossVPC // write-only, preserved
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -450,4 +520,24 @@ func (r *memberResource) ImportState(ctx context.Context, req resource.ImportSta
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[2])...)
 	// cross_vpc is write-only and cannot be recovered on import.
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("cross_vpc"), types.BoolNull())...)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
+}
+
+// ModifyPlan predicts tags_all: unknown whenever the next write changes the
+// platform's tag set, including a change to the provider's default_tags.
+func (r *memberResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+}
+
+// currentTags reads the tags the platform holds on the member right now.
+func (r *memberResource) currentTags(ctx context.Context, memberPath string) (map[string]string, error) {
+	apiResp, err := r.client.Get(ctx, memberPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := client.ParseResponse[apiMember](apiResp)
+	if err != nil {
+		return nil, err
+	}
+	return obj.customerTags(), nil
 }

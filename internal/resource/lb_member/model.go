@@ -2,8 +2,13 @@
 package lb_member
 
 import (
+	"context"
+
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -18,6 +23,8 @@ type MemberModel struct {
 	Weight         types.Int64  `tfsdk:"weight"`
 	SubnetID       types.String `tfsdk:"subnet_id"`
 	CrossVPC       types.Bool   `tfsdk:"cross_vpc"`
+	Tags           types.Map    `tfsdk:"tags"`
+	TagsAll        types.Map    `tfsdk:"tags_all"`
 	CreatedAt      types.String `tfsdk:"created_at"`
 	UpdatedAt      types.String `tfsdk:"updated_at"`
 
@@ -35,8 +42,10 @@ type apiMember struct {
 	ProtocolPort int    `json:"protocolPort"`
 	SubnetID     string `json:"subnetId,omitempty"`
 	Weight       int    `json:"weight"`
-	CreatedAt    string `json:"createdAt"`
-	UpdatedAt    string `json:"updatedAt,omitempty"`
+	// Tags are the member's tags, omitted when it has none.
+	Tags      map[string]string `json:"tags,omitempty"`
+	CreatedAt string            `json:"createdAt"`
+	UpdatedAt string            `json:"updatedAt,omitempty"`
 }
 
 // apiMemberList is the pool's member listing that the create-timeout adoption
@@ -54,12 +63,47 @@ type apiCreateMemberRequest struct {
 	SubnetID     string `json:"subnetId,omitempty"`
 	Weight       int    `json:"weight,omitempty"`
 	CrossVPC     bool   `json:"crossVpc,omitempty"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the
+	// platform merges the tenant's default tags in.
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
 // apiUpdateMemberRequest is the API request to update a pool member.
+//
+// ClearTags is how tags are emptied, and `tags: {}` is NOT a substitute: member
+// writes are served by provisioning, which forwards the map to the network
+// service over gRPC, where an empty map is indistinguishable from an absent one.
+// Provisioning refuses `tags` and `clearTags` together, so exactly one is ever
+// set (setTags).
 type apiUpdateMemberRequest struct {
-	Name   *string `json:"name,omitempty"`
-	Weight *int    `json:"weight,omitempty"`
+	Name      *string           `json:"name,omitempty"`
+	Weight    *int              `json:"weight,omitempty"`
+	Tags      map[string]string `json:"tags,omitempty"`
+	ClearTags bool              `json:"clearTags,omitempty"`
+}
+
+// setTags puts the desired tag set on an update: a non-empty set as `tags`,
+// emptying it as the explicit clearTags flag. Never both — that is a 400.
+func (req *apiUpdateMemberRequest) setTags(tags map[string]string) {
+	if len(tags) > 0 {
+		req.Tags = tags
+		return
+	}
+	req.ClearTags = true
+}
+
+// customerTags is the tag set the platform holds on the member, as Terraform
+// sees it: platform-reserved keys filtered out. The read-back and the fresh read
+// an update makes before it writes both use it.
+func (a *apiMember) customerTags() map[string]string {
+	return reservedmeta.FilterNetwork(a.Tags)
+}
+
+// tagsFromAPI renders the member's tags into `tags` (the keys the prior value
+// names) and `tags_all` (every customer key). m.Tags must hold the prior value:
+// the configuration on a create or update, the state on a refresh.
+func (m *MemberModel) tagsFromAPI(ctx context.Context, mem *apiMember, diags *diag.Diagnostics) {
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, mem.customerTags(), m.Tags, diags)
 }
 
 // toCreateRequest converts the Terraform model to an API create request.

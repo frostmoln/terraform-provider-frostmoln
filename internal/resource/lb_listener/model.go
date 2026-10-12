@@ -7,6 +7,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -23,6 +25,8 @@ type ListenerModel struct {
 	TLSCertificateID types.String `tfsdk:"tls_certificate_id"`
 	ConnectionLimit  types.Int64  `tfsdk:"connection_limit"`
 	AdminStateUp     types.Bool   `tfsdk:"admin_state_up"`
+	Tags             types.Map    `tfsdk:"tags"`
+	TagsAll          types.Map    `tfsdk:"tags_all"`
 	CreatedAt        types.String `tfsdk:"created_at"`
 	UpdatedAt        types.String `tfsdk:"updated_at"`
 
@@ -44,6 +48,7 @@ type apiListener struct {
 	InsertHeaders    map[string]string `json:"insertHeaders,omitempty"`
 	TLSCertificateID string            `json:"tlsCertificateId,omitempty"`
 	AdminStateUp     bool              `json:"adminStateUp"`
+	Tags             map[string]string `json:"tags,omitempty"`
 	CreatedAt        string            `json:"createdAt"`
 	UpdatedAt        string            `json:"updatedAt,omitempty"`
 }
@@ -65,15 +70,27 @@ type apiCreateListenerRequest struct {
 	AllowedCIDRs     []string          `json:"allowedCidrs,omitempty"`
 	InsertHeaders    map[string]string `json:"insertHeaders,omitempty"`
 	TLSCertificateID string            `json:"tlsCertificateId,omitempty"`
+	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the
+	// platform merges the tenant's default tags in.
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
 // apiUpdateListenerRequest is the API request to update a listener.
+//
+// ClearTags is how tags are emptied, and `tags: {}` is NOT a substitute.
+// Listener writes are served by provisioning, which forwards the map to the
+// network service over gRPC; proto3 cannot tell an absent map from an empty
+// one, so an empty map arrives as "leave the tags alone" and the request still
+// succeeds. Provisioning refuses `tags` and `clearTags` together with a 400, so
+// exactly one is ever set (setTags).
 type apiUpdateListenerRequest struct {
 	Name            *string           `json:"name,omitempty"`
 	DefaultPoolID   *string           `json:"defaultPoolId,omitempty"`
 	ConnectionLimit *int              `json:"connectionLimit,omitempty"`
 	AllowedCIDRs    []string          `json:"allowedCidrs,omitempty"`
 	InsertHeaders   map[string]string `json:"insertHeaders,omitempty"`
+	Tags            map[string]string `json:"tags,omitempty"`
+	ClearTags       bool              `json:"clearTags,omitempty"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -186,4 +203,28 @@ func (m *ListenerModel) fromAPI(ctx context.Context, l *apiListener, diags *diag
 	} else {
 		m.UpdatedAt = types.StringNull()
 	}
+
+	// Platform-owned frostmoln_* keys are filtered first (network refuses them on
+	// every customer write, so no config can converge on one).
+	m.Tags, m.TagsAll = tftags.ReadBack(ctx, l.customerTags(), m.Tags, diags)
+}
+
+// setTags puts the desired tag set on an update (tftags.ForUpdate's result).
+// A non-empty set is sent as `tags`; emptying a set the platform still holds
+// (changed) goes out as the explicit clearTags flag, because an empty map is
+// lost on the gRPC hop. Never both — that is a 400.
+func (req *apiUpdateListenerRequest) setTags(tags map[string]string, changed bool) {
+	switch {
+	case len(tags) > 0:
+		req.Tags = tags
+	case changed:
+		req.ClearTags = true
+	}
+}
+
+// customerTags is the tag set the platform holds on the listener, as Terraform
+// sees it: platform-reserved keys filtered out. The read-back and the fresh read
+// an update makes before it writes both use it.
+func (a *apiListener) customerTags() map[string]string {
+	return reservedmeta.FilterNetwork(a.Tags)
 }

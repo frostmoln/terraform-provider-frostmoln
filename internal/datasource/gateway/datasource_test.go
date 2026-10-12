@@ -32,6 +32,7 @@ func dsObjectType() tftypes.Object {
 			"source_address": tftypes.String,
 			"status":         tftypes.String,
 			"origin":         tftypes.String,
+			"tags":           tftypes.Map{ElementType: tftypes.String},
 		},
 	}
 }
@@ -45,6 +46,7 @@ func dsConfig(vpcID string) tftypes.Value {
 		"source_address": null,
 		"status":         null,
 		"origin":         null,
+		"tags":           tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 	})
 }
 
@@ -103,7 +105,8 @@ func TestGatewayDataSourceRead(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.RawQuery
 		_, _ = w.Write([]byte(`{"gateways":[{"id":"gw-1","vpcId":"vpc-1","mode":"some-other-mode",
-			"sourceAddress":"46.246.117.231","status":"active","origin":"vpc_create"}],"totalCount":1}`))
+			"sourceAddress":"46.246.117.231","status":"active","origin":"vpc_create",
+			"tags":{"env":"prod","frostmoln-note":"x"}}],"totalCount":1}`))
 	}))
 	defer server.Close()
 
@@ -129,6 +132,11 @@ func TestGatewayDataSourceRead(t *testing.T) {
 	}
 	if state.SourceAddress.ValueString() != "46.246.117.231" {
 		t.Errorf("unexpected source_address %v", state.SourceAddress)
+	}
+	tags := map[string]string{}
+	state.Tags.ElementsAs(context.Background(), &tags, false)
+	if len(tags) != 1 || tags["env"] != "prod" {
+		t.Errorf("tags = %v, want the customer tag and no reserved key", tags)
 	}
 }
 

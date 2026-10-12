@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -16,6 +17,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
 var (
@@ -203,6 +205,11 @@ func (r *gatewayResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 					"\"unknown\", never as \"old\".",
 				Computed: true,
 			},
+			"tags": tftags.OfferTagsAttribute("Resource tags on the gateway: your own key/value metadata for " +
+				"search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform " +
+				"only. Changing them updates the gateway in place and touches nothing else: no mode change, no " +
+				"re-addressing, and no `acknowledge_connectivity_loss` needed."),
+			"tags_all": tftags.TagsAllAttribute(),
 		},
 	}
 }
@@ -293,6 +300,15 @@ func (modeValidator) ValidateString(_ context.Context, req validator.StringReque
 // is never touched here: it is the practitioner's choice, and overwriting it
 // with unknown would hide the very change being planned.
 func (r *gatewayResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// tags_all: unknown whenever the next write changes the platform's tag set,
+	// including a change to the provider's default_tags. Independent of the
+	// observed attributes below, so it runs for a create too.
+	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	// A create marks every null Computed attribute unknown already, and a
 	// destroy plan has no attributes to resolve.
 	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
@@ -363,6 +379,12 @@ func (r *gatewayResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
+	defaults := r.client.DefaultTags()
+	tags := tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/gateways"), apiCreateGatewayRequest{
 		VPCID: plan.VPCID.ValueString(),
 		Mode:  plan.Mode.ValueString(),
@@ -370,11 +392,13 @@ func (r *gatewayResource) Create(ctx context.Context, req resource.CreateRequest
 		// absent field as "draw the gateway an address yourself", which
 		// creates no public IP resource for the tenant.
 		PublicIPID: configuredPublicIPID(plan.PublicIPID),
+		Tags:       tags,
 	})
 	if err != nil {
 		addGatewayError(&resp.Diagnostics, "Failed to create gateway", err)
 		return
 	}
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
 	var gw apiGateway
 	if err := json.Unmarshal(apiResp.Body, &gw); err != nil {
@@ -389,6 +413,7 @@ func (r *gatewayResource) Create(ctx context.Context, req resource.CreateRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	plan.tagsFromAPI(ctx, &gw, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -429,6 +454,8 @@ func (r *gatewayResource) Read(ctx context.Context, req resource.ReadRequest, re
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	state.tagsFromAPI(ctx, gw, &resp.Diagnostics)
+	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -519,22 +546,11 @@ func (r *gatewayResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	// The updatable inputs are `mode` and `public_ip_id`;
+	// The updatable inputs are `mode`, `public_ip_id` and `tags`;
 	// `acknowledge_connectivity_loss` is a statement of intent the API never
-	// stores. Toggling it alone must not send a mutation, so carry the observed
-	// values over from state and stop — the next refresh re-reads them anyway.
+	// stores. Toggling it alone must not send a mutation.
 	modeChanged := !plan.Mode.Equal(state.Mode)
 	pinChanged := publicIPPinChanged(plan.PublicIPID, state.PublicIPID)
-
-	if !modeChanged && !pinChanged {
-		plan.ID = state.ID
-		plan.SourceAddress = state.SourceAddress
-		plan.Status = state.Status
-		plan.Origin = state.Origin
-		plan.PublicIPID = state.PublicIPID
-		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-		return
-	}
 
 	// Refuse locally, before any request. The API requires the acknowledgement
 	// for a mode change, and it is not ceremony: the VPC's outbound source
@@ -546,7 +562,10 @@ func (r *gatewayResource) Update(ctx context.Context, req resource.UpdateRequest
 	// connections drop, and every partner allow-list and DNS record naming the
 	// old address goes stale. That is precisely the kind of change this
 	// resource refuses to make on a plan approval alone.
-	if !plan.AcknowledgeConnectivityLoss.ValueBool() {
+	//
+	// A tags change is not: it never reaches the cloud, so it needs no
+	// acknowledgement and is sent without one.
+	if (modeChanged || pinChanged) && !plan.AcknowledgeConnectivityLoss.ValueBool() {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("acknowledge_connectivity_loss"),
 			gatewayChangeAckSummary(modeChanged),
@@ -555,34 +574,109 @@ func (r *gatewayResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	// PATCH by the gateway's own id, which survives both changes — that is why
-	// this is an update rather than a replacement.
-	apiResp, err := r.client.Patch(ctx,
-		r.client.TenantPath("/gateways/"+url.PathEscape(state.ID.ValueString())),
-		apiUpdateGatewayRequest{
+	// The tag set to write, or nil when the platform's needs no change —
+	// computed against the tags the gateway holds right now, so a key added
+	// outside Terraform since the last refresh is kept.
+	id := state.ID.ValueString()
+	gatewayPath := r.client.TenantPath("/gateways/" + url.PathEscape(id))
+	defaults := r.client.DefaultTags()
+	tags, err := tftags.OfferTagsToWrite(ctx, defaults, plan.Tags, state.Tags, state.TagsAll, req.Private,
+		func(ctx context.Context) (map[string]string, error) {
+			cur, found, err := r.getByID(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nil, fmt.Errorf("gateway %s was not found", id)
+			}
+			return tftags.OfferCustomerTags(cur.Tags), nil
+		}, &resp.Diagnostics)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	var gw *apiGateway
+	switch {
+	case modeChanged || pinChanged:
+		// PATCH by the gateway's own id, which survives both changes — that is
+		// why this is an update rather than a replacement. A tags change rides
+		// the same request.
+		gw = r.patch(ctx, gatewayPath, apiUpdateGatewayRequest{
 			Mode: plan.Mode.ValueString(),
 			// Omitted when the practitioner named no address, which the API
 			// reads as "keep the address this gateway has" — never as "detach".
 			PublicIPID:                  configuredPublicIPID(plan.PublicIPID),
 			AcknowledgeConnectivityLoss: true,
-		})
-	if err != nil {
-		addGatewayError(&resp.Diagnostics, "Failed to change gateway", err)
-		return
+			Tags:                        tags,
+		}, &resp.Diagnostics)
+		if gw != nil {
+			resp.Diagnostics.Append(checkRequestedPublicIP(plan.PublicIPID, gw)...)
+		}
+	case tags != nil:
+		// A TAGS-ONLY update: tags and nothing else. No mode and no
+		// acknowledgement, so the platform never touches the gateway's
+		// connectivity for it.
+		gw = r.patch(ctx, gatewayPath, apiUpdateGatewayRequest{Tags: tags}, &resp.Diagnostics)
+	case plan.TagsAll.IsUnknown():
+		// Nothing to write, but the plan left tags_all to the apply (a
+		// default_tags change that the platform already matches, or an update
+		// for another reason): read what the platform holds.
+		found := false
+		gw, found, err = r.lookup(ctx, state.VPCID.ValueString(), id)
+		if err != nil {
+			addGatewayError(&resp.Diagnostics, "Failed to read gateway", err)
+			return
+		}
+		if !found {
+			resp.Diagnostics.AddError("Gateway not found", fmt.Sprintf("Gateway %s was not found after the update.", id))
+			return
+		}
 	}
-
-	var gw apiGateway
-	if err := json.Unmarshal(apiResp.Body, &gw); err != nil {
-		resp.Diagnostics.AddError("Failed to parse gateway response", err.Error())
-		return
-	}
-
-	resp.Diagnostics.Append(checkRequestedPublicIP(plan.PublicIPID, &gw)...)
-	resp.Diagnostics.Append(applyToModel(&plan, &gw)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// The platform now holds the desired set, whether or not this update had to
+	// write it; that also ends an import's pending state.
+	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+
+	if gw == nil {
+		// Only the acknowledgement changed: carry the observed values over from
+		// state — the next refresh re-reads them anyway.
+		plan.ID = state.ID
+		plan.SourceAddress = state.SourceAddress
+		plan.Status = state.Status
+		plan.Origin = state.Origin
+		plan.PublicIPID = state.PublicIPID
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		return
+	}
+
+	resp.Diagnostics.Append(applyToModel(&plan, gw)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	plan.tagsFromAPI(ctx, gw, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// patch sends one PATCH to the gateway and returns the gateway it answers
+// with, or nil with the failure in diags.
+func (r *gatewayResource) patch(ctx context.Context, gatewayPath string, body apiUpdateGatewayRequest, diags *diag.Diagnostics) *apiGateway {
+	apiResp, err := r.client.Patch(ctx, gatewayPath, body)
+	if err != nil {
+		addGatewayError(diags, "Failed to change gateway", err)
+		return nil
+	}
+	var gw apiGateway
+	if err := json.Unmarshal(apiResp.Body, &gw); err != nil {
+		diags.AddError("Failed to parse gateway response", err.Error())
+		return nil
+	}
+	return &gw
 }
 
 // publicIPPinChanged reports whether the practitioner moved the gateway onto a
@@ -699,4 +793,5 @@ func (r *gatewayResource) ImportState(ctx context.Context, req resource.ImportSt
 	// acknowledge_connectivity_loss stays null, so an imported gateway cannot be
 	// destroyed until the practitioner states the intent — the safe default.
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
+	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }

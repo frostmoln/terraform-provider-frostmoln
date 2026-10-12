@@ -20,4 +20,10 @@ resource "frostmoln_lb_listener" "https" {
   insert_headers = {
     "X-Forwarded-For" = "true"
   }
+
+  # The listener's own tags, separate from the load balancer's. Merged with
+  # the provider's default_tags; changing them updates the listener in place.
+  tags = {
+    env = "prod"
+  }
 }
