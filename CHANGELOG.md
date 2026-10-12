@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.85.0] - 2026-10-12
+
+### 🚀 Features
+
+- *(kubernetes_cluster)* Retained_volumes_on_destroy (#662)
+
 ## [0.84.0] - 2026-10-12
 
 ### 🚀 Features
