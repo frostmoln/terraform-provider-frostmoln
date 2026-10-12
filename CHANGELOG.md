@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.0] - 2026-10-12
+
+### 🚀 Features
+
+- Tags on gateway, dns_record, lb_listener and lb_member (#659)
+
 ## [0.82.0] - 2026-10-12
 
 ### 🚀 Features
