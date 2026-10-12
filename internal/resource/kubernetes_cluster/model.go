@@ -55,6 +55,12 @@ type KubernetesClusterModel struct {
 	Tags    types.Map `tfsdk:"tags"`
 	TagsAll types.Map `tfsdk:"tags_all"`
 
+	// RetainedVolumesOnDestroy is CONFIGURATION ONLY ("keep" | "delete" | null): what
+	// the destroy does to the cluster's volumes with PV reclaimPolicy Retain or Unknown
+	// (K8S-PVC-VOLUME-LIFECYCLE-PLAN §2.3). Never sent or read back by the API outside
+	// Delete; null after import.
+	RetainedVolumesOnDestroy types.String `tfsdk:"retained_volumes_on_destroy"`
+
 	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
 	// absent block, which resolves to the resource's hardcoded defaults.
 	Timeouts *timeouts.Model `tfsdk:"timeouts"`

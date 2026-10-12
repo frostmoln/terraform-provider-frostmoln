@@ -1455,7 +1455,12 @@ func TestDeleteSoftDeletePoll(t *testing.T) {
 	var gets atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/kubernetes-clusters/c-1/persistent-volumes":
+			_, _ = io.WriteString(w, `{"volumes":[],"retainedSetToken":"t","reportedAt":null}`)
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tenants/t-1/kubernetes-clusters/c-1":
+			if len(r.URL.Query()) != 0 {
+				t.Errorf("a cluster with no retained volumes must be deleted with no query, got %s", r.URL.RawQuery)
+			}
 			deleted.Store(true)
 			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/kubernetes-clusters/c-1":

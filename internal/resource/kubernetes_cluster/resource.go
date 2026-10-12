@@ -132,6 +132,7 @@ func (r *kubernetesClusterResource) ModifyPlan(ctx context.Context, req resource
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	warnReplaceWithoutRetainedChoice(ctx, req, plan, &resp.Diagnostics)
 	resp.Diagnostics.Append(r.checkConfiguredAddonVersions(ctx, req.Config, plan.AddonVersions)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -299,6 +300,25 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 					// workload on it, to perform an operation that now happens in the
 					// background without an outage.
 				},
+			},
+			"retained_volumes_on_destroy": schema.StringAttribute{
+				Description: "What destroying this cluster does to its volumes whose PersistentVolume has " +
+					"reclaimPolicy `Retain`, or `Unknown` (the cluster has not reported its volumes recently, which " +
+					"is treated as Retain): `keep` (they stay as ordinary volumes, listed with your other volumes " +
+					"and still billed) or `delete` (they are deleted with the cluster). Volumes with reclaimPolicy " +
+					"`Delete` are always deleted with the cluster. `delete` deletes whatever is Retain/Unknown at " +
+					"destroy time. Unknown means the cluster has not reported the volume in the last 15 minutes — " +
+					"until every worker runs the platform's volume-reporting controller that is any cluster's " +
+					"volumes, so the choice applies to most clusters with volumes. There is NO default: when the " +
+					"cluster has such volumes and this is unset, destroy fails and lists them, and nothing is " +
+					"deleted. APPLY THE SETTING FIRST: the destroy reads it from state, so set it and " +
+					"`terraform apply` before `terraform destroy` or before a change that REPLACES the cluster " +
+					"(the plan warns when a replacement is planned without it). Changing it is an in-place update " +
+					"that makes no API call. Null after import. With `delete`, the destroy also fails if the set of " +
+					"retained volumes changed after the check, so a volume is never deleted unseen. Destroying a " +
+					"cluster that is already being deleted only waits: the first delete's choice stands.",
+				Optional:   true,
+				Validators: []validator.String{stringvalidator.OneOf(retainedVolumesKeep, retainedVolumesDelete)},
 			},
 			"addon_versions": schema.MapAttribute{
 				Description: "Pins addons to published versions, keyed by addon key (at most 32). Every key must " +
@@ -911,6 +931,19 @@ func (r *kubernetesClusterResource) Update(ctx context.Context, req resource.Upd
 		return
 	}
 
+	// retained_volumes_on_destroy alone: a setting only Delete reads. Recorded in state
+	// with NO API call (not even the refresh below), so changing it never touches the
+	// cluster.
+	if r.onlyDestroyChoiceChanged(ctx, plan, state, req.Private, &resp.Diagnostics) {
+		state.RetainedVolumesOnDestroy = plan.RetainedVolumesOnDestroy
+		state.Timeouts = plan.Timeouts
+		resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	// The customer's timeouts block, with defaults identical to the values
 	// this resource has always hardcoded. The update's polls run on the
 	// update budget; the addons PUT's retries run against the same deadline.
@@ -1100,11 +1133,10 @@ func (r *kubernetesClusterResource) Delete(ctx context.Context, req resource.Del
 		return
 	}
 
-	if _, err := r.client.Delete(ctx, r.clusterPath(id)); err != nil {
-		if client.IsNotFound(err) {
-			return
-		}
-		resp.Diagnostics.AddError("Failed to delete Kubernetes cluster", err.Error())
+	// The volume preflight, and the choice for the volumes it asks about
+	// (retained_volumes_on_destroy). No choice while there are such volumes = no
+	// delete: the platform refuses it too, and nothing may be deleted unseen.
+	if !r.deleteWithVolumeChoice(ctx, id, state.RetainedVolumesOnDestroy, &resp.Diagnostics) {
 		return
 	}
 
