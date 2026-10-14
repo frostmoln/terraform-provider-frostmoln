@@ -21,9 +21,9 @@ import (
 // The cluster-delete volume choice (K8S-PVC-VOLUME-LIFECYCLE-PLAN §2.3, ADR-0031
 // amendment 2026-10-11). Volumes whose PV reclaimPolicy is Delete (freshly reported)
 // are deleted with the cluster. Retain and Unknown volumes are ASKED about: the delete
-// must say keep or delete (retainedVolumes), and `delete` must echo the preflight's
+// must say keep or delete (retainedVolumes), and both echo the preflight's
 // retainedSetToken, so a volume that turned Retain after the preflight is never
-// deleted unseen. The server answers an undecided delete 409
+// deleted unseen, and one listed as Unknown is never deleted on a keep. The server answers an undecided delete 409
 // retained_volumes_decision_required, and this resource refuses before sending one.
 
 const (
@@ -66,6 +66,36 @@ func (p *apiClusterVolumePlan) asked() []apiClusterVolume {
 	return out
 }
 
+// deleted returns the volumes a delete removes with the cluster whatever the answer.
+func (p *apiClusterVolumePlan) deleted() []apiClusterVolume {
+	var out []apiClusterVolume
+	for _, v := range p.Volumes {
+		if v.Disposition == volumeDispositionDelete {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// describeChangedPlan renders a 409's fresh plan: the volumes still asked about AND
+// the ones that will now be deleted with the cluster. The second half matters most
+// when a volume listed as Unknown has since been reported Delete: nothing is asked
+// about any more, and the next destroy deletes it, so it must be named here.
+func describeChangedPlan(p *apiClusterVolumePlan) string {
+	var b strings.Builder
+	if asked := p.asked(); len(asked) > 0 {
+		b.WriteString("Volumes with reclaimPolicy Retain or Unknown (kept or deleted per retained_volumes_on_destroy):")
+		b.WriteString(describeVolumes(asked))
+	} else {
+		b.WriteString("No volume has reclaimPolicy Retain or Unknown any more.")
+	}
+	if del := p.deleted(); len(del) > 0 {
+		fmt.Fprintf(&b, "\n\n%d volume(s) with reclaimPolicy Delete will be deleted with the cluster:", len(del))
+		b.WriteString(describeVolumes(del))
+	}
+	return b.String()
+}
+
 func (r *kubernetesClusterResource) listClusterVolumes(ctx context.Context, id string) (*apiClusterVolumePlan, error) {
 	resp, err := r.client.Get(ctx, r.clusterPath(id)+"/persistent-volumes", nil)
 	if err != nil {
@@ -105,8 +135,10 @@ const retainedVolumesRemedy = "\n\nSet retained_volumes_on_destroy = \"keep\" (t
 //   - A cluster already `deleting` is a REPEAT delete: no preflight and no DELETE —
 //     the first delete's volume choice stands — just the poll (true).
 //   - Otherwise the volume preflight decides the parameters: none when nothing is
-//     asked about, else retainedVolumes from retained_volumes_on_destroy (and the
-//     retainedSetToken for delete). Unset while volumes are asked about = refused
+//     asked about, else retainedVolumes from retained_volumes_on_destroy and the
+//     preflight's retainedSetToken — for keep too: the platform re-plans at delete
+//     time, so a keep without it would delete a volume listed as Unknown that has
+//     been reported Delete since. Unset while volumes are asked about = refused
 //     here, before any DELETE.
 func (r *kubernetesClusterResource) deleteWithVolumeChoice(ctx context.Context, id string, choiceAttr types.String, diags *diag.Diagnostics) bool {
 	cluster, err := r.getCluster(ctx, id)
@@ -147,7 +179,7 @@ func (r *kubernetesClusterResource) deleteWithVolumeChoice(ctx context.Context, 
 			return false
 		}
 		query = url.Values{"retainedVolumes": {choice}}
-		if choice == retainedVolumesDelete {
+		if plan.RetainedSetToken != "" {
 			query.Set("retainedSetToken", plan.RetainedSetToken)
 		}
 	}
@@ -158,9 +190,9 @@ func (r *kubernetesClusterResource) deleteWithVolumeChoice(ctx context.Context, 
 		}
 		if fresh, ok := retainedVolumesDecision(err); ok {
 			diags.AddError("Kubernetes cluster's retained volumes changed",
-				fmt.Sprintf("The platform refused the delete of cluster %s: its volumes with reclaimPolicy Retain "+
-					"or Unknown are now:%s\n\nReview them, then destroy again. Nothing was deleted.",
-					id, describeVolumes(fresh.asked())))
+				fmt.Sprintf("The platform refused the delete of cluster %s: its volumes changed since they were "+
+					"checked. Nothing was deleted. Now:\n\n%s\n\nReview them, then destroy again.",
+					id, describeChangedPlan(fresh)))
 			return false
 		}
 		var apiErr *client.APIError

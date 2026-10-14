@@ -144,7 +144,7 @@ func TestDeleteRetainedVolumesChoice(t *testing.T) {
 	for _, tc := range []struct {
 		choice    string
 		wantToken string
-	}{{"keep", ""}, {"delete", tfVolToken}} {
+	}{{"keep", tfVolToken}, {"delete", tfVolToken}} { // both answers bind to the shown set
 		t.Run(tc.choice, func(t *testing.T) {
 			api := &tfVolAPI{volumes: []string{tfVolDelete, tfVolRetain}, clusterStatus: statusDeleted}
 			resp := runVolDelete(t, api, types.StringValue(tc.choice))
@@ -185,6 +185,26 @@ func TestDeleteConflictListsTheFreshSet(t *testing.T) {
 	if detail := resp.Diagnostics.Errors()[0].Detail(); !strings.Contains(detail, "44444444-4444-4444-8444-444444444444") ||
 		!strings.Contains(detail, "Nothing was deleted") {
 		t.Fatalf("diagnostic does not list the fresh set:\n%s", detail)
+	}
+}
+
+// The live 2026-10-14 case: keep was answered for a volume listed as Unknown, and the
+// cluster reported it Delete before the DELETE. The fresh plan asks about nothing; the
+// diagnostic must still name the volume the next destroy will delete.
+func TestDeleteConflictNamesVolumesNowDeleted(t *testing.T) {
+	api := &tfVolAPI{volumes: []string{tfVolUnknwn}, clusterStatus: statusDeleted,
+		conflict: `{"code":"retained_volumes_decision_required","message":"decide","details":{"volumes":[` + tfVolDelete +
+			`],"retainedSetToken":"cd","reportedAt":null}}`}
+	resp := runVolDelete(t, api, types.StringValue("keep"))
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a 409 must fail the destroy")
+	}
+	detail := resp.Diagnostics.Errors()[0].Detail()
+	for _, want := range []string{"No volume has reclaimPolicy Retain or Unknown any more",
+		"1 volume(s) with reclaimPolicy Delete will be deleted", "11111111-1111-4111-8111-111111111111", "Nothing was deleted"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("diagnostic lacks %q:\n%s", want, detail)
+		}
 	}
 }
 

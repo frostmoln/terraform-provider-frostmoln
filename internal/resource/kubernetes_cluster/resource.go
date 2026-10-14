@@ -306,16 +306,16 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 					"reclaimPolicy `Retain`, or `Unknown` (the cluster has not reported its volumes recently, which " +
 					"is treated as Retain): `keep` (they stay as ordinary volumes, listed with your other volumes " +
 					"and still billed) or `delete` (they are deleted with the cluster). Volumes with reclaimPolicy " +
-					"`Delete` are always deleted with the cluster. `delete` deletes whatever is Retain/Unknown at " +
-					"destroy time. Unknown means the cluster has not reported the volume in the last 15 minutes — " +
-					"until every worker runs the platform's volume-reporting controller that is any cluster's " +
-					"volumes, so the choice applies to most clusters with volumes. There is NO default: when the " +
+					"`Delete` are always deleted with the cluster. Unknown " +
+					"means the cluster has not reported the volume in the last 15 minutes, for example one created " +
+					"moments before the destroy. There is NO default: when the " +
 					"cluster has such volumes and this is unset, destroy fails and lists them, and nothing is " +
 					"deleted. APPLY THE SETTING FIRST: the destroy reads it from state, so set it and " +
 					"`terraform apply` before `terraform destroy` or before a change that REPLACES the cluster " +
 					"(the plan warns when a replacement is planned without it). Changing it is an in-place update " +
-					"that makes no API call. Null after import. With `delete`, the destroy also fails if the set of " +
-					"retained volumes changed after the check, so a volume is never deleted unseen. Destroying a " +
+					"that makes no API call. Null after import. With either value, the destroy also fails if the set " +
+					"of retained volumes changed after the check, so a volume is never deleted unseen and a volume " +
+					"shown as kept is never deleted. Destroying a " +
 					"cluster that is already being deleted only waits: the first delete's choice stands.",
 				Optional:   true,
 				Validators: []validator.String{stringvalidator.OneOf(retainedVolumesKeep, retainedVolumesDelete)},

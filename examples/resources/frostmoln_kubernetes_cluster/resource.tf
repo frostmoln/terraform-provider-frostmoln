@@ -39,10 +39,11 @@ resource "frostmoln_kubernetes_cluster" "main" {
   # What `terraform destroy` does to volumes whose PersistentVolume has
   # reclaimPolicy Retain (or Unknown — not reported in the last 15 minutes):
   # "keep" leaves them as ordinary volumes (still billed), "delete" deletes
-  # whatever is Retain/Unknown at destroy time. Volumes with reclaimPolicy Delete
-  # are always deleted with the cluster. No default: if such volumes exist and
-  # this is unset, destroy fails and lists them. Apply the setting FIRST, before
-  # a destroy or a change that replaces the cluster; changing it makes no API call.
+  # them. Either way the destroy fails, deleting nothing, if that set changed
+  # after the check. Volumes with reclaimPolicy Delete are always deleted with
+  # the cluster. No default: if such volumes exist and this is unset, destroy
+  # fails and lists them. Apply the setting FIRST, before a destroy or a change
+  # that replaces the cluster; changing it makes no API call.
   retained_volumes_on_destroy = "keep"
 
   # Optional version pins, keyed by addon key; each key must be in addons. Use a
