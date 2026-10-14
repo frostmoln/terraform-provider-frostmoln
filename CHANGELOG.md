@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.85.1] - 2026-10-14
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.29 (#669)
+- *(kubernetes_cluster)* Send retainedSetToken with keep and name newly-deleted volumes on 409 (#671)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.14.4 (#667)
+
 ## [0.85.0] - 2026-10-12
 
 ### 🚀 Features
