@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.85.2] - 2026-10-15
+
+### 🐛 Bug Fixes
+
+- *(lifecycle)* Keep rules in configured order on read (#673)
+
 ## [0.85.1] - 2026-10-14
 
 ### 🐛 Bug Fixes
