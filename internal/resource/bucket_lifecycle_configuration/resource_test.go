@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -149,6 +150,47 @@ func TestLifecycleModelFromAPIZeroValuesBecomeNull(t *testing.T) {
 	m.fromAPI([]apiLifecycleRule{{ID: "r1", Enabled: false, ExpirationDays: 1}})
 	if m.Rules[0].Enabled.IsNull() || m.Rules[0].Enabled.ValueBool() {
 		t.Errorf("expected enabled=false to survive, got %v", m.Rules[0].Enabled)
+	}
+}
+
+// TestLifecycleModelFromAPIKeepsStateOrder: RGW returns rules sorted by id. A
+// config declaring them in another order must read back in its own order, or
+// every plan shows a reorder. Ids the state lacks (import, drift) go last in
+// API order.
+func TestLifecycleModelFromAPIKeepsStateOrder(t *testing.T) {
+	m := BucketLifecycleConfigurationModel{Rules: []lifecycleRuleModel{
+		{ID: types.StringValue("zeta")},
+		{ID: types.StringValue("alpha")},
+		{ID: types.StringValue("gone")},
+	}}
+	m.fromAPI([]apiLifecycleRule{{ID: "alpha"}, {ID: "new-b"}, {ID: "new-a"}, {ID: "zeta"}})
+
+	got := make([]string, 0, len(m.Rules))
+	for _, r := range m.Rules {
+		got = append(got, r.ID.ValueString())
+	}
+	want := []string{"zeta", "alpha", "new-b", "new-a"}
+	if !slices.Equal(got, want) {
+		t.Errorf("rule order = %v, want %v", got, want)
+	}
+
+	// No prior state (import): API order unchanged.
+	var imported BucketLifecycleConfigurationModel
+	imported.fromAPI([]apiLifecycleRule{{ID: "b"}, {ID: "a"}})
+	if imported.Rules[0].ID.ValueString() != "b" || imported.Rules[1].ID.ValueString() != "a" {
+		t.Errorf("import reordered rules: %v", imported.Rules)
+	}
+
+	// Duplicate ids (the service refuses them, but an out-of-band write is not
+	// the service) may only move rules, never drop or repeat one.
+	dup := BucketLifecycleConfigurationModel{Rules: []lifecycleRuleModel{{ID: types.StringValue("x")}, {ID: types.StringValue("x")}}}
+	dup.fromAPI([]apiLifecycleRule{{ID: "x", ExpirationDays: 1}, {ID: "y"}, {ID: "x", ExpirationDays: 2}})
+	days := make([]int64, 0, len(dup.Rules))
+	for _, r := range dup.Rules {
+		days = append(days, r.ExpirationDays.ValueInt64())
+	}
+	if !slices.Equal(days, []int64{1, 2, 0}) {
+		t.Errorf("duplicate ids: expiration days = %v, want [1 2 0]", days)
 	}
 }
 

@@ -3,6 +3,9 @@
 package bucket_lifecycle_configuration
 
 import (
+	"cmp"
+	"slices"
+
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -69,8 +72,27 @@ func (m *BucketLifecycleConfigurationModel) toAPI() apiLifecycleRules {
 	return out
 }
 
-// fromAPI replaces the model's rules with what the API returned.
+// fromAPI replaces the model's rules with what the API returned, kept in the
+// order the model already had them. RGW answers with the rules sorted by id,
+// and `rules` is a list, so taking the API order verbatim planned a reorder on
+// every run for any config not written in id order. Rule order carries no S3
+// meaning, and the service rejects duplicate ids, so matching on id is safe
+// (a duplicate would only affect order: nothing is dropped or repeated). Ids the
+// model does not know (import, drift) go last, in API order.
 func (m *BucketLifecycleConfigurationModel) fromAPI(rules []apiLifecycleRule) {
+	pos := make(map[string]int, len(m.Rules))
+	for i := range m.Rules {
+		pos[m.Rules[i].ID.ValueString()] = i
+	}
+	rank := func(id string) int {
+		if i, ok := pos[id]; ok {
+			return i
+		}
+		return len(m.Rules)
+	}
+	rules = slices.Clone(rules)
+	slices.SortStableFunc(rules, func(a, b apiLifecycleRule) int { return cmp.Compare(rank(a.ID), rank(b.ID)) })
+
 	out := make([]lifecycleRuleModel, 0, len(rules))
 
 	for _, rule := range rules {

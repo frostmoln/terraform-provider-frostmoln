@@ -67,7 +67,7 @@ resource "frostmoln_bucket_lifecycle_configuration" "example" {
 ### Required
 
 - `bucket` (String) The name of the bucket whose lifecycle configuration this is. Also the import ID.
-- `rules` (Attributes List) The lifecycle rules, in order. At least one rule is required — an empty list is refused rather than sent, because the API treats it as "delete the whole lifecycle configuration" and answers 204, which would silently clear the bucket's rules from a config that reads like it is adding them. Use terraform destroy to leave the bucket without a lifecycle configuration. (see [below for nested schema](#nestedatt--rules))
+- `rules` (Attributes List) The lifecycle rules, in order. At least one rule is required — an empty list is refused rather than sent, because the API treats it as "delete the whole lifecycle configuration" and answers 204, which would silently clear the bucket's rules from a config that reads like it is adding them. Use terraform destroy to leave the bucket without a lifecycle configuration. Order carries no S3 meaning; the provider keeps your order on read. After terraform import, the first plan may show a one-time reorder to match your config. (see [below for nested schema](#nestedatt--rules))
 
 <a id="nestedatt--rules"></a>
 ### Nested Schema for `rules`

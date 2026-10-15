@@ -70,7 +70,8 @@ func (r *bucketLifecycleConfigurationResource) Schema(_ context.Context, _ resou
 					"refused rather than sent, because the API treats it as \"delete the whole lifecycle " +
 					"configuration\" and answers 204, which would silently clear the bucket's rules from a " +
 					"config that reads like it is adding them. Use terraform destroy to leave the bucket " +
-					"without a lifecycle configuration.",
+					"without a lifecycle configuration." +
+					" Order carries no S3 meaning; the provider keeps your order on read. After terraform import, the first plan may show a one-time reorder to match your config.",
 				Required: true,
 				Validators: []validator.List{
 					listvalidator.SizeAtLeast(1),
