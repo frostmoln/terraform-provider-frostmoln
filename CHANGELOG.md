@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.87.0] - 2026-10-16
+
+### 🚀 Features
+
+- *(messaging)* LavinMQ vhost, user and permission resources (#677)
+
 ## [0.86.0] - 2026-10-16
 
 ### 🚀 Features
