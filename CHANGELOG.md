@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.87.1] - 2026-10-16
+
+### 📚 Documentation
+
+- *(messaging)* Build the user example's URL as amqp:// on the AMQP port (#679)
+
 ## [0.87.0] - 2026-10-16
 
 ### 🚀 Features
