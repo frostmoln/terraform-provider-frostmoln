@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.86.0] - 2026-10-16
+
+### 🚀 Features
+
+- *(kubernetes_cluster)* Manage the initial node pool's tags (initial_node_pool.tags / tags_all) (#675)
+
 ## [0.85.2] - 2026-10-15
 
 ### 🐛 Bug Fixes
