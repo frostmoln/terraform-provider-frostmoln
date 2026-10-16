@@ -155,6 +155,22 @@ var pinnedBehaviorSentences = map[string]map[string][]string{
 			"when you set `security_groups` in your configuration",
 		},
 	},
+	"frostmoln_messaging_user": {
+		// Phase 6 of MESSAGING-VHOSTS-USERS-PLAN: the password is re-readable
+		// (GET .../credentials), so unlike the once-minted credentials it is
+		// refreshed, and it is still plaintext in state.
+		"password": {
+			"Stored in Terraform state in plaintext",
+			"read once the user is `ready`",
+		},
+	},
+	"frostmoln_messaging_permission": {
+		// The broker's own semantics: "^$" is how a grant says "nothing", and a
+		// leading "-" is refused server-side.
+		"configure": {"`^$` grants nothing", "never starting with `-`"},
+		"write":     {"`^$` grants nothing", "never starting with `-`"},
+		"read":      {"`^$` grants nothing", "never starting with `-`"},
+	},
 	"frostmoln_security_group": {
 		// 01a09b9a: network persists the description since v4.5.0, so the old
 		// "does not persist it yet" warning became false. What a reader needs now

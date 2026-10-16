@@ -53,6 +53,9 @@ import (
 	kubernetesversionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/kubernetes_versions"
 	loadbalancerds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/load_balancer"
 	messaginginstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/messaging_instance"
+	messagingpermissionds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/messaging_permission"
+	messaginguserds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/messaging_user"
+	messagingvhostds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/messaging_vhost"
 	mysqlinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/mysql_instance"
 	mysqlversionsds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/mysql_versions"
 	nginxinstanceds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/nginx_instance"
@@ -113,6 +116,9 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/lb_pool"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/load_balancer"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/messaging_instance"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/messaging_permission"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/messaging_user"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/messaging_vhost"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/mysql_backup"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/mysql_instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/mysql_read_replica"
@@ -723,6 +729,9 @@ func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resou
 		redis_instance.NewResource,
 		valkey_instance.NewResource,
 		messaging_instance.NewResource,
+		messaging_vhost.NewResource,
+		messaging_user.NewResource,
+		messaging_permission.NewResource,
 		scale_group.NewResource,
 		secret.NewResource,
 		api_key.NewResource,
@@ -817,6 +826,9 @@ func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.D
 		redisinstanceds.NewDataSource,
 		valkeyinstanceds.NewDataSource,
 		messaginginstanceds.NewDataSource,
+		messagingvhostds.NewDataSource,
+		messaginguserds.NewDataSource,
+		messagingpermissionds.NewDataSource,
 		secretds.NewDataSource,
 		apacheinstanceds.NewDataSource,
 		nginxinstanceds.NewDataSource,

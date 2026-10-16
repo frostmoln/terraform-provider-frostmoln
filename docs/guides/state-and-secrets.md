@@ -69,6 +69,19 @@ of band instead:
 $ fm kubernetes cluster kubeconfig <cluster-id>
 ```
 
+### A credential the platform generates and serves again
+
+| Resource | Attribute |
+|---|---|
+| `frostmoln_messaging_user` | `password` |
+
+The platform generates the password and serves it from a dedicated endpoint
+whenever the user is `ready`, so the provider reads it again on every refresh;
+nothing is lost if state is. It is in state because this is a managed resource.
+If you do not need it in Terraform, leave the attribute unreferenced and read it
+out of band through the portal or the API instead. The
+`frostmoln_messaging_user` data source never exposes it.
+
 ### Values you supply in configuration
 
 | Resource | Attribute | Write-only form |

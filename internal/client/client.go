@@ -793,6 +793,16 @@ func (c *Client) WaitForOperation(ctx context.Context, operationID string, inter
 	return lastOp, nil
 }
 
+type acceptLanguageKey struct{}
+
+// WithAcceptLanguage returns a context whose requests carry Accept-Language:
+// lang, for the surfaces that localise a message into the response body (the
+// messaging object API's failureMessage). Requests on a context without it
+// send no Accept-Language header, as they always have.
+func WithAcceptLanguage(ctx context.Context, lang string) context.Context {
+	return context.WithValue(ctx, acceptLanguageKey{}, lang)
+}
+
 // Response represents an API response.
 type Response struct {
 	StatusCode int
@@ -946,6 +956,9 @@ func (c *Client) do(ctx context.Context, method, reqPath string, query url.Value
 		httpReq.Header.Set(ProviderVersionHeader, c.version)
 	}
 	httpReq.Header.Set("Accept", "application/json")
+	if lang, ok := ctx.Value(acceptLanguageKey{}).(string); ok && lang != "" {
+		httpReq.Header.Set("Accept-Language", lang)
+	}
 	if body != nil {
 		httpReq.Header.Set("Content-Type", "application/json")
 	}

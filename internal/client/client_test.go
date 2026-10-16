@@ -1397,3 +1397,22 @@ func TestAPIErrorFlatEnvelopeMarksOnlyFlatRefusalBodies(t *testing.T) {
 		})
 	}
 }
+
+func TestWithAcceptLanguageSetsTheHeader(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("Accept-Language"))
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "k")
+	if _, err := c.Get(WithAcceptLanguage(context.Background(), "en"), "/x", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Get(context.Background(), "/x", nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "en" || got[1] != "" {
+		t.Fatalf("Accept-Language per request = %q, want [en \"\"]", got)
+	}
+}
