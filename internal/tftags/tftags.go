@@ -275,16 +275,38 @@ func PlanTagsAll(ctx context.Context, d Defaults, req resource.ModifyPlanRequest
 	planTagsAll(ctx, d, req.Plan, req.State, req.Private, &resp.Plan, &resp.Diagnostics)
 }
 
+// PlanNestedTagsAll is PlanTagsAll for a `tags` / `tags_all` pair nested in an
+// object attribute (the cluster's initial_node_pool), judged against private
+// state the caller scoped to it (ScopedReader). The resource's own updated_at
+// is not touched: the nested object's write is to another API object.
+func PlanNestedTagsAll(ctx context.Context, d Defaults, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse,
+	private PrivateReader, tagsPath, tagsAllPath path.Path) {
+	planTagsAllAt(ctx, d, req.Plan, req.State, private, &resp.Plan, &resp.Diagnostics, tagsPath, tagsAllPath, false)
+}
+
 // planTagsAll is PlanTagsAll over its parts, so a test can hand it a private
 // state (the framework's type cannot be constructed outside the framework).
 func planTagsAll(ctx context.Context, d Defaults, plan tfsdk.Plan, state tfsdk.State, private PrivateReader, out *tfsdk.Plan, diags *diag.Diagnostics) {
+	planTagsAllAt(ctx, d, plan, state, private, out, diags, path.Root("tags"), path.Root("tags_all"), true)
+}
+
+func planTagsAllAt(ctx context.Context, d Defaults, plan tfsdk.Plan, state tfsdk.State, private PrivateReader, out *tfsdk.Plan,
+	diags *diag.Diagnostics, tagsPath, tagsAllPath path.Path, updatedAt bool) {
 	// The framework always hands ModifyPlan a response plan initialised from
 	// the request; a test calling ModifyPlan directly may not, and there is
 	// then nothing to write to.
 	if plan.Raw.IsNull() || out.Schema == nil {
 		return
 	}
-	tagsAllPath := path.Root("tags_all")
+	// A nested pair whose parent object is not known yet: there is nothing to mark,
+	// and setting a child would make a known parent the configuration never had.
+	if parent := tagsAllPath.ParentPath(); len(parent.Steps()) > 0 {
+		var obj types.Object
+		diags.Append(plan.GetAttribute(ctx, parent, &obj)...)
+		if obj.IsNull() || obj.IsUnknown() {
+			return
+		}
+	}
 	// write plans an update that the framework may not have seen: when the
 	// configuration equals state, it planned every other computed attribute at
 	// its prior value, and the platform bumps updated_at on the write — a
@@ -293,7 +315,7 @@ func planTagsAll(ctx context.Context, d Defaults, plan tfsdk.Plan, state tfsdk.S
 	// stays empty.
 	write := func() {
 		diags.Append(out.SetAttribute(ctx, tagsAllPath, types.MapUnknown(types.StringType))...)
-		if _, ok := out.Schema.GetAttributes()["updated_at"]; ok {
+		if _, ok := out.Schema.GetAttributes()["updated_at"]; ok && updatedAt {
 			diags.Append(out.SetAttribute(ctx, path.Root("updated_at"), types.StringUnknown())...)
 		}
 	}
@@ -325,8 +347,8 @@ func planTagsAll(ctx context.Context, d Defaults, plan tfsdk.Plan, state tfsdk.S
 	}
 
 	var planTags, stateTags, stateTagsAll types.Map
-	diags.Append(plan.GetAttribute(ctx, path.Root("tags"), &planTags)...)
-	diags.Append(state.GetAttribute(ctx, path.Root("tags"), &stateTags)...)
+	diags.Append(plan.GetAttribute(ctx, tagsPath, &planTags)...)
+	diags.Append(state.GetAttribute(ctx, tagsPath, &stateTags)...)
 	diags.Append(state.GetAttribute(ctx, tagsAllPath, &stateTagsAll)...)
 	if diags.HasError() {
 		return
@@ -424,6 +446,12 @@ const (
 	// until then the imported `tags` are not taken as managed (Prior.ImportPending).
 	privateImportPending = "tftags_import_pending"
 )
+
+// ImportPending reports whether an import's tags are still unmanaged: set by the
+// Read after an import, cleared by the first write (RecordDefaults).
+func ImportPending(ctx context.Context, private PrivateReader, diags *diag.Diagnostics) bool {
+	return importPending(ctx, private, diags)
+}
 
 func importPending(ctx context.Context, private PrivateReader, diags *diag.Diagnostics) bool {
 	if isNil(private) {
@@ -552,6 +580,39 @@ func FinishRead(ctx context.Context, req PrivateReader, resp PrivateWriter, d De
 	if len(kept) != len(recorded) {
 		setDefaultKeys(ctx, resp, kept, diags)
 	}
+}
+
+// ScopedReader is private state seen through a key prefix, so a resource can
+// keep a second tag set's bookkeeping (a nested object's, e.g. the cluster's
+// initial_node_pool) next to its own without the two sharing keys. nil when
+// private is absent, which every helper here treats as "no private state".
+func ScopedReader(private PrivateReader, scope string) PrivateReader {
+	if isNil(private) {
+		return nil
+	}
+	return scoped{r: private, scope: scope}
+}
+
+// ScopedWriter is the write half of ScopedReader.
+func ScopedWriter(private PrivateWriter, scope string) PrivateWriter {
+	if isNil(private) {
+		return nil
+	}
+	return scoped{w: private, scope: scope}
+}
+
+type scoped struct {
+	r     PrivateReader
+	w     PrivateWriter
+	scope string
+}
+
+func (s scoped) GetKey(ctx context.Context, key string) ([]byte, diag.Diagnostics) {
+	return s.r.GetKey(ctx, s.scope+key)
+}
+
+func (s scoped) SetKey(ctx context.Context, key string, value []byte) diag.Diagnostics {
+	return s.w.SetKey(ctx, s.scope+key, value)
 }
 
 // isNil reports whether v is nil or a typed nil pointer. The framework hands a

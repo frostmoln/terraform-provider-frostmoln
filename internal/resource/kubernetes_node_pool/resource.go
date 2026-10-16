@@ -270,7 +270,8 @@ func (r *kubernetesNodePoolResource) Schema(_ context.Context, _ resource.Schema
 					"beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Changing them updates " +
 					"the pool in place and touches no node. A pool added here does not inherit the " +
 					"cluster's tags. (The cluster's INITIAL pool, which this resource cannot manage, got a " +
-					"one-time copy of the cluster's tags at create; see frostmoln_kubernetes_cluster.)" +
+					"one-time copy of the cluster's tags at create; manage its tags with " +
+					"`initial_node_pool.tags` on frostmoln_kubernetes_cluster.)" +
 					tftags.TagsNote,
 				Optional:    true,
 				ElementType: types.StringType,

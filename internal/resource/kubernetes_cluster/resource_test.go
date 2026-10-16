@@ -602,6 +602,7 @@ func buildState(t *testing.T, model KubernetesClusterModel) tfsdk.State {
 	state := tfsdk.State{Schema: schemaResp.Schema}
 	model.AddonVersions = typedPins(model.AddonVersions)
 	nullUnsetTags(&model.Tags, &model.TagsAll)
+	nullUnsetPoolTags(&model)
 	if diags := state.Set(context.Background(), &model); diags.HasError() {
 		t.Fatalf("failed to set state: %v", diags.Errors())
 	}
@@ -617,6 +618,7 @@ func buildPlan(t *testing.T, model KubernetesClusterModel) tfsdk.Plan {
 	plan := tfsdk.Plan{Schema: schemaResp.Schema}
 	model.AddonVersions = typedPins(model.AddonVersions)
 	nullUnsetTags(&model.Tags, &model.TagsAll)
+	nullUnsetPoolTags(&model)
 	if diags := plan.Set(context.Background(), &model); diags.HasError() {
 		t.Fatalf("failed to set plan: %v", diags.Errors())
 	}
@@ -1542,6 +1544,15 @@ func TestImportRejectsPathSeparator(t *testing.T) {
 
 // nullUnsetTags gives a fixture that predates tags (a zero types.Map, which has no
 // element type and cannot be set) the null maps an untagged configuration holds.
+// nullUnsetPoolTags is nullUnsetTags for the initial pool's pair.
+func nullUnsetPoolTags(m *KubernetesClusterModel) {
+	if m.InitialNodePool != nil {
+		pool := *m.InitialNodePool
+		nullUnsetTags(&pool.Tags, &pool.TagsAll)
+		m.InitialNodePool = &pool
+	}
+}
+
 func nullUnsetTags(maps ...*types.Map) {
 	for _, m := range maps {
 		if m.ElementType(context.Background()) == nil {

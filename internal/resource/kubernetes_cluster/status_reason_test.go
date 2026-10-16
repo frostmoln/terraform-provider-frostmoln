@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 )
 
@@ -89,14 +92,14 @@ func TestFromAPIStatusDetail(t *testing.T) {
 func TestSetInitialNodePoolStatusDetail(t *testing.T) {
 	var m KubernetesClusterModel
 	pool := initialPool(statusActive)
-	m.setInitialNodePool(&pool)
+	m.setInitialNodePool(context.Background(), &pool, types.MapNull(types.StringType), &diag.Diagnostics{})
 	if p := m.InitialNodePool; !p.StatusReason.IsNull() || !p.StatusMessage.IsNull() || !p.FailedStep.IsNull() {
 		t.Errorf("active pool: want null detail, got %v %v %v", p.StatusReason, p.StatusMessage, p.FailedStep)
 	}
 
 	pool = initialPool(statusError)
 	pool.StatusReason, pool.StatusMessage, pool.FailedStep = "QuotaExceeded", "instance quota exhausted", "node_pool"
-	m.setInitialNodePool(&pool)
+	m.setInitialNodePool(context.Background(), &pool, types.MapNull(types.StringType), &diag.Diagnostics{})
 	if p := m.InitialNodePool; p.StatusReason.ValueString() != "QuotaExceeded" || p.StatusMessage.ValueString() != "instance quota exhausted" || p.FailedStep.ValueString() != "node_pool" {
 		t.Errorf("error pool: got %v %v %v", p.StatusReason, p.StatusMessage, p.FailedStep)
 	}

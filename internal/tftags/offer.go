@@ -129,3 +129,36 @@ func WarnOfferTagBudget(ctx context.Context, d Defaults, req resource.ModifyPlan
 				len(merged), OfferMaxTags))
 	}
 }
+
+// OfferTagsProblems returns why a tag map a write is about to send breaks the offer
+// policy, one line per key, sorted; empty when it is fine. The plan-time validator
+// skips an unknown map, so a write re-checks the map it resolved.
+func OfferTagsProblems(tags map[string]string) []string {
+	var out []string
+	for k, v := range tags {
+		v := v
+		if p := OfferTagProblem(k, &v); p != "" {
+			out = append(out, k+": "+p)
+		}
+	}
+	if len(tags) > OfferMaxTags {
+		out = append(out, fmt.Sprintf("%d keys; the platform accepts at most %d", len(tags), OfferMaxTags))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TooManyOfferTags is the budget check over known key sets: the number of distinct
+// keys across them when it exceeds OfferMaxTags, else 0.
+func TooManyOfferTags(sets ...map[string]string) int {
+	keys := map[string]bool{}
+	for _, s := range sets {
+		for k := range s {
+			keys[k] = true
+		}
+	}
+	if len(keys) > OfferMaxTags {
+		return len(keys)
+	}
+	return 0
+}

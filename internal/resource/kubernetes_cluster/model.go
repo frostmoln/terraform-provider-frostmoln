@@ -50,8 +50,8 @@ type KubernetesClusterModel struct {
 	UpdatedAt       types.String          `tfsdk:"updated_at"`
 	TenantID        types.String          `tfsdk:"tenant_id"`
 	// Tags / TagsAll are the cluster's customer resource tags (internal/tftags). They
-	// are the CLUSTER's only: the initial node pool got a one-time copy at create and
-	// is not modelled here (see the schema description).
+	// are the CLUSTER's only: the initial node pool got a one-time copy at create, and
+	// its own pair is InitialNodePoolModel's Tags / TagsAll.
 	Tags    types.Map `tfsdk:"tags"`
 	TagsAll types.Map `tfsdk:"tags_all"`
 
@@ -81,7 +81,18 @@ type InitialNodePoolModel struct {
 	StatusReason  types.String `tfsdk:"status_reason"`
 	StatusMessage types.String `tfsdk:"status_message"`
 	FailedStep    types.String `tfsdk:"failed_step"`
+	// Tags / TagsAll are the initial pool's customer resource tags (internal/tftags),
+	// managed like any taggable resource's but with their own private-state scope
+	// (initialPoolTagsScope). The create body never carries them: the platform
+	// refuses initialNodePool.tags and gives the pool a copy of the cluster's merged
+	// tags instead, so the provider PATCHes the pool right after the create.
+	Tags    types.Map `tfsdk:"tags"`
+	TagsAll types.Map `tfsdk:"tags_all"`
 }
+
+// initialPoolTagsScope prefixes the private-state keys of the initial pool's tag
+// bookkeeping (tftags.ScopedReader), so they never share the cluster's.
+const initialPoolTagsScope = "initial_node_pool."
 
 // apiKubernetesCluster is the API representation of a managed Kubernetes
 // cluster (kubernetes service domain.ManagedCluster).
@@ -150,6 +161,14 @@ type apiNodePool struct {
 	IsInitial     bool   `json:"isInitial"`
 	CreatedAt     string `json:"createdAt"`
 	UpdatedAt     string `json:"updatedAt,omitempty"`
+	// Tags are the pool's customer resource tags ({} when untagged).
+	Tags map[string]string `json:"tags"`
+}
+
+// apiUpdateNodePoolRequest is a tags-only PATCH of a node pool: it REPLACES the
+// pool's tags (`{}` clears them) and touches no node.
+type apiUpdateNodePoolRequest struct {
+	Tags *map[string]string `json:"tags,omitempty"`
 }
 
 // apiNodePoolList is the API response for listing a cluster's node pools.
@@ -318,10 +337,20 @@ func customerTags(c *apiKubernetesCluster) map[string]string {
 	return reservedmeta.FilterOffer(c.Tags)
 }
 
+// poolCustomerTags is the tag set the platform holds on a node pool, as Terraform
+// sees it (the offer's reserved namespace removed).
+func poolCustomerTags(p *apiNodePool) map[string]string {
+	return reservedmeta.FilterOffer(p.Tags)
+}
+
 // setInitialNodePool fills the nested initial_node_pool block from a node-pool
-// API response.
-func (m *KubernetesClusterModel) setInitialNodePool(p *apiNodePool) {
+// API response. priorTags is the pool's `tags` from the configuration (create,
+// update) or state (refresh), which decides the keys `tags` keeps (tftags.ReadBack).
+func (m *KubernetesClusterModel) setInitialNodePool(ctx context.Context, p *apiNodePool, priorTags types.Map, diags *diag.Diagnostics) {
+	tags, tagsAll := tftags.ReadBack(ctx, poolCustomerTags(p), priorTags, diags)
 	m.InitialNodePool = &InitialNodePoolModel{
+		Tags:          tags,
+		TagsAll:       tagsAll,
 		ID:            types.StringValue(p.ID),
 		Name:          types.StringValue(p.Name),
 		FlavorID:      types.StringValue(p.FlavorID),

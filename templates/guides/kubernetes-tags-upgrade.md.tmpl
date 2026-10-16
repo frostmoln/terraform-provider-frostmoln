@@ -31,9 +31,21 @@ every apply and appear only in `tags_all`.
 
 The cluster's initial node pool got a **one-time copy** of the cluster's merged
 tags when the cluster was created. Changing the cluster's `tags` later does not
-reach it, and the cluster resource does not manage that pool's tags. Change
-them in the portal, with `fm kubernetes node-pool tags set`, or with the API.
-Clusters created before this release have an untagged initial pool.
+reach it. Manage the pool's own tags with `initial_node_pool.tags` on
+`frostmoln_kubernetes_cluster`; every tag the pool holds, the copied ones
+included, is in `initial_node_pool.tags_all`. Keys you do not set there are kept.
+
+The provider's `default_tags` apply to the initial pool as to any resource. A
+cluster `tags` key that overrides a default stays the cluster's only: set it in
+`initial_node_pool.tags` too to keep it on the pool.
+
+Clusters created before the tags release have an untagged initial pool. With
+`default_tags` set, the first plan after upgrading to a provider that manages
+`initial_node_pool.tags` shows an in-place update of the pool's tags: a
+tags-only write that touches no node. The same first plan rewrites a pool key
+that a cluster tag overrode from a default (default `team = "ops"`, cluster
+`team = "web"`): the pool's copy says `web`, and the pool gets the default `ops`.
+Set the key in `initial_node_pool.tags` to keep `web` there.
 
 ## Limits
 

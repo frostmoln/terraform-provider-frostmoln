@@ -2,8 +2,10 @@ package kubernetes_cluster
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -60,6 +62,8 @@ type kubernetesClusterResource struct {
 	client       *client.Client
 	pollInterval time.Duration
 	pollTimeout  time.Duration
+	// poolTagRetryInterval overrides patchPoolTags' wait between attempts (tests).
+	poolTagRetryInterval time.Duration
 }
 
 func (r *kubernetesClusterResource) getPollInterval() time.Duration {
@@ -119,9 +123,17 @@ func (r *kubernetesClusterResource) resolveBudgets(m *timeouts.Model) timeouts.B
 // operation on an EXISTING cluster (update, destroy) free; those get a warning.
 func (r *kubernetesClusterResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	// tags_all: a default_tags change, or a managed key's drift, plans an in-place
-	// update (it handles the destroy plan itself).
-	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
-	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
+	// update (it handles the destroy plan itself). The initial pool's pair first: the
+	// cluster's half must then see a plan that writes the pool's tags as an update
+	// too, which re-reads the cluster (its tags_all may have moved since the refresh).
+	defaults := r.client.DefaultTags()
+	tftags.PlanNestedTagsAll(ctx, defaults, req, resp, tftags.ScopedReader(req.Private, initialPoolTagsScope),
+		path.Root("initial_node_pool").AtName("tags"), path.Root("initial_node_pool").AtName("tags_all"))
+	planned := req
+	planned.Plan = resp.Plan
+	tftags.PlanTagsAll(ctx, defaults, planned, resp)
+	tftags.WarnOfferTagBudget(ctx, defaults, req, resp)
+	warnInitialPoolTags(ctx, defaults, req, &resp.Diagnostics)
 
 	// Destroy: no plan to judge.
 	if req.Plan.Raw.IsNull() {
@@ -403,6 +415,22 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 						Description: "The provisioning phase the initial node pool failed in, e.g. `node_pool`. Set only when `status` is `error`, and may be absent even then.",
 						Computed:    true,
 					},
+					"tags": schema.MapAttribute{
+						Description: "Resource tags on the initial node pool: your own key/value metadata for search and " +
+							"filtering, stored by the platform only. They are NOT Kubernetes node labels and never reach " +
+							"a node. At create the platform gives the pool a copy of the cluster's merged tags (the " +
+							"cluster's `tags`, the provider's `default_tags` and the tenant's default tags); the keys set " +
+							"here are then written onto the pool, and the copied keys are kept as keys this configuration " +
+							"does not manage. The provider's `default_tags` apply to the pool as to any resource, so a " +
+							"cluster `tags` key that overrides a default stays the cluster's only: set it here too to keep " +
+							"it on the pool. Later changes to the cluster's `tags` do not reach the pool. Changing them " +
+							"updates the pool in place and touches no node. The same limits as the cluster's `tags` apply." +
+							tftags.TagsNote,
+						Optional:    true,
+						ElementType: types.StringType,
+						Validators:  []validator.Map{tftags.OfferTagsValidator()},
+					},
+					"tags_all": tftags.TagsAllAttribute(),
 				},
 			},
 			"status": schema.StringAttribute{
@@ -535,12 +563,10 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 			"place and does not touch the running cluster. " +
 			"🔴 THE INITIAL NODE POOL GETS A ONE-TIME COPY. At create, the platform copies the cluster's " +
 			"merged tags (these, the provider's `default_tags` and the tenant's default tags) onto the " +
-			"initial node pool, once. Later changes to this attribute do NOT reach that pool, and this " +
-			"resource does not manage its tags — and the initial pool cannot be imported as a " +
-			"`frostmoln_kubernetes_node_pool` either. Change them in the portal, with " +
-			"`fm kubernetes node-pool tags set`, or with the API (PATCH the node pool's `tags`). Pools you " +
-			"add with `frostmoln_kubernetes_node_pool` get no copy: tag them on that resource, where " +
-			"the same tags can be set again if you want them to match." + tftags.TagsNote,
+			"initial node pool, once. Later changes to this attribute do NOT reach that pool: manage its " +
+			"tags with `initial_node_pool.tags` (all of them are shown in `initial_node_pool.tags_all`). " +
+			"Pools you add with `frostmoln_kubernetes_node_pool` get no copy: tag them on that resource, " +
+			"where the same tags can be set again if you want them to match." + tftags.TagsNote,
 		Optional:    true,
 		ElementType: types.StringType,
 		Validators:  []validator.Map{tftags.OfferTagsValidator()},
@@ -740,6 +766,17 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// The initial pool's tags are written AFTER the cluster exists, so a pool set the
+	// platform would refuse must be refused here, before anything is created: past the
+	// POST it would leave a provisioning cluster tainted. A lower bound (the tenant's
+	// default tags count too), but every key it counts is certain to be there.
+	poolOwn, _ := knownTags(ctx, plan.InitialNodePool.Tags, &resp.Diagnostics)
+	if n := tftags.TooManyOfferTags(createReq.Tags, poolOwn); n > 0 && len(createReq.Tags) <= tftags.OfferMaxTags {
+		resp.Diagnostics.AddAttributeError(path.Root("initial_node_pool").AtName("tags"), "Too Many Tags On The Initial Node Pool",
+			fmt.Sprintf("The initial node pool would hold %d tags: the cluster's merged tags, which the platform copies onto "+
+				"it, plus initial_node_pool.tags. The platform accepts at most %d. Nothing was created.", n, tftags.OfferMaxTags))
+		return
+	}
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/kubernetes-clusters"), createReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create Kubernetes cluster", err.Error())
@@ -768,6 +805,7 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 	plan.InitialNodePool.StatusReason = types.StringNull()
 	plan.InitialNodePool.StatusMessage = types.StringNull()
 	plan.InitialNodePool.FailedStep = types.StringNull()
+	plan.InitialNodePool.TagsAll = types.MapNull(types.StringType)
 	if plan.InitialNodePool.Name.IsUnknown() {
 		plan.InitialNodePool.Name = types.StringNull()
 	}
@@ -777,6 +815,17 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 	}
 
 	clusterID := created.ID
+
+	// The initial pool's tags, right away rather than after the long wait below: the
+	// pool row is written with the cluster, so it exists now, and a refusal (the tag
+	// budget) fails in seconds instead of after a 30-minute create.
+	if err := r.writeInitialPoolTagsAfterCreate(ctx, clusterID, defaults, plan.Tags, plan.InitialNodePool.Tags, resp.Private, &resp.Diagnostics); err != nil {
+		resp.Diagnostics.AddError("Failed to set the initial node pool's tags", err.Error())
+		return
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	if err := r.pollCluster(ctx, clusterID, []string{statusRunning}, []string{statusError, statusDeleted}, budgets.Create); err != nil {
 		resp.Diagnostics.AddError("Kubernetes cluster failed to reach running state", err.Error())
@@ -820,7 +869,7 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 
 	plan.fromAPI(final)
 	plan.tagsFromAPI(ctx, final, &resp.Diagnostics)
-	plan.setInitialNodePool(finalPool)
+	plan.setInitialNodePool(ctx, finalPool, plan.InitialNodePool.Tags, &resp.Diagnostics)
 	if kcErr != nil {
 		resp.Diagnostics.AddWarning(
 			"Failed to fetch cluster kubeconfig",
@@ -881,7 +930,14 @@ func (r *kubernetesClusterResource) Read(ctx context.Context, req resource.ReadR
 		return
 	}
 	if pool != nil {
-		state.setInitialNodePool(pool)
+		priorPoolTags := types.MapNull(types.StringType)
+		if state.InitialNodePool != nil {
+			priorPoolTags = state.InitialNodePool.Tags
+		}
+		state.setInitialNodePool(ctx, pool, priorPoolTags, &resp.Diagnostics)
+		tftags.FinishRead(ctx, tftags.ScopedReader(req.Private, initialPoolTagsScope),
+			tftags.ScopedWriter(resp.Private, initialPoolTagsScope), r.client.DefaultTags(),
+			&state.InitialNodePool.Tags, state.InitialNodePool.TagsAll, &resp.Diagnostics)
 	} else {
 		// The backend only guards the LAST pool against deletion, so the
 		// initial pool can be deleted out-of-band. Surface it loudly instead
@@ -985,6 +1041,14 @@ func (r *kubernetesClusterResource) Update(ctx context.Context, req resource.Upd
 	// write it; that also ends an import's pending state.
 	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
+	// THE INITIAL POOL'S TAGS: a tags-only PATCH of the pool, judged the same way — only
+	// when the pool's set would change, against the tags it holds right now.
+	if state.InitialNodePool != nil && plan.InitialNodePool != nil {
+		if !r.writeInitialPoolTags(ctx, id, defaults, *plan.InitialNodePool, *state.InitialNodePool, req.Private, resp.Private, &resp.Diagnostics) {
+			return
+		}
+	}
+
 	// ADDONS — ADDITIONS AND REMOVALS, BOTH IN PLACE. Removing one used to plan a full
 	// cluster REPLACEMENT, because the API was add-only and rebuilding really was the
 	// only way to be rid of an addon. The API prunes now, so `requiresReplaceOnAddonRemoval`
@@ -1055,8 +1119,18 @@ func (r *kubernetesClusterResource) Update(ctx context.Context, req resource.Upd
 		// selection, which is what the API changed.
 	}
 
+	if plan.InitialNodePool != nil && state.InitialNodePool == nil {
+		resp.Diagnostics.AddError(
+			"Initial node pool missing from state",
+			"This cluster's state has no initial node pool (none was found when it was read), so it cannot be "+
+				"updated. Replace the cluster (terraform apply -replace=<this resource>).",
+		)
+		return
+	}
+
 	scaled := false
-	if !plan.InitialNodePool.NodeCount.Equal(state.InitialNodePool.NodeCount) {
+	if plan.InitialNodePool != nil && state.InitialNodePool != nil &&
+		!plan.InitialNodePool.NodeCount.Equal(state.InitialNodePool.NodeCount) {
 		// Re-verify the pool is live before scaling: the backend does not
 		// gate /scale on the pool's own status, so scaling a stale ID from
 		// state would resurrect a soft-deleted pool row.
@@ -1104,15 +1178,28 @@ func (r *kubernetesClusterResource) Update(ctx context.Context, req resource.Upd
 			return
 		}
 		if pool != nil {
-			plan.setInitialNodePool(pool)
+			plan.setInitialNodePool(ctx, pool, plan.InitialNodePool.Tags, &resp.Diagnostics)
 		} else {
-			plan.InitialNodePool = state.InitialNodePool
+			plan.InitialNodePool = carryInitialPool(state.InitialNodePool, plan.InitialNodePool)
 		}
 	} else {
-		// No pool mutation: carry the prior pool state instead of a re-read,
-		// so a concurrent out-of-band scale can't make the applied state
-		// diverge from a known planned node_count.
-		plan.InitialNodePool = state.InitialNodePool
+		// No scale: carry the prior pool state instead of a re-read, so a concurrent
+		// out-of-band scale can't make the applied state diverge from a known planned
+		// node_count. Only its tags are re-read, when the plan left tags_all to the
+		// apply (a tag write, or any update: a key added outside Terraform since the
+		// refresh comes back with the read).
+		next := carryInitialPool(state.InitialNodePool, plan.InitialNodePool)
+		if next != nil && plan.InitialNodePool != nil && plan.InitialNodePool.TagsAll.IsUnknown() {
+			pool, err := r.findInitialNodePool(ctx, id)
+			if err != nil {
+				resp.Diagnostics.AddError("Failed to read the initial node pool's tags after update", err.Error())
+				return
+			}
+			if pool != nil && pool.ID == next.ID.ValueString() {
+				next.Tags, next.TagsAll = tftags.ReadBack(ctx, poolCustomerTags(pool), plan.InitialNodePool.Tags, &resp.Diagnostics)
+			}
+		}
+		plan.InitialNodePool = next
 	}
 	// kubeconfig is carried from prior state by UseStateForUnknown; it only
 	// changes on replacement.
@@ -1161,6 +1248,238 @@ func (r *kubernetesClusterResource) ImportState(ctx context.Context, req resourc
 	}
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
+	tftags.MarkImported(ctx, tftags.ScopedWriter(resp.Private, initialPoolTagsScope), &resp.Diagnostics)
+}
+
+// carryInitialPool is the prior pool state with the configuration's `tags`, for an
+// update that does not re-read the pool. tags_all keeps the prior value unless the
+// caller re-reads it; a still-unknown planned value takes the prior one.
+func carryInitialPool(prior, planned *InitialNodePoolModel) *InitialNodePoolModel {
+	if prior == nil {
+		return nil
+	}
+	next := *prior
+	if planned != nil {
+		next.Tags = planned.Tags
+	}
+	return &next
+}
+
+// writeInitialPoolTagsAfterCreate writes the initial pool's tags right after the
+// cluster create. The pool holds the platform's copy of the cluster's merged tags.
+// The provider's default_tags apply to the pool as to any taggable resource; the
+// copy's other keys are kept as keys this configuration does not manage.
+//
+// The copy is already the desired set unless the pool configures keys of its own
+// or a cluster tag overrode a default (the override is the cluster's; the pool gets
+// the default) — both known here, so the common create makes no extra request.
+func (r *kubernetesClusterResource) writeInitialPoolTagsAfterCreate(ctx context.Context, clusterID string, defaults tftags.Defaults,
+	clusterTags, tags types.Map, private tftags.PrivateWriter, diags *diag.Diagnostics) error {
+	if len(tags.Elements()) == 0 && !overridesADefault(ctx, defaults, clusterTags, diags) {
+		tftags.RecordDefaults(ctx, tftags.ScopedWriter(private, initialPoolTagsScope), defaults, diags)
+		return nil
+	}
+	pool, err := r.findInitialNodePool(ctx, clusterID)
+	if err != nil {
+		return err
+	}
+	if pool == nil {
+		return fmt.Errorf("cluster %s has no live initial node pool", clusterID)
+	}
+	prior := tftags.Prior{
+		Tags:        types.MapNull(types.StringType),
+		TagsAll:     types.MapNull(types.StringType),
+		DefaultKeys: defaults.Keys(),
+	}.WithCurrent(poolCustomerTags(pool))
+	want, changed := tftags.ForUpdate(ctx, defaults, tags, prior, diags)
+	if diags.HasError() {
+		return nil
+	}
+	if changed {
+		if err := r.patchPoolTags(ctx, clusterID, pool.ID, want); err != nil {
+			return err
+		}
+	}
+	tftags.RecordDefaults(ctx, tftags.ScopedWriter(private, initialPoolTagsScope), defaults, diags)
+	return nil
+}
+
+// patchPoolTags writes a pool's tags (a full replace), after re-checking the
+// resolved map against the offer policy (the plan-time validator skips an unknown
+// map). A transient failure (5xx, connection) is retried a few times: right after
+// a create, a failure here taints a cluster that is already provisioning.
+func (r *kubernetesClusterResource) patchPoolTags(ctx context.Context, clusterID, poolID string, tags map[string]string) error {
+	if problems := tftags.OfferTagsProblems(tags); len(problems) > 0 {
+		return fmt.Errorf("the initial node pool's tags break the tag policy: %s", strings.Join(problems, "; "))
+	}
+	var err error
+	for attempt := 0; attempt < poolTagWriteAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return err
+			case <-time.After(r.getPoolTagRetryInterval()):
+			}
+		}
+		if _, err = r.client.Patch(ctx, r.poolPath(clusterID, poolID), apiUpdateNodePoolRequest{Tags: &tags}); err == nil || !isTransient(err) {
+			return err
+		}
+	}
+	return err
+}
+
+// poolTagWriteAttempts bounds patchPoolTags' retries.
+const poolTagWriteAttempts = 4
+
+func (r *kubernetesClusterResource) getPoolTagRetryInterval() time.Duration {
+	if r.poolTagRetryInterval > 0 {
+		return r.poolTagRetryInterval
+	}
+	return 2 * time.Second
+}
+
+// isTransient reports a failure worth retrying: a 5xx answer, or no answer at all.
+func isTransient(err error) bool {
+	var apiErr *client.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode >= 500
+	}
+	return true
+}
+
+// knownTags returns a tag map's elements; ok is false when it is unknown.
+func knownTags(ctx context.Context, m types.Map, diags *diag.Diagnostics) (map[string]string, bool) {
+	out := map[string]string{}
+	if m.IsUnknown() {
+		return nil, false
+	}
+	if m.IsNull() {
+		return out, true
+	}
+	for _, v := range m.Elements() {
+		if v.IsUnknown() {
+			return nil, false
+		}
+	}
+	diags.Append(m.ElementsAs(ctx, &out, false)...)
+	return out, true
+}
+
+// warnInitialPoolTags is the plan-time half for the initial pool's tags: the pool's
+// tag budget (what it holds, or at create the copy it gets, plus default_tags and
+// its own keys — the tenant's defaults count too), and, at create, a cluster key
+// that overrides a default, which the pool will NOT keep. Warnings only: a plan
+// error would also abort a destroy.
+func warnInitialPoolTags(ctx context.Context, defaults tftags.Defaults, req resource.ModifyPlanRequest, diags *diag.Diagnostics) {
+	if req.Plan.Raw.IsNull() || defaults.Unknown {
+		return
+	}
+	var plan KubernetesClusterModel
+	if d := req.Plan.Get(ctx, &plan); d.HasError() || plan.InitialNodePool == nil {
+		return
+	}
+	poolPath := path.Root("initial_node_pool").AtName("tags")
+	own, ok := knownTags(ctx, plan.InitialNodePool.Tags, diags)
+	if !ok {
+		return
+	}
+	var base map[string]string
+	if req.State.Raw.IsNull() {
+		cluster, ok := knownTags(ctx, plan.Tags, diags)
+		if !ok {
+			return
+		}
+		var over []string
+		for k, v := range cluster {
+			if d, isDefault := defaults.Tags[k]; isDefault && d != v {
+				if _, poolSets := own[k]; !poolSets {
+					over = append(over, k)
+				}
+			}
+		}
+		if len(over) > 0 {
+			sort.Strings(over)
+			diags.AddAttributeWarning(poolPath, "Cluster Tag Overrides A Default On The Initial Node Pool",
+				fmt.Sprintf("The cluster's tags override the provider's default_tags for %s. The override is the "+
+					"cluster's only: the initial node pool gets the default value. Set the key in "+
+					"initial_node_pool.tags too to keep it on the pool.", strings.Join(over, ", ")))
+		}
+		base = cluster
+	} else {
+		// What the next write leaves: removed managed keys and dropped defaults do not count.
+		var state KubernetesClusterModel
+		if d := req.State.Get(ctx, &state); d.HasError() || state.InitialNodePool == nil {
+			return
+		}
+		prior := tftags.PriorOf(ctx, state.InitialNodePool.Tags, state.InitialNodePool.TagsAll,
+			tftags.ScopedReader(req.Private, initialPoolTagsScope), diags)
+		desired, ok := tftags.Desired(ctx, defaults, plan.InitialNodePool.Tags, &prior, diags)
+		if !ok {
+			return
+		}
+		base = desired
+	}
+	if n := tftags.TooManyOfferTags(base, defaults.Tags, own); n > 0 {
+		diags.AddAttributeWarning(poolPath, "Too Many Tags On The Initial Node Pool",
+			fmt.Sprintf("The initial node pool would hold %d tags (the ones it holds or is copied from the cluster, "+
+				"default_tags and initial_node_pool.tags); the platform accepts at most %d, the tenant's default "+
+				"tags included, so the write will be refused.", n, tftags.OfferMaxTags))
+	}
+}
+
+// overridesADefault reports whether the cluster's own tags set a default_tags key
+// to another value.
+func overridesADefault(ctx context.Context, defaults tftags.Defaults, clusterTags types.Map, diags *diag.Diagnostics) bool {
+	own := map[string]string{}
+	if clusterTags.IsNull() || clusterTags.IsUnknown() {
+		return false
+	}
+	diags.Append(clusterTags.ElementsAs(ctx, &own, false)...)
+	for k, v := range own {
+		if d, ok := defaults.Tags[k]; ok && d != v {
+			return true
+		}
+	}
+	return false
+}
+
+// writeInitialPoolTags is the update half: judged against state first (the plan was
+// made from it), and only when a write is due re-read against the pool's tags right
+// now, so a key added outside Terraform since the last refresh is kept. Reports false
+// when the update must stop (an error diagnostic was added).
+func (r *kubernetesClusterResource) writeInitialPoolTags(ctx context.Context, clusterID string, defaults tftags.Defaults,
+	plan, state InitialNodePoolModel, reqPrivate tftags.PrivateReader, respPrivate tftags.PrivateWriter, diags *diag.Diagnostics) bool {
+	prior := tftags.PriorOf(ctx, state.Tags, state.TagsAll, tftags.ScopedReader(reqPrivate, initialPoolTagsScope), diags)
+	if _, changed := tftags.ForUpdate(ctx, defaults, plan.Tags, prior, diags); changed && !diags.HasError() {
+		pool, err := r.findInitialNodePool(ctx, clusterID)
+		if err != nil {
+			diags.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
+			return false
+		}
+		if pool == nil || pool.ID != state.ID.ValueString() {
+			diags.AddError(
+				"Initial node pool no longer exists",
+				"The cluster's initial node pool was deleted or replaced outside Terraform, so its tags cannot "+
+					"be updated. Replace the cluster (terraform apply -replace=<this resource>).",
+			)
+			return false
+		}
+		want, stillChanged := tftags.ForUpdate(ctx, defaults, plan.Tags, prior.WithCurrent(poolCustomerTags(pool)), diags)
+		if diags.HasError() {
+			return false
+		}
+		if stillChanged {
+			if err := r.patchPoolTags(ctx, clusterID, pool.ID, want); err != nil {
+				diags.AddError("Failed to update the initial node pool's tags", err.Error())
+				return false
+			}
+		}
+	}
+	if diags.HasError() {
+		return false
+	}
+	tftags.RecordDefaults(ctx, tftags.ScopedWriter(respPrivate, initialPoolTagsScope), defaults, diags)
+	return true
 }
 
 // tagsToWrite returns the tag map an update must send, or nil when the platform's

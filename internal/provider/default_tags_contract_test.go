@@ -610,6 +610,19 @@ func (h *tagHarness) assertConforms(planned, applied tftypes.Value, step string)
 			h.t.Errorf("%s: planned %s = %v but the apply returned %v (inconsistent result after apply)", step, name, p, got[name])
 		}
 	}
+	// A nested tag pair (the cluster's initial_node_pool) gets the same check.
+	pp, ok := objAttrs(h.t, planned)["initial_node_pool"]
+	if !ok || pp.IsNull() || !pp.IsKnown() {
+		return
+	}
+	gotPool := objAttrs(h.t, got["initial_node_pool"])
+	for _, name := range []string{"tags", "tags_all"} {
+		p := objAttrs(h.t, pp)[name]
+		if p.IsFullyKnown() && !p.Equal(gotPool[name]) {
+			h.t.Errorf("%s: planned initial_node_pool.%s = %v but the apply returned %v (inconsistent result after apply)",
+				step, name, p, gotPool[name])
+		}
+	}
 }
 
 func (h *tagHarness) assertLastWrite(method, field string, want map[string]string, step string) {

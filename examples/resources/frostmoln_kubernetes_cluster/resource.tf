@@ -57,11 +57,18 @@ resource "frostmoln_kubernetes_cluster" "main" {
   initial_node_pool = {
     flavor_id  = data.frostmoln_kubernetes_flavors.available.flavors[0].id
     node_count = 3
+
+    # The initial pool's own resource tags (not Kubernetes node labels). Every
+    # tag the pool holds, the copied ones included, is in tags_all.
+    tags = {
+      role = "workers"
+    }
   }
 
   # Resource tags: your own metadata for search and filtering, never applied to
   # the cluster or its nodes. The initial node pool gets a ONE-TIME copy of the
-  # cluster's merged tags at create; changing them here later does not reach it.
+  # cluster's merged tags at create; changing them here later does not reach it
+  # (manage the pool's with initial_node_pool.tags).
   tags = {
     env  = "prod"
     team = "platform"

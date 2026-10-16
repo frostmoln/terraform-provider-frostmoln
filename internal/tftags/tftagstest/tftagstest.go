@@ -132,6 +132,7 @@ func k8sInitialPool() tftypes.Value {
 	ot := tftypes.Object{AttributeTypes: map[string]tftypes.Type{
 		"id": str, "name": str, "flavor_id": str, "node_count": tftypes.Number,
 		"status": str, "status_reason": str, "status_message": str, "failed_step": str,
+		"tags": tftypes.Map{ElementType: str}, "tags_all": tftypes.Map{ElementType: str},
 	}}
 	vals := map[string]tftypes.Value{}
 	for name, at := range ot.AttributeTypes {
@@ -139,6 +140,44 @@ func k8sInitialPool() tftypes.Value {
 	}
 	vals["flavor_id"] = Str("k8s.gp1.medium")
 	return tftypes.NewValue(ot, vals)
+}
+
+// k8sInitialPoolTags answers the cluster's initial-pool routes: the pool list and
+// the pool itself carry the pool's own tags, and a tags-only PATCH replaces them.
+// After the cluster create it records the platform's copy of the cluster's merged
+// tags onto the pool.
+func k8sInitialPoolTags(f *Fake, w http.ResponseWriter, r *http.Request, body map[string]json.RawMessage) bool {
+	const tenant = "/v1/tenants/t-1"
+	pools := tenant + "/kubernetes-clusters/" + ObjectID + "/node-pools"
+	wire := func() map[string]any {
+		out := map[string]any{"tags": f.poolTags}
+		for k, v := range k8sInitialPoolWire {
+			out[k] = v
+		}
+		return out
+	}
+	switch {
+	case r.Method == http.MethodPost && r.URL.Path == tenant+f.Profile.Create:
+		f.create(r, body)
+		f.poolTags = map[string]string{}
+		for k, v := range f.tags {
+			f.poolTags[k] = v
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(f.Object())
+	case r.Method == http.MethodGet && r.URL.Path == pools:
+		_ = json.NewEncoder(w).Encode(map[string]any{"nodePools": []any{wire()}})
+	case r.Method == http.MethodGet && r.URL.Path == pools+"/np-1":
+		_ = json.NewEncoder(w).Encode(wire())
+	case r.Method == http.MethodPatch && r.URL.Path == pools+"/np-1":
+		next := map[string]string{}
+		_ = json.Unmarshal(body["tags"], &next)
+		f.poolTags = next
+		_ = json.NewEncoder(w).Encode(wire())
+	default:
+		return false
+	}
+	return true
 }
 
 // k8sInitialPoolWire is the initial pool as the node-pool routes answer it.
@@ -413,10 +452,9 @@ var Profiles = map[string]Profile{
 		// the placeholders the create configuration gives them.
 		Extra: map[string]any{"name": "x", "status": "running", "vpcId": "x", "subnetId": "x", "addons": []string{}},
 		Routes: map[string]any{
-			"/kubernetes-clusters/" + ObjectID + "/node-pools":      map[string]any{"nodePools": []any{k8sInitialPoolWire}},
-			"/kubernetes-clusters/" + ObjectID + "/node-pools/np-1": k8sInitialPoolWire,
-			"/kubernetes-clusters/" + ObjectID + "/kubeconfig":      map[string]any{"endpoint": "https://k", "kubeconfig": "apiVersion: v1"},
+			"/kubernetes-clusters/" + ObjectID + "/kubeconfig": map[string]any{"endpoint": "https://k", "kubeconfig": "apiVersion: v1"},
 		},
+		Handle: k8sInitialPoolTags,
 		// The cluster PUT has PATCH semantics: a rename sends the name alone.
 		Touch: map[string]any{"name": "touched"},
 	},
@@ -738,6 +776,10 @@ type Fake struct {
 	// fields are the non-tag fields updates carried, read back over Extra, so an
 	// in-place change of another attribute (Touch) reads back as written.
 	fields map[string]json.RawMessage
+	// poolTags are the initial node pool's own tags (frostmoln_kubernetes_cluster):
+	// a copy of the cluster's merged tags at create, then whatever the pool's
+	// PATCH writes — exactly the platform's one-time copy.
+	poolTags map[string]string
 }
 
 // updatedAt is the object's updatedAt: like the platform, the fake bumps it on
@@ -763,6 +805,11 @@ func (f *Fake) Set(k, v string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.tags[k] = v
+	// The initial pool sees the same outside edits, so every matrix step drives
+	// its tag set too.
+	if f.poolTags != nil {
+		f.poolTags[k] = v
+	}
 }
 
 // Delete removes a tag from the object as a change made outside Terraform
@@ -771,6 +818,7 @@ func (f *Fake) Delete(k string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.tags, k)
+	delete(f.poolTags, k)
 }
 
 // UserTags returns the object's non-platform tags.

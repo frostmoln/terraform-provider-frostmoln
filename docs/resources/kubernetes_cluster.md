@@ -90,11 +90,18 @@ resource "frostmoln_kubernetes_cluster" "main" {
   initial_node_pool = {
     flavor_id  = data.frostmoln_kubernetes_flavors.available.flavors[0].id
     node_count = 3
+
+    # The initial pool's own resource tags (not Kubernetes node labels). Every
+    # tag the pool holds, the copied ones included, is in tags_all.
+    tags = {
+      role = "workers"
+    }
   }
 
   # Resource tags: your own metadata for search and filtering, never applied to
   # the cluster or its nodes. The initial node pool gets a ONE-TIME copy of the
-  # cluster's merged tags at create; changing them here later does not reach it.
+  # cluster's merged tags at create; changing them here later does not reach it
+  # (manage the pool's with initial_node_pool.tags).
   tags = {
     env  = "prod"
     team = "platform"
@@ -138,7 +145,7 @@ An existing cluster created with a BYO public IP is unaffected and keeps its add
 🔴 REMOVING IT CAN PLAN A REPLACEMENT. This attribute forces replacement and is never read back from the API, so deleting the line is itself the change that makes Terraform want to destroy and recreate the cluster. Add `lifecycle { ignore_changes = [public_ip_id] }` **as well as** removing it — the two are not alternatives, and only the pair is non-destructive.
 - `region` (String) The region to create the cluster in. Defaults server-side.
 - `retained_volumes_on_destroy` (String) What destroying this cluster does to its volumes whose PersistentVolume has reclaimPolicy `Retain`, or `Unknown` (the cluster has not reported its volumes recently, which is treated as Retain): `keep` (they stay as ordinary volumes, listed with your other volumes and still billed) or `delete` (they are deleted with the cluster). Volumes with reclaimPolicy `Delete` are always deleted with the cluster. Unknown means the cluster has not reported the volume in the last 15 minutes, for example one created moments before the destroy. There is NO default: when the cluster has such volumes and this is unset, destroy fails and lists them, and nothing is deleted. APPLY THE SETTING FIRST: the destroy reads it from state, so set it and `terraform apply` before `terraform destroy` or before a change that REPLACES the cluster (the plan warns when a replacement is planned without it). Changing it is an in-place update that makes no API call. Null after import. With either value, the destroy also fails if the set of retained volumes changed after the check, so a volume is never deleted unseen and a volume shown as kept is never deleted. Destroying a cluster that is already being deleted only waits: the first delete's choice stands.
-- `tags` (Map of String) Resource tags on the cluster: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only and never applied to the cluster or its nodes. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Changing them updates the cluster in place and does not touch the running cluster. 🔴 THE INITIAL NODE POOL GETS A ONE-TIME COPY. At create, the platform copies the cluster's merged tags (these, the provider's `default_tags` and the tenant's default tags) onto the initial node pool, once. Later changes to this attribute do NOT reach that pool, and this resource does not manage its tags — and the initial pool cannot be imported as a `frostmoln_kubernetes_node_pool` either. Change them in the portal, with `fm kubernetes node-pool tags set`, or with the API (PATCH the node pool's `tags`). Pools you add with `frostmoln_kubernetes_node_pool` get no copy: tag them on that resource, where the same tags can be set again if you want them to match. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
+- `tags` (Map of String) Resource tags on the cluster: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only and never applied to the cluster or its nodes. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Changing them updates the cluster in place and does not touch the running cluster. 🔴 THE INITIAL NODE POOL GETS A ONE-TIME COPY. At create, the platform copies the cluster's merged tags (these, the provider's `default_tags` and the tenant's default tags) onto the initial node pool, once. Later changes to this attribute do NOT reach that pool: manage its tags with `initial_node_pool.tags` (all of them are shown in `initial_node_pool.tags_all`). Pools you add with `frostmoln_kubernetes_node_pool` get no copy: tag them on that resource, where the same tags can be set again if you want them to match. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `version` (String) The Kubernetes version (e.g. "1.35"). Defaults to the platform default version. Changing it currently REPLACES the cluster — in-place upgrade is not available yet.
 
@@ -173,6 +180,7 @@ Optional:
 
 - `name` (String) The name of the initial node pool. Defaults to "default".
 - `node_count` (Number) The number of worker nodes in the initial pool (1-100). Scaled in-place. Omitting it manages the pool at 1 node — an out-of-band scale will be reverted on the next apply.
+- `tags` (Map of String) Resource tags on the initial node pool: your own key/value metadata for search and filtering, stored by the platform only. They are NOT Kubernetes node labels and never reach a node. At create the platform gives the pool a copy of the cluster's merged tags (the cluster's `tags`, the provider's `default_tags` and the tenant's default tags); the keys set here are then written onto the pool, and the copied keys are kept as keys this configuration does not manage. The provider's `default_tags` apply to the pool as to any resource, so a cluster `tags` key that overrides a default stays the cluster's only: set it here too to keep it on the pool. Later changes to the cluster's `tags` do not reach the pool. Changing them updates the pool in place and touches no node. The same limits as the cluster's `tags` apply. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 
 Read-Only:
 
@@ -181,6 +189,7 @@ Read-Only:
 - `status` (String) The current status of the initial node pool.
 - `status_message` (String) A human-readable description of why the initial node pool failed. Set only when `status` is `error`.
 - `status_reason` (String) Why the initial node pool failed, as a failure class (e.g. `QuotaExceeded`). Set only when `status` is `error`.
+- `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 
 
 <a id="nestedblock--timeouts"></a>

@@ -273,7 +273,8 @@ func retainedVolumesDecision(err error) (*apiClusterVolumePlan, bool) {
 }
 
 // onlyDestroyChoiceChanged reports whether this update changes retained_volumes_on_destroy
-// and NOTHING the Update would act on (name, tags, addons, pins, node count). It makes
+// and NOTHING the Update would act on (name, tags, the initial pool's tags, addons, pins,
+// node count). It makes
 // no API call: the tag judgement is the state-only first pass tagsToWrite also starts
 // with.
 func (r *kubernetesClusterResource) onlyDestroyChoiceChanged(ctx context.Context, plan, state KubernetesClusterModel,
@@ -296,6 +297,15 @@ func (r *kubernetesClusterResource) onlyDestroyChoiceChanged(ctx context.Context
 	}
 	prior := tftags.PriorOf(ctx, state.Tags, state.TagsAll, private, diags)
 	if _, changed := tftags.ForUpdate(ctx, r.client.DefaultTags(), plan.Tags, prior, diags); changed {
+		return false
+	}
+	// The initial pool's tags too: a change there is an Update that writes the pool.
+	poolPrivate := tftags.ScopedReader(private, initialPoolTagsScope)
+	if tftags.ImportPending(ctx, poolPrivate, diags) {
+		return false
+	}
+	poolPrior := tftags.PriorOf(ctx, state.InitialNodePool.Tags, state.InitialNodePool.TagsAll, poolPrivate, diags)
+	if _, changed := tftags.ForUpdate(ctx, r.client.DefaultTags(), plan.InitialNodePool.Tags, poolPrior, diags); changed {
 		return false
 	}
 	return !diags.HasError()
