@@ -85,6 +85,27 @@ go mod tidy             # Update dependencies
 rm -rf bin/            # Clean build artifacts
 ```
 
+## Release and distribution
+
+Governing decision: ADR-0079 (public client distribution; the Terraform Registry is its one
+byte-host exception). The provider rules:
+
+- **Canonical source, review and CI stay on `git.sm.internal`.** The shared release workflow
+  (`.gitea/workflows/release.yml`) cuts `vX.Y.Z`; the tag-triggered `.gitea/workflows/goreleaser.yml`
+  publishes to `registry.terraform.io/frostmoln/frostmoln`.
+- **The public GitHub repo `Frostmoln/terraform-provider-frostmoln` is a full-source mirror,**
+  pushed at release (tagged tree plus tag); no PRs land there. The registry reads `docs/`,
+  `LICENSE` and `terraform-registry-manifest.json` from the tag and the signed assets from the
+  GitHub Release.
+- **Signing is GPG, not minisign** (the registry accepts only GPG): a dedicated passphrase-less
+  key in `GPG_PRIVATE_KEY_B64`, its public key uploaded to the registry publisher account. Never
+  rotated without operator approval (claude-config/CLAUDE.md rule 12).
+- **Pushes use a per-run `frostmoln-goreleaser` GitHub App token** scoped to `contents:write` on
+  this repo; never a user PAT or deploy key.
+- **License is MPL-2.0; the manifest declares protocol 6.0** (terraform-plugin-framework).
+- **`enforce_siv_path` stays off** in `release.yml`: the provider is a leaf plugin binary, never
+  an imported Go module.
+
 ## Testing
 
 ### Running Tests
