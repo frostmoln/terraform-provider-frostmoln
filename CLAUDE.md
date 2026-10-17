@@ -7,6 +7,9 @@ For project-wide conventions and architecture details, see:
 ## Module
 `go.frostmoln.internal/terraform-provider-frostmoln`
 
+- **OIDC refresh** for the fm-session credential source comes from the shared
+  `go.frostmoln.internal/oidc` module, never a hand copy; its rules are in [oidc/CLAUDE.md](../oidc/CLAUDE.md).
+
 ## Project Overview
 
 Terraform provider for the Frostmoln Cloud Platform. Enables infrastructure-as-code management of compute instances, VPCs, subnets, security groups, public IPs, volumes, buckets, snapshots, SSH keys, S3 credentials, and API keys.
