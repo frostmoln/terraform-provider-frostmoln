@@ -295,6 +295,12 @@ the edge with `NOT_FOUND: the requested resource was not found` while the
 provider configures. It is also what the `fm` CLI stores in `~/.fm/config.yaml`,
 and the default when `api_endpoint` is unset.
 
+The provider stamps its build version as `X-FM-Provider-Version` on its API and OIDC calls,
+for the gateway's minimum-version gate (426 `PROVIDER_UPGRADE_REQUIRED`). The stamp and the 426
+handling come from the shared `oidc` `VersionGate` / `NewUpgradeRequiredError` (terminal-safe
+message); never hand-copy a gate here. Gateway side: api-gateway `CLAUDE.md` "Client
+minimum-version gate".
+
 ## API Endpoints Reference
 
 | Resource | Base Path | Notes |
