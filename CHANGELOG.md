@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.87.2] - 2026-10-18
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.30 (#687)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.31 (#691)
+
+### 📚 Documentation
+
+- ADR corpus audit plan + b1 - stubs for retired ADRs, index drift (#682)
+- ADR corpus audit b11 - gateway-edge ADRs retired into service CLAUDE.md (#683)
+- ADR corpus audit b9 - public client distribution (ADR-0076/0077/0083 into ADR-0079) (#681)
+- *(volume)* Describe volume_type as a tier key, not a fixed list (#693)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.14.5 (#689)
+
 ## [0.87.1] - 2026-10-16
 
 ### 📚 Documentation
