@@ -78,7 +78,7 @@ check "billing_data_disk_is_attached" {
 - `tenant_id` (String) The tenant ID that owns this volume.
 - `throughput` (Number) The provisioned throughput in MiB/s, null when the volume has no provisioned throughput floor.
 - `updated_at` (String) The timestamp when the volume was last updated.
-- `volume_type` (String) The type of storage backing this volume (ssd, hdd, nvme, or default).
+- `volume_type` (String) The volume tier key backing this volume (e.g. "ssd"), as listed by the frostmoln_volume_tiers data source. A volume keeps the key it was created with, even if that tier has since been retired.
 
 <a id="nestedatt--attachments"></a>
 ### Nested Schema for `attachments`

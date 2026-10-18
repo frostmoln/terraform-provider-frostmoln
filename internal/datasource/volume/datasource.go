@@ -188,8 +188,9 @@ func (d *volumeDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 				Computed: true,
 			},
 			"volume_type": schema.StringAttribute{
-				Description: "The type of storage backing this volume (ssd, hdd, nvme, or " +
-					"default).",
+				Description: "The volume tier key backing this volume (e.g. \"ssd\"), as listed " +
+					"by the frostmoln_volume_tiers data source. A volume keeps the key it was " +
+					"created with, even if that tier has since been retired.",
 				Computed: true,
 			},
 			"availability_zone": schema.StringAttribute{
