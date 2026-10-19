@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.87.3] - 2026-10-19
+
+### 🐛 Bug Fixes
+
+- *(auth)* Bind fm CLI credentials to their context's endpoint; resolve them by fm-cli's rule (#695)
+
 ## [0.87.2] - 2026-10-18
 
 ### 🐛 Bug Fixes
