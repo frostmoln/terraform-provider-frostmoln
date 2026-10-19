@@ -137,7 +137,7 @@ func (m *IAMPolicyModel) fromAPI(p *apiPolicy) {
 	// — it falls through to a visible diff Terraform re-applies (fail-closed:
 	// never report a policy as intact when the server holds none).
 	apiDoc := string(p.Document)
-	if !m.Document.IsNull() && !m.Document.IsUnknown() && sameJSONDoc(m.Document.ValueString(), apiDoc) {
+	if !m.Document.IsNull() && !m.Document.IsUnknown() && sameServerDoc(m.Document.ValueString(), apiDoc) {
 		// Keep the config string — it denotes the same policy.
 		return
 	}
@@ -147,12 +147,28 @@ func (m *IAMPolicyModel) fromAPI(p *apiPolicy) {
 // sameJSONDoc reports whether two JSON strings are semantically equal (same
 // value tree, ignoring key order and whitespace). Invalid JSON never matches.
 func sameJSONDoc(a, b string) bool {
+	return sameDoc(a, b, false)
+}
+
+// sameServerDoc is sameJSONDoc for a configured document against the one the
+// server returned: identity's FRN normalisation is undone on both sides first
+// (canonicalPolicyDoc). Only a config-to-server comparison folds; two configs
+// that spell an id differently are a real change to send.
+func sameServerDoc(config, server string) bool {
+	return sameDoc(config, server, true)
+}
+
+func sameDoc(a, b string, fold bool) bool {
 	var av, bv any
 	if err := json.Unmarshal([]byte(a), &av); err != nil {
 		return false
 	}
 	if err := json.Unmarshal([]byte(b), &bv); err != nil {
 		return false
+	}
+	if fold {
+		canonicalPolicyDoc(av)
+		canonicalPolicyDoc(bv)
 	}
 	return reflect.DeepEqual(av, bv)
 }

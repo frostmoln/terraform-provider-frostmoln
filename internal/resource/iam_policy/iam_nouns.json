@@ -1,0 +1,134 @@
+[
+  {
+    "noun": "appgw:application-gateways",
+    "prefix": "agw"
+  },
+  {
+    "noun": "cache:caches",
+    "prefix": "cch"
+  },
+  {
+    "noun": "cache:redis-instances",
+    "prefix": "cch"
+  },
+  {
+    "noun": "compute:images",
+    "prefix": "img"
+  },
+  {
+    "noun": "compute:instances",
+    "prefix": "ins"
+  },
+  {
+    "noun": "compute:launch-templates",
+    "prefix": "lt"
+  },
+  {
+    "noun": "compute:scale-groups",
+    "prefix": "asg"
+  },
+  {
+    "noun": "compute:snapshots",
+    "prefix": "img"
+  },
+  {
+    "noun": "database:database-parameter-groups",
+    "prefix": "dbp"
+  },
+  {
+    "noun": "database:databases",
+    "prefix": "db"
+  },
+  {
+    "noun": "identity:api-keys",
+    "prefix": "key"
+  },
+  {
+    "noun": "identity:audit-logs",
+    "prefix": "aud"
+  },
+  {
+    "noun": "identity:iam-groups",
+    "prefix": "grp"
+  },
+  {
+    "noun": "identity:iam-policies",
+    "prefix": "pol"
+  },
+  {
+    "noun": "identity:roles",
+    "prefix": "role"
+  },
+  {
+    "noun": "identity:users",
+    "prefix": "usr"
+  },
+  {
+    "noun": "identity:workload-identity",
+    "prefix": "wib"
+  },
+  {
+    "noun": "kubernetes:kubernetes-clusters",
+    "prefix": "k8s"
+  },
+  {
+    "noun": "messaging:messaging",
+    "prefix": "mq"
+  },
+  {
+    "noun": "network:dns-zones",
+    "prefix": "dnz"
+  },
+  {
+    "noun": "network:gateways",
+    "prefix": "vpc"
+  },
+  {
+    "noun": "network:load-balancers",
+    "prefix": "lb"
+  },
+  {
+    "noun": "network:public-ips",
+    "prefix": "pip"
+  },
+  {
+    "noun": "network:routers",
+    "prefix": "rtr"
+  },
+  {
+    "noun": "network:security-groups",
+    "prefix": "sg"
+  },
+  {
+    "noun": "network:subnets",
+    "prefix": "sub"
+  },
+  {
+    "noun": "network:vpc-routes",
+    "prefix": "vpc"
+  },
+  {
+    "noun": "network:vpcs",
+    "prefix": "vpc"
+  },
+  {
+    "noun": "quotas:change-requests",
+    "prefix": "qr"
+  },
+  {
+    "noun": "secrets:secrets",
+    "prefix": "sec"
+  },
+  {
+    "noun": "storage:snapshots",
+    "prefix": "vsn"
+  },
+  {
+    "noun": "storage:volumes",
+    "prefix": "vol"
+  },
+  {
+    "noun": "webserver:webservers",
+    "prefix": "ws"
+  }
+]

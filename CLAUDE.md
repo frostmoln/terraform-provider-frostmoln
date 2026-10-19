@@ -285,6 +285,18 @@ coming managed Kubernetes) follow one HCL surface — keep new ones consistent:
   `flavor`→`flavor_id` StateUpgrader via the shared `internal/stateupgrade`
   helper, so existing state upgrades cleanly (no spurious diff).
 
+### Policy documents: FRN read-back fold
+
+identity stores every policy document in canonical public FRN form (ADR-0129, PUBLIC-IDS-PLAN
+3b). `frostmoln_iam_policy` compares a configured document with the stored one through
+`sameServerDoc`, which undoes exactly identity's rewrite and nothing more (`frn_compare.go`):
+the tenant segment, string `frn:tenant` values, and the id segment of the nouns in
+`internal/resource/iam_policy/iam_nouns.json`, each only for a UUID or that kind's own prefix.
+That table is identity's `pubid.IAMNouns`/`KindForNoun` output and changes in lockstep with
+identity's `TestNormaliseFRN_NounsMatchTheTerraformProviderTable`. Never widen the fold to a
+name-keyed noun or another prefix: two documents the evaluator tells apart would compare equal
+and hide drift. Config-to-config comparisons (`onlyTagsDiffer`) stay exact.
+
 ### Adding New Data Sources
 
 1. Create a new directory under `internal/datasource/<name>/`
