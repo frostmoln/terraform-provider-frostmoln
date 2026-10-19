@@ -194,7 +194,25 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.ghapp.outputs.token }}
           GPG_FINGERPRINT: ${{ steps.gpg.outputs.fingerprint }}
-        run: goreleaser release --clean
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # The GitHub Release body is what the Terraform Registry and customers
+          # read. Every release up to v0.87.4 shipped with an empty body: nothing
+          # passed --release-notes, and changelog.disable made goreleaser ignore
+          # one anyway. Use this tag's git-cliff section of CHANGELOG.md, which the
+          # release PR committed into the tagged tree. `(#NNN)` is stripped: those
+          # are internal Gitea PRs, and GitHub would autolink them to this mirror.
+          # Pass it as --release-notes, never --release-notes-tmpl: the latter
+          # template-renders commit subjects inside a job holding the release token.
+          notes="$(mktemp)"
+          awk -v h="## [${TAG#v}]" 'index($0, h) == 1 {f = 1; next} f && /^## \[/ {exit} f {sub(/ \(#[0-9]+\)$/, ""); print}' CHANGELOG.md > "$notes"
+          if ! grep -q '[^[:space:]]' "$notes"; then
+            # Never block a release on its notes: publish, and say so.
+            echo "::warning::CHANGELOG.md has no section for ${TAG}; publishing a placeholder release body."
+            echo "Release ${TAG}." > "$notes"
+          fi
+          goreleaser release --clean --release-notes "$notes"
 
       - name: Clean up signing key + mirror remote
         if: always()

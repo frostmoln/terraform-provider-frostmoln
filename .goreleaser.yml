@@ -85,7 +85,10 @@ release:
     owner: Frostmoln
     name: terraform-provider-frostmoln
 
-# Release notes come from the shared release workflow's git-cliff changelog +
-# the release PR; goreleaser does not generate its own.
+# goreleaser does not generate its own notes: the GitHub Release body is this
+# tag's git-cliff section of CHANGELOG.md, passed as --release-notes by
+# .gitea/workflows/goreleaser.yml. Do NOT set `disable: true` here: it skips the
+# changelog pipe, and that pipe is what loads --release-notes, so every release
+# would ship with an empty body again (all of them up to v0.87.4 did).
 changelog:
-  disable: true
+  use: git
