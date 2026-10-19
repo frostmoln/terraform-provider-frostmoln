@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.87.4] - 2026-10-19
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.32 (#697)
+- *(iam_policy)* Compare policy documents with FRN ids in either form (#699)
+
 ## [0.87.3] - 2026-10-19
 
 ### 🐛 Bug Fixes
