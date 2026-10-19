@@ -108,6 +108,145 @@ func TestResolveMissingContextErrors(t *testing.T) {
 	}
 }
 
+// The provider reads the same file as fm and must never authenticate where fm
+// refuses (fm-cli config.Credentials): inheriting the top-level block is how a
+// token minted for one context's endpoint reaches another's.
+func TestResolveCredentialsMirrorFmCLI(t *testing.T) {
+	cases := []struct {
+		name       string
+		config     string
+		context    string
+		wantAccess string
+		wantAPIKey string
+		wantCtx    string
+	}{
+		{
+			name: "context without credentials does not inherit while another context has some",
+			config: `current_context: staging
+credentials:
+  access_token: prod-access
+contexts:
+  prod:
+    api_endpoint: https://api.frostmoln.cloud/api
+    credentials:
+      access_token: prod-access
+  staging:
+    api_endpoint: https://evil.example/api
+`,
+			wantCtx: "staging",
+		},
+		{
+			name: "explicit cli_context without credentials does not inherit either",
+			config: `current_context: prod
+credentials:
+  api_key: fmk_prod
+contexts:
+  prod:
+    credentials:
+      api_key: fmk_prod
+  staging:
+    api_endpoint: https://evil.example/api
+`,
+			context: "staging",
+			wantCtx: "staging",
+		},
+		{
+			name: "dangling current_context resolves to no credentials",
+			config: `current_context: deleted
+credentials:
+  access_token: deleted-access
+contexts:
+  other:
+    api_endpoint: https://api.frostmoln.cloud/api
+`,
+		},
+		{
+			name: "empty current_context with contexts resolves to no credentials",
+			config: `credentials:
+  api_key: fmk_top
+contexts:
+  other:
+    api_endpoint: https://api.frostmoln.cloud/api
+`,
+		},
+		{
+			name: "pre-0.29.1 shape: no context has credentials, so the top level is the login",
+			config: `current_context: default
+credentials:
+  api_key: fmk_legacy
+contexts:
+  default:
+    api_endpoint: https://api.frostmoln.cloud/api
+`,
+			wantAPIKey: "fmk_legacy", // pragma: allowlist secret
+			wantCtx:    "default",
+		},
+		{
+			name: "a context holding only a refresh token counts as its own credentials",
+			config: `current_context: default
+credentials:
+  access_token: top-access
+contexts:
+  default:
+    credentials:
+      refresh_token: own-refresh
+`,
+			wantCtx: "default",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeConfigFile(t, tc.config, 0o600)
+			r, err := Resolve(Options{Path: path, Context: tc.context})
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			if r.AccessToken != tc.wantAccess || r.APIKey != tc.wantAPIKey { // pragma: allowlist secret
+				t.Errorf("credentials = access %q / api key %q, want %q / %q", r.AccessToken, r.APIKey, tc.wantAccess, tc.wantAPIKey)
+			}
+			if r.Context != tc.wantCtx {
+				t.Errorf("Context = %q, want %q", r.Context, tc.wantCtx)
+			}
+			if tc.wantAccess == "" && r.Bearer != nil {
+				t.Error("no bearer source expected without an access token")
+			}
+		})
+	}
+}
+
+// A pre-0.29.1 file's login lives in the top-level block; its rotation lands in
+// the context (as fm's setTokens does), never back in the shared block.
+func TestRefreshInheritedLoginRotatesIntoContext(t *testing.T) {
+	s := newOIDCServer(t)
+	path := writeConfigFile(t, `current_context: default
+credentials:
+  access_token: legacy-access
+  refresh_token: legacy-refresh
+contexts:
+  default:
+    api_endpoint: https://api.frostmoln.cloud/api
+`, 0o600)
+	r, err := Resolve(Options{Path: path})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if r.Bearer == nil || r.AccessToken != "legacy-access" {
+		t.Fatalf("expected the inherited legacy bearer, got %+v", r)
+	}
+	if _, err := r.Bearer.Refresh(context.Background(), s.Client(), s.URL, r.RefreshToken, r.ExpiresAt); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	var got cliConfig
+	_ = yaml.Unmarshal(data, &got)
+	if c := got.Contexts["default"].Credentials; c.AccessToken != "fresh-access" || c.RefreshToken != "fresh-refresh" {
+		t.Errorf("rotation not written into the context: %+v", c)
+	}
+	if got.Credentials.AccessToken != "legacy-access" {
+		t.Errorf("top-level block rewritten: %+v", got.Credentials)
+	}
+}
+
 func TestResolveFlatConfig(t *testing.T) {
 	flat := "api_endpoint: https://api.example.com/api\ncredentials:\n  api_key: fmk_flat\n"
 	path := writeConfigFile(t, flat, 0o600)
@@ -187,8 +326,10 @@ func TestRefreshWritesBackPreservingFields(t *testing.T) {
 	if c := cfg.Contexts["default"].Credentials; c.AccessToken != "fresh-access" || c.RefreshToken != "fresh-refresh" {
 		t.Errorf("default context creds not updated: %+v", c)
 	}
-	if cfg.Credentials.AccessToken != "fresh-access" || cfg.Credentials.RefreshToken != "fresh-refresh" {
-		t.Errorf("top-level mirror not updated: %+v", cfg.Credentials)
+	// fm-cli's setTokens writes the current context only; a live token parked in
+	// the top-level fallback is one another context could inherit.
+	if cfg.Credentials.AccessToken != "top-access" || cfg.Credentials.RefreshToken != "top-refresh" {
+		t.Errorf("top-level block must not receive the context's rotated tokens: %+v", cfg.Credentials)
 	}
 	if cfg.Contexts["staging"].Credentials.APIKey != "fmk_staging_key" { // pragma: allowlist secret
 		t.Errorf("staging context clobbered: %+v", cfg.Contexts["staging"])
@@ -251,8 +392,7 @@ func TestRefreshSendsUserAgent(t *testing.T) {
 }
 
 func TestRefreshNonCurrentContextLeavesTopLevel(t *testing.T) {
-	// Refreshing a non-current context must NOT touch the top-level mirror
-	// (which fm-cli keeps pointed at the current context).
+	// Refreshing a non-current context must NOT touch the top-level block.
 	s := newOIDCServer(t)
 	cfg2 := `current_context: default
 credentials:
@@ -310,6 +450,87 @@ func TestRefreshAdoptsPeerRotationWithoutPOST(t *testing.T) {
 	}
 	if tok.AccessToken != "default-access" || tok.RefreshToken != "default-refresh" {
 		t.Errorf("expected adopted on-disk token, got %+v", tok)
+	}
+}
+
+// A pair `fm auth login` minted after the context was re-pointed belongs to the
+// new endpoint: it must not be adopted and sent to the one this source was
+// resolved for. Refresh POSTs its own in-memory token instead.
+func TestRefreshDoesNotAdoptPairForRepointedContext(t *testing.T) {
+	s := newOIDCServer(t)
+	path := writeConfigFile(t, sampleConfig, 0o600)
+	r, err := Resolve(Options{Path: path})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	repointed := strings.Replace(sampleConfig, `    api_endpoint: https://api.frostmoln.cloud/api
+    region: sweden
+    credentials:
+      access_token: default-access
+      refresh_token: default-refresh
+      expires_at: 222`, `    api_endpoint: https://other.example/api
+    region: sweden
+    credentials:
+      access_token: other-access
+      refresh_token: other-refresh
+      expires_at: 999999`, 1)
+	if repointed == sampleConfig {
+		t.Fatal("fixture replacement did not apply")
+	}
+	if err := os.WriteFile(path, []byte(repointed), 0o600); err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	tok, err := r.Bearer.Refresh(context.Background(), s.Client(), s.URL, r.RefreshToken, r.ExpiresAt)
+	var perr *PersistError
+	if err != nil && !errors.As(err, &perr) {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if tok == nil || tok.AccessToken == "other-access" {
+		t.Fatalf("adopted the re-pointed context's pair: %+v", tok)
+	}
+	if tok.AccessToken != "fresh-access" {
+		t.Errorf("expected our own grant, got %+v", tok)
+	}
+}
+
+// A flat (context-less) file keeps its login in the top-level block, and the
+// rotation goes back there.
+func TestRefreshFlatConfigWritesTopLevel(t *testing.T) {
+	s := newOIDCServer(t)
+	path := writeConfigFile(t, "api_endpoint: https://api.example.com/api\ncredentials:\n  access_token: flat-access\n  refresh_token: flat-refresh\n  expires_at: 5\n", 0o600)
+	r, err := Resolve(Options{Path: path})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if r.Bearer == nil {
+		t.Fatal("expected a Bearer for the flat bearer login")
+	}
+	if _, err := r.Bearer.Refresh(context.Background(), s.Client(), s.URL, r.RefreshToken, r.ExpiresAt); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	var got cliConfig
+	_ = yaml.Unmarshal(data, &got)
+	if got.Credentials.AccessToken != "fresh-access" || got.Credentials.RefreshToken != "fresh-refresh" {
+		t.Errorf("flat rotation not written to the top level: %+v", got.Credentials)
+	}
+	if len(got.Contexts) != 0 {
+		t.Errorf("flat file grew contexts: %+v", got.Contexts)
+	}
+}
+
+func TestResolveReportsUnusedCredentials(t *testing.T) {
+	path := writeConfigFile(t, "current_context: staging\ncontexts:\n  prod:\n    credentials:\n      api_key: fmk_prod\n  staging: {}\n", 0o600)
+	r, err := Resolve(Options{Path: path})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !r.UnusedCredentials {
+		t.Error("expected UnusedCredentials when another context holds credentials")
+	}
+	path = writeConfigFile(t, sampleConfig, 0o600)
+	if r, _ = Resolve(Options{Path: path}); r.UnusedCredentials {
+		t.Error("UnusedCredentials set although the context's own credentials resolved")
 	}
 }
 

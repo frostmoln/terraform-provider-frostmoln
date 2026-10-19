@@ -191,7 +191,9 @@ func (p *FrostmolnProvider) Schema(_ context.Context, _ provider.SchemaRequest, 
 		Attributes: map[string]schema.Attribute{
 			"api_endpoint": schema.StringAttribute{
 				Description: "The API endpoint URL, including the /api prefix the gateway mounts customer routes under. " +
-					"Can also be set via the FROSTMOLN_API_ENDPOINT environment variable. Defaults to https://api.frostmoln.cloud/api.",
+					"Can also be set via the FROSTMOLN_API_ENDPOINT environment variable. Defaults to https://api.frostmoln.cloud/api, " +
+					"or, with fm CLI credentials, the endpoint of their context; those credentials are never sent elsewhere, " +
+					"so a different value is an error.",
 				Optional: true,
 			},
 			"api_key": schema.StringAttribute{
@@ -294,6 +296,7 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 	// fm CLI config (api_key, else OIDC bearer with refresh) > error.
 	var c *client.Client
 	cliConfigFound := false
+	cliUnusedCredentials, cliLabel := false, ""
 	// Whether the endpoint in use was adopted from the fm CLI config, which
 	// changes where a wrong endpoint has to be fixed (see endpointHint).
 	endpointFromCLIConfig := false
@@ -343,12 +346,38 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 			return
 		default:
 			cliConfigFound = true
+			cliUnusedCredentials = resolved.UnusedCredentials
+			cliLabel = cliSourceLabel(resolved.Path, resolved.Context)
 			if resolved.PermsWarning != "" {
 				resp.Diagnostics.AddWarning("Insecure fm CLI config permissions", resolved.PermsWarning)
 			}
-			// Adopt the CLI's endpoint (with /api) unless one was set explicitly.
-			endpoint := chooseCLIEndpoint(endpointExplicit, apiEndpoint, resolved.APIEndpoint)
-			endpointFromCLIConfig = !endpointExplicit && resolved.APIEndpoint != ""
+			// A CLI credential goes ONLY to the endpoint its context stores (the
+			// only place `fm` itself ever sends it). An explicit api_endpoint /
+			// FROSTMOLN_API_ENDPOINT is a value the configuration chooses, so a
+			// module or a checked-out repo could otherwise point the
+			// practitioner's own login at any host; it may restate that
+			// endpoint, never redirect it.
+			endpoint := cliEndpoint(resolved.APIEndpoint)
+			hasCreds := resolved.APIKey != "" || resolved.AccessToken != ""
+			if hasCreds && endpointExplicit && !sameEndpoint(apiEndpoint, endpoint) {
+				remedy := "Remove the api_endpoint setting, select a matching context with cli_context, " +
+					"or authenticate to that endpoint with the api_key attribute or FROSTMOLN_API_KEY."
+				if sameHost(apiEndpoint, endpoint) {
+					// Same server, different path: almost always a CLI config
+					// written before fm stored the /api suffix. Fix it there.
+					remedy = fmt.Sprintf("If %s is the correct endpoint, update the fm CLI config with "+
+						"`fm config set api_endpoint %s` and keep or remove the api_endpoint setting. ",
+						redactedEndpoint(apiEndpoint), redactedEndpoint(apiEndpoint)) + remedy
+				}
+				resp.Diagnostics.AddError(
+					"API endpoint does not match the fm CLI credentials",
+					fmt.Sprintf("api_endpoint (or FROSTMOLN_API_ENDPOINT) is %q, but the credentials in %s belong to %q, "+
+						"and fm CLI credentials are only ever sent to the endpoint they were issued for. %s",
+						redactedEndpoint(apiEndpoint), cliSourceLabel(resolved.Path, resolved.Context), redactedEndpoint(endpoint), remedy),
+				)
+				return
+			}
+			endpointFromCLIConfig = resolved.APIEndpoint != ""
 			switch {
 			case resolved.APIKey != "":
 				credentialSource = fmt.Sprintf("the API key stored in the fm CLI config (%s)", cliSourceLabel(resolved.Path, resolved.Context))
@@ -377,7 +406,17 @@ func (p *FrostmolnProvider) Configure(ctx context.Context, req provider.Configur
 	}
 
 	if c == nil {
-		if cliConfigFound {
+		if cliConfigFound && cliUnusedCredentials {
+			// fm's own rule: a context never inherits credentials that belong to
+			// another context, so say why the ones sitting in the file are unused.
+			resp.Diagnostics.AddError(
+				"Missing Credentials",
+				"The fm CLI config holds credentials, but none for the selected context ("+cliLabel+"): "+
+					"credentials are never borrowed from another context or from a context that no longer exists. "+
+					"Run `fm auth login` with that context selected, choose another with cli_context, "+
+					"or set the `api_key` attribute or FROSTMOLN_API_KEY environment variable.",
+			)
+		} else if cliConfigFound {
 			resp.Diagnostics.AddError(
 				"Missing Credentials",
 				"An fm CLI config was found but the selected context has no usable credentials. "+
@@ -608,17 +647,45 @@ func resolveTenantID(config FrostmolnProviderModel) string {
 	return os.Getenv("FROSTMOLN_TENANT_ID")
 }
 
-// chooseCLIEndpoint picks the API endpoint for a CLI-sourced credential: an
-// explicitly-set endpoint wins; otherwise adopt the CLI config's endpoint
-// (which carries the /api suffix), falling back to the default.
-func chooseCLIEndpoint(explicit bool, base, cliEndpoint string) string {
-	if explicit {
-		return base
-	}
-	if cliEndpoint != "" {
-		return cliEndpoint
+// cliEndpoint is the endpoint a CLI-sourced credential is used against: the
+// one its fm CLI context stores (carrying the /api suffix), else the default —
+// which is also where fm sends a credential from a config without one.
+func cliEndpoint(stored string) string {
+	if stored != "" {
+		return stored
 	}
 	return defaultAPIEndpoint
+}
+
+// sameHost reports whether two endpoints share scheme and host (port included),
+// ignoring the path — only used to pick the remedy, never to allow a request.
+func sameHost(a, b string) bool {
+	ua, errA := url.Parse(a)
+	ub, errB := url.Parse(b)
+	return errA == nil && errB == nil &&
+		strings.EqualFold(ua.Scheme, ub.Scheme) && strings.EqualFold(ua.Host, ub.Host)
+}
+
+// sameEndpoint reports whether two endpoints name the same API root: scheme
+// and host compared case-insensitively, a trailing slash ignored, everything
+// else (port, path, userinfo, query) exact. Deliberately strict — a false
+// "different" costs a practitioner one config edit, a false "same" sends their
+// login session to another host.
+func sameEndpoint(a, b string) bool {
+	ua, errA := url.Parse(a)
+	ub, errB := url.Parse(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	norm := func(u *url.URL) string {
+		v := *u
+		v.Scheme = strings.ToLower(v.Scheme)
+		v.Host = strings.ToLower(v.Host)
+		v.Path = strings.TrimSuffix(v.Path, "/")
+		v.RawPath = ""
+		return v.String()
+	}
+	return norm(ua) == norm(ub)
 }
 
 // cliSourceLabel names WHICH fm CLI credential was adopted, so the log line and

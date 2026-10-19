@@ -117,7 +117,7 @@ The taggable resources are `frostmoln_bucket`, `frostmoln_dns_zone`, `frostmoln_
 
 ### Optional
 
-- `api_endpoint` (String) The API endpoint URL, including the /api prefix the gateway mounts customer routes under. Can also be set via the FROSTMOLN_API_ENDPOINT environment variable. Defaults to https://api.frostmoln.cloud/api.
+- `api_endpoint` (String) The API endpoint URL, including the /api prefix the gateway mounts customer routes under. Can also be set via the FROSTMOLN_API_ENDPOINT environment variable. Defaults to https://api.frostmoln.cloud/api, or, with fm CLI credentials, the endpoint of their context; those credentials are never sent elsewhere, so a different value is an error.
 - `api_key` (String, Sensitive) The API key for authentication. Can also be set via the FROSTMOLN_API_KEY environment variable. When unset, the provider falls back to an existing fm CLI session (see use_cli_config).
 - `cli_config_path` (String) Path to the fm CLI config file. Defaults to ~/.fm/config.yaml. Can also be set via the FROSTMOLN_CLI_CONFIG environment variable.
 - `cli_context` (String) Name of the fm CLI context to read credentials from. Defaults to the config file's current_context.

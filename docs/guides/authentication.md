@@ -88,11 +88,21 @@ provider talks to carries that suffix — the default
 endpoint without it 404s at the edge (`NOT_FOUND: the requested resource was not
 found`) while the provider configures.
 
-The `fm` CLI stores its endpoint in the same `/api` form. When the credential
-comes from the CLI config and you have **not** set `api_endpoint` explicitly,
-the provider adopts the context's endpoint (falling back to the default if the
-config omits one), so both API calls and the OIDC discovery resolve correctly.
-Note that an OIDC bearer session requires an `https` endpoint.
+The `fm` CLI stores its endpoint in the same `/api` form. A credential that
+comes from the CLI config is sent **only to that context's endpoint** (the
+default if the config omits one), exactly as `fm` itself does, so both API calls
+and the OIDC discovery resolve correctly. Setting `api_endpoint` (or
+`FROSTMOLN_API_ENDPOINT`) to a different endpoint is an error rather than a
+redirect: your own login session never follows a value a configuration chose.
+To reach another endpoint, select a context that targets it with `cli_context`,
+or use an API key. Note that an OIDC bearer session requires an `https`
+endpoint.
+
+A context that holds no credentials of its own is **not** authenticated by the
+file's top-level `credentials` block once any other context holds some, and
+neither is a `current_context` that is empty or names a deleted context — the
+same rules `fm` applies, so Terraform never authenticates where `fm` reports
+"not authenticated".
 
 ## Disabling the CLI fallback (CI)
 

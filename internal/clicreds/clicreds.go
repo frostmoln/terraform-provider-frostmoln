@@ -112,6 +112,11 @@ type Resolved struct {
 	// PermsWarning is non-empty when the config file is group/other-readable.
 	PermsWarning string
 
+	// UnusedCredentials reports that the file holds credentials that are NOT
+	// in effect for the resolved context (fm's HasUnusedCredentials), so a
+	// "no usable credentials" error can say why instead of looking wrong.
+	UnusedCredentials bool
+
 	// Bearer refreshes the OIDC token (under the config lock, with write-back)
 	// for the bearer path. It is non-nil only when AccessToken is set.
 	Bearer *FileSource
@@ -146,36 +151,19 @@ func Resolve(opts Options) (*Resolved, error) {
 	if ctxName == "" {
 		ctxName = cfg.CurrentContext
 	}
-
-	var (
-		creds    cliCredentials
-		endpoint string
-		chosen   string // the context name actually used; "" for a flat (context-less) config
-	)
-	if ctxName != "" {
-		if c, ok := cfg.Contexts[ctxName]; ok {
-			endpoint = c.APIEndpoint
-			chosen = ctxName
-			// fm-cli only adopts a context's credentials when they are
-			// non-empty, else it keeps the top-level ones (config.go Load).
-			if c.Credentials.AccessToken != "" || c.Credentials.APIKey != "" {
-				creds = c.Credentials
-			} else {
-				creds = cfg.Credentials
-			}
-		}
-	}
-	if chosen == "" {
-		// An explicitly-requested context that does not exist is an error; a
-		// missing current_context just falls back to the flat top-level creds.
-		if opts.Context != "" {
+	// An explicitly-requested context that does not exist is an error; a
+	// dangling current_context is fm-cli's "refuse" case and resolves to no
+	// credentials below.
+	if opts.Context != "" {
+		if _, ok := cfg.Contexts[opts.Context]; !ok {
 			return nil, fmt.Errorf("fm CLI context %q not found in %s", opts.Context, path)
 		}
-		creds = cfg.Credentials
-		endpoint = cfg.APIEndpoint
 	}
-	if endpoint == "" {
-		endpoint = cfg.APIEndpoint // context with no endpoint inherits the top-level one
+	creds := cfg.effectiveCredentials(ctxName)
+	endpoint := cfg.effectiveEndpoint(ctxName)
+	chosen := "" // the context name actually used; "" for a flat (context-less) config
+	if _, ok := cfg.Contexts[ctxName]; ok {
+		chosen = ctxName
 	}
 
 	res := &Resolved{
@@ -187,6 +175,12 @@ func Resolve(opts Options) (*Resolved, error) {
 		RefreshToken: creds.RefreshToken,
 		ExpiresAt:    creds.ExpiresAt,
 	}
+	if !creds.isSet() {
+		res.UnusedCredentials = cfg.Credentials.isSet()
+		for _, c := range cfg.Contexts {
+			res.UnusedCredentials = res.UnusedCredentials || c.Credentials.isSet()
+		}
+	}
 	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
 		res.PermsWarning = fmt.Sprintf(
 			"fm CLI config %s is accessible to group/other (mode %#o); it holds credentials — run `chmod 600 %s`",
@@ -195,7 +189,7 @@ func Resolve(opts Options) (*Resolved, error) {
 	}
 	// Refresh/write-back only matters for the bearer path (api keys never rotate).
 	if creds.AccessToken != "" && creds.APIKey == "" {
-		res.Bearer = &FileSource{path: path, contextName: chosen, userAgent: opts.UserAgent}
+		res.Bearer = &FileSource{path: path, contextName: chosen, endpoint: endpoint, userAgent: opts.UserAgent}
 	}
 	return res, nil
 }
@@ -285,6 +279,7 @@ func IsRetryable(err error) bool {
 type FileSource struct {
 	path        string
 	contextName string // "" for a flat (context-less) config
+	endpoint    string // the context's endpoint at Resolve; a peer pair is adopted only while it is unchanged
 	userAgent   string // sent on OIDC refresh requests; "" sends none
 }
 
@@ -333,7 +328,13 @@ func (s *FileSource) Refresh(ctx context.Context, httpClient *http.Client, apiEn
 	// reuse-detection trip — not corruption. A monotonic per-write counter would
 	// close it fully but is YAGNI until such a deployment exists (see the plan's
 	// "Edge" note).
-	if onDisk.RefreshToken != "" && onDisk.ExpiresAt > lastSeenExpiresAt {
+	//
+	// The pair is adopted only while the context still exists and still names
+	// the endpoint this source was resolved for: a pair `fm auth login` minted
+	// after the context was re-pointed (or deleted) belongs to another endpoint,
+	// and adopting it would send it to ours. Otherwise fall through and POST our
+	// own in-memory token.
+	if onDisk.RefreshToken != "" && onDisk.ExpiresAt > lastSeenExpiresAt && s.boundLocked(cfg) {
 		return &Token{
 			AccessToken:  onDisk.AccessToken,
 			RefreshToken: onDisk.RefreshToken,
@@ -397,44 +398,102 @@ func (s *FileSource) Refresh(ctx context.Context, httpClient *http.Client, apiEn
 	return result, nil
 }
 
-// credsLocked returns the on-disk credentials for the resolved context (or the
-// top-level credentials for a flat config). Caller holds the file lock.
+// credsLocked returns the on-disk credentials for the resolved context, by the
+// same rule Resolve used. Caller holds the file lock.
 func (s *FileSource) credsLocked(cfg *cliConfig) cliCredentials {
-	if s.contextName != "" {
-		if c, ok := cfg.Contexts[s.contextName]; ok &&
-			(c.Credentials.AccessToken != "" || c.Credentials.APIKey != "") {
-			return c.Credentials
+	return cfg.effectiveCredentials(s.contextName)
+}
+
+// boundLocked reports whether the config still resolves this source's context
+// to the endpoint it was resolved for. Caller holds the file lock.
+func (s *FileSource) boundLocked(cfg *cliConfig) bool {
+	if s.contextName == "" {
+		if len(cfg.Contexts) != 0 {
+			return false
+		}
+	} else if _, ok := cfg.Contexts[s.contextName]; !ok {
+		return false
+	}
+	return cfg.effectiveEndpoint(s.contextName) == s.endpoint
+}
+
+// applyLocked writes the rotated token pair into the resolved context, or into
+// the top-level block for a flat (context-less) config — the same place fm-cli's
+// setTokens writes. It never mirrors a context's tokens into the top-level
+// block: that block is the fallback other contexts can inherit, and a live
+// token parked there is how one context's credential reaches another's endpoint.
+// It errors if the context was deleted underneath us, so a lost rotation is
+// never silently reported as success.
+func (s *FileSource) applyLocked(cfg *cliConfig, access, refresh string, expiresAt int64) error {
+	if s.contextName == "" {
+		cfg.Credentials.AccessToken = access
+		cfg.Credentials.RefreshToken = refresh
+		cfg.Credentials.ExpiresAt = expiresAt
+		return nil
+	}
+	c, ok := cfg.Contexts[s.contextName]
+	if !ok {
+		return fmt.Errorf("fm CLI context %q no longer exists in the config", s.contextName)
+	}
+	c.Credentials.AccessToken = access
+	c.Credentials.RefreshToken = refresh
+	c.Credentials.ExpiresAt = expiresAt
+	cfg.Contexts[s.contextName] = c
+	return nil
+}
+
+// isSet reports whether this block carries any credential at all (fm-cli's
+// Credentials.isSet: a refresh token alone counts).
+func (cr cliCredentials) isSet() bool {
+	return cr.AccessToken != "" || cr.RefreshToken != "" || cr.APIKey != ""
+}
+
+// effectiveCredentials returns the credential block for context name, by
+// fm-cli's rule (config.Credentials) — never a more permissive one. The
+// provider is a second reader of the same file; were it to inherit where the
+// CLI refuses, a token minted for one context's endpoint would be sent to
+// another's by Terraform while `fm` itself correctly says "not authenticated".
+//
+//   - No contexts at all (a flat file): the top-level block is all there is.
+//   - name is "" or names a context that does not exist: none. The fallback
+//     may hold a deleted context's tokens.
+//   - The context carries credentials: those, wholesale.
+//   - It carries none and NO other context does: the top-level block (the
+//     pre-0.29.1 fm shape, whose only login lives there).
+//   - It carries none but another context does: none. The top-level block is
+//     then a stale copy of some other context's credentials.
+//
+// The pre-0.29.1 shape has one shared login, so every credential-less context
+// inherits it and the first rotation lands in whichever context refreshed
+// (fm's setTokens does the same). A provider refreshing context B while fm
+// refreshes A can then find B empty and POST the token fm just rotated — a
+// reuse-detection trip on a legacy file, cured by `fm auth login`.
+func (cfg *cliConfig) effectiveCredentials(name string) cliCredentials {
+	if len(cfg.Contexts) == 0 {
+		return cfg.Credentials
+	}
+	c, ok := cfg.Contexts[name]
+	if !ok {
+		return cliCredentials{}
+	}
+	if c.Credentials.isSet() {
+		return c.Credentials
+	}
+	for _, other := range cfg.Contexts {
+		if other.Credentials.isSet() {
+			return cliCredentials{}
 		}
 	}
 	return cfg.Credentials
 }
 
-// applyLocked writes the rotated token pair into the resolved context and, when
-// that context is the current one (or the config is flat), the top-level mirror
-// fm-cli keeps (config.SetTokens writes both). It errors if neither was updated
-// (e.g. the context was deleted underneath us) so a lost rotation is never
-// silently reported as success.
-func (s *FileSource) applyLocked(cfg *cliConfig, access, refresh string, expiresAt int64) error {
-	wrote := false
-	if s.contextName != "" {
-		if c, ok := cfg.Contexts[s.contextName]; ok {
-			c.Credentials.AccessToken = access
-			c.Credentials.RefreshToken = refresh
-			c.Credentials.ExpiresAt = expiresAt
-			cfg.Contexts[s.contextName] = c
-			wrote = true
-		}
+// effectiveEndpoint returns context name's api_endpoint, falling back to the
+// top-level one (fm-cli's config.APIEndpoint); "" when neither is set.
+func (cfg *cliConfig) effectiveEndpoint(name string) string {
+	if c, ok := cfg.Contexts[name]; ok && c.APIEndpoint != "" {
+		return c.APIEndpoint
 	}
-	if s.contextName == "" || s.contextName == cfg.CurrentContext {
-		cfg.Credentials.AccessToken = access
-		cfg.Credentials.RefreshToken = refresh
-		cfg.Credentials.ExpiresAt = expiresAt
-		wrote = true
-	}
-	if !wrote {
-		return fmt.Errorf("fm CLI context %q no longer exists in the config", s.contextName)
-	}
-	return nil
+	return cfg.APIEndpoint
 }
 
 func defaultPath() (string, error) {

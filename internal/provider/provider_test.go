@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -602,25 +603,176 @@ func TestEndpointHintSuggestionKeepsProxySubPath(t *testing.T) {
 	}
 }
 
-func TestChooseCLIEndpoint(t *testing.T) {
+func TestCLIEndpoint(t *testing.T) {
+	if got := cliEndpoint("https://cli.example/api"); got != "https://cli.example/api" {
+		t.Errorf("stored endpoint not used: %q", got)
+	}
+	if got := cliEndpoint(""); got != defaultAPIEndpoint {
+		t.Errorf("config without endpoint must use the default, got %q", got)
+	}
+}
+
+func TestSameEndpoint(t *testing.T) {
 	cases := []struct {
-		name        string
-		explicit    bool
-		base        string
-		cliEndpoint string
-		want        string
+		a, b string
+		want bool
 	}{
-		{"explicit wins", true, "https://explicit.example/api", "https://cli.example/api", "https://explicit.example/api"},
-		{"adopt CLI endpoint", false, defaultAPIEndpoint, "https://cli.example/api", "https://cli.example/api"},
-		{"CLI config without endpoint falls back to the default", false, defaultAPIEndpoint, "", defaultAPIEndpoint},
+		{"https://api.frostmoln.cloud/api", "https://api.frostmoln.cloud/api", true},
+		{"https://api.frostmoln.cloud/api/", "https://api.frostmoln.cloud/api", true},
+		{"HTTPS://API.Frostmoln.cloud/api", "https://api.frostmoln.cloud/api", true},
+		{"https://api.frostmoln.cloud", "https://api.frostmoln.cloud/api", false},
+		{"https://evil.example/api", "https://api.frostmoln.cloud/api", false},
+		{"http://api.frostmoln.cloud/api", "https://api.frostmoln.cloud/api", false},
+		{"https://api.frostmoln.cloud:8443/api", "https://api.frostmoln.cloud/api", false},
+		{"https://u:p@api.frostmoln.cloud/api", "https://api.frostmoln.cloud/api", false},
+		{"https://api.frostmoln.cloud.evil.example/api", "https://api.frostmoln.cloud/api", false},
+		{"://bad", "://bad", false},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := chooseCLIEndpoint(tc.explicit, tc.base, tc.cliEndpoint); got != tc.want {
-				t.Errorf("chooseCLIEndpoint(%v,%q,%q) = %q, want %q", tc.explicit, tc.base, tc.cliEndpoint, got, tc.want)
-			}
-		})
+		if got := sameEndpoint(tc.a, tc.b); got != tc.want {
+			t.Errorf("sameEndpoint(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+		}
 	}
+}
+
+// A CLI credential goes only to the endpoint its context stores. An explicit
+// api_endpoint / FROSTMOLN_API_ENDPOINT is chosen by the configuration — a
+// module, a cloned repo — and must never redirect the practitioner's own login
+// to another host: Configure refuses before sending anything.
+func TestConfigureRefusesCLICredentialsForAnotherEndpoint(t *testing.T) {
+	var leaked atomic.Int32
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" || r.Header.Get("X-API-Key") != "" {
+			leaked.Add(1)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "u1", "tenantId": "t1"})
+	}))
+	defer other.Close()
+
+	// The stored endpoint is a local server too, so a regression that drops the
+	// guard fails on the leak counter without reaching any real host.
+	home := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer home.Close()
+
+	exp := time.Now().Add(time.Hour).Unix()
+	configs := map[string]string{
+		"bearer":  fmt.Sprintf("current_context: default\ncontexts:\n  default:\n    api_endpoint: %s/api\n    credentials:\n      access_token: cli-access\n      refresh_token: cli-refresh\n      expires_at: %d\n", home.URL, exp),
+		"api key": fmt.Sprintf("current_context: default\ncontexts:\n  default:\n    api_endpoint: %s/api\n    credentials:\n      api_key: fmk_from_cli\n", home.URL),
+	}
+	for name, content := range configs {
+		for _, viaEnv := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/env=%v", name, viaEnv), func(t *testing.T) {
+				clearCredentialEnv(t)
+				cfg := writeFMConfig(t, content)
+				values := providerConfigValues{cliConfigPath: &cfg}
+				endpoint := other.URL + "/api"
+				if viaEnv {
+					t.Setenv("FROSTMOLN_API_ENDPOINT", endpoint)
+				} else {
+					values.endpoint = &endpoint
+				}
+				resp, err := providerserver.NewProtocol6(New("test")())().ConfigureProvider(
+					context.Background(), &tfprotov6.ConfigureProviderRequest{Config: newProviderConfig(t, values)},
+				)
+				if err != nil {
+					t.Fatalf("ConfigureProvider: %v", err)
+				}
+				refused := false
+				for _, d := range resp.Diagnostics {
+					if d.Severity == tfprotov6.DiagnosticSeverityError && d.Summary == "API endpoint does not match the fm CLI credentials" {
+						refused = true
+					}
+				}
+				if !refused {
+					t.Errorf("expected the endpoint-mismatch refusal, got %+v", resp.Diagnostics)
+				}
+				assertNoDiagnosticContains(t, resp.Diagnostics, "fmk_from_cli") // pragma: allowlist secret
+				assertNoDiagnosticContains(t, resp.Diagnostics, "cli-access")
+				if n := leaked.Load(); n != 0 {
+					t.Fatalf("CLI credential sent to the configured endpoint %d time(s)", n)
+				}
+			})
+		}
+	}
+}
+
+func configureDiagnostics(t *testing.T, values providerConfigValues) []*tfprotov6.Diagnostic {
+	t.Helper()
+	resp, err := providerserver.NewProtocol6(New("test")())().ConfigureProvider(
+		context.Background(), &tfprotov6.ConfigureProviderRequest{Config: newProviderConfig(t, values)},
+	)
+	if err != nil {
+		t.Fatalf("ConfigureProvider: %v", err)
+	}
+	return resp.Diagnostics
+}
+
+func errorDiagnostic(diags []*tfprotov6.Diagnostic, summary string) *tfprotov6.Diagnostic {
+	for _, d := range diags {
+		if d.Severity == tfprotov6.DiagnosticSeverityError && d.Summary == summary {
+			return d
+		}
+	}
+	return nil
+}
+
+// Same host, different path is the CLI config written before fm stored the
+// /api suffix: still refused, but the remedy points at the CLI config.
+func TestConfigureEndpointMismatchOnSameHostPointsAtCLIConfig(t *testing.T) {
+	clearCredentialEnv(t)
+	cfg := writeFMConfig(t, "current_context: default\ncontexts:\n  default:\n    api_endpoint: https://127.0.0.1:1\n    credentials:\n      api_key: fmk_from_cli\n")
+	endpoint := "https://127.0.0.1:1/api"
+	d := errorDiagnostic(configureDiagnostics(t, providerConfigValues{endpoint: &endpoint, cliConfigPath: &cfg}),
+		"API endpoint does not match the fm CLI credentials")
+	if d == nil || !strings.Contains(d.Detail, "fm config set api_endpoint https://127.0.0.1:1/api") {
+		t.Fatalf("expected the fm config set remedy, got %+v", d)
+	}
+}
+
+// With no usable CLI credential there is nothing to protect: the error is the
+// missing-credentials one, and it says why the file's credentials are unused.
+func TestConfigureNamesUnusedCLICredentials(t *testing.T) {
+	clearCredentialEnv(t)
+	cfg := writeFMConfig(t, "current_context: staging\ncontexts:\n  prod:\n    credentials:\n      api_key: fmk_prod\n  staging:\n    api_endpoint: https://127.0.0.1:1/api\n")
+	endpoint := "https://127.0.0.1:2/api"
+	diags := configureDiagnostics(t, providerConfigValues{endpoint: &endpoint, cliConfigPath: &cfg})
+	if errorDiagnostic(diags, "API endpoint does not match the fm CLI credentials") != nil {
+		t.Error("endpoint-mismatch error raised for a context with no credentials")
+	}
+	d := errorDiagnostic(diags, "Missing Credentials")
+	if d == nil || !strings.Contains(d.Detail, "none for the selected context") || !strings.Contains(d.Detail, "context staging") {
+		t.Fatalf("expected the unused-credentials explanation, got %+v", diags)
+	}
+	assertNoDiagnosticContains(t, diags, "fmk_prod") // pragma: allowlist secret
+}
+
+// Restating the context's own endpoint (a trailing slash aside) is allowed.
+func TestConfigureAllowsExplicitEndpointMatchingCLIContext(t *testing.T) {
+	clearCredentialEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/me" || r.Header.Get("X-API-Key") != "fmk_from_cli" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "u1", "tenantId": "t1"})
+	}))
+	defer server.Close()
+
+	cfg := writeFMConfig(t, fmt.Sprintf("current_context: default\ncontexts:\n  default:\n    api_endpoint: %s\n    credentials:\n      api_key: fmk_from_cli\n", server.URL))
+	endpoint := server.URL + "/"
+	resp, err := providerserver.NewProtocol6(New("test")())().ConfigureProvider(
+		context.Background(), &tfprotov6.ConfigureProviderRequest{
+			Config: newProviderConfig(t, providerConfigValues{endpoint: &endpoint, cliConfigPath: &cfg}),
+		},
+	)
+	if err != nil {
+		t.Fatalf("ConfigureProvider: %v", err)
+	}
+	assertNoErrorDiagnostics(t, resp.Diagnostics)
 }
 
 func TestResolveUseCLIConfigEnvParse(t *testing.T) {
