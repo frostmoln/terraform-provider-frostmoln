@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.87.5] - 2026-10-19
+
+### 🐛 Bug Fixes
+
+- *(release)* Publish the CHANGELOG section as the GitHub Release body (#701)
+
 ## [0.87.4] - 2026-10-19
 
 ### 🐛 Bug Fixes
