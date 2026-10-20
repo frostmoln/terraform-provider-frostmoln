@@ -1,4 +1,7 @@
 resource "frostmoln_instance" "example" {
+  # Also the instance's internal DNS name (hostname): unique within the VPC.
+  # Do not combine create_before_destroy with an unchanged name - the
+  # replacement is created while this instance still holds the name.
   name      = "web-server-01"
   flavor_id = data.frostmoln_flavor.medium.id
   image_id  = data.frostmoln_image.ubuntu.id
@@ -87,4 +90,10 @@ resource "frostmoln_instance" "bootstrap" {
   # never again, so there is nothing an in-place update could change.
   console_password_wo         = var.console_password
   console_password_wo_version = "1"
+}
+
+# Resolvable from inside the VPC only, e.g.
+# web-server-01.prod.<tenant>.<org>.fm.internal
+output "web_fqdn" {
+  value = frostmoln_instance.example.fqdn
 }

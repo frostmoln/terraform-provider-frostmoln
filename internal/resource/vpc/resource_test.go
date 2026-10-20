@@ -134,7 +134,7 @@ func TestVPCModelToUpdateRequest(t *testing.T) {
 		TagsAll:     types.MapNull(types.StringType),
 	}
 
-	req := model.toUpdateRequest()
+	req := model.toUpdateRequest(types.BoolNull())
 
 	if *req.Name != "updated-vpc" {
 		t.Errorf("expected Name updated-vpc, got %s", *req.Name)
@@ -426,18 +426,21 @@ func TestVPCResource_TFSDKCreate(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"name":         tftypes.NewValue(tftypes.String, "test-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"is_default":   tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
-		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
-		"created_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"updated_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":                 tftypes.NewValue(tftypes.String, "test-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"is_default":           tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"created_at":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"updated_at":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	createReq := resource.CreateRequest{
@@ -509,18 +512,21 @@ func TestVPCResource_TFSDKRead(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, "vpc-read-1"),
-		"name":         tftypes.NewValue(tftypes.String, "read-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, "172.16.0.0/12"),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, "active"),
-		"is_default":   tftypes.NewValue(tftypes.Bool, true),
-		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
-		"created_at":   tftypes.NewValue(tftypes.String, "2025-02-01T00:00:00Z"),
-		"updated_at":   tftypes.NewValue(tftypes.String, nil),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, "vpc-read-1"),
+		"name":                 tftypes.NewValue(tftypes.String, "read-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, "172.16.0.0/12"),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, "active"),
+		"is_default":           tftypes.NewValue(tftypes.Bool, true),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
+		"created_at":           tftypes.NewValue(tftypes.String, "2025-02-01T00:00:00Z"),
+		"updated_at":           tftypes.NewValue(tftypes.String, nil),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -616,18 +622,21 @@ func TestVPCResource_TFSDKCreateAdoptsAfterTimeout(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"name":         tftypes.NewValue(tftypes.String, "adopted-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"is_default":   tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
-		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
-		"created_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"updated_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":                 tftypes.NewValue(tftypes.String, "adopted-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"is_default":           tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"created_at":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"updated_at":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	createReq := resource.CreateRequest{
@@ -697,18 +706,21 @@ func TestVPCResource_TFSDKCreateRefusedByOperation(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"name":         tftypes.NewValue(tftypes.String, "refused-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"is_default":   tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
-		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
-		"created_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"updated_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":                 tftypes.NewValue(tftypes.String, "refused-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"is_default":           tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"created_at":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"updated_at":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	createReq := resource.CreateRequest{
@@ -759,18 +771,21 @@ func TestVPCResource_TFSDKReadNotFound(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, "vpc-gone"),
-		"name":         tftypes.NewValue(tftypes.String, "gone-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, "active"),
-		"is_default":   tftypes.NewValue(tftypes.Bool, false),
-		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
-		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
-		"updated_at":   tftypes.NewValue(tftypes.String, nil),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, "vpc-gone"),
+		"name":                 tftypes.NewValue(tftypes.String, "gone-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, "active"),
+		"is_default":           tftypes.NewValue(tftypes.Bool, false),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
+		"created_at":           tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"updated_at":           tftypes.NewValue(tftypes.String, nil),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -845,18 +860,21 @@ func TestVPCResource_TFSDKUpdate(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, "vpc-upd-1"),
-		"name":         tftypes.NewValue(tftypes.String, "old-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, "active"),
-		"is_default":   tftypes.NewValue(tftypes.Bool, false),
-		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(1)),
-		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
-		"updated_at":   tftypes.NewValue(tftypes.String, nil),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, "vpc-upd-1"),
+		"name":                 tftypes.NewValue(tftypes.String, "old-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, "active"),
+		"is_default":           tftypes.NewValue(tftypes.Bool, false),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, big.NewFloat(1)),
+		"created_at":           tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"updated_at":           tftypes.NewValue(tftypes.String, nil),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
@@ -867,13 +885,16 @@ func TestVPCResource_TFSDKUpdate(t *testing.T) {
 		"tags": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{
 			"env": tftypes.NewValue(tftypes.String, "prod"),
 		}),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, "active"),
-		"is_default":   tftypes.NewValue(tftypes.Bool, false),
-		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(1)),
-		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
-		"updated_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, "active"),
+		"is_default":           tftypes.NewValue(tftypes.Bool, false),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, big.NewFloat(1)),
+		"created_at":           tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"updated_at":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	updateReq := resource.UpdateRequest{
@@ -941,18 +962,21 @@ func TestVPCResource_TFSDKDelete(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, "vpc-del-1"),
-		"name":         tftypes.NewValue(tftypes.String, "del-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, "active"),
-		"is_default":   tftypes.NewValue(tftypes.Bool, false),
-		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
-		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
-		"updated_at":   tftypes.NewValue(tftypes.String, nil),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, "vpc-del-1"),
+		"name":                 tftypes.NewValue(tftypes.String, "del-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, "active"),
+		"is_default":           tftypes.NewValue(tftypes.Bool, false),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
+		"created_at":           tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"updated_at":           tftypes.NewValue(tftypes.String, nil),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -1001,18 +1025,21 @@ func TestVPCResource_TFSDKDeleteAlreadyGone(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, "vpc-already-gone"),
-		"name":         tftypes.NewValue(tftypes.String, "gone-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, "active"),
-		"is_default":   tftypes.NewValue(tftypes.Bool, false),
-		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
-		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
-		"updated_at":   tftypes.NewValue(tftypes.String, nil),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, "vpc-already-gone"),
+		"name":                 tftypes.NewValue(tftypes.String, "gone-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, "active"),
+		"is_default":           tftypes.NewValue(tftypes.Bool, false),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
+		"created_at":           tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"updated_at":           tftypes.NewValue(tftypes.String, nil),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -1097,18 +1124,21 @@ func TestVPCResource_TFSDKCreateSync201(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"name":         tftypes.NewValue(tftypes.String, "sync-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"is_default":   tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
-		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
-		"created_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"updated_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":                 tftypes.NewValue(tftypes.String, "sync-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"is_default":           tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"created_at":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"updated_at":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	createReq := resource.CreateRequest{
@@ -1163,18 +1193,21 @@ func TestVPCResource_TFSDKCreateAPIError(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"name":         tftypes.NewValue(tftypes.String, "fail-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"is_default":   tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
-		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
-		"created_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"updated_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":                 tftypes.NewValue(tftypes.String, "fail-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"is_default":           tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"created_at":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"updated_at":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	createReq := resource.CreateRequest{
@@ -1217,18 +1250,21 @@ func TestVPCResource_TFSDKCreateBadResponseBody(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"name":         tftypes.NewValue(tftypes.String, "bad-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"is_default":   tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
-		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
-		"created_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"updated_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":                 tftypes.NewValue(tftypes.String, "bad-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"is_default":           tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"created_at":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"updated_at":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	createReq := resource.CreateRequest{
@@ -1280,18 +1316,21 @@ func TestVPCResource_TFSDKCreatePollingErrorState(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"name":         tftypes.NewValue(tftypes.String, "err-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"is_default":   tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
-		"subnet_count": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
-		"created_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"updated_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":                 tftypes.NewValue(tftypes.String, "err-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"is_default":           tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"created_at":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"updated_at":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	createReq := resource.CreateRequest{
@@ -1334,18 +1373,21 @@ func TestVPCResource_TFSDKReadAPIError(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, "vpc-err-r"),
-		"name":         tftypes.NewValue(tftypes.String, "err-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, "active"),
-		"is_default":   tftypes.NewValue(tftypes.Bool, false),
-		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
-		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
-		"updated_at":   tftypes.NewValue(tftypes.String, nil),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, "vpc-err-r"),
+		"name":                 tftypes.NewValue(tftypes.String, "err-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, "active"),
+		"is_default":           tftypes.NewValue(tftypes.Bool, false),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
+		"created_at":           tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"updated_at":           tftypes.NewValue(tftypes.String, nil),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -1389,18 +1431,21 @@ func TestVPCResource_TFSDKReadBadJSON(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, "vpc-bj-1"),
-		"name":         tftypes.NewValue(tftypes.String, "bj-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, "active"),
-		"is_default":   tftypes.NewValue(tftypes.Bool, false),
-		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
-		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
-		"updated_at":   tftypes.NewValue(tftypes.String, nil),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, "vpc-bj-1"),
+		"name":                 tftypes.NewValue(tftypes.String, "bj-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, "active"),
+		"is_default":           tftypes.NewValue(tftypes.Bool, false),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
+		"created_at":           tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"updated_at":           tftypes.NewValue(tftypes.String, nil),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -1445,33 +1490,39 @@ func TestVPCResource_TFSDKUpdateAPIError(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, "vpc-ue-1"),
-		"name":         tftypes.NewValue(tftypes.String, "old-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, "active"),
-		"is_default":   tftypes.NewValue(tftypes.Bool, false),
-		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
-		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
-		"updated_at":   tftypes.NewValue(tftypes.String, nil),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, "vpc-ue-1"),
+		"name":                 tftypes.NewValue(tftypes.String, "old-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, "active"),
+		"is_default":           tftypes.NewValue(tftypes.Bool, false),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
+		"created_at":           tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"updated_at":           tftypes.NewValue(tftypes.String, nil),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, "vpc-ue-1"),
-		"name":         tftypes.NewValue(tftypes.String, "new-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, "active"),
-		"is_default":   tftypes.NewValue(tftypes.Bool, false),
-		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
-		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
-		"updated_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, "vpc-ue-1"),
+		"name":                 tftypes.NewValue(tftypes.String, "new-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, "active"),
+		"is_default":           tftypes.NewValue(tftypes.Bool, false),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
+		"created_at":           tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"updated_at":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	updateReq := resource.UpdateRequest{
@@ -1515,33 +1566,39 @@ func TestVPCResource_TFSDKUpdateBadJSON(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, "vpc-ubj-1"),
-		"name":         tftypes.NewValue(tftypes.String, "old-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, "active"),
-		"is_default":   tftypes.NewValue(tftypes.Bool, false),
-		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
-		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
-		"updated_at":   tftypes.NewValue(tftypes.String, nil),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, "vpc-ubj-1"),
+		"name":                 tftypes.NewValue(tftypes.String, "old-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, "active"),
+		"is_default":           tftypes.NewValue(tftypes.Bool, false),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
+		"created_at":           tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"updated_at":           tftypes.NewValue(tftypes.String, nil),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, "vpc-ubj-1"),
-		"name":         tftypes.NewValue(tftypes.String, "new-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, "active"),
-		"is_default":   tftypes.NewValue(tftypes.Bool, false),
-		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
-		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
-		"updated_at":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, "vpc-ubj-1"),
+		"name":                 tftypes.NewValue(tftypes.String, "new-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, "active"),
+		"is_default":           tftypes.NewValue(tftypes.Bool, false),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
+		"created_at":           tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"updated_at":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	updateReq := resource.UpdateRequest{
@@ -1585,18 +1642,21 @@ func TestVPCResource_TFSDKDeleteAPIError(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, "vpc-del-err"),
-		"name":         tftypes.NewValue(tftypes.String, "err-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, "active"),
-		"is_default":   tftypes.NewValue(tftypes.Bool, false),
-		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
-		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
-		"updated_at":   tftypes.NewValue(tftypes.String, nil),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, "vpc-del-err"),
+		"name":                 tftypes.NewValue(tftypes.String, "err-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, "active"),
+		"is_default":           tftypes.NewValue(tftypes.Bool, false),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
+		"created_at":           tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"updated_at":           tftypes.NewValue(tftypes.String, nil),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -1620,18 +1680,21 @@ func TestVPCResource_TFSDKImportState(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	emptyState := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, nil),
-		"name":         tftypes.NewValue(tftypes.String, nil),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, nil),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, nil),
-		"is_default":   tftypes.NewValue(tftypes.Bool, nil),
-		"subnet_count": tftypes.NewValue(tftypes.Number, nil),
-		"created_at":   tftypes.NewValue(tftypes.String, nil),
-		"updated_at":   tftypes.NewValue(tftypes.String, nil),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, nil),
+		"name":                 tftypes.NewValue(tftypes.String, nil),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, nil),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, nil),
+		"is_default":           tftypes.NewValue(tftypes.Bool, nil),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, nil),
+		"created_at":           tftypes.NewValue(tftypes.String, nil),
+		"updated_at":           tftypes.NewValue(tftypes.String, nil),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 
 	importReq := resource.ImportStateRequest{ID: "vpc-import-1"}
@@ -1675,18 +1738,21 @@ func deleteStateForVPC(t *testing.T, r *vpcResource, id string) (context.Context
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, id),
-		"name":         tftypes.NewValue(tftypes.String, "del-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":     tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":       tftypes.NewValue(tftypes.String, "active"),
-		"is_default":   tftypes.NewValue(tftypes.Bool, false),
-		"subnet_count": tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
-		"created_at":   tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
-		"updated_at":   tftypes.NewValue(tftypes.String, nil),
-		"timeouts":     tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                   tftypes.NewValue(tftypes.String, id),
+		"name":                 tftypes.NewValue(tftypes.String, "del-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, "10.0.0.0/16"),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":               tftypes.NewValue(tftypes.String, "active"),
+		"is_default":           tftypes.NewValue(tftypes.Bool, false),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, big.NewFloat(0)),
+		"created_at":           tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"updated_at":           tftypes.NewValue(tftypes.String, nil),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
+		"timeouts":             tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	})
 	req := resource.DeleteRequest{State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal}}
 	resp := resource.DeleteResponse{State: tfsdk.State{Schema: schemaResp.Schema}}

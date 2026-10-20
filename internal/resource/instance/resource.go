@@ -126,8 +126,15 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				},
 			},
 			"name": schema.StringAttribute{
-				Description: "The name of the instance.",
-				Required:    true,
+				Description: "The name of the instance. It is also the instance's internal DNS name " +
+					"(`hostname`), so it must contain at least one ASCII letter or digit (otherwise the " +
+					"create is refused with 400) and must be unique within the VPC: a name whose DNS label " +
+					"another instance in the VPC already holds fails the create with `AlreadyExists`. " +
+					"Renaming updates in place and moves the hostname with it.\n\n" +
+					"    **`create_before_destroy` with an unchanged `name` fails**: the replacement is created " +
+					"while the old instance still holds the name in the VPC. Change the name in the same " +
+					"apply, or do not use `create_before_destroy` for instances.",
+				Required: true,
 			},
 			"flavor_id": schema.StringAttribute{
 				Description: "The flavor ID for the instance. Changing this resizes the instance in place: the platform powers it down for the migration and brings it back up. It does not power on an instance that was already stopped, and a guest that fails to come back up after the migration leaves the instance stopped with the resize still reported as successful — check `status` after a resize.",
@@ -410,6 +417,25 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			// hostname / fqdn are plain Computed, like private_ip: no
+			// UseStateForUnknown, because both can move under an in-place
+			// update (a rename moves the hostname; the VPC's
+			// enable_dns_hostnames, changed in the same apply, moves the fqdn),
+			// and a pinned value would then fail the apply as an inconsistent
+			// result.
+			"hostname": schema.StringAttribute{
+				Description: "The instance's internal DNS name inside its VPC: the name as a DNS label " +
+					"(lowercased; other characters become `-`, at most 63). It is the guest's hostname and is " +
+					"unique per VPC. Null when the instance holds no DNS name (an instance created before names " +
+					"were unique that shares its name with an older one; renaming it to a free name gives it one).",
+				Computed: true,
+			},
+			"fqdn": schema.StringAttribute{
+				Description: "`hostname` followed by the VPC's `dns_domain`, without a trailing dot. Resolves " +
+					"from inside the VPC only. Null when the VPC has no DNS domain yet or has " +
+					"`enable_dns_hostnames` off.",
+				Computed: true,
+			},
 		},
 		Blocks: map[string]schema.Block{
 			// Customer-tunable wait budgets: defaults keep the values this
@@ -522,6 +548,18 @@ func (r *instanceResource) Create(ctx context.Context, req resource.CreateReques
 		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Create)
 		if waitErr != nil {
 			if r.client.ClassifyOperationFailure(ctx, op.OperationID) == client.OperationRefused {
+				var opErr *client.OperationError
+				if errors.As(waitErr, &opErr) && opErr.ErrorCode == errCodeAlreadyExists {
+					resp.Diagnostics.AddAttributeError(path.Root("name"),
+						"Instance Name Already Used In The VPC",
+						fmt.Sprintf("An instance named %q (or with the same DNS label) already exists in this VPC. "+
+							"Instance names are unique per VPC because the name is the instance's internal DNS "+
+							"name. Nothing was created and nothing has been recorded in Terraform state.\n\n"+
+							"Choose another `name`, or rename or destroy the other instance first. With "+
+							"`create_before_destroy`, the replacement needs a name different from the instance "+
+							"it replaces.\n\nThe platform said: %s", plan.Name.ValueString(), waitErr))
+					return
+				}
 				orphan.AddCreateRefused(&resp.Diagnostics, "Instance", fmt.Sprintf("the instance %q", plan.Name.ValueString()), waitErr)
 				return
 			}

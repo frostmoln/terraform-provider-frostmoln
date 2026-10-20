@@ -23,6 +23,14 @@ resource "frostmoln_vpc" "example" {
   description = "Production VPC"
   cidr        = "10.0.0.0/16"
 
+  # Optional. The internal DNS label, fixed at create: unset, it is derived from
+  # name ("production-vpc"). Changing it later is refused, never a replacement.
+  dns_label = "prod"
+
+  # Optional. VMs in the VPC get internal DNS names unless this is false
+  # (unset = the platform default, on). Updates in place.
+  # enable_dns_hostnames = false
+
   tags = {
     environment = "production"
   }
@@ -43,4 +51,11 @@ resource "frostmoln_gateway" "example" {
 # default_tags and any tag set outside this configuration.
 output "production_vpc_tags" {
   value = frostmoln_vpc.example.tags_all
+}
+
+# The VPC's internal DNS domain (trailing dot), e.g.
+# prod.<tenant>.<org>.fm.internal. Instances resolve as <hostname>.<domain>
+# from inside this VPC only.
+output "production_vpc_dns_domain" {
+  value = frostmoln_vpc.example.dns_domain
 }

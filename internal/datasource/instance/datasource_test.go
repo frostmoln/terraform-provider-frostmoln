@@ -225,6 +225,8 @@ func TestTFSDK_ReadInstanceByID(t *testing.T) {
 			PublicIPs:  []string{"203.0.113.10"},
 			Metadata:   map[string]string{"env": "prod"},
 			CreatedAt:  "2025-01-01T00:00:00Z",
+			Hostname:   "web-1",
+			FQDN:       "web-1.prod.ck4to7.omkcmwdd.fm.internal",
 		},
 	}
 	server := newTestServer(t, instances)
@@ -257,6 +259,8 @@ func TestTFSDK_ReadInstanceByID(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, nil),
+		"hostname":    tftypes.NewValue(tftypes.String, nil),
+		"fqdn":        tftypes.NewValue(tftypes.String, nil),
 	})
 
 	readReq := datasource.ReadRequest{
@@ -301,6 +305,9 @@ func TestTFSDK_ReadInstanceByID(t *testing.T) {
 	}
 	if state.SubnetID.ValueString() != "sub-1" {
 		t.Errorf("expected SubnetID sub-1, got %q", state.SubnetID.ValueString())
+	}
+	if state.Hostname.ValueString() != "web-1" || state.FQDN.ValueString() != "web-1.prod.ck4to7.omkcmwdd.fm.internal" {
+		t.Errorf("hostname/fqdn = %v / %v", state.Hostname, state.FQDN)
 	}
 }
 
@@ -349,6 +356,8 @@ func TestTFSDK_ReadInstance_UnresolvedVPCIsNull(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, nil),
+		"hostname":    tftypes.NewValue(tftypes.String, nil),
+		"fqdn":        tftypes.NewValue(tftypes.String, nil),
 	})
 
 	readReq := datasource.ReadRequest{Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal}}
@@ -397,6 +406,8 @@ func TestTFSDK_ReadInstanceNotFound(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, nil),
+		"hostname":    tftypes.NewValue(tftypes.String, nil),
+		"fqdn":        tftypes.NewValue(tftypes.String, nil),
 	})
 
 	readReq := datasource.ReadRequest{
@@ -551,6 +562,8 @@ func TestTFSDK_ReadInstanceFiltersReservedTags(t *testing.T) {
 		"status":      tftypes.NewValue(tftypes.String, nil),
 		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, nil),
+		"hostname":    tftypes.NewValue(tftypes.String, nil),
+		"fqdn":        tftypes.NewValue(tftypes.String, nil),
 	})
 
 	readReq := datasource.ReadRequest{

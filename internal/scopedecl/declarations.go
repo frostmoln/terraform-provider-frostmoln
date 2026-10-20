@@ -232,6 +232,8 @@ var Declarations = map[string]Decl{
 			tagsAllObserved,
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
 			{Path: "public_ip", Why: "platform-attached; an association made out of band is read back, not fought"},
+			{Path: "hostname", Why: "platform-derived from `name` (its DNS label, unique per VPC); moves with a rename"},
+			{Path: "fqdn", Why: "`hostname` plus the VPC's `dns_domain`; absent while the VPC has no domain or has `enable_dns_hostnames` off, so a change to the VPC changes it"},
 		},
 	},
 	"frostmoln_instance_port_security_groups": {
@@ -573,6 +575,9 @@ var Declarations = map[string]Decl{
 	"frostmoln_vpc": {
 		ImmutableWhy: "the platform does not renumber a VPC in place",
 		Immutable:    fields("cidr"),
+		ImmutableWithoutReplace: []Field{
+			{Path: "dns_label", Why: "the platform freezes the label at create and refuses any other value, and replacing a VPC destroys everything in it — so a change is warned about at plan and refused at apply instead (unset, the platform derives it from the name)"},
+		},
 		Defaults: []PlatformDefault{
 			{
 				Name:   "the tenant's default VPC (`is_default`)",
@@ -580,7 +585,10 @@ var Declarations = map[string]Decl{
 				Why:    "Readable as the computed `is_default`; no `default_*` resource exists to adopt it today",
 			},
 		},
-		Observes: []Field{tagsAllObserved},
+		Observes: []Field{
+			tagsAllObserved,
+			{Path: "dns_domain", Why: "platform-assigned from the DNS label and the tenant and organization; null until assigned, fixed once it is"},
+		},
 	},
 	"frostmoln_vpc_route": {
 		EnactsNone:   true,

@@ -41,6 +41,8 @@ type InstanceModel struct {
 	PrivateIP          types.String `tfsdk:"private_ip"`
 	PublicIP           types.String `tfsdk:"public_ip"`
 	CreatedAt          types.String `tfsdk:"created_at"`
+	Hostname           types.String `tfsdk:"hostname"`
+	FQDN               types.String `tfsdk:"fqdn"`
 
 	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
 	// absent block, which resolves to the resource's hardcoded defaults.
@@ -85,7 +87,16 @@ type apiInstance struct {
 	SecurityGroups []string          `json:"securityGroups,omitempty"`
 	Metadata       map[string]string `json:"metadata,omitempty"`
 	CreatedAt      string            `json:"createdAt"`
+	// Hostname / FQDN are the instance's internal DNS name (absent when it
+	// holds none) and that name in the VPC's domain (absent when the VPC has no
+	// domain or does not publish VM names).
+	Hostname string `json:"hostname,omitempty"`
+	FQDN     string `json:"fqdn,omitempty"`
 }
+
+// errCodeAlreadyExists is provisioning's published errorCode for an instance
+// create whose name (its DNS label) another instance in the VPC already holds.
+const errCodeAlreadyExists = "AlreadyExists"
 
 // apiCreateInstanceRequest is the API request to create an instance. The create
 // routes through provisioning, which expects sshKeyIds/securityGroupIds (see
@@ -282,6 +293,9 @@ func (m *InstanceModel) fromAPI(ctx context.Context, inst *apiInstance, diags *d
 		m.PublicIP = types.StringNull()
 	}
 
+	m.Hostname = nullIfEmpty(inst.Hostname)
+	m.FQDN = nullIfEmpty(inst.FQDN)
+
 	// vpc_id / subnet_id are RequiresReplace create-time attributes that the
 	// backend does not echo as top-level scalars (they live inside networks[]).
 	// They are intentionally left untouched here so the value set by the user
@@ -335,4 +349,12 @@ func (m *InstanceModel) fromAPI(ctx context.Context, inst *apiInstance, diags *d
 // it, so the two cannot disagree about what counts as a tag.
 func (a *apiInstance) customerTags() map[string]string {
 	return reservedmeta.FilterInstance(a.Metadata)
+}
+
+// nullIfEmpty maps an absent (omitempty) API string to null.
+func nullIfEmpty(s string) types.String {
+	if s == "" {
+		return types.StringNull()
+	}
+	return types.StringValue(s)
 }

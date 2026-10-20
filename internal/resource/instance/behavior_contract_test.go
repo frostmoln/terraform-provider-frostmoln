@@ -245,6 +245,8 @@ func TestInstanceUpdateSecurityGroupsSendsTheClearFlag(t *testing.T) {
 		"image_id":        tftypes.NewValue(tftypes.String, "img-ubuntu"),
 		"status":          tftypes.NewValue(tftypes.String, "ACTIVE"),
 		"created_at":      tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"hostname":        tftypes.NewValue(tftypes.String, nil),
+		"fqdn":            tftypes.NewValue(tftypes.String, nil),
 		"security_groups": priorSet,
 		"user_data_hash":  tftypes.NewValue(tftypes.String, nil),
 	})

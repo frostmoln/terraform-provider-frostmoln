@@ -267,6 +267,8 @@ func TestTFSDK_ReadByID(t *testing.T) {
 			SubnetCount: 3,
 			Tags:        map[string]string{"env": "prod"},
 			CreatedAt:   "2025-01-01T00:00:00Z",
+			DNSLabel:    "prod-vpc",
+			DNSDomain:   "prod-vpc.ck4to7.omkcmwdd.fm.internal.",
 		},
 	}
 	server := newTestServer(t, vpcs)
@@ -285,15 +287,18 @@ func TestTFSDK_ReadByID(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, "vpc-1"),
-		"name":         tftypes.NewValue(tftypes.String, nil),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, nil),
-		"status":       tftypes.NewValue(tftypes.String, nil),
-		"is_default":   tftypes.NewValue(tftypes.Bool, nil),
-		"subnet_count": tftypes.NewValue(tftypes.Number, nil),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"created_at":   tftypes.NewValue(tftypes.String, nil),
+		"id":                   tftypes.NewValue(tftypes.String, "vpc-1"),
+		"name":                 tftypes.NewValue(tftypes.String, nil),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, nil),
+		"status":               tftypes.NewValue(tftypes.String, nil),
+		"is_default":           tftypes.NewValue(tftypes.Bool, nil),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, nil),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"created_at":           tftypes.NewValue(tftypes.String, nil),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
 	})
 
 	readReq := datasource.ReadRequest{
@@ -323,6 +328,13 @@ func TestTFSDK_ReadByID(t *testing.T) {
 	if state.SubnetCount.ValueInt64() != 3 {
 		t.Errorf("expected SubnetCount 3, got %d", state.SubnetCount.ValueInt64())
 	}
+	if state.DNSLabel.ValueString() != "prod-vpc" || state.DNSDomain.ValueString() != "prod-vpc.ck4to7.omkcmwdd.fm.internal." {
+		t.Errorf("dns_label/dns_domain = %v / %v", state.DNSLabel, state.DNSDomain)
+	}
+	// Not sent by this fixture: null, not a fabricated value.
+	if !state.EnableDNSHostnames.IsNull() {
+		t.Errorf("enable_dns_hostnames = %v, want null when the API omits it", state.EnableDNSHostnames)
+	}
 }
 
 func TestTFSDK_ReadByName(t *testing.T) {
@@ -346,15 +358,18 @@ func TestTFSDK_ReadByName(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, nil),
-		"name":         tftypes.NewValue(tftypes.String, "staging-vpc"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, nil),
-		"status":       tftypes.NewValue(tftypes.String, nil),
-		"is_default":   tftypes.NewValue(tftypes.Bool, nil),
-		"subnet_count": tftypes.NewValue(tftypes.Number, nil),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"created_at":   tftypes.NewValue(tftypes.String, nil),
+		"id":                   tftypes.NewValue(tftypes.String, nil),
+		"name":                 tftypes.NewValue(tftypes.String, "staging-vpc"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, nil),
+		"status":               tftypes.NewValue(tftypes.String, nil),
+		"is_default":           tftypes.NewValue(tftypes.Bool, nil),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, nil),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"created_at":           tftypes.NewValue(tftypes.String, nil),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
 	})
 
 	readReq := datasource.ReadRequest{
@@ -398,15 +413,18 @@ func TestTFSDK_ReadBothIDAndName(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, "vpc-1"),
-		"name":         tftypes.NewValue(tftypes.String, "test"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, nil),
-		"status":       tftypes.NewValue(tftypes.String, nil),
-		"is_default":   tftypes.NewValue(tftypes.Bool, nil),
-		"subnet_count": tftypes.NewValue(tftypes.Number, nil),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"created_at":   tftypes.NewValue(tftypes.String, nil),
+		"id":                   tftypes.NewValue(tftypes.String, "vpc-1"),
+		"name":                 tftypes.NewValue(tftypes.String, "test"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, nil),
+		"status":               tftypes.NewValue(tftypes.String, nil),
+		"is_default":           tftypes.NewValue(tftypes.Bool, nil),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, nil),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"created_at":           tftypes.NewValue(tftypes.String, nil),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
 	})
 
 	readReq := datasource.ReadRequest{
@@ -440,15 +458,18 @@ func TestTFSDK_ReadNeitherIDNorName(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, nil),
-		"name":         tftypes.NewValue(tftypes.String, nil),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, nil),
-		"status":       tftypes.NewValue(tftypes.String, nil),
-		"is_default":   tftypes.NewValue(tftypes.Bool, nil),
-		"subnet_count": tftypes.NewValue(tftypes.Number, nil),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"created_at":   tftypes.NewValue(tftypes.String, nil),
+		"id":                   tftypes.NewValue(tftypes.String, nil),
+		"name":                 tftypes.NewValue(tftypes.String, nil),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, nil),
+		"status":               tftypes.NewValue(tftypes.String, nil),
+		"is_default":           tftypes.NewValue(tftypes.Bool, nil),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, nil),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"created_at":           tftypes.NewValue(tftypes.String, nil),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
 	})
 
 	readReq := datasource.ReadRequest{
@@ -482,15 +503,18 @@ func TestTFSDK_ReadNameNotFound(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":           tftypes.NewValue(tftypes.String, nil),
-		"name":         tftypes.NewValue(tftypes.String, "nonexistent"),
-		"description":  tftypes.NewValue(tftypes.String, nil),
-		"cidr":         tftypes.NewValue(tftypes.String, nil),
-		"status":       tftypes.NewValue(tftypes.String, nil),
-		"is_default":   tftypes.NewValue(tftypes.Bool, nil),
-		"subnet_count": tftypes.NewValue(tftypes.Number, nil),
-		"tags":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"created_at":   tftypes.NewValue(tftypes.String, nil),
+		"id":                   tftypes.NewValue(tftypes.String, nil),
+		"name":                 tftypes.NewValue(tftypes.String, "nonexistent"),
+		"description":          tftypes.NewValue(tftypes.String, nil),
+		"cidr":                 tftypes.NewValue(tftypes.String, nil),
+		"status":               tftypes.NewValue(tftypes.String, nil),
+		"is_default":           tftypes.NewValue(tftypes.Bool, nil),
+		"subnet_count":         tftypes.NewValue(tftypes.Number, nil),
+		"tags":                 tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"created_at":           tftypes.NewValue(tftypes.String, nil),
+		"dns_label":            tftypes.NewValue(tftypes.String, nil),
+		"dns_domain":           tftypes.NewValue(tftypes.String, nil),
+		"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, nil),
 	})
 
 	readReq := datasource.ReadRequest{

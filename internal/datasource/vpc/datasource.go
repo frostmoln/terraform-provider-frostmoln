@@ -37,6 +37,10 @@ type vpcModel struct {
 	SubnetCount types.Int64  `tfsdk:"subnet_count"`
 	Tags        types.Map    `tfsdk:"tags"`
 	CreatedAt   types.String `tfsdk:"created_at"`
+
+	DNSLabel           types.String `tfsdk:"dns_label"`
+	DNSDomain          types.String `tfsdk:"dns_domain"`
+	EnableDNSHostnames types.Bool   `tfsdk:"enable_dns_hostnames"`
 }
 
 // apiVPC is the API representation of a VPC.
@@ -50,6 +54,10 @@ type apiVPC struct {
 	SubnetCount int               `json:"subnetCount"`
 	Tags        map[string]string `json:"tags,omitempty"`
 	CreatedAt   string            `json:"createdAt"`
+
+	DNSLabel           string `json:"dnsLabel,omitempty"`
+	DNSDomain          string `json:"dnsDomain,omitempty"`
+	EnableDNSHostnames *bool  `json:"enableDnsHostnames,omitempty"`
 }
 
 // apiVPCList is the API response for listing VPCs.
@@ -102,6 +110,21 @@ func (d *vpcDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, re
 			},
 			"created_at": schema.StringAttribute{
 				Description: "The timestamp when the VPC was created.",
+				Computed:    true,
+			},
+			"dns_label": schema.StringAttribute{
+				Description: "The VPC's DNS label (fixed at create; derived from the name unless set " +
+					"explicitly). Null only for a VPC the platform has not labelled yet.",
+				Computed: true,
+			},
+			"dns_domain": schema.StringAttribute{
+				Description: "The VPC's internal DNS domain, `<dns_label>.<tenant>.<org>.fm.internal.` " +
+					"(trailing dot). Instances resolve as `<hostname>.<dns_domain>` from inside the VPC " +
+					"only. Null until assigned.",
+				Computed: true,
+			},
+			"enable_dns_hostnames": schema.BoolAttribute{
+				Description: "Whether VMs in the VPC get internal DNS names. Managed instances are always named.",
 				Computed:    true,
 			},
 		},
@@ -206,6 +229,13 @@ func (d *vpcDataSource) setVPCState(ctx context.Context, state *vpcModel, vpc *a
 	state.IsDefault = types.BoolValue(vpc.IsDefault)
 	state.SubnetCount = types.Int64Value(int64(vpc.SubnetCount))
 	state.CreatedAt = types.StringValue(vpc.CreatedAt)
+	state.DNSLabel = nullIfEmpty(vpc.DNSLabel)
+	state.DNSDomain = nullIfEmpty(vpc.DNSDomain)
+	if vpc.EnableDNSHostnames != nil {
+		state.EnableDNSHostnames = types.BoolValue(*vpc.EnableDNSHostnames)
+	} else {
+		state.EnableDNSHostnames = types.BoolNull()
+	}
 
 	// Filter platform-internal metadata (the frostmoln_ namespace) so the computed
 	// tags attribute exposes only customer tags, matching the instance data source
@@ -220,4 +250,12 @@ func (d *vpcDataSource) setVPCState(ctx context.Context, state *vpcModel, vpc *a
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
+}
+
+// nullIfEmpty maps an absent (omitempty) API string to null.
+func nullIfEmpty(s string) types.String {
+	if s == "" {
+		return types.StringNull()
+	}
+	return types.StringValue(s)
 }

@@ -3,6 +3,7 @@ package vpc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"time"
@@ -176,6 +177,44 @@ func (r *vpcResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 				Description: "The last update timestamp.",
 				Computed:    true,
 			},
+			"dns_label": schema.StringAttribute{
+				Description: "The VPC's DNS label, the first part of its internal DNS domain. " +
+					"Unset, the platform derives it from `name` (diacritics transliterated, lowercased, " +
+					"other characters become `-`, at most 63; `vpc` if nothing is left) and a derived " +
+					"label never fails: one already used in the tenant gets `-2`, `-3`. Set explicitly, " +
+					"it must be an RFC 1123 label (a-z, 0-9, `-`, at most 63) free in the tenant, or the " +
+					"create fails with `VPCDNSLabelTaken`.\n\n" +
+					"    **Fixed at create.** Renaming the VPC never changes it, and a change to this " +
+					"attribute is REFUSED (a warning at plan, an error at apply, before anything is sent) " +
+					"rather than planned as a replacement: replacing a VPC destroys everything in it. To " +
+					"use another label, create a new VPC.",
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"dns_domain": schema.StringAttribute{
+				Description: "The VPC's internal DNS domain, `<dns_label>.<tenant>.<org>.fm.internal.` " +
+					"(with a trailing dot; the tenant and organization parts are opaque ids, never names). " +
+					"Instances in the VPC resolve as `<hostname>.<dns_domain>` from inside this VPC only. " +
+					"Assigned by the platform and fixed once assigned; null until then.",
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"enable_dns_hostnames": schema.BoolAttribute{
+				Description: "Whether VMs in the VPC get internal DNS names (`hostname` / `fqdn` on " +
+					"`frostmoln_instance`). Defaults to `true` (the platform's default) when unset; a " +
+					"configuration that never sets it never changes it. Controls VM names only — managed " +
+					"instances are always named. Updates in place; turning it off removes the VPC's VM records.",
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
+			},
 		},
 		Blocks: map[string]schema.Block{
 			// Customer-tunable wait budgets: defaults keep the values this
@@ -243,6 +282,15 @@ func (r *vpcResource) Create(ctx context.Context, req resource.CreateRequest, re
 		done, waitErr := r.client.WaitForOperation(ctx, op.OperationID, r.getPollInterval(), budgets.Create)
 		if waitErr != nil {
 			if r.client.ClassifyOperationFailure(ctx, op.OperationID) == client.OperationRefused {
+				if operationErrorCode(waitErr) == errCodeVPCDNSLabelTaken {
+					resp.Diagnostics.AddAttributeError(path.Root("dns_label"),
+						"VPC DNS Label Already Taken",
+						fmt.Sprintf("Another VPC in this tenant already uses the DNS label %q; labels are unique "+
+							"per tenant. Nothing was created and nothing has been recorded in Terraform state.\n\n"+
+							"Choose another `dns_label`, or remove it to have one derived from `name` (a derived "+
+							"label never collides).\n\nThe platform said: %s", plan.DNSLabel.ValueString(), waitErr))
+					return
+				}
 				orphan.AddCreateRefused(&resp.Diagnostics, "VPC", fmt.Sprintf("the VPC %q", plan.Name.ValueString()), waitErr)
 				return
 			}
@@ -372,8 +420,25 @@ func (r *vpcResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		return
 	}
 
+	// Null when the configuration does not set it (and when no config is
+	// carried at all, as in a unit-level call).
+	configHostnames := types.BoolNull()
+	if !req.Config.Raw.IsNull() {
+		resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("enable_dns_hostnames"), &configHostnames)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	// The apply-time half of the dns_label refusal (see dnsLabelChange):
+	// refused before anything is sent, so the VPC is left exactly as it was.
+	if summary, detail, refused := dnsLabelChange(plan.DNSLabel, state.DNSLabel); refused {
+		resp.Diagnostics.AddAttributeError(path.Root("dns_label"), summary, detail)
+		return
+	}
+
 	defaults := r.client.DefaultTags()
-	updateReq := plan.toUpdateRequest()
+	updateReq := plan.toUpdateRequest(configHostnames)
 	current, err := r.currentTags(ctx, r.client.TenantPath(fmt.Sprintf("/vpcs/%s", state.ID.ValueString())))
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
@@ -474,9 +539,77 @@ func (r *vpcResource) ImportState(ctx context.Context, req resource.ImportStateR
 }
 
 // ModifyPlan predicts tags_all: unknown whenever the next write changes the
-// platform's tag set, including a change to the provider's default_tags.
+// platform's tag set, including a change to the provider's default_tags. It
+// also WARNS about a dns_label change, which Update then refuses.
 func (r *vpcResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	warnDNSLabelChange(ctx, req, resp)
 	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+}
+
+// dnsLabelChange: a dns_label change is REFUSED, never planned as a
+// replacement.
+//
+// NEVER RequiresReplace. The label is frozen by the platform, so the only way
+// to "change" it is a new VPC — and replacing a VPC destroys every subnet,
+// instance and managed service in it to rename a DNS zone. A refusal names the
+// conflict and leaves the choice (a new VPC, or putting the label back) with
+// the practitioner; scopedecl declares it ImmutableWithoutReplace.
+//
+// WARNED AT PLAN, REFUSED AT APPLY (the frostmoln_secret pattern). An error in
+// ModifyPlan would also abort `terraform destroy` — its refresh phase plans
+// against the configuration — so the plan shows a warning that the apply will
+// fail, and Update refuses before it sends anything
+// (TestNoErrorDiagnosticsWhilePlanning holds the rule provider-wide).
+//
+// Only a CONFIGURED value is judged: unset, the attribute plans as the state
+// value (UseStateForUnknown) and there is nothing to refuse.
+//
+// dnsLabelChange returns that refusal for a planned dns_label against the
+// VPC's current one, or refused=false when there is nothing to refuse.
+func dnsLabelChange(planned, current types.String) (summary, detail string, refused bool) {
+	if planned.IsNull() || planned.IsUnknown() {
+		return "", "", false
+	}
+	if current.IsNull() || current.IsUnknown() || current.ValueString() == "" {
+		return "VPC DNS Label Cannot Be Set On An Existing VPC",
+			fmt.Sprintf("This VPC has no DNS label yet. The platform assigns one to a VPC created before "+
+				"labels existed, and a label can only be chosen at create. Remove `dns_label` (= %q) from the "+
+				"configuration; once the platform has labelled the VPC, a refresh shows the label it chose.",
+				planned.ValueString()), true
+	}
+	if planned.ValueString() == current.ValueString() {
+		return "", "", false
+	}
+	return "VPC DNS Label Cannot Change",
+		fmt.Sprintf("The VPC's DNS label is %q and is fixed at create: renaming the VPC never moves it, and "+
+			"the platform refuses to change it. Terraform will not replace the VPC to get %q either, because "+
+			"replacing a VPC destroys everything in it.\n\n"+
+			"Set `dns_label = %q` (or remove it), or create a new VPC with the label you want.",
+			current.ValueString(), planned.ValueString(), current.ValueString()), true
+}
+
+// warnDNSLabelChange is the plan-time half: a warning, never an error.
+func warnDNSLabelChange(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return // create or destroy
+	}
+	var configured, current types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("dns_label"), &configured)...)
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("dns_label"), &current)...)
+	if summary, detail, refused := dnsLabelChange(configured, current); refused {
+		resp.Diagnostics.AddAttributeWarning(path.Root("dns_label"), summary,
+			detail+"\n\nThis apply will fail; a destroy is unaffected.")
+	}
+}
+
+// operationErrorCode is the published errorCode of a failed operation in
+// err's chain, or "" when it carries none.
+func operationErrorCode(err error) string {
+	var opErr *client.OperationError
+	if errors.As(err, &opErr) {
+		return opErr.ErrorCode
+	}
+	return ""
 }
 
 // currentTags reads the tags the platform holds right now, at memberPath. An update

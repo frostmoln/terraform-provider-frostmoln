@@ -349,6 +349,8 @@ func TestUpdateResizeOverrideBoundsTheResizeWait(t *testing.T) {
 		"image_id":       tftypes.NewValue(tftypes.String, "img-ubuntu"),
 		"status":         tftypes.NewValue(tftypes.String, "ACTIVE"),
 		"created_at":     tftypes.NewValue(tftypes.String, "2025-01-01T00:00:00Z"),
+		"hostname":       tftypes.NewValue(tftypes.String, nil),
+		"fqdn":           tftypes.NewValue(tftypes.String, nil),
 		"user_data_hash": tftypes.NewValue(tftypes.String, nil),
 		"timeouts":       instanceTimeoutsValue(tfType, nil, &update, nil),
 	})
@@ -1711,6 +1713,8 @@ func instanceTFValue(t *testing.T, tfType tftypes.Type, vals map[string]tftypes.
 		"private_ip":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"public_ip":                   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"created_at":                  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"hostname":                    tftypes.NewValue(tftypes.String, nil),
+		"fqdn":                        tftypes.NewValue(tftypes.String, nil),
 		"timeouts":                    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
 	}
 
@@ -2310,6 +2314,8 @@ func TestInstanceResource_TFSDKRead(t *testing.T) {
 		}),
 		"tags_all":   tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"created_at": tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"hostname":   tftypes.NewValue(tftypes.String, nil),
+		"fqdn":       tftypes.NewValue(tftypes.String, nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -2440,6 +2446,8 @@ func readWithSGSubresource(t *testing.T, statedSGs []string, sgHandler http.Hand
 		"status":          tftypes.NewValue(tftypes.String, "running"),
 		"security_groups": sgVal,
 		"created_at":      tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"hostname":        tftypes.NewValue(tftypes.String, nil),
+		"fqdn":            tftypes.NewValue(tftypes.String, nil),
 	})
 	readResp := &resource.ReadResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
 	r.Read(ctx, resource.ReadRequest{State: tfsdk.State{Schema: schemaResp.Schema, Raw: stateVal}}, readResp)
@@ -2552,6 +2560,8 @@ func TestInstanceResource_TFSDKReadNotFound(t *testing.T) {
 		"private_ip":  tftypes.NewValue(tftypes.String, nil),
 		"public_ip":   tftypes.NewValue(tftypes.String, nil),
 		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"hostname":    tftypes.NewValue(tftypes.String, nil),
+		"fqdn":        tftypes.NewValue(tftypes.String, nil),
 	})
 
 	readReq := resource.ReadRequest{
@@ -2655,6 +2665,8 @@ func TestInstanceResource_TFSDKUpdateNameChange(t *testing.T) {
 		"user_data_hash":  tftypes.NewValue(tftypes.String, computeUserDataHash("#!/bin/bash")),
 		"instance_access": tftypes.NewValue(tftypes.Bool, true),
 		"created_at":      tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"hostname":        tftypes.NewValue(tftypes.String, nil),
+		"fqdn":            tftypes.NewValue(tftypes.String, nil),
 	})
 
 	planVal := instanceTFValue(t, tfType, map[string]tftypes.Value{
@@ -2671,6 +2683,8 @@ func TestInstanceResource_TFSDKUpdateNameChange(t *testing.T) {
 		"user_data":       tftypes.NewValue(tftypes.String, "#!/bin/bash"),
 		"user_data_hash":  tftypes.NewValue(tftypes.String, computeUserDataHash("#!/bin/bash")),
 		"created_at":      tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"hostname":        tftypes.NewValue(tftypes.String, nil),
+		"fqdn":            tftypes.NewValue(tftypes.String, nil),
 	})
 
 	updateReq := resource.UpdateRequest{
@@ -2765,6 +2779,8 @@ func TestInstanceResource_TFSDKUpdateInstanceAccessRespell(t *testing.T) {
 		"name":       tftypes.NewValue(tftypes.String, "respell-vm"),
 		"status":     tftypes.NewValue(tftypes.String, "running"),
 		"created_at": tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"hostname":   tftypes.NewValue(tftypes.String, nil),
+		"fqdn":       tftypes.NewValue(tftypes.String, nil),
 	}
 	stateOverrides := map[string]tftypes.Value{
 		"instance_access": tftypes.NewValue(tftypes.Bool, false),
@@ -2881,6 +2897,8 @@ func TestInstanceResource_TFSDKUpdateResize(t *testing.T) {
 		"user_data":      tftypes.NewValue(tftypes.String, nil),
 		"user_data_hash": tftypes.NewValue(tftypes.String, nil),
 		"created_at":     tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"hostname":       tftypes.NewValue(tftypes.String, nil),
+		"fqdn":           tftypes.NewValue(tftypes.String, nil),
 	})
 
 	planVal := instanceTFValue(t, tfType, map[string]tftypes.Value{
@@ -2896,6 +2914,8 @@ func TestInstanceResource_TFSDKUpdateResize(t *testing.T) {
 		"user_data":      tftypes.NewValue(tftypes.String, nil),
 		"user_data_hash": tftypes.NewValue(tftypes.String, nil),
 		"created_at":     tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"hostname":       tftypes.NewValue(tftypes.String, nil),
+		"fqdn":           tftypes.NewValue(tftypes.String, nil),
 	})
 
 	updateReq := resource.UpdateRequest{
@@ -3038,6 +3058,8 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 		"user_data":      tftypes.NewValue(tftypes.String, nil),
 		"user_data_hash": tftypes.NewValue(tftypes.String, nil),
 		"created_at":     tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"hostname":       tftypes.NewValue(tftypes.String, nil),
+		"fqdn":           tftypes.NewValue(tftypes.String, nil),
 	})
 
 	planVal := instanceTFValue(t, tfType, map[string]tftypes.Value{
@@ -3061,6 +3083,8 @@ func TestInstanceResource_TFSDKUpdateTagsAndSecurityGroups(t *testing.T) {
 		"user_data":      tftypes.NewValue(tftypes.String, nil),
 		"user_data_hash": tftypes.NewValue(tftypes.String, nil),
 		"created_at":     tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"hostname":       tftypes.NewValue(tftypes.String, nil),
+		"fqdn":           tftypes.NewValue(tftypes.String, nil),
 	})
 
 	updateReq := resource.UpdateRequest{
@@ -3151,6 +3175,8 @@ func TestInstanceResource_TFSDKClearSecurityGroups(t *testing.T) {
 		"private_ip": tftypes.NewValue(tftypes.String, nil), "public_ip": tftypes.NewValue(tftypes.String, nil),
 		"user_data": tftypes.NewValue(tftypes.String, nil), "user_data_hash": tftypes.NewValue(tftypes.String, nil),
 		"created_at": tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"hostname":   tftypes.NewValue(tftypes.String, nil),
+		"fqdn":       tftypes.NewValue(tftypes.String, nil),
 	}
 	withSGs := func(sgs *tftypes.Value) map[string]tftypes.Value {
 		m := make(map[string]tftypes.Value, len(base)+1)
@@ -3253,6 +3279,8 @@ func TestInstanceResource_TFSDKDelete(t *testing.T) {
 		"user_data":      tftypes.NewValue(tftypes.String, nil),
 		"user_data_hash": tftypes.NewValue(tftypes.String, nil),
 		"created_at":     tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"hostname":       tftypes.NewValue(tftypes.String, nil),
+		"fqdn":           tftypes.NewValue(tftypes.String, nil),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -3312,6 +3340,8 @@ func TestInstanceResource_TFSDKDeleteAlreadyGone(t *testing.T) {
 		"user_data":      tftypes.NewValue(tftypes.String, nil),
 		"user_data_hash": tftypes.NewValue(tftypes.String, nil),
 		"created_at":     tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"hostname":       tftypes.NewValue(tftypes.String, nil),
+		"fqdn":           tftypes.NewValue(tftypes.String, nil),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -3350,6 +3380,8 @@ func TestInstanceResource_TFSDKImportState(t *testing.T) {
 		"user_data":      tftypes.NewValue(tftypes.String, nil),
 		"user_data_hash": tftypes.NewValue(tftypes.String, nil),
 		"created_at":     tftypes.NewValue(tftypes.String, nil),
+		"hostname":       tftypes.NewValue(tftypes.String, nil),
+		"fqdn":           tftypes.NewValue(tftypes.String, nil),
 	})
 
 	importReq := resource.ImportStateRequest{ID: "inst-imported-1"}

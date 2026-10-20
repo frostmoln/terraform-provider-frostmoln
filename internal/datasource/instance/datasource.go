@@ -41,6 +41,8 @@ type instanceModel struct {
 	Status     types.String `tfsdk:"status"`
 	Tags       types.Map    `tfsdk:"tags"`
 	CreatedAt  types.String `tfsdk:"created_at"`
+	Hostname   types.String `tfsdk:"hostname"`
+	FQDN       types.String `tfsdk:"fqdn"`
 }
 
 // apiNestedRef is a nested object that only carries a name (flavor{}/image{}).
@@ -72,6 +74,8 @@ type apiInstance struct {
 	SecurityGroups []string             `json:"securityGroups,omitempty"`
 	Metadata       map[string]string    `json:"metadata,omitempty"`
 	CreatedAt      string               `json:"createdAt"`
+	Hostname       string               `json:"hostname,omitempty"`
+	FQDN           string               `json:"fqdn,omitempty"`
 }
 
 func (d *instanceDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -131,6 +135,17 @@ func (d *instanceDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 			"public_ip": schema.StringAttribute{
 				Description: "The public IP address of the instance.",
 				Computed:    true,
+			},
+			"hostname": schema.StringAttribute{
+				Description: "The instance's internal DNS name inside its VPC (its name as a DNS label, " +
+					"unique per VPC). Null when the instance holds no DNS name.",
+				Computed: true,
+			},
+			"fqdn": schema.StringAttribute{
+				Description: "`hostname` followed by the VPC's DNS domain, without a trailing dot; resolves " +
+					"from inside the VPC only. Null when the VPC has no DNS domain or has " +
+					"`enable_dns_hostnames` off.",
+				Computed: true,
 			},
 			"status": schema.StringAttribute{
 				Description: "The status of the instance.",
@@ -213,6 +228,16 @@ func (d *instanceDataSource) Read(ctx context.Context, req datasource.ReadReques
 		state.PublicIP = types.StringValue(inst.PublicIPs[0])
 	} else {
 		state.PublicIP = types.StringNull()
+	}
+	if inst.Hostname != "" {
+		state.Hostname = types.StringValue(inst.Hostname)
+	} else {
+		state.Hostname = types.StringNull()
+	}
+	if inst.FQDN != "" {
+		state.FQDN = types.StringValue(inst.FQDN)
+	} else {
+		state.FQDN = types.StringNull()
 	}
 
 	// vpc_id and subnet_id both come from networks[0] — the ALPHABETICALLY-FIRST

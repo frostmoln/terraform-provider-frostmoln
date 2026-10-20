@@ -26,6 +26,11 @@ type VPCModel struct {
 	CreatedAt   types.String `tfsdk:"created_at"`
 	UpdatedAt   types.String `tfsdk:"updated_at"`
 
+	// Internal DNS (MANAGED-OFFER-TLS-AND-INTERNAL-DNS-PLAN D10/D12).
+	DNSLabel           types.String `tfsdk:"dns_label"`
+	DNSDomain          types.String `tfsdk:"dns_domain"`
+	EnableDNSHostnames types.Bool   `tfsdk:"enable_dns_hostnames"`
+
 	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
 	// absent block, which resolves to the resource's hardcoded defaults.
 	Timeouts *timeouts.Model `tfsdk:"timeouts"`
@@ -43,7 +48,20 @@ type apiVPC struct {
 	Tags        map[string]string `json:"tags,omitempty"`
 	CreatedAt   string            `json:"createdAt"`
 	UpdatedAt   string            `json:"updatedAt,omitempty"`
+
+	// DNSLabel is frozen at create; empty only for a VPC created before labels
+	// existed that the platform has not labelled yet.
+	DNSLabel string `json:"dnsLabel,omitempty"`
+	// DNSDomain is read-only, with a trailing dot; empty until assigned.
+	DNSDomain string `json:"dnsDomain,omitempty"`
+	// EnableDNSHostnames is a pointer so a backend that does not send it reads
+	// as "unknown to us" (state keeps what it had) rather than as false.
+	EnableDNSHostnames *bool `json:"enableDnsHostnames,omitempty"`
 }
+
+// errCodeVPCDNSLabelTaken is provisioning's published errorCode for a create
+// whose explicit dnsLabel another VPC of the tenant already holds.
+const errCodeVPCDNSLabelTaken = "VPCDNSLabelTaken"
 
 // apiVPCList is the family listing the create-timeout adoption sweep reads
 // (GET /vpcs → {"vpcs":[…]}); it wraps the item shape the package already has.
@@ -74,13 +92,26 @@ type apiCreateVPCRequest struct {
 	Description string            `json:"description,omitempty"`
 	CIDR        string            `json:"cidrBlock"`
 	Tags        map[string]string `json:"tags,omitempty"`
+
+	// DNSLabel is sent only when configured: omitted, network derives it from
+	// the name (and a derived label never collides).
+	DNSLabel string `json:"dnsLabel,omitempty"`
+	// EnableDNSHostnames is sent only when configured: omitted is the API's
+	// default (on), which is what keeps a configuration that never mentions it
+	// from deciding it.
+	EnableDNSHostnames *bool `json:"enableDnsHostnames,omitempty"`
 }
 
 // apiUpdateVPCRequest is the API request to update a VPC.
+//
+// It deliberately has NO dnsLabel: the label is frozen at create (the API
+// accepts it on update only as an echo of the current value), and a change is
+// refused at plan time (ModifyPlan), so there is never one to send.
 type apiUpdateVPCRequest struct {
-	Name        *string           `json:"name,omitempty"`
-	Description *string           `json:"description,omitempty"`
-	Tags        map[string]string `json:"tags"`
+	Name               *string           `json:"name,omitempty"`
+	Description        *string           `json:"description,omitempty"`
+	Tags               map[string]string `json:"tags"`
+	EnableDNSHostnames *bool             `json:"enableDnsHostnames,omitempty"`
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
@@ -94,6 +125,16 @@ func (m *VPCModel) toCreateRequest() apiCreateVPCRequest {
 		req.Description = m.Description.ValueString()
 	}
 
+	// Optional+Computed: an unconfigured value plans as unknown on create, so
+	// "known and not null" is exactly "configured".
+	if !m.DNSLabel.IsNull() && !m.DNSLabel.IsUnknown() && m.DNSLabel.ValueString() != "" {
+		req.DNSLabel = m.DNSLabel.ValueString()
+	}
+	if !m.EnableDNSHostnames.IsNull() && !m.EnableDNSHostnames.IsUnknown() {
+		enabled := m.EnableDNSHostnames.ValueBool()
+		req.EnableDNSHostnames = &enabled
+	}
+
 	// Tags are not set here: Create merges the provider's default_tags into
 	// them (tftags.ForCreate).
 	return req
@@ -102,8 +143,19 @@ func (m *VPCModel) toCreateRequest() apiCreateVPCRequest {
 // toUpdateRequest converts the Terraform model to an API update request. Tags
 // are not set here: Update merges them with the provider's default_tags and
 // the keys it does not manage (tftags.ForUpdate).
-func (m *VPCModel) toUpdateRequest() apiUpdateVPCRequest {
+//
+// enableHostnames is the CONFIGURED enable_dns_hostnames (null when the
+// configuration does not set it). It is read from config, not from the plan:
+// an unset attribute plans as the state's value, and echoing that back would
+// overwrite a change made since the last refresh by a setting this
+// configuration never claimed.
+func (m *VPCModel) toUpdateRequest(enableHostnames types.Bool) apiUpdateVPCRequest {
 	req := apiUpdateVPCRequest{}
+
+	if !enableHostnames.IsNull() && !enableHostnames.IsUnknown() {
+		enabled := enableHostnames.ValueBool()
+		req.EnableDNSHostnames = &enabled
+	}
 
 	if !m.Name.IsNull() && !m.Name.IsUnknown() {
 		name := m.Name.ValueString()
@@ -143,6 +195,28 @@ func (m *VPCModel) fromAPI(ctx context.Context, vpc *apiVPC, diags *diag.Diagnos
 		m.UpdatedAt = types.StringValue(vpc.UpdatedAt)
 	} else {
 		m.UpdatedAt = types.StringNull()
+	}
+
+	// Null, never "", while unassigned: UseStateForUnknown does not pin a null
+	// state value, so the plan stays unknown until the platform assigns one. A
+	// pinned "" would make the apply that observes the assignment fail with
+	// "inconsistent result after apply".
+	if vpc.DNSLabel != "" {
+		m.DNSLabel = types.StringValue(vpc.DNSLabel)
+	} else {
+		m.DNSLabel = types.StringNull()
+	}
+	if vpc.DNSDomain != "" {
+		m.DNSDomain = types.StringValue(vpc.DNSDomain)
+	} else {
+		m.DNSDomain = types.StringNull()
+	}
+	if vpc.EnableDNSHostnames != nil {
+		m.EnableDNSHostnames = types.BoolValue(*vpc.EnableDNSHostnames)
+	} else if m.EnableDNSHostnames.IsUnknown() {
+		// A backend that does not send the field: the computed value must still
+		// be known after apply, and null claims nothing the platform did not say.
+		m.EnableDNSHostnames = types.BoolNull()
 	}
 
 	// network's REST plane refuses a frostmoln_* key on write, so a key that IS
