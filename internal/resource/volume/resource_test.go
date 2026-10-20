@@ -66,8 +66,8 @@ func TestVolumeModel_toCreateRequest(t *testing.T) {
 	if req.Zone != "falkenberg" {
 		t.Errorf("expected zone falkenberg, got %s", req.Zone)
 	}
-	if req.SourceSnapshotID != "" {
-		t.Errorf("expected empty snapshotId, got %s", req.SourceSnapshotID)
+	if req.SnapshotID != "" {
+		t.Errorf("expected empty snapshotId, got %s", req.SnapshotID)
 	}
 	if !req.Encrypted {
 		t.Error("expected encrypted true")
@@ -598,6 +598,115 @@ func TestVolumeResource_TFSDKCreate(t *testing.T) {
 	}
 	if model.IOPS.ValueInt64() != 3000 {
 		t.Errorf("expected IOPS 3000, got %d", model.IOPS.ValueInt64())
+	}
+}
+
+// TestVolumeResource_TFSDKCreate_SnapshotIDOnTheWire pins the JSON key the
+// snapshot travels under. POST /tenants/*/volumes is routed to provisioning,
+// which binds only `snapshotId`; the provider used to send `sourceSnapshotId`
+// (the name storage reports on READ), so the snapshot was dropped and the
+// volume came up blank.
+func TestVolumeResource_TFSDKCreate_SnapshotIDOnTheWire(t *testing.T) {
+	var createBody map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "user-123", "tenantId": "tenant-456"})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/volumes":
+			if err := json.NewDecoder(r.Body).Decode(&createBody); err != nil {
+				t.Errorf("decode create body: %v", err)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId":  "op-vol-snap",
+				"status":       "pending",
+				"resourceType": "volume",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/operations/op-vol-snap":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"operationId":  "op-vol-snap",
+				"status":       "completed",
+				"resourceType": "volume",
+				"resourceId":   "vol-from-snap",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/volumes/vol-from-snap":
+			// storage reports the source on read as sourceSnapshotId.
+			_ = json.NewEncoder(w).Encode(apiVolume{
+				ID:               "vol-from-snap",
+				Name:             "restored",
+				Size:             100,
+				VolumeType:       "ssd",
+				SourceSnapshotID: "vsn_snap1",
+				Status:           "available",
+				CreatedAt:        "2025-01-01T00:00:00Z",
+			})
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "NOT_FOUND", "message": "not found"})
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("client configure failed: %v", err)
+	}
+
+	r := NewResource()
+	configureVolumeResource(t, r, c)
+	schemaResp := getVolumeSchema(t)
+
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":        tftypes.NewValue(tftypes.String, "restored"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
+		"zone":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"snapshot_id": tftypes.NewValue(tftypes.String, "vsn_snap1"),
+		"encrypted":   tftypes.NewValue(tftypes.Bool, false),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"iops":        tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"throughput":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"attached_to": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"device_path": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+
+	createReq := resource.CreateRequest{
+		Plan: tfsdk.Plan{Schema: schemaResp.Schema, Raw: planVal},
+	}
+	var createResp resource.CreateResponse
+	createResp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	r.Create(ctx, createReq, &createResp)
+
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("Create failed: %v", createResp.Diagnostics.Errors())
+	}
+
+	if got := createBody["snapshotId"]; got != "vsn_snap1" {
+		t.Errorf("create body snapshotId = %v, want vsn_snap1 (body %v)", got, createBody)
+	}
+	if _, ok := createBody["sourceSnapshotId"]; ok {
+		t.Errorf("create body carries sourceSnapshotId, which provisioning does not bind: %v", createBody)
+	}
+
+	var model VolumeModel
+	createResp.State.Get(ctx, &model)
+	if model.SnapshotID.ValueString() != "vsn_snap1" {
+		t.Errorf("state snapshot_id = %q, want vsn_snap1", model.SnapshotID.ValueString())
 	}
 }
 

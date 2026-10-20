@@ -68,14 +68,18 @@ type apiVolume struct {
 
 // apiCreateVolumeRequest is the API request to create a volume.
 type apiCreateVolumeRequest struct {
-	Name             string            `json:"name"`
-	Description      string            `json:"description,omitempty"`
-	Size             int64             `json:"size"`
-	VolumeType       string            `json:"volumeType,omitempty"`
-	Zone             string            `json:"availabilityZone,omitempty"`
-	SourceSnapshotID string            `json:"sourceSnapshotId,omitempty"`
-	Encrypted        bool              `json:"encrypted"`
-	Metadata         map[string]string `json:"metadata,omitempty"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Size        int64  `json:"size"`
+	VolumeType  string `json:"volumeType,omitempty"`
+	Zone        string `json:"availabilityZone,omitempty"`
+	// SnapshotID is `snapshotId`, not the `sourceSnapshotId` storage reports
+	// on read: POST /tenants/*/volumes is routed to provisioning, which binds
+	// only `snapshotId` (and its pubid edge decodes that key). Any other name
+	// is dropped silently and the volume is created blank.
+	SnapshotID string            `json:"snapshotId,omitempty"`
+	Encrypted  bool              `json:"encrypted"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
 }
 
 // apiUpdateVolumeRequest is the API request to update a volume.
@@ -115,7 +119,7 @@ func (m *VolumeModel) toCreateRequest(ctx context.Context, diags *diag.Diagnosti
 		req.Zone = m.Zone.ValueString()
 	}
 	if !m.SnapshotID.IsNull() && !m.SnapshotID.IsUnknown() {
-		req.SourceSnapshotID = m.SnapshotID.ValueString()
+		req.SnapshotID = m.SnapshotID.ValueString()
 	}
 	// Tags are set by Create, which merges the provider's default_tags into
 	// them (tftags.ForCreate).
