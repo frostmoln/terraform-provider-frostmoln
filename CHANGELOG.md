@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.87.6] - 2026-10-20
+
+### 🐛 Bug Fixes
+
+- *(client)* Keep resource ids as UUIDs when the API default changes (#703)
+
 ## [0.87.5] - 2026-10-19
 
 ### 🐛 Bug Fixes
