@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.0] - 2026-10-20
+
+### 🚀 Features
+
+- *(vpc,instance)* Internal DNS attributes (dns_label, dns_domain, enable_dns_hostnames, hostname, fqdn) (#713)
+
 ## [0.89.0] - 2026-10-20
 
 ### 🚀 Features
