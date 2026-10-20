@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.0] - 2026-10-20
+
+### 🚀 Features
+
+- *(datasource)* Frostmoln_ca_bundle data source (#709)
+
+### 📚 Documentation
+
+- *(guides)* Drop the 0.87 rollback advice now that 0.88.0 is required (#711)
+
 ## [0.88.0] - 2026-10-20
 
 ### 🚀 Features
