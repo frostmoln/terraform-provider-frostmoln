@@ -30,6 +30,7 @@ import (
 	appgwwafrulesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/appgw_waf_rules"
 	applicationgatewayds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/application_gateway"
 	bucketds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/bucket"
+	cabundleds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/ca_bundle"
 	dscontainerregistry "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/container_registry"
 	dscontainerregistryartifacts "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/container_registry_artifacts"
 	dscontainerregistrycacheupstreams "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/container_registry_cache_upstreams"
@@ -920,6 +921,9 @@ var dataSourceFactories = []func() datasource.DataSource{
 	nginxinstanceds.NewDataSource,
 	regionsds.NewDataSource,
 	volumetiersds.NewDataSource,
+	// The platform CA bundle that signs managed instances' TLS certificates;
+	// public material, not tenant-scoped.
+	cabundleds.NewDataSource,
 	apikeyscopesds.NewDataSource,
 	kubernetesversionsds.NewDataSource,
 	kubernetestiersds.NewDataSource,
