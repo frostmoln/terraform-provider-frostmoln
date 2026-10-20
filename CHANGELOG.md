@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.0] - 2026-10-20
+
+### 🚀 Features
+
+- [**breaking**] Public ids in state; for_each keys and sorted count lists of ids re-key and REPLACE - add moved blocks first (guides/public-ids-upgrade) (#706)
+
 ## [0.87.7] - 2026-10-20
 
 ### 🐛 Bug Fixes
