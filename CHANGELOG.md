@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.87.7] - 2026-10-20
+
+### 🐛 Bug Fixes
+
+- *(volume)* Send snapshot_id under the key the create API accepts (#705)
+
 ## [0.87.6] - 2026-10-20
 
 ### 🐛 Bug Fixes
