@@ -79,11 +79,10 @@ that earlier provider versions refuse. Before that, save a copy:
 $ terraform state pull > pre-public-ids.tfstate
 ```
 
-To roll back **before you have applied anything** with the new provider, pin a
-0.87 release from 0.87.6 on (`version = "~> 0.87.6"`) and restore the copy with
-`terraform state push -force pre-public-ids.tfstate`. Do not roll back after
-applying changes: anything created or changed since the copy was taken would
-no longer be tracked.
+Frostmoln requires provider 0.88.0 or later, so you cannot go back to an earlier
+provider. Keep the copy anyway: if a plan after the upgrade looks wrong, do not
+apply it, and contact support with the plan output. The copy is your state
+exactly as it was before the upgrade.
 
 ## What changes on its own
 
@@ -125,5 +124,5 @@ For unchanged infrastructure the plan should report **no changes**, apart from
 the `moved` addresses above. Then run `terraform apply -refresh-only` to write
 the migrated state. If it proposes to replace a resource, stop:
 replacement is never the expected outcome of this upgrade. Do not apply.
-Contact support with the plan output. If you need to go back to the previous
-provider meanwhile, follow the rollback steps above.
+Contact support with the plan output, and keep the state copy from "Back up
+state first" above.
