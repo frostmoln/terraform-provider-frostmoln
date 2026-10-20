@@ -22,6 +22,11 @@ import (
 func sseOperationServer(t *testing.T, gets *atomic.Int32, status func(n int32) string, stream func(w http.ResponseWriter, r *http.Request, flush func())) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Every wait test thereby proves the watcher's real stream request and
+		// the operation polls both pin the id format.
+		if f := r.Header.Get(IDFormatHeader); f != "uuid" {
+			t.Errorf("%s %s: %s = %q, want uuid", r.Method, r.URL.Path, IDFormatHeader, f)
+		}
 		switch r.URL.Path {
 		case "/v1/tenants/t-1/operations/op-1":
 			n := gets.Add(1)

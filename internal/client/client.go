@@ -52,6 +52,15 @@ type Client struct {
 // middleware constant; ADR-0088).
 const ProviderVersionHeader = "X-FM-Provider-Version"
 
+// IDFormatHeader asks the gateway for an id form (ADR-0129). The provider pins
+// `uuid` on every request so the gateway's default flip to public ids does not
+// change what lands in state; the switch to public ids is its own versioned
+// release with state upgraders.
+const IDFormatHeader = "Frostmoln-Id-Format"
+
+// idFormat is the form this provider keeps in state.
+const idFormat = "uuid"
+
 // providerUpgradeFallback is shown when the gateway rejects this provider as too
 // old but its 426 body carried no message of its own.
 const providerUpgradeFallback = "your Frostmoln Terraform provider is older than the minimum supported version; upgrade at https://registry.terraform.io/providers/frostmoln/frostmoln/latest"
@@ -955,6 +964,7 @@ func (c *Client) do(ctx context.Context, method, reqPath string, query url.Value
 	if c.version != "" {
 		httpReq.Header.Set(ProviderVersionHeader, c.version)
 	}
+	httpReq.Header.Set(IDFormatHeader, idFormat)
 	httpReq.Header.Set("Accept", "application/json")
 	if lang, ok := ctx.Value(acceptLanguageKey{}).(string); ok && lang != "" {
 		httpReq.Header.Set("Accept-Language", lang)

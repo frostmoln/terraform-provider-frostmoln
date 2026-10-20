@@ -1416,3 +1416,37 @@ func TestWithAcceptLanguageSetsTheHeader(t *testing.T) {
 		t.Fatalf("Accept-Language per request = %q, want [en \"\"]", got)
 	}
 }
+
+// TestEveryRequestPinsUUIDIDFormat covers every verb helper (all funnel through
+// do). The event stream builds its own request; sseOperationServer asserts the
+// header on it, through the watcher. Uploads go to presigned storage URLs and
+// carry no ids.
+func TestEveryRequestPinsUUIDIDFormat(t *testing.T) {
+	var got []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Method+" "+r.Header.Get(IDFormatHeader))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(server.Close)
+
+	c := NewClient(server.URL, "test-key")
+	ctx := context.Background()
+	calls := []func() error{
+		func() error { _, err := c.Get(ctx, "/v1/x", nil); return err },
+		func() error { _, err := c.Post(ctx, "/v1/x", map[string]string{}); return err },
+		func() error { _, err := c.Patch(ctx, "/v1/x", map[string]string{}); return err },
+		func() error { _, err := c.Put(ctx, "/v1/x", map[string]string{}); return err },
+		func() error { _, err := c.Delete(ctx, "/v1/x"); return err },
+		func() error { _, err := c.DeleteWithQuery(ctx, "/v1/x", nil); return err },
+	}
+	for i, call := range calls {
+		if err := call(); err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+	}
+	want := []string{"GET uuid", "POST uuid", "PATCH uuid", "PUT uuid", "DELETE uuid", "DELETE uuid"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("id format per request = %v, want %v", got, want)
+	}
+}

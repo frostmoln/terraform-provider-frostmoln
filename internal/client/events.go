@@ -227,6 +227,7 @@ func (c *Client) newStreamRequest(ctx context.Context) (*http.Request, error) {
 	if c.version != "" {
 		req.Header.Set(ProviderVersionHeader, c.version)
 	}
+	req.Header.Set(IDFormatHeader, idFormat)
 	if c.bearer != nil {
 		// Refresh proactively: a stream lives up to 5 minutes and cannot re-auth
 		// mid-flight, and the gateway's deadline is min(lifetime, token.exp) -- so
