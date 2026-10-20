@@ -17,3 +17,11 @@ output "messaging_amqps_port" {
 output "messaging_management_port" {
   value = data.frostmoln_messaging_instance.broker.management_port
 }
+
+output "messaging_tls_enabled" {
+  value = data.frostmoln_messaging_instance.broker.tls_enabled
+}
+
+output "messaging_hostname" {
+  value = data.frostmoln_messaging_instance.broker.hostname
+}

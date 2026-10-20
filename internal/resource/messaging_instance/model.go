@@ -26,8 +26,12 @@ type MessagingInstanceModel struct {
 	Port            types.Int64  `tfsdk:"port"`
 	AMQPSPort       types.Int64  `tfsdk:"amqps_port"`
 	ManagementPort  types.Int64  `tfsdk:"management_port"`
-	CreatedAt       types.String `tfsdk:"created_at"`
-	UpdatedAt       types.String `tfsdk:"updated_at"`
+	// TLS (MANAGED-OFFER-TLS-AND-INTERNAL-DNS-PLAN §8, Phase 4a), all read-only.
+	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
+	Hostname   types.String `tfsdk:"hostname"`
+	PublicName types.String `tfsdk:"public_name"`
+	CreatedAt  types.String `tfsdk:"created_at"`
+	UpdatedAt  types.String `tfsdk:"updated_at"`
 	// Tags / TagsAll are the instance's customer resource tags (internal/tftags).
 	Tags    types.Map `tfsdk:"tags"`
 	TagsAll types.Map `tfsdk:"tags_all"`
@@ -52,8 +56,13 @@ type apiMessagingInstance struct {
 	Port            int    `json:"port,omitempty"`
 	AMQPSPort       int    `json:"amqpsPort,omitempty"`
 	ManagementPort  int    `json:"managementPort,omitempty"`
-	CreatedAt       string `json:"createdAt"`
-	UpdatedAt       string `json:"updatedAt,omitempty"`
+	// TLSEnabled is always sent by a TLS-aware messaging service; Hostname and
+	// PublicName only when assigned.
+	TLSEnabled bool   `json:"tlsEnabled"`
+	Hostname   string `json:"hostname,omitempty"`
+	PublicName string `json:"publicName,omitempty"`
+	CreatedAt  string `json:"createdAt"`
+	UpdatedAt  string `json:"updatedAt,omitempty"`
 	// Tags are the instance's customer resource tags ({} when untagged).
 	Tags map[string]string `json:"tags"`
 }
@@ -166,6 +175,19 @@ func (m *MessagingInstanceModel) fromAPI(ctx context.Context, inst *apiMessaging
 	} else {
 		m.UpdatedAt = types.StringNull()
 	}
+
+	// What the instance serves, as the service reports it: an absent tlsEnabled (a
+	// service predating TLS) reads as false, the truth for every instance it holds.
+	m.TLSEnabled = types.BoolValue(inst.TLSEnabled)
+	m.Hostname = stringOrNull(inst.Hostname)
+	m.PublicName = stringOrNull(inst.PublicName)
+}
+
+func stringOrNull(s string) types.String {
+	if s == "" {
+		return types.StringNull()
+	}
+	return types.StringValue(s)
 }
 
 // apiInstanceRef is the slice of the family listing's item shape that the

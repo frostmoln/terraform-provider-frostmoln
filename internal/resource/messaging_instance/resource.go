@@ -107,8 +107,13 @@ func (r *messagingInstanceResource) Schema(_ context.Context, _ resource.SchemaR
 				},
 			},
 			"name": schema.StringAttribute{
-				Description: "The name of the messaging instance.",
-				Required:    true,
+				Description: "The name of the messaging instance. It is also the instance's DNS name (`hostname` is " +
+					"derived from it), so it must contain at least one ASCII letter or digit (otherwise the create is refused with " +
+					"400) and must be unique within the VPC, including names still held by instances renamed since: " +
+					"a taken name fails the create with `INSTANCE_DNS_NAME_TAKEN`.\n\n" +
+					"    **`create_before_destroy` with an unchanged `name` fails**: the replacement is created " +
+					"while the old instance still holds the name in the VPC.",
+				Required: true,
 			},
 			"type": schema.StringAttribute{
 				Description: "The messaging type. Only \"lavinmq\" is currently supported. Defaults to \"lavinmq\".",
@@ -183,6 +188,32 @@ func (r *messagingInstanceResource) Schema(_ context.Context, _ resource.SchemaR
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.UseStateForUnknown(),
 				},
+			},
+			// hostname is fixed once assigned (a rename does not move it), so it keeps its
+			// state across an update. tls_enabled is plain Computed: a state written while the
+			// instance was still being created could hold false before the certificate
+			// landed, and a pinned stale value would fail the next apply as an inconsistent
+			// result. public_name is plain Computed too: the platform freezes the name itself,
+			// but it exists only while the instance has a public IP.
+			"tls_enabled": schema.BoolAttribute{
+				Description: "Whether the instance serves TLS: AMQPS on `amqps_port` and HTTPS management, with a certificate for " +
+					"`hostname` from the Frostmoln customer CA (see the `frostmoln_ca_bundle` data source). Plaintext AMQP " +
+					"and HTTP management stay served beside it. False on an instance without a certificate.",
+				Computed: true,
+			},
+			"hostname": schema.StringAttribute{
+				Description: "The instance's internal DNS name (`<label>.mq.<vpc-label>.<tenant-label>.<org-label>.fm.internal`, the label being the name at create lowercased, every run of characters other than `a-z0-9` turned into one `-`, `-` trimmed at both ends and cut to 63 characters), resolvable " +
+					"inside its VPC; its TLS certificate is issued for this name. Fixed once assigned: a rename does not " +
+					"move it. Null on an instance without a certificate (it gets none retroactively; " +
+					"recreate it to get one).",
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"public_name": schema.StringAttribute{
+				Description: "The instance's public DNS name under `mq.svc.frostmoln.cloud`. Null unless it has a public IP.",
+				Computed:    true,
 			},
 			"created_at": schema.StringAttribute{
 				Description: "The timestamp when the instance was created.",
@@ -280,6 +311,10 @@ func (r *messagingInstanceResource) Create(ctx context.Context, req resource.Cre
 		tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 	}
 	if err != nil {
+		if isDNSNameTaken(err) {
+			addDNSNameTakenError(&resp.Diagnostics, plan.Name.ValueString(), err)
+			return
+		}
 		resp.Diagnostics.AddError("Failed to create messaging instance", err.Error())
 		return
 	}

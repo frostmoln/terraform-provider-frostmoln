@@ -40,6 +40,9 @@ type messagingInstanceModel struct {
 	Port            types.Int64  `tfsdk:"port"`
 	AMQPSPort       types.Int64  `tfsdk:"amqps_port"`
 	ManagementPort  types.Int64  `tfsdk:"management_port"`
+	TLSEnabled      types.Bool   `tfsdk:"tls_enabled"`
+	Hostname        types.String `tfsdk:"hostname"`
+	PublicName      types.String `tfsdk:"public_name"`
 	CreatedAt       types.String `tfsdk:"created_at"`
 	UpdatedAt       types.String `tfsdk:"updated_at"`
 	Tags            types.Map    `tfsdk:"tags"`
@@ -60,6 +63,9 @@ type apiMessagingInstance struct {
 	Port            int    `json:"port,omitempty"`
 	AMQPSPort       int    `json:"amqpsPort,omitempty"`
 	ManagementPort  int    `json:"managementPort,omitempty"`
+	TLSEnabled      bool   `json:"tlsEnabled"`
+	Hostname        string `json:"hostname,omitempty"`
+	PublicName      string `json:"publicName,omitempty"`
 	CreatedAt       string `json:"createdAt"`
 	UpdatedAt       string `json:"updatedAt,omitempty"`
 	// Tags are the resource's customer resource tags ({} when untagged).
@@ -126,6 +132,23 @@ func (d *messagingInstanceDataSource) Schema(_ context.Context, _ datasource.Sch
 				Description: "The HTTP management/API port number the messaging instance is listening on.",
 				Computed:    true,
 			},
+			"tls_enabled": schema.BoolAttribute{
+				Description: "Whether the instance serves TLS: AMQPS on `amqps_port` and HTTPS management, with a certificate for " +
+					"`hostname` from the Frostmoln customer CA (see the `frostmoln_ca_bundle` data source). Plaintext AMQP " +
+					"and HTTP management stay served beside it. False on an instance without a certificate.",
+				Computed: true,
+			},
+			"hostname": schema.StringAttribute{
+				Description: "The instance's internal DNS name (`<label>.mq.<vpc-label>.<tenant-label>.<org-label>.fm.internal`, the label being the name at create lowercased, every run of characters other than `a-z0-9` turned into one `-`, `-` trimmed at both ends and cut to 63 characters), resolvable " +
+					"inside its VPC; its TLS certificate is issued for this name. Fixed once assigned: a rename does not " +
+					"move it. Null on an instance without a certificate (it gets none retroactively; " +
+					"recreate it to get one).",
+				Computed: true,
+			},
+			"public_name": schema.StringAttribute{
+				Description: "The instance's public DNS name under `mq.svc.frostmoln.cloud`. Null unless it has a public IP.",
+				Computed:    true,
+			},
 			"created_at": schema.StringAttribute{
 				Description: "The timestamp when the instance was created.",
 				Computed:    true,
@@ -188,6 +211,15 @@ func (d *messagingInstanceDataSource) Read(ctx context.Context, req datasource.R
 	state.PersistenceMode = types.StringValue(inst.PersistenceMode)
 	state.Status = types.StringValue(inst.Status)
 	state.CreatedAt = types.StringValue(inst.CreatedAt)
+	state.TLSEnabled = types.BoolValue(inst.TLSEnabled)
+	state.Hostname = types.StringNull()
+	if inst.Hostname != "" {
+		state.Hostname = types.StringValue(inst.Hostname)
+	}
+	state.PublicName = types.StringNull()
+	if inst.PublicName != "" {
+		state.PublicName = types.StringValue(inst.PublicName)
+	}
 
 	if inst.PrivateIP != "" {
 		state.PrivateIP = types.StringValue(inst.PrivateIP)

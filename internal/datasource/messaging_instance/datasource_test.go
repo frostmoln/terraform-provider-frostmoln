@@ -123,6 +123,9 @@ func configVal(t *testing.T, id string) tftypes.Value {
 		"port":             tftypes.NewValue(tftypes.Number, nil),
 		"amqps_port":       tftypes.NewValue(tftypes.Number, nil),
 		"management_port":  tftypes.NewValue(tftypes.Number, nil),
+		"tls_enabled":      tftypes.NewValue(tftypes.Bool, nil),
+		"hostname":         tftypes.NewValue(tftypes.String, nil),
+		"public_name":      tftypes.NewValue(tftypes.String, nil),
 		"created_at":       tftypes.NewValue(tftypes.String, nil),
 		"updated_at":       tftypes.NewValue(tftypes.String, nil),
 		"tags":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
@@ -147,6 +150,8 @@ func TestReadByID(t *testing.T) {
 				Port:            5672,
 				AMQPSPort:       5671,
 				ManagementPort:  15672,
+				TLSEnabled:      true,
+				Hostname:        "my-broker.mq.prod.omkcmw.ck4to7f6.fm.internal",
 				CreatedAt:       "2025-01-01T00:00:00Z",
 				UpdatedAt:       "2025-01-02T00:00:00Z",
 			})
@@ -197,6 +202,13 @@ func TestReadByID(t *testing.T) {
 	}
 	if state.AMQPSPort.ValueInt64() != 5671 {
 		t.Errorf("expected AMQPSPort 5671, got %d", state.AMQPSPort.ValueInt64())
+	}
+	// TLS state (plan Phase 4a): read back as the service sends it; no public IP, no public_name.
+	if !state.TLSEnabled.ValueBool() || state.Hostname.ValueString() != "my-broker.mq.prod.omkcmw.ck4to7f6.fm.internal" {
+		t.Errorf("expected tls_enabled true and the hostname, got %v / %v", state.TLSEnabled, state.Hostname)
+	}
+	if !state.PublicName.IsNull() {
+		t.Errorf("expected public_name null, got %v", state.PublicName)
 	}
 	if state.ManagementPort.ValueInt64() != 15672 {
 		t.Errorf("expected ManagementPort 15672, got %d", state.ManagementPort.ValueInt64())

@@ -14,3 +14,11 @@ resource "frostmoln_messaging_instance" "broker" {
     env = "prod"
   }
 }
+
+# The broker's certificate is issued for its hostname by the Frostmoln customer
+# CA (trust the bundle from the frostmoln_ca_bundle data source and verify the
+# server against this name). Null, with tls_enabled false, on an instance
+# without a certificate.
+output "broker_hostname" {
+  value = frostmoln_messaging_instance.broker.tls_enabled ? frostmoln_messaging_instance.broker.hostname : null
+}

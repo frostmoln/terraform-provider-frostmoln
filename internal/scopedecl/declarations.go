@@ -320,6 +320,9 @@ var Declarations = map[string]Decl{
 		Observes: []Field{
 			tagsAllObserved,
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
+			{Path: "tls_enabled", Why: "whether the platform issued the instance a certificate at create; false for an instance without a certificate"},
+			{Path: "hostname", Why: "platform-derived at create from `name`'s DNS label, the VPC, tenant and organization; fixed for life (a rename does not move it), null on an instance without a certificate"},
+			{Path: "public_name", Why: "platform-derived from the DNS label at create and frozen; present only while the instance has a public IP"},
 		},
 	},
 	"frostmoln_messaging_permission": {
