@@ -297,6 +297,33 @@ identity's `TestNormaliseFRN_NounsMatchTheTerraformProviderTable`. Never widen t
 name-keyed noun or another prefix: two documents the evaluator tells apart would compare equal
 and hide drift. Config-to-config comparisons (`onlyTagsDiffer`) stay exact.
 
+### Public ids (ADR-0129): `internal/idform` and `internal/pubid`
+
+The provider asks for public ids (`Frostmoln-Id-Format: public`, `internal/client`) and keeps
+them in state. `internal/pubid` is a copy of the servicekit codec, tested against verbatim
+copies of servicekit's `vectors.json` and `kinds.json` (refresh both from servicekit
+origin/main `pubid/testdata/`). Every resource and data source is registered through
+`idform.Wrap` / `idform.WrapDataSource` in `provider.go`. Those wrappers:
+
+- bump each resource's schema version by one, with a state upgrader that rewrites the ids
+  named in `idform.Kinds` (chained after the resource's own upgraders);
+- wrap every attribute plan modifier, so a replacement is dropped when plan and state name
+  the same id in two spellings (bytes, and kind when both are public);
+- keep a planned (Create/Update) or prior (Read, except computed-only attributes) id spelling
+  the API echoes in the other form, and keep a data source's configured spelling;
+- return from Update without an API call when plan and state differ only in id spelling.
+
+Rules for new code:
+- **Compare ids with `pubid.Equal`, never `==`**: state, config and the API can spell one id
+  two ways.
+- **A new resource holding Frostmoln UUID ids gets an `idform.Kinds` entry**, checked against
+  what the backend's pubidhttp specs render. `TestIDFormKinds` holds every entry to the live
+  schema and the registry. An id left out stays a UUID in state, which is safe but cosmetic.
+- **Never list an id whose kind depends on a sibling field, or one the API does not encode.**
+  A wrong kind on a referenced id makes the replace guard plan a REPLACEMENT.
+- **Never bump a resource's own schema `Version` without its own upgrader.** The wrapper adds
+  one on top, and chains your upgraders for every older version.
+
 ### Adding New Data Sources
 
 1. Create a new directory under `internal/datasource/<name>/`

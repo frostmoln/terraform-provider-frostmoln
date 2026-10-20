@@ -1,5 +1,5 @@
 # Resolve a block volume that Terraform did not create
-# (provisioned in the portal or with `fm`) by NAME — no hardcoded UUID.
+# (provisioned in the portal or with `fm`) by NAME — no hardcoded id.
 # (A bucket's name IS its id; a volume's id is distinct from its name, so a
 # resolved id is what every other reference takes.)
 data "frostmoln_volume" "data_disk" {

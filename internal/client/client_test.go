@@ -1417,11 +1417,11 @@ func TestWithAcceptLanguageSetsTheHeader(t *testing.T) {
 	}
 }
 
-// TestEveryRequestPinsUUIDIDFormat covers every verb helper (all funnel through
+// TestEveryRequestPinsPublicIDFormat covers every verb helper (all funnel through
 // do). The event stream builds its own request; sseOperationServer asserts the
 // header on it, through the watcher. Uploads go to presigned storage URLs and
 // carry no ids.
-func TestEveryRequestPinsUUIDIDFormat(t *testing.T) {
+func TestEveryRequestPinsPublicIDFormat(t *testing.T) {
 	var got []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = append(got, r.Method+" "+r.Header.Get(IDFormatHeader))
@@ -1445,7 +1445,7 @@ func TestEveryRequestPinsUUIDIDFormat(t *testing.T) {
 			t.Fatalf("call %d: %v", i, err)
 		}
 	}
-	want := []string{"GET uuid", "POST uuid", "PATCH uuid", "PUT uuid", "DELETE uuid", "DELETE uuid"}
+	want := []string{"GET public", "POST public", "PATCH public", "PUT public", "DELETE public", "DELETE public"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("id format per request = %v, want %v", got, want)
 	}

@@ -17,6 +17,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/unenacted"
@@ -283,7 +284,7 @@ func (r *webserverDomainResource) findDomain(ctx context.Context, instanceID, do
 		return nil, err
 	}
 	for i := range list.Domains {
-		if list.Domains[i].ID == domainID {
+		if pubid.Equal(list.Domains[i].ID, domainID) {
 			return &list.Domains[i], nil
 		}
 	}

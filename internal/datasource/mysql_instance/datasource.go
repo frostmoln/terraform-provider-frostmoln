@@ -38,6 +38,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
@@ -132,7 +133,7 @@ func (d *mysqlInstanceDataSource) Schema(_ context.Context, _ datasource.SchemaR
 
 			"This is how a configuration reaches a database that Terraform did not create: an " +
 			"instance provisioned in the portal or with `fm` can today be referenced only by a " +
-			"hardcoded UUID or plumbed through `terraform_remote_state` — both of which tie the " +
+			"hardcoded id or plumbed through `terraform_remote_state` — both of which tie the " +
 			"configuration to one deployment. Look it up by name instead and the reference " +
 			"survives re-provisioning elsewhere.\n\n" +
 
@@ -355,7 +356,7 @@ func (d *mysqlInstanceDataSource) readByID(ctx context.Context, id string) (*api
 		diags.AddError("Failed to Parse MySQL Instance Response", err.Error())
 		return nil, diags
 	}
-	if inst.ID != id {
+	if !pubid.Equal(inst.ID, id) {
 		diags.AddError(
 			"This instance read did not identify the requested instance",
 			fmt.Sprintf("The response does not carry the id this path asks for (%q). Whatever "+

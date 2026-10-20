@@ -74,23 +74,15 @@ func PutDefaultTags(ctx context.Context, c *client.Client, tenantID string, tags
 	return body.Tags, nil
 }
 
-// CheckTenantID returns why id cannot be a tenant id, or "": uuid.Parse, as
-// identity parses the path segment, in the canonical spelling (the same
-// convergence rule as CheckOrganizationID).
+// CheckTenantID returns why id cannot be a tenant id, or "": a ten_ public id
+// or a canonical UUID (the same convergence rule as CheckOrganizationID).
 func CheckTenantID(id string) string {
-	canonical, err := CanonicalUUID(id)
-	if err != nil {
-		return fmt.Sprintf("%q is not a tenant id (a UUID).", clip(id))
-	}
-	if canonical != id {
-		return fmt.Sprintf("Write the tenant id as %q, the form the platform reports.", canonical)
-	}
-	return ""
+	return checkID(id, "ten", "a", "tenant id", "ten_7Hq2kXbV9mRtLp3nWc8sYd")
 }
 
 // TenantIDValidator validates a tenant id (CheckTenantID).
 func TenantIDValidator() validator.String {
-	return checkValidator{"Invalid Tenant ID", "a tenant id (UUID)", CheckTenantID}
+	return checkValidator{"Invalid Tenant ID", "a tenant id (`ten_` public id or UUID)", CheckTenantID}
 }
 
 // DefaultTagsValidator checks a tenant default-tag set against identity's

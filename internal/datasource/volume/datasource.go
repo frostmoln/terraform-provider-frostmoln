@@ -40,6 +40,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
 )
 
@@ -84,7 +85,6 @@ type volumeModel struct {
 // VolumeAttachment fields is omitempty), so rows render with values, never
 // nulls.
 type volumeAttachmentRowModel struct {
-	ID         types.String `tfsdk:"id"`
 	VolumeID   types.String `tfsdk:"volume_id"`
 	InstanceID types.String `tfsdk:"instance_id"`
 	Device     types.String `tfsdk:"device"`
@@ -119,8 +119,9 @@ type apiVolume struct {
 	UpdatedAt        string                `json:"updatedAt"`
 }
 
+// apiVolumeAttachment carries no attachment id: it is a Cinder row id with no
+// public kind, which storage drops from the customer DTO (ADR-0129).
 type apiVolumeAttachment struct {
-	ID         string `json:"id"`
 	VolumeID   string `json:"volumeId"`
 	InstanceID string `json:"instanceId"`
 	Device     string `json:"device"`
@@ -144,7 +145,7 @@ func (d *volumeDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 
 			"This is how a configuration reaches a volume that Terraform did not create: a " +
 			"volume provisioned in the portal or with `fm` can today be referenced only by a " +
-			"hardcoded UUID or plumbed through `terraform_remote_state` — both of which tie the " +
+			"hardcoded id or plumbed through `terraform_remote_state` — both of which tie the " +
 			"configuration to one deployment. Look it up by name instead and the reference " +
 			"survives re-provisioning elsewhere.\n\n" +
 
@@ -213,10 +214,6 @@ func (d *volumeDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 				Computed: true,
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
-						"id": schema.StringAttribute{
-							Description: "The unique identifier of the attachment.",
-							Computed:    true,
-						},
 						"volume_id": schema.StringAttribute{
 							Description: "The ID of the attached volume — the same volume this " +
 								"data source resolved.",
@@ -385,7 +382,7 @@ func (d *volumeDataSource) readByID(ctx context.Context, id string) (*apiVolume,
 		diags.AddError("Failed to Parse Volume Response", err.Error())
 		return nil, diags
 	}
-	if vol.ID != id {
+	if !pubid.Equal(vol.ID, id) {
 		diags.AddError(
 			"This volume read did not identify the requested volume",
 			fmt.Sprintf("The response does not carry the id this path asks for (%q). Whatever "+
@@ -529,7 +526,6 @@ func setInstanceState(ctx context.Context, state *volumeModel, vol *apiVolume, d
 	for i := range vol.Attachments {
 		att := &vol.Attachments[i]
 		rows = append(rows, volumeAttachmentRowModel{
-			ID:         types.StringValue(att.ID),
 			VolumeID:   types.StringValue(att.VolumeID),
 			InstanceID: types.StringValue(att.InstanceID),
 			Device:     types.StringValue(att.Device),
@@ -574,7 +570,6 @@ func setInstanceState(ctx context.Context, state *volumeModel, vol *apiVolume, d
 func attachmentRowObjectType() attr.Type {
 	return types.ObjectType{
 		AttrTypes: map[string]attr.Type{
-			"id":          types.StringType,
 			"volume_id":   types.StringType,
 			"instance_id": types.StringType,
 			"device":      types.StringType,

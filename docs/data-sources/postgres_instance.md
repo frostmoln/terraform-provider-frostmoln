@@ -4,7 +4,7 @@ page_title: "frostmoln_postgres_instance Data Source - Frostmoln"
 subcategory: ""
 description: |-
   Look up a PostgreSQL instance by ID or name. Exactly one of id or name must be specified.
-  This is how a configuration reaches a database that Terraform did not create: an instance provisioned in the portal or with fm can today be referenced only by a hardcoded UUID or plumbed through terraform_remote_state — both of which tie the configuration to one deployment. Look it up by name instead and the reference survives re-provisioning elsewhere.
+  This is how a configuration reaches a database that Terraform did not create: an instance provisioned in the portal or with fm can today be referenced only by a hardcoded id or plumbed through terraform_remote_state — both of which tie the configuration to one deployment. Look it up by name instead and the reference survives re-provisioning elsewhere.
   A name lookup that matches NOTHING fails the read, and so does one that matches MORE THAN ONE instance: the data source refuses to pick for you (the diagnostic names the colliding ids). A mysql instance never satisfies this data source, by id or by name — use frostmoln_mysql_instance. There is no composed endpoint attribute: the platform serves the instance's address as private_ip/public_ip plus port, which is the wire shape every client composes from.
 ---
 
@@ -12,7 +12,7 @@ description: |-
 
 Look up a PostgreSQL instance by ID or name. Exactly one of `id` or `name` must be specified.
 
-This is how a configuration reaches a database that Terraform did not create: an instance provisioned in the portal or with `fm` can today be referenced only by a hardcoded UUID or plumbed through `terraform_remote_state` — both of which tie the configuration to one deployment. Look it up by name instead and the reference survives re-provisioning elsewhere.
+This is how a configuration reaches a database that Terraform did not create: an instance provisioned in the portal or with `fm` can today be referenced only by a hardcoded id or plumbed through `terraform_remote_state` — both of which tie the configuration to one deployment. Look it up by name instead and the reference survives re-provisioning elsewhere.
 
 A name lookup that matches NOTHING fails the read, and so does one that matches MORE THAN ONE instance: the data source refuses to pick for you (the diagnostic names the colliding ids). A `mysql` instance never satisfies this data source, by id or by name — use `frostmoln_mysql_instance`. There is no composed `endpoint` attribute: the platform serves the instance's address as `private_ip`/`public_ip` plus `port`, which is the wire shape every client composes from.
 
@@ -20,7 +20,7 @@ A name lookup that matches NOTHING fails the read, and so does one that matches 
 
 ```terraform
 # Resolve a PostgreSQL instance that Terraform did not create
-# (provisioned in the portal or with `fm`) by NAME — no hardcoded UUID.
+# (provisioned in the portal or with `fm`) by NAME — no hardcoded id.
 data "frostmoln_postgres_instance" "billing" {
   name = "billing"
 }
@@ -32,7 +32,7 @@ locals {
   billing_address = coalesce(data.frostmoln_postgres_instance.billing.public_ip, data.frostmoln_postgres_instance.billing.private_ip)
 }
 
-# A lookup by id behaves identically for instances whose UUID is already known.
+# A lookup by id behaves identically for instances whose id is already known.
 data "frostmoln_postgres_instance" "by_id" {
   id = data.frostmoln_postgres_instance.billing.id
 }

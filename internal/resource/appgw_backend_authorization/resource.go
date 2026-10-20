@@ -5,6 +5,7 @@ package appgw_backend_authorization
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -17,9 +18,9 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
-	"net/http"
 )
 
 var (
@@ -253,7 +254,7 @@ func (r *authorizationResource) find(ctx context.Context, gwID, id string) (*api
 		return nil, err
 	}
 	for i := range list.Items {
-		if list.Items[i].ID == id {
+		if pubid.Equal(list.Items[i].ID, id) {
 			return &list.Items[i], nil
 		}
 	}
@@ -387,7 +388,7 @@ func (r *authorizationResource) Read(ctx context.Context, req resource.ReadReque
 	}
 	want := state.ID.ValueString()
 	for i := range list.Items {
-		if list.Items[i].ID == want {
+		if pubid.Equal(list.Items[i].ID, want) {
 			poolID, backendID := state.PoolID, state.BackendID
 			adopt, wasAdopted := state.AdoptExisting, state.Adopted
 			state.fromAPI(&list.Items[i])

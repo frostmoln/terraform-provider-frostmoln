@@ -4,7 +4,7 @@ page_title: "frostmoln_volume Data Source - Frostmoln"
 subcategory: ""
 description: |-
   Look up a block storage volume by ID or name. Exactly one of id or name must be specified.
-  This is how a configuration reaches a volume that Terraform did not create: a volume provisioned in the portal or with fm can today be referenced only by a hardcoded UUID or plumbed through terraform_remote_state — both of which tie the configuration to one deployment. Look it up by name instead and the reference survives re-provisioning elsewhere.
+  This is how a configuration reaches a volume that Terraform did not create: a volume provisioned in the portal or with fm can today be referenced only by a hardcoded id or plumbed through terraform_remote_state — both of which tie the configuration to one deployment. Look it up by name instead and the reference survives re-provisioning elsewhere.
   A name lookup that matches NOTHING fails the read, and so does one that matches MORE THAN ONE volume: the data source refuses to pick for you (the diagnostic names the colliding ids). The list request carries the name as the service's exact-match filter, but the match is re-verified client-side over the answer — a filter narrows the search, it never earns the resolution.
   attachments shows what consumes the volume: one row per attachment, carrying the consuming instance's id and the device path it occupies — the same rows the portal's volume panel shows. A volume nothing consumes renders an empty list, never null.
 ---
@@ -13,7 +13,7 @@ description: |-
 
 Look up a block storage volume by ID or name. Exactly one of `id` or `name` must be specified.
 
-This is how a configuration reaches a volume that Terraform did not create: a volume provisioned in the portal or with `fm` can today be referenced only by a hardcoded UUID or plumbed through `terraform_remote_state` — both of which tie the configuration to one deployment. Look it up by name instead and the reference survives re-provisioning elsewhere.
+This is how a configuration reaches a volume that Terraform did not create: a volume provisioned in the portal or with `fm` can today be referenced only by a hardcoded id or plumbed through `terraform_remote_state` — both of which tie the configuration to one deployment. Look it up by name instead and the reference survives re-provisioning elsewhere.
 
 A name lookup that matches NOTHING fails the read, and so does one that matches MORE THAN ONE volume: the data source refuses to pick for you (the diagnostic names the colliding ids). The list request carries the name as the service's exact-match filter, but the match is re-verified client-side over the answer — a filter narrows the search, it never earns the resolution.
 
@@ -23,7 +23,7 @@ A name lookup that matches NOTHING fails the read, and so does one that matches 
 
 ```terraform
 # Resolve a block volume that Terraform did not create
-# (provisioned in the portal or with `fm`) by NAME — no hardcoded UUID.
+# (provisioned in the portal or with `fm`) by NAME — no hardcoded id.
 # (A bucket's name IS its id; a volume's id is distinct from its name, so a
 # resolved id is what every other reference takes.)
 data "frostmoln_volume" "data_disk" {
@@ -87,6 +87,5 @@ Read-Only:
 
 - `attached_at` (String) The timestamp when the volume was attached.
 - `device` (String) The device path on the instance (e.g. /dev/vdb).
-- `id` (String) The unique identifier of the attachment.
 - `instance_id` (String) The ID of the instance the volume is attached to — the consumer.
 - `volume_id` (String) The ID of the attached volume — the same volume this data source resolved.

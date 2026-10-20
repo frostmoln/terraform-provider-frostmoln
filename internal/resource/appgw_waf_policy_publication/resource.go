@@ -35,6 +35,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
@@ -835,7 +836,7 @@ func (r *publicationResource) findDryRun(ctx context.Context, base, id string) (
 		return nil, err
 	}
 	for i := range list.DryRuns {
-		if list.DryRuns[i].ID == id {
+		if pubid.Equal(list.DryRuns[i].ID, id) {
 			return &list.DryRuns[i], nil
 		}
 	}

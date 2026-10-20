@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 )
 
 var _ datasource.DataSource = &imageDataSource{}
@@ -162,7 +163,7 @@ func (d *imageDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	var found *apiImage
 	for i := range list.Images {
 		img := &list.Images[i]
-		if idSet && img.ID == state.ID.ValueString() {
+		if idSet && pubid.Equal(img.ID, state.ID.ValueString()) {
 			found = img
 			break
 		}

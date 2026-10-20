@@ -47,6 +47,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 )
 
 var _ datasource.DataSource = &loadBalancerDataSource{}
@@ -133,7 +134,7 @@ func (d *loadBalancerDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 
 			"This is how a configuration reaches a load balancer that Terraform did not create: " +
 			"a load balancer provisioned in the portal or with `fm` can today be referenced only " +
-			"by a hardcoded UUID or plumbed through `terraform_remote_state`. Look it up by name " +
+			"by a hardcoded id or plumbed through `terraform_remote_state`. Look it up by name " +
 			"instead and the reference survives re-provisioning elsewhere. The optional `vpc_id` " +
 			"narrows a name lookup (the `vpcId` filter rides the request) and is echoed back " +
 			"from the read.\n\n" +
@@ -344,7 +345,7 @@ func (d *loadBalancerDataSource) readByID(ctx context.Context, id string) (*apiL
 		diags.AddError("Failed to Parse Load Balancer Response", err.Error())
 		return nil, diags
 	}
-	if lb.ID != id {
+	if !pubid.Equal(lb.ID, id) {
 		diags.AddError(
 			"This load balancer read did not identify the requested load balancer",
 			fmt.Sprintf("The response does not carry the id this path asks for (%q). Whatever "+
@@ -404,7 +405,7 @@ func (d *loadBalancerDataSource) resolveByName(ctx context.Context, name, vpcID 
 			if lb.Name != name {
 				continue
 			}
-			if vpcID != "" && lb.VPCID != vpcID {
+			if vpcID != "" && !pubid.Equal(lb.VPCID, vpcID) {
 				continue
 			}
 			matches = append(matches, *lb)

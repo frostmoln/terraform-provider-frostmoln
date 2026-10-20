@@ -18,6 +18,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
@@ -310,7 +311,9 @@ func (r *publicIPResource) ModifyPlan(ctx context.Context, req resource.ModifyPl
 		return
 	}
 
-	if plan.InstanceID.Equal(state.InstanceID) {
+	// The same instance in another id spelling is no move (ADR-0129).
+	if plan.InstanceID.Equal(state.InstanceID) ||
+		(!plan.InstanceID.IsUnknown() && pubid.Equal(plan.InstanceID.ValueString(), state.InstanceID.ValueString())) {
 		return
 	}
 
@@ -781,7 +784,7 @@ func (r *publicIPResource) Update(ctx context.Context, req resource.UpdateReques
 		newInstanceID = plan.InstanceID.ValueString()
 	}
 
-	if oldInstanceID != newInstanceID {
+	if !pubid.Equal(oldInstanceID, newInstanceID) {
 		// Disassociate if previously associated
 		if oldInstanceID != "" {
 			if !r.detachFromRecordedInstance(ctx, fipID, oldInstanceID, newInstanceID, budgets.Update, &resp.Diagnostics) {

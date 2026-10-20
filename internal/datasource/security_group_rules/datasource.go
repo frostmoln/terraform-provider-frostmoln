@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 )
 
 var _ datasource.DataSource = &securityGroupRulesDataSource{}
@@ -292,7 +293,7 @@ func (d *securityGroupRulesDataSource) Read(ctx context.Context, req datasource.
 	// `id`, and an answer that names that group IS the contract — with the
 	// set, or without it. Anything that does not name the group is refused,
 	// never rendered as an empty table.
-	if sg.ID != sgID {
+	if !pubid.Equal(sg.ID, sgID) {
 		resp.Diagnostics.AddError(
 			"This security group's read did not identify the requested group",
 			fmt.Sprintf("The response does not carry the id of the security group this path asks "+

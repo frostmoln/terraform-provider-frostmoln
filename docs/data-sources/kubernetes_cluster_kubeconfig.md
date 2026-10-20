@@ -4,7 +4,7 @@ page_title: "frostmoln_kubernetes_cluster_kubeconfig Data Source - Frostmoln"
 subcategory: ""
 description: |-
   Fetch the kubeconfig of a managed Kubernetes cluster, resolved by ID or name. Exactly one of id or name must be specified.
-  This is the credential half of reaching a cluster that Terraform did not create: a cluster provisioned in the portal or with fm can today be referenced only by a hardcoded UUID, so look it up by name. The non-secret attributes of the same cluster (endpoint, CIDRs, tier, the CA cert hash) live on frostmoln_kubernetes_cluster.
+  This is the credential half of reaching a cluster that Terraform did not create: a cluster provisioned in the portal or with fm can today be referenced only by a hardcoded id, so look it up by name. The non-secret attributes of the same cluster (endpoint, CIDRs, tier, the CA cert hash) live on frostmoln_kubernetes_cluster.
   A name lookup that matches nothing — or more than one cluster — fails the read, and a soft-deleted cluster (the deleted row answers 200 with status deleted forever) is reported as ABSENT on both paths. The service refuses the kubeconfig read until the cluster is serviceable: an EMPTY kubeconfig on a 200 fails the read instead of rendering empty credential material — the cluster may simply not be serviceable yet.
   API-key callers need the kubernetes:read scope.
 ---
@@ -13,7 +13,7 @@ description: |-
 
 Fetch the kubeconfig of a managed Kubernetes cluster, resolved by ID or name. Exactly one of `id` or `name` must be specified.
 
-This is the credential half of reaching a cluster that Terraform did not create: a cluster provisioned in the portal or with `fm` can today be referenced only by a hardcoded UUID, so look it up by name. The non-secret attributes of the same cluster (endpoint, CIDRs, tier, the CA cert hash) live on `frostmoln_kubernetes_cluster`.
+This is the credential half of reaching a cluster that Terraform did not create: a cluster provisioned in the portal or with `fm` can today be referenced only by a hardcoded id, so look it up by name. The non-secret attributes of the same cluster (endpoint, CIDRs, tier, the CA cert hash) live on `frostmoln_kubernetes_cluster`.
 
 A name lookup that matches nothing — or more than one cluster — fails the read, and a soft-deleted cluster (the deleted row answers 200 with status `deleted` forever) is reported as ABSENT on both paths. The service refuses the kubeconfig read until the cluster is serviceable: an EMPTY kubeconfig on a 200 fails the read instead of rendering empty credential material — the cluster may simply not be serviceable yet.
 
@@ -23,7 +23,7 @@ API-key callers need the `kubernetes:read` scope.
 
 ```terraform
 # Resolve a managed Kubernetes cluster by NAME and fetch its kubeconfig —
-# no hardcoded UUID (a portal- or `fm`-created cluster is otherwise reachable
+# no hardcoded id (a portal- or `fm`-created cluster is otherwise reachable
 # only by its id).
 data "frostmoln_kubernetes_cluster_kubeconfig" "billing" {
   name = "billing-prod"

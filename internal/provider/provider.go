@@ -76,6 +76,7 @@ import (
 	volumetiersds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/volume_tiers"
 	vpcds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/vpc"
 	vpcroutesds "go.frostmoln.internal/terraform-provider-frostmoln/internal/datasource/vpc_routes"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/idform"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/apache_instance"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/api_key"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/appgw_backend"
@@ -730,189 +731,206 @@ func stringValue(s types.String) string {
 	return s.ValueString()
 }
 
+// Resources returns every resource wrapped by idform, which carries state
+// through the switch to public ids (schema version bump, upgrader, replace
+// guard; see the idform package).
 func (p *FrostmolnProvider) Resources(_ context.Context) []func() resource.Resource {
-	return []func() resource.Resource{
-		ssh_key.NewResource,
-		bucket.NewResource,
-		bucket_cors_configuration.NewResource,
-		bucket_lifecycle_configuration.NewResource,
-		s3_credential.NewResource,
-		container_registry.NewResource,
-		container_registry_credential.NewResource,
-		container_registry_retention.NewResource,
-		// One pull-through cache. Immutable end to end: the API has no update
-		// route, so every argument is RequiresReplace — including the write-only
-		// upstream password, whose missing RequiresReplace would report a
-		// successful apply that changed nothing on the server.
-		container_registry_cache.NewResource,
-		vpc.NewResource,
-		vpc_route.NewResource,
-		subnet.NewResource,
-		security_group.NewResource,
-		security_group_rule.NewResource,
-		public_ip.NewResource,
-		public_ip_association.NewResource,
-		dns_zone.NewResource,
-		gateway.NewResource,
-		dns_record.NewResource,
-		load_balancer.NewResource,
-		lb_listener.NewResource,
-
-		// Application Gateway. Ordered parent-first so the family reads as the
-		// object graph it is: a gateway, its listeners and their routes, its
-		// pools and their backends, and the WAF policy over all of it.
-		appgw_config_apply.NewResource,
-		application_gateway.NewResource,
-		appgw_listener.NewResource,
-		appgw_route.NewResource,
-		appgw_backend_pool.NewResource,
-		appgw_backend.NewResource,
-		appgw_backend_authorization.NewResource,
-		appgw_health_check.NewResource,
-		appgw_certificate.NewResource,
-		appgw_waf_policy.NewResource,
-		appgw_waf_rule.NewResource,
-		appgw_waf_exclusion.NewResource,
-		appgw_waf_policy_attachment.NewResource,
-		appgw_waf_policy_publication.NewResource,
-		lb_pool.NewResource,
-		lb_member.NewResource,
-		lb_health_monitor.NewResource,
-		volume.NewResource,
-		volume_attachment.NewResource,
-		snapshot.NewResource,
-		image.NewResource,
-		instance.NewResource,
-		instance_port_security_groups.NewResource,
-		kubernetes_cluster.NewResource,
-		kubernetes_node_pool.NewResource,
-		launch_template.NewResource,
-		postgres_instance.NewResource,
-		postgres_backup.NewResource,
-		postgres_read_replica.NewResource,
-		mysql_instance.NewResource,
-		mysql_backup.NewResource,
-		mysql_read_replica.NewResource,
-		redis_instance.NewResource,
-		valkey_instance.NewResource,
-		messaging_instance.NewResource,
-		messaging_vhost.NewResource,
-		messaging_user.NewResource,
-		messaging_permission.NewResource,
-		scale_group.NewResource,
-		secret.NewResource,
-		api_key.NewResource,
-		iam_policy.NewResource,
-		iam_policy_attachment.NewResource,
-		apache_instance.NewResource,
-		nginx_instance.NewResource,
-		webserver_domain.NewResource,
-		webserver_deployment.NewResource,
-		workload_identity_binding.NewResource,
-		// Organization-wide display settings: one tag colour rule per resource.
-		tag_color.NewResource,
-		// A tenant's one default-tag set. Its `tags` is the SETTING, not tags on
-		// the resource itself, so it has no tags_all (default_tags_contract_test).
-		tenant_default_tags.NewResource,
+	out := make([]func() resource.Resource, 0, len(resourceFactories))
+	for _, f := range resourceFactories {
+		out = append(out, func() resource.Resource { return idform.Wrap(f()) })
 	}
+	return out
 }
 
+var resourceFactories = []func() resource.Resource{
+	ssh_key.NewResource,
+	bucket.NewResource,
+	bucket_cors_configuration.NewResource,
+	bucket_lifecycle_configuration.NewResource,
+	s3_credential.NewResource,
+	container_registry.NewResource,
+	container_registry_credential.NewResource,
+	container_registry_retention.NewResource,
+	// One pull-through cache. Immutable end to end: the API has no update
+	// route, so every argument is RequiresReplace — including the write-only
+	// upstream password, whose missing RequiresReplace would report a
+	// successful apply that changed nothing on the server.
+	container_registry_cache.NewResource,
+	vpc.NewResource,
+	vpc_route.NewResource,
+	subnet.NewResource,
+	security_group.NewResource,
+	security_group_rule.NewResource,
+	public_ip.NewResource,
+	public_ip_association.NewResource,
+	dns_zone.NewResource,
+	gateway.NewResource,
+	dns_record.NewResource,
+	load_balancer.NewResource,
+	lb_listener.NewResource,
+
+	// Application Gateway. Ordered parent-first so the family reads as the
+	// object graph it is: a gateway, its listeners and their routes, its
+	// pools and their backends, and the WAF policy over all of it.
+	appgw_config_apply.NewResource,
+	application_gateway.NewResource,
+	appgw_listener.NewResource,
+	appgw_route.NewResource,
+	appgw_backend_pool.NewResource,
+	appgw_backend.NewResource,
+	appgw_backend_authorization.NewResource,
+	appgw_health_check.NewResource,
+	appgw_certificate.NewResource,
+	appgw_waf_policy.NewResource,
+	appgw_waf_rule.NewResource,
+	appgw_waf_exclusion.NewResource,
+	appgw_waf_policy_attachment.NewResource,
+	appgw_waf_policy_publication.NewResource,
+	lb_pool.NewResource,
+	lb_member.NewResource,
+	lb_health_monitor.NewResource,
+	volume.NewResource,
+	volume_attachment.NewResource,
+	snapshot.NewResource,
+	image.NewResource,
+	instance.NewResource,
+	instance_port_security_groups.NewResource,
+	kubernetes_cluster.NewResource,
+	kubernetes_node_pool.NewResource,
+	launch_template.NewResource,
+	postgres_instance.NewResource,
+	postgres_backup.NewResource,
+	postgres_read_replica.NewResource,
+	mysql_instance.NewResource,
+	mysql_backup.NewResource,
+	mysql_read_replica.NewResource,
+	redis_instance.NewResource,
+	valkey_instance.NewResource,
+	messaging_instance.NewResource,
+	messaging_vhost.NewResource,
+	messaging_user.NewResource,
+	messaging_permission.NewResource,
+	scale_group.NewResource,
+	secret.NewResource,
+	api_key.NewResource,
+	iam_policy.NewResource,
+	iam_policy_attachment.NewResource,
+	apache_instance.NewResource,
+	nginx_instance.NewResource,
+	webserver_domain.NewResource,
+	webserver_deployment.NewResource,
+	workload_identity_binding.NewResource,
+	// Organization-wide display settings: one tag colour rule per resource.
+	tag_color.NewResource,
+	// A tenant's one default-tag set. Its `tags` is the SETTING, not tags on
+	// the resource itself, so it has no tags_all (default_tags_contract_test).
+	tenant_default_tags.NewResource,
+}
+
+// DataSources returns every data source wrapped by idform, which keeps a
+// configured id in the spelling the configuration wrote.
 func (p *FrostmolnProvider) DataSources(_ context.Context) []func() datasource.DataSource {
-	return []func() datasource.DataSource{
-		imageds.NewDataSource,
-		// Read-only: the RESOURCE of the same name opts the tenant in and starts
-		// billable storage, so a config that only consumes a registry someone
-		// else owns needs a path that cannot create one.
-		dscontainerregistry.NewDataSource,
-		// The registry's image inventory, read-only in both directions: which
-		// repositories exist, and what is inside one of them. Neither has a
-		// resource counterpart — a `docker push` owns that lifecycle, not
-		// Terraform.
-		dscontainerregistryrepositories.NewDataSource,
-		dscontainerregistryartifacts.NewDataSource,
-		// The upstream catalog a pull-through cache may front. It is a data
-		// source rather than a constant on purpose: the set is server-owned and
-		// rows are retired without a provider release, so any copy held here
-		// would refuse a key the server accepts.
-		dscontainerregistrycacheupstreams.NewDataSource,
-		appgwflavorsds.NewDataSource,
-		// Two sources rather than one with an owner argument: a tenant's rules
-		// and the platform's are managed by entirely different means, and a
-		// forgotten filter argument would silently iterate the wrong set.
-		appgwwafrulesds.NewTenantDataSource,
-		appgwwafrulesds.NewPlatformDataSource,
-		imagesds.NewDataSource,
-		flavords.NewDataSource,
-		flavorsds.NewDataSource,
-		vpcds.NewDataSource,
-		// The VPC's tenant-visible route table. READ-ONLY: `frostmoln_vpc_route`
-		// is deliberately one resource per route and owns no table, so an
-		// out-of-band addition is invisible to every plan — this listing is what
-		// a check block pins to turn that drift into a failed plan.
-		vpcroutesds.NewDataSource,
-		subnetds.NewDataSource,
-		// The security group's whole stored rule set. READ-ONLY: rules are one
-		// resource per rule and the group manages the group and nothing else, so
-		// a rule added out of band is invisible to every plan — this listing is
-		// what a check block pins to turn that drift into a failed plan (the
-		// group read embeds its rules; rules have no GET of their own).
-		securitygrouprulesds.NewDataSource,
-		dnszoneds.NewDataSource,
-		gatewayds.NewDataSource,
-		publicipds.NewDataSource,
-		instanceds.NewDataSource,
-		// The name→id resolvers for the eight offers that had none (audit S3) —
-		// an object created outside Terraform (portal, fm CLI) could be
-		// referenced only by a hardcoded UUID or through terraform_remote_state,
-		// and these nine data sources break that: postgres/mysql instances (the
-		// /databases surface carries both types; each resolves only its own),
-		// the Application Gateway (whose eleven child resources all take a
-		// required gateway_id with no lookup anywhere), the managed Kubernetes
-		// cluster, load balancers, buckets, volumes and security groups.
-		// Each resolver is vpc-shaped (id or name, exactly one) and refuses both
-		// absence and ambiguity rather than picking for the practitioner.
-		postgresinstanceds.NewDataSource,
-		mysqlinstanceds.NewDataSource,
-		applicationgatewayds.NewDataSource,
-		// The kubeconfig data source pairs with the cluster resolver and is the
-		// cross-provider composition enabler (endpoint + kubeconfig blob) for
-		// the kubernetes and helm providers. The kubeconfig is secret material
-		// (Sensitive); the resolver exports only the non-secret pairing
-		// (ca_cert_hash).
-		kubernetesclusterds.NewDataSource,
-		kubernetesclusterkubeconfigds.NewDataSource,
-		loadbalancerds.NewDataSource,
-		bucketds.NewDataSource,
-		volumeds.NewDataSource,
-		// The security-group resolver feeds frostmoln_security_group_rules, the
-		// one-owner rules listing.
-		securitygroupds.NewDataSource,
-		postgresversionsds.NewDataSource,
-		mysqlversionsds.NewDataSource,
-		databasetypesds.NewDataSource,
-		redisinstanceds.NewDataSource,
-		valkeyinstanceds.NewDataSource,
-		messaginginstanceds.NewDataSource,
-		messagingvhostds.NewDataSource,
-		messaginguserds.NewDataSource,
-		messagingpermissionds.NewDataSource,
-		secretds.NewDataSource,
-		apacheinstanceds.NewDataSource,
-		nginxinstanceds.NewDataSource,
-		regionsds.NewDataSource,
-		volumetiersds.NewDataSource,
-		apikeyscopesds.NewDataSource,
-		kubernetesversionsds.NewDataSource,
-		kubernetestiersds.NewDataSource,
-		kubernetesflavorsds.NewDataSource,
-		kubernetesaddonsds.NewDataSource,
-		kubernetesaddonversionsds.NewDataSource,
-		kubernetesclusteraddonsds.NewDataSource,
-		iampolicydocumentds.NewDataSource,
-		// Every colour rule of an organization, portal-made ones included, with
-		// the ids frostmoln_tag_color imports by.
-		tagcolorsds.NewDataSource,
-		tenantdefaulttagsds.NewDataSource,
-		tenantquotasds.NewDataSource,
+	out := make([]func() datasource.DataSource, 0, len(dataSourceFactories))
+	for _, f := range dataSourceFactories {
+		out = append(out, func() datasource.DataSource { return idform.WrapDataSource(f()) })
 	}
+	return out
+}
+
+var dataSourceFactories = []func() datasource.DataSource{
+	imageds.NewDataSource,
+	// Read-only: the RESOURCE of the same name opts the tenant in and starts
+	// billable storage, so a config that only consumes a registry someone
+	// else owns needs a path that cannot create one.
+	dscontainerregistry.NewDataSource,
+	// The registry's image inventory, read-only in both directions: which
+	// repositories exist, and what is inside one of them. Neither has a
+	// resource counterpart — a `docker push` owns that lifecycle, not
+	// Terraform.
+	dscontainerregistryrepositories.NewDataSource,
+	dscontainerregistryartifacts.NewDataSource,
+	// The upstream catalog a pull-through cache may front. It is a data
+	// source rather than a constant on purpose: the set is server-owned and
+	// rows are retired without a provider release, so any copy held here
+	// would refuse a key the server accepts.
+	dscontainerregistrycacheupstreams.NewDataSource,
+	appgwflavorsds.NewDataSource,
+	// Two sources rather than one with an owner argument: a tenant's rules
+	// and the platform's are managed by entirely different means, and a
+	// forgotten filter argument would silently iterate the wrong set.
+	appgwwafrulesds.NewTenantDataSource,
+	appgwwafrulesds.NewPlatformDataSource,
+	imagesds.NewDataSource,
+	flavords.NewDataSource,
+	flavorsds.NewDataSource,
+	vpcds.NewDataSource,
+	// The VPC's tenant-visible route table. READ-ONLY: `frostmoln_vpc_route`
+	// is deliberately one resource per route and owns no table, so an
+	// out-of-band addition is invisible to every plan — this listing is what
+	// a check block pins to turn that drift into a failed plan.
+	vpcroutesds.NewDataSource,
+	subnetds.NewDataSource,
+	// The security group's whole stored rule set. READ-ONLY: rules are one
+	// resource per rule and the group manages the group and nothing else, so
+	// a rule added out of band is invisible to every plan — this listing is
+	// what a check block pins to turn that drift into a failed plan (the
+	// group read embeds its rules; rules have no GET of their own).
+	securitygrouprulesds.NewDataSource,
+	dnszoneds.NewDataSource,
+	gatewayds.NewDataSource,
+	publicipds.NewDataSource,
+	instanceds.NewDataSource,
+	// The name→id resolvers for the eight offers that had none (audit S3) —
+	// an object created outside Terraform (portal, fm CLI) could be
+	// referenced only by a hardcoded UUID or through terraform_remote_state,
+	// and these nine data sources break that: postgres/mysql instances (the
+	// /databases surface carries both types; each resolves only its own),
+	// the Application Gateway (whose eleven child resources all take a
+	// required gateway_id with no lookup anywhere), the managed Kubernetes
+	// cluster, load balancers, buckets, volumes and security groups.
+	// Each resolver is vpc-shaped (id or name, exactly one) and refuses both
+	// absence and ambiguity rather than picking for the practitioner.
+	postgresinstanceds.NewDataSource,
+	mysqlinstanceds.NewDataSource,
+	applicationgatewayds.NewDataSource,
+	// The kubeconfig data source pairs with the cluster resolver and is the
+	// cross-provider composition enabler (endpoint + kubeconfig blob) for
+	// the kubernetes and helm providers. The kubeconfig is secret material
+	// (Sensitive); the resolver exports only the non-secret pairing
+	// (ca_cert_hash).
+	kubernetesclusterds.NewDataSource,
+	kubernetesclusterkubeconfigds.NewDataSource,
+	loadbalancerds.NewDataSource,
+	bucketds.NewDataSource,
+	volumeds.NewDataSource,
+	// The security-group resolver feeds frostmoln_security_group_rules, the
+	// one-owner rules listing.
+	securitygroupds.NewDataSource,
+	postgresversionsds.NewDataSource,
+	mysqlversionsds.NewDataSource,
+	databasetypesds.NewDataSource,
+	redisinstanceds.NewDataSource,
+	valkeyinstanceds.NewDataSource,
+	messaginginstanceds.NewDataSource,
+	messagingvhostds.NewDataSource,
+	messaginguserds.NewDataSource,
+	messagingpermissionds.NewDataSource,
+	secretds.NewDataSource,
+	apacheinstanceds.NewDataSource,
+	nginxinstanceds.NewDataSource,
+	regionsds.NewDataSource,
+	volumetiersds.NewDataSource,
+	apikeyscopesds.NewDataSource,
+	kubernetesversionsds.NewDataSource,
+	kubernetestiersds.NewDataSource,
+	kubernetesflavorsds.NewDataSource,
+	kubernetesaddonsds.NewDataSource,
+	kubernetesaddonversionsds.NewDataSource,
+	kubernetesclusteraddonsds.NewDataSource,
+	iampolicydocumentds.NewDataSource,
+	// Every colour rule of an organization, portal-made ones included, with
+	// the ids frostmoln_tag_color imports by.
+	tagcolorsds.NewDataSource,
+	tenantdefaulttagsds.NewDataSource,
+	tenantquotasds.NewDataSource,
 }

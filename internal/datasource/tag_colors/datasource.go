@@ -157,11 +157,8 @@ func (d *tagColorsDataSource) Read(ctx context.Context, req datasource.ReadReque
 
 	state := tagColorsModel{Rules: list, OrganizationID: types.StringNull()}
 	if orgID != "" {
-		// The platform reports the canonical form already; normalising keeps the
-		// value equal to what a frostmoln_tag_color records for the same org.
-		if canonical, err := tagsettings.CanonicalUUID(orgID); err == nil {
-			orgID = canonical
-		}
+		// The platform's own spelling, which is what a frostmoln_tag_color
+		// records for the same org when organization_id is not configured.
 		state.OrganizationID = types.StringValue(orgID)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)

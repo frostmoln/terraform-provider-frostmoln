@@ -4,7 +4,7 @@ page_title: "frostmoln_kubernetes_cluster Data Source - Frostmoln"
 subcategory: ""
 description: |-
   Look up a managed Kubernetes cluster by ID or name. Exactly one of id or name must be specified.
-  This is how a configuration reaches a cluster that Terraform did not create: a cluster provisioned in the portal or with fm can today be referenced only by a hardcoded UUID or plumbed through terraform_remote_state — both of which tie the configuration to one deployment. Look it up by name instead and the reference survives re-provisioning elsewhere; the endpoint and CIDRs feed other references, while the credential material is fetched separately by frostmoln_kubernetes_cluster_kubeconfig.
+  This is how a configuration reaches a cluster that Terraform did not create: a cluster provisioned in the portal or with fm can today be referenced only by a hardcoded id or plumbed through terraform_remote_state — both of which tie the configuration to one deployment. Look it up by name instead and the reference survives re-provisioning elsewhere; the endpoint and CIDRs feed other references, while the credential material is fetched separately by frostmoln_kubernetes_cluster_kubeconfig.
   A name lookup that matches NOTHING fails the read, and so does one that matches MORE THAN ONE cluster: the data source refuses to pick for you (the diagnostic names the colliding ids). Deletes are soft — a deleted cluster's row answers 200 with status deleted forever — and a deleted cluster is reported as ABSENT, on the id path and in the name search, so a gone cluster can never resolve.
   API-key callers need the kubernetes:read scope; a refused read fails on every path rather than answering with an empty row.
   The addons collection is deliberately NOT part of this schema: one collection, one owner — the addon selection (and the per-addon applied versions) is read with frostmoln_kubernetes_cluster_addons.
@@ -14,7 +14,7 @@ description: |-
 
 Look up a managed Kubernetes cluster by ID or name. Exactly one of `id` or `name` must be specified.
 
-This is how a configuration reaches a cluster that Terraform did not create: a cluster provisioned in the portal or with `fm` can today be referenced only by a hardcoded UUID or plumbed through `terraform_remote_state` — both of which tie the configuration to one deployment. Look it up by name instead and the reference survives re-provisioning elsewhere; the endpoint and CIDRs feed other references, while the credential material is fetched separately by `frostmoln_kubernetes_cluster_kubeconfig`.
+This is how a configuration reaches a cluster that Terraform did not create: a cluster provisioned in the portal or with `fm` can today be referenced only by a hardcoded id or plumbed through `terraform_remote_state` — both of which tie the configuration to one deployment. Look it up by name instead and the reference survives re-provisioning elsewhere; the endpoint and CIDRs feed other references, while the credential material is fetched separately by `frostmoln_kubernetes_cluster_kubeconfig`.
 
 A name lookup that matches NOTHING fails the read, and so does one that matches MORE THAN ONE cluster: the data source refuses to pick for you (the diagnostic names the colliding ids). Deletes are soft — a deleted cluster's row answers 200 with status `deleted` forever — and a deleted cluster is reported as ABSENT, on the id path and in the name search, so a gone cluster can never resolve.
 
@@ -26,7 +26,7 @@ The addons collection is deliberately NOT part of this schema: one collection, o
 
 ```terraform
 # Resolve a managed Kubernetes cluster that Terraform did not create
-# (provisioned in the portal or with `fm`) by NAME — no hardcoded UUID.
+# (provisioned in the portal or with `fm`) by NAME — no hardcoded id.
 data "frostmoln_kubernetes_cluster" "billing" {
   name = "billing-prod"
 }
@@ -39,7 +39,7 @@ locals {
   workloads_vpc = data.frostmoln_kubernetes_cluster.billing.vpc_id
 }
 
-# A lookup by id behaves identically for clusters whose UUID is already known.
+# A lookup by id behaves identically for clusters whose id is already known.
 data "frostmoln_kubernetes_cluster" "by_id" {
   id = data.frostmoln_kubernetes_cluster.billing.id
 }
@@ -70,7 +70,7 @@ data "frostmoln_kubernetes_cluster" "by_id" {
 - `endpoint` (String) The load-balancer VIP fronting the API server — the address kube clients reach the cluster on. Null while provisioning has not produced one.
 - `failed_step` (String) The provisioning phase the cluster failed in: one of `validation`, `control_plane`, `api_endpoint`, `addons`, `node_pool` or `provisioning`. Set only when `status` is `error`, and may be absent even then.
 - `ha_enabled` (Boolean) Whether the dedicated control plane is high-availability.
-- `load_balancer_id` (String) The ID of the load balancer behind the API endpoint — the only load balancer this surface reports.
+- `load_balancer_id` (String) Always null: the id of the load balancer behind the API endpoint is internal, has no public form, and the API no longer returns it.
 - `pod_cidr` (String) The cluster's per-cluster pod CIDR, allocated from the managed pool. Null while the platform has not allocated one.
 - `public_ip` (String) The public IP of the API endpoint, null when the endpoint is not internet-reachable (an enclave cluster's private VIP has none).
 - `region` (String) The region the cluster lives in.

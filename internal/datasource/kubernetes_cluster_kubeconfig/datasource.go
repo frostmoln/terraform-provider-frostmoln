@@ -43,6 +43,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 )
 
 var _ datasource.DataSource = &kubernetesClusterKubeconfigDataSource{}
@@ -113,7 +114,7 @@ func (d *kubernetesClusterKubeconfigDataSource) Schema(_ context.Context, _ data
 
 			"This is the credential half of reaching a cluster that Terraform did not create: " +
 			"a cluster provisioned in the portal or with `fm` can today be referenced only by a " +
-			"hardcoded UUID, so look it up by name. The non-secret attributes of the same " +
+			"hardcoded id, so look it up by name. The non-secret attributes of the same " +
 			"cluster (endpoint, CIDRs, tier, the CA cert hash) live on " +
 			"`frostmoln_kubernetes_cluster`.\n\n" +
 
@@ -294,7 +295,7 @@ func (d *kubernetesClusterKubeconfigDataSource) resolveByID(ctx context.Context,
 		diags.AddError("Failed to Parse Kubernetes Cluster Response", err.Error())
 		return nil, diags
 	}
-	if cluster.ID != id {
+	if !pubid.Equal(cluster.ID, id) {
 		diags.AddError(
 			"This cluster read did not identify the requested cluster",
 			fmt.Sprintf("The response does not carry the id this path asks for (%q). Whatever "+

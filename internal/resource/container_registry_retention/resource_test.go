@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 )
 
 const wantPath = "/v1/tenants/tenant-456/registry/retention"
@@ -440,5 +441,17 @@ func TestModifyPlanWarnsWhenDeletingMore(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSameTenantRefusesAnotherKind(t *testing.T) {
+	const u = "019a0c3e-7b10-7cc0-8a52-3f1d2e9b6a01"
+	ten, _ := pubid.Encode("ten", u)
+	vpc, _ := pubid.Encode("vpc", u)
+	if !sameTenant(ten, u) || !sameTenant(u, ten) {
+		t.Error("a tenant's public id and UUID are one tenant")
+	}
+	if sameTenant(vpc, u) || sameTenant(u, vpc) {
+		t.Error("a vpc id with the tenant's bytes passed as the tenant")
 	}
 }

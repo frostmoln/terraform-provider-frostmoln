@@ -5,6 +5,7 @@ package appgw_backend
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/netip"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
@@ -20,9 +21,9 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
-	"net/http"
 )
 
 var (
@@ -404,7 +405,7 @@ func (r *backendResource) Read(ctx context.Context, req resource.ReadRequest, re
 	}
 	want := state.ID.ValueString()
 	for i := range list.Backends {
-		if list.Backends[i].ID == want {
+		if pubid.Equal(list.Backends[i].ID, want) {
 			gwID := state.GatewayID
 			state.fromAPI(&list.Backends[i])
 			state.GatewayID = gwID
@@ -430,7 +431,7 @@ func (r *backendResource) find(ctx context.Context, gwID, poolID, id string) (*a
 		return nil, err
 	}
 	for i := range list.Backends {
-		if list.Backends[i].ID == id {
+		if pubid.Equal(list.Backends[i].ID, id) {
 			return &list.Backends[i], nil
 		}
 	}

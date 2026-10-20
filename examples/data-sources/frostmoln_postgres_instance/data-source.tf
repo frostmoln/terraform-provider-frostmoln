@@ -1,5 +1,5 @@
 # Resolve a PostgreSQL instance that Terraform did not create
-# (provisioned in the portal or with `fm`) by NAME — no hardcoded UUID.
+# (provisioned in the portal or with `fm`) by NAME — no hardcoded id.
 data "frostmoln_postgres_instance" "billing" {
   name = "billing"
 }
@@ -11,7 +11,7 @@ locals {
   billing_address = coalesce(data.frostmoln_postgres_instance.billing.public_ip, data.frostmoln_postgres_instance.billing.private_ip)
 }
 
-# A lookup by id behaves identically for instances whose UUID is already known.
+# A lookup by id behaves identically for instances whose id is already known.
 data "frostmoln_postgres_instance" "by_id" {
   id = data.frostmoln_postgres_instance.billing.id
 }

@@ -29,7 +29,7 @@ Manages the security groups on a SINGLE network port of a multi-NIC compute inst
 
 resource "frostmoln_instance_port_security_groups" "frontend_nic" {
   instance_id = frostmoln_instance.example.id
-  port_id     = "b1e0f6c2-1234-4a5b-9c8d-abcdef012345" # port ID (see the instance's per-port SG breakdown)
+  port_id     = "nic_Nxz2cqf1GoqJAwYhjYmdWL" # port ID (see the instance's per-port SG breakdown)
 
   security_groups = [
     frostmoln_security_group.web.id,
@@ -72,5 +72,5 @@ The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/c
 
 ```shell
 # Import an instance port's security-group binding by {instance_id}/{port_id}.
-terraform import frostmoln_instance_port_security_groups.frontend_nic "inst-abc123/b1e0f6c2-1234-4a5b-9c8d-abcdef012345"
+terraform import frostmoln_instance_port_security_groups.frontend_nic "ins_8V9iHjoNmU8xYDupErMSNU/nic_Nxz2cqf1GoqJAwYhjYmdWL"
 ```

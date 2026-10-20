@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tagsettings"
 )
@@ -212,7 +213,7 @@ func (r *tagColorResource) ModifyPlan(ctx context.Context, req resource.ModifyPl
 		return
 	}
 	current, err := tagsettings.ResolveOrganizationID(ctx, r.client)
-	if err != nil || current == recorded.ValueString() {
+	if err != nil || pubid.Equal(current, recorded.ValueString()) {
 		return
 	}
 	resp.Diagnostics.AddAttributeWarning(path.Root("organization_id"), "Rule Belongs to Another Organization",

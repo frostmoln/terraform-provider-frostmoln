@@ -58,6 +58,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
@@ -165,7 +166,7 @@ func (d *applicationGatewayDataSource) Schema(_ context.Context, _ datasource.Sc
 			"`frostmoln_appgw_certificate`, `frostmoln_appgw_waf_policy`, " +
 			"`frostmoln_appgw_config_apply`, …) all take a required `gateway_id`, and a gateway " +
 			"provisioned in the portal or with `fm` can today be referenced only by a hardcoded " +
-			"UUID. Look it up by name instead and the reference survives re-provisioning " +
+			"id. Look it up by name instead and the reference survives re-provisioning " +
 			"elsewhere.\n\n" +
 
 			"A name lookup that matches NOTHING fails the read, and so does one that matches " +
@@ -387,7 +388,7 @@ func (d *applicationGatewayDataSource) readByID(ctx context.Context, id string) 
 		diags.AddError("Failed to Parse Application Gateway Response", err.Error())
 		return nil, diags
 	}
-	if gw.ID != id {
+	if !pubid.Equal(gw.ID, id) {
 		diags.AddError(
 			"This gateway read did not identify the requested gateway",
 			fmt.Sprintf("The response does not carry the id this path asks for (%q). Whatever "+

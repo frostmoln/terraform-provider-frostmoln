@@ -5,6 +5,7 @@ package instance_port_security_groups
 import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -52,7 +53,7 @@ type apiInstanceSecurityGroups struct {
 // the instance's port breakdown (port detached or instance gone).
 func (s *apiInstanceSecurityGroups) findPort(portID string) *apiInstancePortSecurityGroups {
 	for i := range s.Ports {
-		if s.Ports[i].PortID == portID {
+		if pubid.Equal(s.Ports[i].PortID, portID) {
 			return &s.Ports[i]
 		}
 	}

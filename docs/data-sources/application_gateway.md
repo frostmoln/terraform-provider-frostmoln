@@ -4,7 +4,7 @@ page_title: "frostmoln_application_gateway Data Source - Frostmoln"
 subcategory: ""
 description: |-
   Look up an Application Gateway by ID or name. Exactly one of id or name must be specified.
-  This is how a configuration reaches a gateway that Terraform did not create: the offer's child resources (frostmoln_appgw_listener, frostmoln_appgw_backend_pool, frostmoln_appgw_certificate, frostmoln_appgw_waf_policy, frostmoln_appgw_config_apply, …) all take a required gateway_id, and a gateway provisioned in the portal or with fm can today be referenced only by a hardcoded UUID. Look it up by name instead and the reference survives re-provisioning elsewhere.
+  This is how a configuration reaches a gateway that Terraform did not create: the offer's child resources (frostmoln_appgw_listener, frostmoln_appgw_backend_pool, frostmoln_appgw_certificate, frostmoln_appgw_waf_policy, frostmoln_appgw_config_apply, …) all take a required gateway_id, and a gateway provisioned in the portal or with fm can today be referenced only by a hardcoded id. Look it up by name instead and the reference survives re-provisioning elsewhere.
   A name lookup that matches NOTHING fails the read, and so does one that matches MORE THAN ONE gateway: the data source refuses to pick for you (the diagnostic names the colliding ids). A deleted gateway never resolves — by id or by name — the same rule the frostmoln_application_gateway resource's read applies.
 ---
 
@@ -12,7 +12,7 @@ description: |-
 
 Look up an Application Gateway by ID or name. Exactly one of `id` or `name` must be specified.
 
-This is how a configuration reaches a gateway that Terraform did not create: the offer's child resources (`frostmoln_appgw_listener`, `frostmoln_appgw_backend_pool`, `frostmoln_appgw_certificate`, `frostmoln_appgw_waf_policy`, `frostmoln_appgw_config_apply`, …) all take a required `gateway_id`, and a gateway provisioned in the portal or with `fm` can today be referenced only by a hardcoded UUID. Look it up by name instead and the reference survives re-provisioning elsewhere.
+This is how a configuration reaches a gateway that Terraform did not create: the offer's child resources (`frostmoln_appgw_listener`, `frostmoln_appgw_backend_pool`, `frostmoln_appgw_certificate`, `frostmoln_appgw_waf_policy`, `frostmoln_appgw_config_apply`, …) all take a required `gateway_id`, and a gateway provisioned in the portal or with `fm` can today be referenced only by a hardcoded id. Look it up by name instead and the reference survives re-provisioning elsewhere.
 
 A name lookup that matches NOTHING fails the read, and so does one that matches MORE THAN ONE gateway: the data source refuses to pick for you (the diagnostic names the colliding ids). A deleted gateway never resolves — by id or by name — the same rule the `frostmoln_application_gateway` resource's read applies.
 
@@ -20,7 +20,7 @@ A name lookup that matches NOTHING fails the read, and so does one that matches 
 
 ```terraform
 # Resolve an Application Gateway that Terraform did not create
-# (provisioned in the portal or with `fm`) by NAME — no hardcoded UUID.
+# (provisioned in the portal or with `fm`) by NAME — no hardcoded id.
 #
 # The offer's child resources all take a required `gateway_id` with no other
 # path to it, so this lookup is what lets a listener, backend pool, certificate
@@ -37,7 +37,7 @@ resource "frostmoln_appgw_listener" "https" {
   port       = 443
 }
 
-# A lookup by id behaves identically for gateways whose UUID is already known
+# A lookup by id behaves identically for gateways whose id is already known
 # (e.g. the gateway this configuration itself created).
 resource "frostmoln_application_gateway" "self_served" {
   name      = "self-served"

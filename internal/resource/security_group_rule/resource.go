@@ -16,6 +16,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
@@ -272,7 +273,7 @@ func (r *securityGroupRuleResource) Create(ctx context.Context, req resource.Cre
 		}
 		var found *apiSecurityGroupRule
 		for i := range sg.Rules {
-			if sg.Rules[i].ID == done.ResourceID {
+			if pubid.Equal(sg.Rules[i].ID, done.ResourceID) {
 				found = &sg.Rules[i]
 				break
 			}
@@ -312,7 +313,7 @@ func matchesPlanRule(plan *SecurityGroupRuleModel, rule *apiSecurityGroupRule) b
 	if !plan.RemoteCIDR.IsNull() && plan.RemoteCIDR.ValueString() != rule.RemoteCIDR {
 		return false
 	}
-	if !plan.RemoteGroupID.IsNull() && plan.RemoteGroupID.ValueString() != rule.RemoteGroupID {
+	if !plan.RemoteGroupID.IsNull() && !pubid.Equal(plan.RemoteGroupID.ValueString(), rule.RemoteGroupID) {
 		return false
 	}
 	if !plan.Description.IsNull() && plan.Description.ValueString() != rule.Description {
@@ -389,7 +390,7 @@ func (r *securityGroupRuleResource) adoptCreatedObject(ctx context.Context, plan
 	}
 	var found *apiSecurityGroupRule
 	for i := range sg.Rules {
-		if sg.Rules[i].ID == id {
+		if pubid.Equal(sg.Rules[i].ID, id) {
 			found = &sg.Rules[i]
 			break
 		}
@@ -433,7 +434,7 @@ func (r *securityGroupRuleResource) Read(ctx context.Context, req resource.ReadR
 	// Find the rule in the security group
 	var found *apiSecurityGroupRule
 	for i := range sg.Rules {
-		if sg.Rules[i].ID == ruleID {
+		if pubid.Equal(sg.Rules[i].ID, ruleID) {
 			found = &sg.Rules[i]
 			break
 		}

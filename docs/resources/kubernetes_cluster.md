@@ -158,7 +158,7 @@ An existing cluster created with a BYO public IP is unaffected and keeps its add
 - `ha_enabled` (Boolean) Whether the control plane is highly available (derived from the control-plane tier).
 - `id` (String) The unique identifier of the cluster.
 - `kubeconfig` (String, Sensitive) A kubeconfig for the cluster, re-fetched from the platform on every refresh while the cluster is running. Stored in Terraform state in plaintext — `sensitive` redacts CLI output, not the state file. See the [Secrets in Terraform state](https://registry.terraform.io/providers/frostmoln/frostmoln/latest/docs/guides/state-and-secrets) guide. Its server address is private to the cluster's VPC, so a `kubernetes` or `helm` provider configured from it must run somewhere with a route into that VPC. Because it is re-fetchable, state is not the only place it can come from: if you do not need it in Terraform, leave the attribute unreferenced and take it out of band with `fm kubernetes cluster kubeconfig <cluster-id> --exec`, which writes a kubeconfig that opens that route itself (it needs an API key with both `kubernetes:read` and `sessions:write`, and the `fm` binary on PATH wherever the kubeconfig is used — a CI runner will not have it by default).
-- `load_balancer_id` (String) The ID of the load balancer fronting the Kubernetes API.
+- `load_balancer_id` (String) Always null: the id of the load balancer fronting the Kubernetes API is internal, has no public form, and the API no longer returns it.
 - `pod_cidr` (String) The server-allocated pod network CIDR.
 - `public_ip` (String) The public IP address of the cluster API endpoint.
 - `service_cidr` (String) The server-allocated service network CIDR.
@@ -213,5 +213,5 @@ The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/c
 # it. If a plan then wants to REPLACE the cluster over that attribute, add
 # lifecycle { ignore_changes = [public_ip_id] } — removing the line alone is what
 # triggers the replacement, not what avoids it.
-terraform import frostmoln_kubernetes_cluster.main 51455a51-db3d-4231-ac27-4fee2553c15f
+terraform import frostmoln_kubernetes_cluster.main k8s_B352H9idUJP6jTWtom31nW
 ```

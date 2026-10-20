@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
@@ -331,9 +332,9 @@ func describe(m RetentionModel) string {
 // tenantGuard refuses a state id that is not the provider's own tenant: an
 // import of another id, or credentials switched under existing state, would
 // otherwise read or write this tenant's policy under that id. Tenant ids are
-// UUIDs, so case is not significant.
+// UUIDs or ten_ public ids (sameTenant).
 func (r *retentionResource) tenantGuard(id types.String) diag.Diagnostic {
-	if v := id.ValueString(); v != "" && !strings.EqualFold(v, r.client.TenantID()) {
+	if v := id.ValueString(); v != "" && !sameTenant(v, r.client.TenantID()) {
 		return diag.NewErrorDiagnostic(
 			"Retention policy belongs to another tenant",
 			fmt.Sprintf("The id %q is not the provider's tenant (%q). A retention policy can only be "+
@@ -365,4 +366,19 @@ func hasReason(err error, reason string) bool {
 	}
 	got, _ := apiErr.Details["reason"].(string)
 	return got == reason
+}
+
+// sameTenant compares two tenant ids: one id in either spelling (pubid.Equal),
+// or two non-public ids that differ only in case. A public id's body is base58,
+// which is case-sensitive, so it never folds case.
+func sameTenant(a, b string) bool {
+	for _, s := range []string{a, b} {
+		if _, p, ok := pubid.Canonical(s); ok && p != "" && p != "ten" {
+			return false // another kind's id is never a tenant id
+		}
+	}
+	if pubid.Equal(a, b) {
+		return true
+	}
+	return !strings.Contains(a, "_") && !strings.Contains(b, "_") && strings.EqualFold(a, b)
 }

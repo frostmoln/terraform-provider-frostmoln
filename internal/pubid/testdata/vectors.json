@@ -1,0 +1,122 @@
+[
+  {
+    "kind": "ten",
+    "uuid": "00000000-0000-0000-0000-000000000000",
+    "public": "ten_1111111111111111111111"
+  },
+  {
+    "kind": "ins",
+    "uuid": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+    "public": "ins_YcVfxkQb6JRzqk5kF2tNLv"
+  },
+  {
+    "kind": "vol",
+    "uuid": "00000000-0000-0000-0000-000000000001",
+    "public": "vol_1111111111111111111112"
+  },
+  {
+    "kind": "vpc",
+    "uuid": "00000000-0000-0000-0000-00000000003a",
+    "public": "vpc_1111111111111111111121"
+  },
+  {
+    "kind": "pola",
+    "uuid": "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+    "public": "pola_LscZPf6gEUNpT5cZL3A9zY"
+  },
+  {
+    "kind": "role",
+    "uuid": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+    "public": "role_4ERatKsceyWUQV7P6dT9nU"
+  },
+  {
+    "kind": "k8s",
+    "uuid": "0f9a6c2e-4b1d-4a57-9d0e-8f3b2c1a7e65",
+    "public": "k8s_2vkbJEWitUCkvcgzku8ixt"
+  },
+  {
+    "kind": "cchb",
+    "uuid": "019a0c3e-7b10-7cc0-8a52-3f1d2e9b6a01",
+    "public": "cchb_1CUNNCkmomaPGecrv6JLsi"
+  },
+  {
+    "kind": "ten",
+    "uuid": "853720c5-c833-0e01-de37-20e8960a80da",
+    "public": "ten_HT6o8A98JUoHx8cJ6voEtR"
+  },
+  {
+    "kind": "ins",
+    "uuid": "e994fca3-e266-0782-0bd2-05e0459481d2",
+    "public": "ins_VqwCjz3fPY1S14V7X1wwxM"
+  },
+  {
+    "kind": "vol",
+    "uuid": "6617dd57-f482-80a5-b1dc-01d6e36bbfe6",
+    "public": "vol_DcCdga3YoQR7Ebt5pGeehB"
+  },
+  {
+    "kind": "vpc",
+    "uuid": "dd848e2d-5453-a00d-3986-04aaa1808a5c",
+    "public": "vpc_UMXjAUqz88ED5kUKT9qoMV"
+  },
+  {
+    "kind": "pola",
+    "uuid": "b5306d49-1ca3-a476-3b7d-8765d1ed414b",
+    "public": "pola_PNhB1RXFQ8gG5N9xnQZnWN"
+  },
+  {
+    "kind": "role",
+    "uuid": "ad93b9c9-22f8-855b-2735-4bea8c6880c5",
+    "public": "role_NSB6MaVtm4St8ekRKdHynt"
+  },
+  {
+    "kind": "k8s",
+    "uuid": "3b67a095-90ed-1b2f-4671-8b25c99c606f",
+    "public": "k8s_8LTpF2jZmDLcyH3aVgxb4r"
+  },
+  {
+    "kind": "cchb",
+    "uuid": "7b408b22-236f-0e26-f0e4-99a9c81e74c8",
+    "public": "cchb_GDk4e2EJ8GzBk1HMxPUPju"
+  },
+  {
+    "kind": "ten",
+    "uuid": "75240b72-cb6d-61c2-986b-8a88bae148c7",
+    "public": "ten_FTyQvmiggSP1DyA16z8STQ"
+  },
+  {
+    "kind": "ins",
+    "uuid": "42520771-1a9a-7fcd-f558-0f4122544ec2",
+    "public": "ins_9BzaNasZh86wg4Y3PgHVcu"
+  },
+  {
+    "kind": "vol",
+    "uuid": "bfbdadb6-42c3-1880-c35c-70f013c7893c",
+    "public": "vol_QgGPReiRfnPMtcS3AxL7LF"
+  },
+  {
+    "kind": "vpc",
+    "uuid": "ffd7ee07-17d9-5a4b-cbb1-46cbbacd43f0",
+    "public": "vpc_YbNenM68K4JGZVBM5xV9GT"
+  },
+  {
+    "kind": "pola",
+    "uuid": "0ad0d8cd-6c21-aa71-e668-c1f8ef2b42aa",
+    "public": "pola_2LTu6VN6xxf6jKikbBe9ow"
+  },
+  {
+    "kind": "role",
+    "uuid": "ee6505c6-2ccd-6e19-947a-4a913d9302b1",
+    "public": "role_WSQNvP1pM19mh5nPiu5cnL"
+  },
+  {
+    "kind": "k8s",
+    "uuid": "c796555b-7bfa-1af5-3dc1-3462191a37ba",
+    "public": "k8s_ReTkaVx4FRYPGCzZ9cmtP3"
+  },
+  {
+    "kind": "cchb",
+    "uuid": "4b942152-9e5b-eb1a-40ac-bba80d7dfbba",
+    "public": "cchb_ALJSnXZ5KCXs1oqxBGXtqF"
+  }
+]

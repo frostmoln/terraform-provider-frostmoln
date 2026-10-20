@@ -44,5 +44,5 @@ repos:
     hooks:
       - id: detect-secrets
         args: ['--baseline', '.secrets.baseline']
-        # A verbatim copy of servicekit's public-id vectors (excluded there too).
-        exclude: ^internal/resource/iam_policy/testdata/pubid_vectors\.json$
+        # Verbatim copies of servicekit's public-id vectors (excluded there too).
+        exclude: ^internal/(resource/iam_policy/testdata/pubid_vectors|pubid/testdata/vectors)\.json$

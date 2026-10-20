@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
 )
 
@@ -205,7 +206,7 @@ func (d *subnetDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		if s.Name != state.Name.ValueString() {
 			continue
 		}
-		if vpcIDFilter != "" && s.VPCID != vpcIDFilter {
+		if vpcIDFilter != "" && !pubid.Equal(s.VPCID, vpcIDFilter) {
 			continue
 		}
 		found = s

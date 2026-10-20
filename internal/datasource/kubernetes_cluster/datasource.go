@@ -52,6 +52,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
 )
 
@@ -157,7 +158,7 @@ func (d *kubernetesClusterDataSource) Schema(_ context.Context, _ datasource.Sch
 
 			"This is how a configuration reaches a cluster that Terraform did not create: a " +
 			"cluster provisioned in the portal or with `fm` can today be referenced only by a " +
-			"hardcoded UUID or plumbed through `terraform_remote_state` — both of which tie the " +
+			"hardcoded id or plumbed through `terraform_remote_state` — both of which tie the " +
 			"configuration to one deployment. Look it up by name instead and the reference " +
 			"survives re-provisioning elsewhere; the endpoint and CIDRs feed other references, " +
 			"while the credential material is fetched separately by " +
@@ -251,8 +252,8 @@ func (d *kubernetesClusterDataSource) Schema(_ context.Context, _ datasource.Sch
 				Computed: true,
 			},
 			"load_balancer_id": schema.StringAttribute{
-				Description: "The ID of the load balancer behind the API endpoint — the only " +
-					"load balancer this surface reports.",
+				Description: "Always null: the id of the load balancer behind the API endpoint is " +
+					"internal, has no public form, and the API no longer returns it.",
 				Computed: true,
 			},
 			"public_ip": schema.StringAttribute{
@@ -391,7 +392,7 @@ func (d *kubernetesClusterDataSource) readByID(ctx context.Context, id string) (
 		diags.AddError("Failed to Parse Kubernetes Cluster Response", err.Error())
 		return nil, diags
 	}
-	if cluster.ID != id {
+	if !pubid.Equal(cluster.ID, id) {
 		diags.AddError(
 			"This cluster read did not identify the requested cluster",
 			fmt.Sprintf("The response does not carry the id this path asks for (%q). Whatever "+

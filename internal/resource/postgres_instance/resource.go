@@ -30,6 +30,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
@@ -1664,10 +1665,10 @@ func checkRestoreSourceShape(sourceID string, source *apiPostgresInstance, cfg P
 	if plan.FlavorID.ValueString() != source.FlavorID {
 		mismatch("flavor_id", plan.FlavorID.ValueString(), source.FlavorID)
 	}
-	if plan.VPCID.ValueString() != source.VPCID {
+	if !pubid.Equal(plan.VPCID.ValueString(), source.VPCID) {
 		mismatch("vpc_id", plan.VPCID.ValueString(), source.VPCID)
 	}
-	if plan.SubnetID.ValueString() != source.SubnetID {
+	if !pubid.Equal(plan.SubnetID.ValueString(), source.SubnetID) {
 		mismatch("subnet_id", plan.SubnetID.ValueString(), source.SubnetID)
 	}
 	// ha_enabled is Optional+Computed: omitted, it is unknown in the plan and

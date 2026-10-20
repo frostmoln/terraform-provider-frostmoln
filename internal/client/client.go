@@ -18,6 +18,7 @@ import (
 
 	"go.frostmoln.internal/oidc"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/clicreds"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
@@ -52,14 +53,13 @@ type Client struct {
 // middleware constant; ADR-0088).
 const ProviderVersionHeader = "X-FM-Provider-Version"
 
-// IDFormatHeader asks the gateway for an id form (ADR-0129). The provider pins
-// `uuid` on every request so the gateway's default flip to public ids does not
-// change what lands in state; the switch to public ids is its own versioned
-// release with state upgraders.
+// IDFormatHeader asks the gateway for an id form (ADR-0129). The provider asks
+// for public ids on every request; state written by releases before the switch
+// holds UUIDs and is upgraded by internal/idform.
 const IDFormatHeader = "Frostmoln-Id-Format"
 
 // idFormat is the form this provider keeps in state.
-const idFormat = "uuid"
+const idFormat = "public"
 
 // providerUpgradeFallback is shown when the gateway rejects this provider as too
 // old but its 426 body carried no message of its own.
@@ -200,7 +200,7 @@ func (c *Client) Configure(ctx context.Context) error {
 	// actionable message — instead of letting every resource operation fail 403
 	// mid-apply. The OIDC / fm CLI session path (c.bearer != nil) can legitimately
 	// target any tenant the user belongs to, so that is left to the gateway.
-	if c.bearer == nil && profile.TenantID != "" && c.tenantID != profile.TenantID {
+	if c.bearer == nil && profile.TenantID != "" && !pubid.Equal(c.tenantID, profile.TenantID) {
 		return fmt.Errorf("tenant_id %q does not match this API key's tenant %q: an API key is bound to a single tenant. Omit tenant_id (or set it to the key's tenant), or authenticate with an fm CLI / OIDC session to manage multiple tenants", c.tenantID, profile.TenantID)
 	}
 	return nil

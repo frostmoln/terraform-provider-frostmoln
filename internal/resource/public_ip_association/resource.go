@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/resource/public_ip"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/schemadoc"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
@@ -321,7 +322,7 @@ func (r *publicIPAssociationResource) Create(ctx context.Context, req resource.C
 		return
 	}
 	switch {
-	case existing.PortID == portID:
+	case pubid.Equal(existing.PortID, portID):
 		resp.Diagnostics.AddWarning(
 			"Public IP Was Already Attached To This Port",
 			fmt.Sprintf("Public IP %s is already attached to port %s (instance %s), which is exactly "+
@@ -399,7 +400,7 @@ func (r *publicIPAssociationResource) Create(ctx context.Context, req resource.C
 		)
 		return
 	}
-	if fip.PortID != portID {
+	if !pubid.Equal(fip.PortID, portID) {
 		resp.Diagnostics.AddError(
 			"Public IP Association Mismatch",
 			fmt.Sprintf("Public IP %s was asked to attach to port %s (instance %s) and the operation "+
@@ -442,7 +443,7 @@ func (r *publicIPAssociationResource) targetPort(plan PublicIPAssociationModel, 
 	}
 
 	portID := plan.PortID.ValueString()
-	if !slices.Contains(ports, portID) {
+	if !slices.ContainsFunc(ports, func(p string) bool { return pubid.Equal(p, portID) }) {
 		diags.AddAttributeError(
 			path.Root("port_id"),
 			"Port Is Not On This Instance",
@@ -468,7 +469,7 @@ func (r *publicIPAssociationResource) targetPort(plan PublicIPAssociationModel, 
 // is concluded, and when that cannot settle it either, the practitioner gets
 // the exact import command rather than a bare timeout.
 func (r *publicIPAssociationResource) reportUnknownAssociateOutcome(ctx context.Context, resp *resource.CreateResponse, plan PublicIPAssociationModel, publicIPID, instanceID, portID string, waitErr error) {
-	if fip, err := r.readPublicIP(ctx, publicIPID); err == nil && fip.PortID == portID {
+	if fip, err := r.readPublicIP(ctx, publicIPID); err == nil && pubid.Equal(fip.PortID, portID) {
 		resp.Diagnostics.AddWarning(
 			"Public IP Association Took Longer Than The Provider Waited",
 			fmt.Sprintf("The wait for the association of public IP %s with instance %s gave up, but the "+
@@ -630,7 +631,7 @@ func (r *publicIPAssociationResource) Delete(ctx context.Context, req resource.D
 	// Something holds the address. Detach it only if it is still THIS
 	// association's binding.
 	if bound := state.PortID.ValueString(); bound != "" {
-		if fip.PortID != bound {
+		if !pubid.Equal(fip.PortID, bound) {
 			resp.Diagnostics.AddWarning(
 				"Public IP Is Attached To Something Else",
 				fmt.Sprintf("Public IP %s is no longer attached to port %s (the port this association bound "+

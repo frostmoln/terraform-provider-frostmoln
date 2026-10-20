@@ -1,0 +1,459 @@
+{
+  "kinds": [
+    {
+      "name": "BackendAuthorization",
+      "prefix": "aga"
+    },
+    {
+      "name": "Backend",
+      "prefix": "agb"
+    },
+    {
+      "name": "AppGatewayListener",
+      "prefix": "agl"
+    },
+    {
+      "name": "BackendPool",
+      "prefix": "agp"
+    },
+    {
+      "name": "AppGatewayRoute",
+      "prefix": "agr"
+    },
+    {
+      "name": "AppGateway",
+      "prefix": "agw"
+    },
+    {
+      "name": "ScaleGroup",
+      "prefix": "asg"
+    },
+    {
+      "name": "ScalingActivity",
+      "prefix": "asga"
+    },
+    {
+      "name": "Attachment",
+      "prefix": "att"
+    },
+    {
+      "name": "AuditEntry",
+      "prefix": "aud"
+    },
+    {
+      "name": "BillingGroup",
+      "prefix": "bg"
+    },
+    {
+      "name": "Cache",
+      "prefix": "cch"
+    },
+    {
+      "name": "CacheBackup",
+      "prefix": "cchb"
+    },
+    {
+      "name": "Credit",
+      "prefix": "cr"
+    },
+    {
+      "name": "Certificate",
+      "prefix": "crt"
+    },
+    {
+      "name": "Database",
+      "prefix": "db"
+    },
+    {
+      "name": "DatabaseBackup",
+      "prefix": "dbb"
+    },
+    {
+      "name": "ParameterGroup",
+      "prefix": "dbp"
+    },
+    {
+      "name": "DatabaseReplica",
+      "prefix": "dbr"
+    },
+    {
+      "name": "DNSRecord",
+      "prefix": "dnr"
+    },
+    {
+      "name": "DNSZone",
+      "prefix": "dnz"
+    },
+    {
+      "name": "Discount",
+      "prefix": "dsc"
+    },
+    {
+      "name": "FeatureRequest",
+      "prefix": "fr"
+    },
+    {
+      "name": "FeatureRequestComment",
+      "prefix": "frc"
+    },
+    {
+      "name": "Guardrail",
+      "prefix": "grd"
+    },
+    {
+      "name": "IAMGroup",
+      "prefix": "grp"
+    },
+    {
+      "name": "Image",
+      "prefix": "img"
+    },
+    {
+      "name": "Instance",
+      "prefix": "ins"
+    },
+    {
+      "name": "Invoice",
+      "prefix": "inv"
+    },
+    {
+      "name": "Invitation",
+      "prefix": "invt"
+    },
+    {
+      "name": "ImageSnapshot",
+      "prefix": "isn",
+      "rendersAs": "img"
+    },
+    {
+      "name": "KubernetesCluster",
+      "prefix": "k8s"
+    },
+    {
+      "name": "KontorDomain",
+      "prefix": "kd"
+    },
+    {
+      "name": "APIKey",
+      "prefix": "key"
+    },
+    {
+      "name": "KontorGroup",
+      "prefix": "kg"
+    },
+    {
+      "name": "KontorMigration",
+      "prefix": "kmg"
+    },
+    {
+      "name": "KontorTenant",
+      "prefix": "kt"
+    },
+    {
+      "name": "LoadBalancer",
+      "prefix": "lb"
+    },
+    {
+      "name": "LBHealthMonitor",
+      "prefix": "lbh"
+    },
+    {
+      "name": "LBListener",
+      "prefix": "lbl"
+    },
+    {
+      "name": "LBMember",
+      "prefix": "lbm"
+    },
+    {
+      "name": "LBPool",
+      "prefix": "lbp"
+    },
+    {
+      "name": "LaunchTemplate",
+      "prefix": "lt"
+    },
+    {
+      "name": "Mailbox",
+      "prefix": "mbx"
+    },
+    {
+      "name": "Messaging",
+      "prefix": "mq"
+    },
+    {
+      "name": "NIC",
+      "prefix": "nic"
+    },
+    {
+      "name": "NodePool",
+      "prefix": "np"
+    },
+    {
+      "name": "Notification",
+      "prefix": "ntf"
+    },
+    {
+      "name": "OrgIAMGroup",
+      "prefix": "ogrp"
+    },
+    {
+      "name": "Operation",
+      "prefix": "op"
+    },
+    {
+      "name": "Organization",
+      "prefix": "org"
+    },
+    {
+      "name": "OrgUnit",
+      "prefix": "ou"
+    },
+    {
+      "name": "Payment",
+      "prefix": "pay"
+    },
+    {
+      "name": "PublicIP",
+      "prefix": "pip"
+    },
+    {
+      "name": "PaymentMethod",
+      "prefix": "pm"
+    },
+    {
+      "name": "IAMPolicy",
+      "prefix": "pol"
+    },
+    {
+      "name": "PolicyAttachment",
+      "prefix": "pola"
+    },
+    {
+      "name": "Promo",
+      "prefix": "prm"
+    },
+    {
+      "name": "QuotaRequest",
+      "prefix": "qr"
+    },
+    {
+      "name": "Referral",
+      "prefix": "ref"
+    },
+    {
+      "name": "Role",
+      "prefix": "role"
+    },
+    {
+      "name": "Router",
+      "prefix": "rtr"
+    },
+    {
+      "name": "Secret",
+      "prefix": "sec"
+    },
+    {
+      "name": "SecurityGroup",
+      "prefix": "sg"
+    },
+    {
+      "name": "SecurityGroupRule",
+      "prefix": "sgr"
+    },
+    {
+      "name": "Subnet",
+      "prefix": "sub"
+    },
+    {
+      "name": "TagColorRule",
+      "prefix": "tcr"
+    },
+    {
+      "name": "Tenant",
+      "prefix": "ten"
+    },
+    {
+      "name": "Ticket",
+      "prefix": "tkt"
+    },
+    {
+      "name": "TicketMessage",
+      "prefix": "tmsg"
+    },
+    {
+      "name": "User",
+      "prefix": "usr"
+    },
+    {
+      "name": "Volume",
+      "prefix": "vol"
+    },
+    {
+      "name": "VPC",
+      "prefix": "vpc"
+    },
+    {
+      "name": "VolumeSnapshot",
+      "prefix": "vsn"
+    },
+    {
+      "name": "WAFPolicy",
+      "prefix": "waf"
+    },
+    {
+      "name": "WAFDryRun",
+      "prefix": "wdr"
+    },
+    {
+      "name": "WorkloadIdentityBinding",
+      "prefix": "wib"
+    },
+    {
+      "name": "Webserver",
+      "prefix": "ws"
+    },
+    {
+      "name": "WebserverDeploy",
+      "prefix": "wsd"
+    },
+    {
+      "name": "DomainBinding",
+      "prefix": "wsdm"
+    }
+  ],
+  "iamNouns": [
+    {
+      "noun": "appgw:application-gateways",
+      "prefix": "agw"
+    },
+    {
+      "noun": "cache:caches",
+      "prefix": "cch"
+    },
+    {
+      "noun": "cache:redis-instances",
+      "prefix": "cch"
+    },
+    {
+      "noun": "compute:images",
+      "prefix": "img"
+    },
+    {
+      "noun": "compute:instances",
+      "prefix": "ins"
+    },
+    {
+      "noun": "compute:launch-templates",
+      "prefix": "lt"
+    },
+    {
+      "noun": "compute:scale-groups",
+      "prefix": "asg"
+    },
+    {
+      "noun": "compute:snapshots",
+      "prefix": "img"
+    },
+    {
+      "noun": "database:database-parameter-groups",
+      "prefix": "dbp"
+    },
+    {
+      "noun": "database:databases",
+      "prefix": "db"
+    },
+    {
+      "noun": "identity:api-keys",
+      "prefix": "key"
+    },
+    {
+      "noun": "identity:audit-logs",
+      "prefix": "aud"
+    },
+    {
+      "noun": "identity:iam-groups",
+      "prefix": "grp"
+    },
+    {
+      "noun": "identity:iam-policies",
+      "prefix": "pol"
+    },
+    {
+      "noun": "identity:roles",
+      "prefix": "role"
+    },
+    {
+      "noun": "identity:users",
+      "prefix": "usr"
+    },
+    {
+      "noun": "identity:workload-identity",
+      "prefix": "wib"
+    },
+    {
+      "noun": "kubernetes:kubernetes-clusters",
+      "prefix": "k8s"
+    },
+    {
+      "noun": "messaging:messaging",
+      "prefix": "mq"
+    },
+    {
+      "noun": "network:dns-zones",
+      "prefix": "dnz"
+    },
+    {
+      "noun": "network:gateways",
+      "prefix": "vpc"
+    },
+    {
+      "noun": "network:load-balancers",
+      "prefix": "lb"
+    },
+    {
+      "noun": "network:public-ips",
+      "prefix": "pip"
+    },
+    {
+      "noun": "network:routers",
+      "prefix": "rtr"
+    },
+    {
+      "noun": "network:security-groups",
+      "prefix": "sg"
+    },
+    {
+      "noun": "network:subnets",
+      "prefix": "sub"
+    },
+    {
+      "noun": "network:vpc-routes",
+      "prefix": "vpc"
+    },
+    {
+      "noun": "network:vpcs",
+      "prefix": "vpc"
+    },
+    {
+      "noun": "quotas:change-requests",
+      "prefix": "qr"
+    },
+    {
+      "noun": "secrets:secrets",
+      "prefix": "sec"
+    },
+    {
+      "noun": "storage:snapshots",
+      "prefix": "vsn"
+    },
+    {
+      "noun": "storage:volumes",
+      "prefix": "vol"
+    },
+    {
+      "noun": "webserver:webservers",
+      "prefix": "ws"
+    }
+  ]
+}

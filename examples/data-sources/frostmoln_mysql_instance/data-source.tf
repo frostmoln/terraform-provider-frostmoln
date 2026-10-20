@@ -1,5 +1,5 @@
 # Resolve a MySQL instance that Terraform did not create
-# (provisioned in the portal or with `fm`) by NAME — no hardcoded UUID.
+# (provisioned in the portal or with `fm`) by NAME — no hardcoded id.
 data "frostmoln_mysql_instance" "orders" {
   name = "orders"
 }
@@ -11,7 +11,7 @@ locals {
   orders_address = coalesce(data.frostmoln_mysql_instance.orders.public_ip, data.frostmoln_mysql_instance.orders.private_ip)
 }
 
-# A lookup by id behaves identically for instances whose UUID is already known.
+# A lookup by id behaves identically for instances whose id is already known.
 data "frostmoln_mysql_instance" "by_id" {
   id = data.frostmoln_mysql_instance.orders.id
 }

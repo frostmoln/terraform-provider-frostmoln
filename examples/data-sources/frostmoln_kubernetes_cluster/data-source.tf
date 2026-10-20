@@ -1,5 +1,5 @@
 # Resolve a managed Kubernetes cluster that Terraform did not create
-# (provisioned in the portal or with `fm`) by NAME — no hardcoded UUID.
+# (provisioned in the portal or with `fm`) by NAME — no hardcoded id.
 data "frostmoln_kubernetes_cluster" "billing" {
   name = "billing-prod"
 }
@@ -12,7 +12,7 @@ locals {
   workloads_vpc = data.frostmoln_kubernetes_cluster.billing.vpc_id
 }
 
-# A lookup by id behaves identically for clusters whose UUID is already known.
+# A lookup by id behaves identically for clusters whose id is already known.
 data "frostmoln_kubernetes_cluster" "by_id" {
   id = data.frostmoln_kubernetes_cluster.billing.id
 }

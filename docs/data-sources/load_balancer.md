@@ -4,7 +4,7 @@ page_title: "frostmoln_load_balancer Data Source - Frostmoln"
 subcategory: ""
 description: |-
   Look up a load balancer by ID or name. Exactly one of id or name must be specified.
-  This is how a configuration reaches a load balancer that Terraform did not create: a load balancer provisioned in the portal or with fm can today be referenced only by a hardcoded UUID or plumbed through terraform_remote_state. Look it up by name instead and the reference survives re-provisioning elsewhere. The optional vpc_id narrows a name lookup (the vpcId filter rides the request) and is echoed back from the read.
+  This is how a configuration reaches a load balancer that Terraform did not create: a load balancer provisioned in the portal or with fm can today be referenced only by a hardcoded id or plumbed through terraform_remote_state. Look it up by name instead and the reference survives re-provisioning elsewhere. The optional vpc_id narrows a name lookup (the vpcId filter rides the request) and is echoed back from the read.
   A name lookup that matches NOTHING fails the read, and so does one that matches MORE THAN ONE load balancer: the data source refuses to pick for you (the diagnostic names the colliding ids). There is no listeners or pools attribute here: those collections belong to the child resources frostmoln_lb_listener, frostmoln_lb_pool, frostmoln_lb_member and frostmoln_lb_health_monitor, so this resolver's job is the id the child resources are addressed by.
 ---
 
@@ -12,7 +12,7 @@ description: |-
 
 Look up a load balancer by ID or name. Exactly one of `id` or `name` must be specified.
 
-This is how a configuration reaches a load balancer that Terraform did not create: a load balancer provisioned in the portal or with `fm` can today be referenced only by a hardcoded UUID or plumbed through `terraform_remote_state`. Look it up by name instead and the reference survives re-provisioning elsewhere. The optional `vpc_id` narrows a name lookup (the `vpcId` filter rides the request) and is echoed back from the read.
+This is how a configuration reaches a load balancer that Terraform did not create: a load balancer provisioned in the portal or with `fm` can today be referenced only by a hardcoded id or plumbed through `terraform_remote_state`. Look it up by name instead and the reference survives re-provisioning elsewhere. The optional `vpc_id` narrows a name lookup (the `vpcId` filter rides the request) and is echoed back from the read.
 
 A name lookup that matches NOTHING fails the read, and so does one that matches MORE THAN ONE load balancer: the data source refuses to pick for you (the diagnostic names the colliding ids). There is no `listeners` or `pools` attribute here: those collections belong to the child resources `frostmoln_lb_listener`, `frostmoln_lb_pool`, `frostmoln_lb_member` and `frostmoln_lb_health_monitor`, so this resolver's job is the id the child resources are addressed by.
 
@@ -20,7 +20,7 @@ A name lookup that matches NOTHING fails the read, and so does one that matches 
 
 ```terraform
 # Resolve a load balancer that Terraform did not create (provisioned in the
-# portal or with `fm`) by NAME — no hardcoded UUID.
+# portal or with `fm`) by NAME — no hardcoded id.
 data "frostmoln_load_balancer" "edge" {
   name = "edge-https"
 }
@@ -32,7 +32,7 @@ locals {
   edge_address = coalesce(data.frostmoln_load_balancer.edge.public_ip_address, data.frostmoln_load_balancer.edge.vip_address)
 }
 
-# A lookup by id behaves identically for load balancers whose UUID is already
+# A lookup by id behaves identically for load balancers whose id is already
 # known.
 data "frostmoln_load_balancer" "by_id" {
   id = data.frostmoln_load_balancer.edge.id
@@ -42,7 +42,7 @@ data "frostmoln_load_balancer" "by_id" {
 # echoed back from the read.
 data "frostmoln_load_balancer" "edge_internal" {
   name   = "edge-https"
-  vpc_id = "vpc-1d2e3f4a-0000-0000-0000-000000000000"
+  vpc_id = "vpc_4bzg7R3PQzPQnCUdYpaPTD"
 }
 
 # A name that matches nothing — or more than one load balancer — fails the

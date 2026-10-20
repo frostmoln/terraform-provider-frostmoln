@@ -27,6 +27,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
@@ -478,7 +479,7 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 				},
 			},
 			"load_balancer_id": schema.StringAttribute{
-				Description: "The ID of the load balancer fronting the Kubernetes API.",
+				Description: "Always null: the id of the load balancer fronting the Kubernetes API is internal, has no public form, and the API no longer returns it.",
 				Computed:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
@@ -1139,7 +1140,7 @@ func (r *kubernetesClusterResource) Update(ctx context.Context, req resource.Upd
 			resp.Diagnostics.AddError("Failed to verify the initial node pool before scaling", err.Error())
 			return
 		}
-		if livePool == nil || livePool.ID != state.InitialNodePool.ID.ValueString() {
+		if livePool == nil || !pubid.Equal(livePool.ID, state.InitialNodePool.ID.ValueString()) {
 			resp.Diagnostics.AddError(
 				"Initial node pool no longer exists",
 				"The cluster's initial node pool was deleted or replaced outside Terraform, so it cannot "+
@@ -1195,7 +1196,7 @@ func (r *kubernetesClusterResource) Update(ctx context.Context, req resource.Upd
 				resp.Diagnostics.AddError("Failed to read the initial node pool's tags after update", err.Error())
 				return
 			}
-			if pool != nil && pool.ID == next.ID.ValueString() {
+			if pool != nil && pubid.Equal(pool.ID, next.ID.ValueString()) {
 				next.Tags, next.TagsAll = tftags.ReadBack(ctx, poolCustomerTags(pool), plan.InitialNodePool.Tags, &resp.Diagnostics)
 			}
 		}
@@ -1242,7 +1243,7 @@ func (r *kubernetesClusterResource) ImportState(ctx context.Context, req resourc
 	if strings.Contains(req.ID, "/") {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",
-			fmt.Sprintf("%q is not a cluster ID: it must be the bare cluster UUID, without path separators.", req.ID),
+			fmt.Sprintf("%q is not a cluster ID: it must be the bare cluster id (k8s_… or a UUID), without path separators.", req.ID),
 		)
 		return
 	}
@@ -1274,7 +1275,8 @@ func carryInitialPool(prior, planned *InitialNodePoolModel) *InitialNodePoolMode
 // or a cluster tag overrode a default (the override is the cluster's; the pool gets
 // the default) — both known here, so the common create makes no extra request.
 func (r *kubernetesClusterResource) writeInitialPoolTagsAfterCreate(ctx context.Context, clusterID string, defaults tftags.Defaults,
-	clusterTags, tags types.Map, private tftags.PrivateWriter, diags *diag.Diagnostics) error {
+	clusterTags, tags types.Map, private tftags.PrivateWriter, diags *diag.Diagnostics,
+) error {
 	if len(tags.Elements()) == 0 && !overridesADefault(ctx, defaults, clusterTags, diags) {
 		tftags.RecordDefaults(ctx, tftags.ScopedWriter(private, initialPoolTagsScope), defaults, diags)
 		return nil
@@ -1448,7 +1450,8 @@ func overridesADefault(ctx context.Context, defaults tftags.Defaults, clusterTag
 // now, so a key added outside Terraform since the last refresh is kept. Reports false
 // when the update must stop (an error diagnostic was added).
 func (r *kubernetesClusterResource) writeInitialPoolTags(ctx context.Context, clusterID string, defaults tftags.Defaults,
-	plan, state InitialNodePoolModel, reqPrivate tftags.PrivateReader, respPrivate tftags.PrivateWriter, diags *diag.Diagnostics) bool {
+	plan, state InitialNodePoolModel, reqPrivate tftags.PrivateReader, respPrivate tftags.PrivateWriter, diags *diag.Diagnostics,
+) bool {
 	prior := tftags.PriorOf(ctx, state.Tags, state.TagsAll, tftags.ScopedReader(reqPrivate, initialPoolTagsScope), diags)
 	if _, changed := tftags.ForUpdate(ctx, defaults, plan.Tags, prior, diags); changed && !diags.HasError() {
 		pool, err := r.findInitialNodePool(ctx, clusterID)
@@ -1456,7 +1459,7 @@ func (r *kubernetesClusterResource) writeInitialPoolTags(ctx context.Context, cl
 			diags.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
 			return false
 		}
-		if pool == nil || pool.ID != state.ID.ValueString() {
+		if pool == nil || !pubid.Equal(pool.ID, state.ID.ValueString()) {
 			diags.AddError(
 				"Initial node pool no longer exists",
 				"The cluster's initial node pool was deleted or replaced outside Terraform, so its tags cannot "+
@@ -1488,7 +1491,8 @@ func (r *kubernetesClusterResource) writeInitialPoolTags(ctx context.Context, cl
 // and recompute against them, so a key added outside Terraform since the last
 // refresh is kept — and an update that is not about tags costs no extra read.
 func (r *kubernetesClusterResource) tagsToWrite(ctx context.Context, id string, defaults tftags.Defaults,
-	plan, state KubernetesClusterModel, private tftags.PrivateReader, diags *diag.Diagnostics) (*map[string]string, error) {
+	plan, state KubernetesClusterModel, private tftags.PrivateReader, diags *diag.Diagnostics,
+) (*map[string]string, error) {
 	prior := tftags.PriorOf(ctx, state.Tags, state.TagsAll, private, diags)
 	if _, changed := tftags.ForUpdate(ctx, defaults, plan.Tags, prior, diags); !changed {
 		return nil, nil

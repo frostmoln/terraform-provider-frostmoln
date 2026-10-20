@@ -107,7 +107,7 @@ data "frostmoln_public_ip" "backoffice" {
 resource "frostmoln_public_ip_association" "web_backoffice_nic" {
   public_ip_id = data.frostmoln_public_ip.backoffice.id
   instance_id  = frostmoln_instance.web.id
-  port_id      = "b1e0f6c2-1234-4a5b-9c8d-abcdef012345" # the instance's second network port
+  port_id      = "nic_Nxz2cqf1GoqJAwYhjYmdWL" # the instance's second network port
 }
 
 output "web_public_ip" {

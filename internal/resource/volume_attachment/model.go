@@ -4,6 +4,7 @@ package volume_attachment
 import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -40,7 +41,7 @@ type apiVolume struct {
 // findAttachment returns the attachment for the given instance, or nil.
 func (v *apiVolume) findAttachment(instanceID string) *apiVolumeAttachment {
 	for i := range v.Attachments {
-		if v.Attachments[i].InstanceID == instanceID {
+		if pubid.Equal(v.Attachments[i].InstanceID, instanceID) {
 			return &v.Attachments[i]
 		}
 	}

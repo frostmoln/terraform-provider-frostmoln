@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 )
 
 // Plan-time checks for a colour rule. They are EXACTLY identity's
@@ -24,11 +26,11 @@ import (
 //
 // The one check that is not identity's is the SPELLING of an organization id:
 // the server accepts any form uuid.Parse does (upper case, braces, urn:uuid:),
-// but it reports ids in the canonical lowercase form, and Terraform compares
-// strings — so a configured `{6F1C…}` would read as a different organization
-// from the canonical id an import or a refresh records, and plan a replacement
-// of the rule. It is refused with the canonical spelling in the message, the
-// vpc_route destination precedent: a convergence rule, not an acceptance one.
+// but it reports ids canonically (an org_ public id; ADR-0129), and Terraform
+// compares strings. The provider treats an org_ id and its canonical UUID as
+// one id (internal/idform), but not `{6F1C…}`: that is refused with the
+// canonical spelling in the message, the vpc_route destination precedent: a
+// convergence rule, not an acceptance one.
 
 // MaxKeyRunes / MaxValueRunes bound a colour rule's key and value, in
 // characters (identity MaxTagColorKeyRunes / MaxTagColorValueRunes).
@@ -106,27 +108,38 @@ func CheckColor(color string) string {
 	return ""
 }
 
-// CheckOrganizationID returns why id cannot be an organization id, or "". The
-// server parses the path segment with uuid.Parse, and so does this; a parseable
-// id in any spelling but the canonical one is refused naming that spelling (see
-// the note at the top of this file). It also keeps "." and ".." (which the
-// client's path cleaning would collapse onto another route) from ever reaching
-// a request path.
+// CheckOrganizationID returns why id cannot be an organization id, or "": an
+// org_ public id or a UUID (ADR-0129). A UUID in any spelling but the canonical
+// one is refused naming that spelling (see the note at the top of this file).
+// It also keeps "." and ".." (which the client's path cleaning would collapse
+// onto another route) from ever reaching a request path.
 func CheckOrganizationID(id string) string {
+	return checkID(id, "org", "an", "organization id", "org_6f1c2a7e0b8d4e3a9a512d")
+}
+
+// checkID refuses anything but a public id of prefix or a UUID, and a UUID in
+// a non-canonical spelling.
+func checkID(id, prefix, article, noun, example string) string {
+	if _, p, ok := pubid.Canonical(id); ok && p == prefix {
+		return ""
+	}
 	canonical, err := CanonicalUUID(id)
-	if err != nil {
-		return fmt.Sprintf("%q is not an organization id (a UUID, e.g. \"6f1c2a7e-0b8d-4e3a-9a51-2d4c8e7f1b30\").", clip(id))
+	if err != nil || strings.Contains(id, "_") {
+		return fmt.Sprintf("%q is not %s %s (a public id like %q, or a UUID).", clip(id), article, noun, example)
 	}
 	if canonical != id {
-		return fmt.Sprintf("Write the organization id as %q. The platform reports ids in that form, and Terraform "+
-			"compares them as text, so %q would read as a different organization and plan a replacement.", canonical, clip(id))
+		return fmt.Sprintf("Write the %s as %q. The platform reports ids in a canonical form, and %q would read "+
+			"as a different id.", noun, canonical, clip(id))
 	}
 	return ""
 }
 
-// CanonicalUUID returns id in the canonical form the platform reports
-// (lowercase, hyphenated, no braces or urn prefix), or uuid.Parse's error.
+// CanonicalUUID returns the canonical UUID behind id, for comparing ids: a
+// public id of any kind, or a UUID in any spelling uuid.Parse accepts.
 func CanonicalUUID(id string) (string, error) {
+	if u, _, ok := pubid.Canonical(id); ok {
+		return u, nil
+	}
 	u, err := uuid.Parse(id)
 	if err != nil {
 		return "", err
@@ -134,11 +147,14 @@ func CanonicalUUID(id string) (string, error) {
 	return u.String(), nil
 }
 
-// CheckRuleID returns why id cannot be a colour rule id, or "" — uuid.Parse,
-// as the server parses the path segment.
+// CheckRuleID returns why id cannot be a colour rule id, or "": a tcr_ public
+// id or a UUID, as the server parses the path segment.
 func CheckRuleID(id string) string {
+	if _, p, ok := pubid.Canonical(id); ok && p == "tcr" {
+		return ""
+	}
 	if _, err := uuid.Parse(id); err != nil {
-		return fmt.Sprintf("%q is not a tag colour rule id (a UUID).", clip(id))
+		return fmt.Sprintf("%q is not a tag colour rule id (a tcr_ public id, or a UUID).", clip(id))
 	}
 	return ""
 }
@@ -192,5 +208,5 @@ func ColorValidator() validator.String {
 
 // OrganizationIDValidator validates an organization id (CheckOrganizationID).
 func OrganizationIDValidator() validator.String {
-	return checkValidator{"Invalid Organization ID", "an organization id (UUID)", CheckOrganizationID}
+	return checkValidator{"Invalid Organization ID", "an organization id (`org_` public id or UUID)", CheckOrganizationID}
 }

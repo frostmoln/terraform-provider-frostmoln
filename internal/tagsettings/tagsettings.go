@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 )
 
 // Error codes the colour-rule routes answer that a caller branches on.
@@ -153,10 +154,15 @@ func ResolveOrganizationID(ctx context.Context, c *client.Client) (string, error
 	}
 	canonical, err := CanonicalUUID(orgID)
 	if err != nil {
-		return "", fmt.Errorf("the platform reported organization id %q, which is not a UUID: %w", orgID, err)
+		return "", fmt.Errorf("the platform reported organization id %q, which is not an organization id: %w", orgID, err)
 	}
-	resolvedOrgs.Store(c, canonical)
-	return canonical, nil
+	// Kept as reported when it is an org_ public id (the spelling Read
+	// records); a UUID is stored canonical.
+	if _, p, _ := pubid.Canonical(orgID); p == "" {
+		orgID = canonical
+	}
+	resolvedOrgs.Store(c, orgID)
+	return orgID, nil
 }
 
 // IsForbidden reports whether err is a 403 — for the tag-settings routes, a

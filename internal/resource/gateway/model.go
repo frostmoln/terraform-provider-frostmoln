@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
 
@@ -201,7 +202,7 @@ func applyToModel(m *GatewayModel, gw *apiGateway) diag.Diagnostics {
 
 	// Never rebind. An id that matches the response's vpcId is the import path
 	// (see the doc comment), not a mismatch.
-	if id := m.ID.ValueString(); id != "" && id != gw.ID && id != gw.VPCID {
+	if id := m.ID.ValueString(); id != "" && !pubid.Equal(id, gw.ID) && !pubid.Equal(id, gw.VPCID) {
 		diags.AddError(
 			"Gateway identity does not match state",
 			fmt.Sprintf("This resource tracks gateway %q, but the API answered with gateway %q "+
@@ -211,7 +212,7 @@ func applyToModel(m *GatewayModel, gw *apiGateway) diag.Diagnostics {
 				"you mean to manage.", id, gw.ID, gw.VPCID),
 		)
 	}
-	if vpcID := m.VPCID.ValueString(); vpcID != "" && vpcID != gw.VPCID {
+	if vpcID := m.VPCID.ValueString(); vpcID != "" && !pubid.Equal(vpcID, gw.VPCID) {
 		diags.AddError(
 			"Gateway belongs to a different VPC",
 			fmt.Sprintf("This resource tracks the gateway of VPC %q, but the API answered with "+
@@ -267,7 +268,7 @@ func checkRequestedPublicIP(requested types.String, gw *apiGateway) diag.Diagnos
 		return diags
 	}
 	want := requested.ValueString()
-	if want == "" || want == gw.PublicIPID {
+	if want == "" || pubid.Equal(want, gw.PublicIPID) {
 		return diags
 	}
 

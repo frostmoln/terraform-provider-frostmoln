@@ -137,7 +137,7 @@ func TestHealthCheckCreateReadUpdate(t *testing.T) {
 	}
 	var created HealthCheckModel
 	createResp.State.Get(context.Background(), &created)
-	if created.ID.ValueString() != "hc-1" || created.GatewayID.ValueString() != "agw-1" {
+	if created.ID.ValueString() != "agw-1/pool-1" || created.GatewayID.ValueString() != "agw-1" {
 		t.Fatalf("create result wrong: %+v", created)
 	}
 

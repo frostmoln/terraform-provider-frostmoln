@@ -1,5 +1,5 @@
 # Resolve a load balancer that Terraform did not create (provisioned in the
-# portal or with `fm`) by NAME — no hardcoded UUID.
+# portal or with `fm`) by NAME — no hardcoded id.
 data "frostmoln_load_balancer" "edge" {
   name = "edge-https"
 }
@@ -11,7 +11,7 @@ locals {
   edge_address = coalesce(data.frostmoln_load_balancer.edge.public_ip_address, data.frostmoln_load_balancer.edge.vip_address)
 }
 
-# A lookup by id behaves identically for load balancers whose UUID is already
+# A lookup by id behaves identically for load balancers whose id is already
 # known.
 data "frostmoln_load_balancer" "by_id" {
   id = data.frostmoln_load_balancer.edge.id
@@ -21,7 +21,7 @@ data "frostmoln_load_balancer" "by_id" {
 # echoed back from the read.
 data "frostmoln_load_balancer" "edge_internal" {
   name   = "edge-https"
-  vpc_id = "vpc-1d2e3f4a-0000-0000-0000-000000000000"
+  vpc_id = "vpc_4bzg7R3PQzPQnCUdYpaPTD"
 }
 
 # A name that matches nothing — or more than one load balancer — fails the

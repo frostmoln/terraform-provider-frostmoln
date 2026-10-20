@@ -128,7 +128,7 @@ func (r *healthCheckResource) Schema(_ context.Context, _ resource.SchemaRequest
 			"\n\n" + scopedecl.Summary("frostmoln_appgw_health_check"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
-				Description:   "The unique identifier of the health check.",
+				Description:   "The health check's identifier, `<gateway_id>/<pool_id>` (a pool has at most one check). The same form is its import id.",
 				Computed:      true,
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
@@ -363,8 +363,10 @@ func (r *healthCheckResource) path(gwID, poolID string) string {
 }
 
 func (m *HealthCheckModel) fromAPI(hc *apiHealthCheck) {
-	m.ID = types.StringValue(hc.ID)
+	// A pool has at most one check, so gateway/pool names it. The API's own
+	// row id is not used: public-format responses omit it (ADR-0129).
 	m.PoolID = types.StringValue(hc.PoolID)
+	m.ID = types.StringValue(m.GatewayID.ValueString() + "/" + hc.PoolID)
 	m.Protocol = types.StringValue(hc.Protocol)
 	m.Path = types.StringValue(hc.Path)
 	m.ExpectedStatus = types.StringValue(hc.ExpectedStatus)

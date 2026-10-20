@@ -116,4 +116,4 @@ Set it when the port you probe expects the header, and leave it off when it does
 
 ### Read-Only
 
-- `id` (String) The unique identifier of the health check.
+- `id` (String) The health check's identifier, `<gateway_id>/<pool_id>` (a pool has at most one check). The same form is its import id.

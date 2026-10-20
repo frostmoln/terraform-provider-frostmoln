@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 )
 
@@ -329,7 +330,7 @@ func (r *iamPolicyAttachmentResource) findAttachment(ctx context.Context, policy
 		}
 		for i := range list.Attachments {
 			a := list.Attachments[i]
-			if a.AttacheeType == attacheeType && a.AttacheeID == attacheeID {
+			if a.AttacheeType == attacheeType && pubid.Equal(a.AttacheeID, attacheeID) {
 				return &a, true, nil
 			}
 		}

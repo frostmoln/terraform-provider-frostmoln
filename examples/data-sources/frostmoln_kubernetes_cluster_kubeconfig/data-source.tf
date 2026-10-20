@@ -1,5 +1,5 @@
 # Resolve a managed Kubernetes cluster by NAME and fetch its kubeconfig —
-# no hardcoded UUID (a portal- or `fm`-created cluster is otherwise reachable
+# no hardcoded id (a portal- or `fm`-created cluster is otherwise reachable
 # only by its id).
 data "frostmoln_kubernetes_cluster_kubeconfig" "billing" {
   name = "billing-prod"

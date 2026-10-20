@@ -17,6 +17,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
@@ -326,7 +327,7 @@ func (r *subnetResource) adoptCreatedObject(ctx context.Context, plan SubnetMode
 			// of another VPC and adopt the wrong object.
 			candidates := make([]orphan.Candidate, 0, len(list.Items))
 			for _, it := range list.Items {
-				if vpcID != "" && it.VPCID != vpcID {
+				if vpcID != "" && !pubid.Equal(it.VPCID, vpcID) {
 					continue
 				}
 				candidates = append(candidates, orphan.Candidate{ID: it.ID, Name: it.Name, CreatedAt: it.CreatedAt})

@@ -46,6 +46,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
 )
 
@@ -280,7 +281,7 @@ func (d *securityGroupDataSource) readByID(ctx context.Context, id string) (*api
 		diags.AddError("Failed to Parse Security Group Response", err.Error())
 		return nil, diags
 	}
-	if sg.ID != id {
+	if !pubid.Equal(sg.ID, id) {
 		diags.AddError(
 			"This security group read did not identify the requested security group",
 			fmt.Sprintf("The response does not carry the id this path asks for (%q). Whatever "+
@@ -340,7 +341,7 @@ func (d *securityGroupDataSource) resolveByName(ctx context.Context, name, vpcID
 			if sg.Name != name {
 				continue
 			}
-			if vpcID != "" && sg.VPCID != vpcID {
+			if vpcID != "" && !pubid.Equal(sg.VPCID, vpcID) {
 				continue
 			}
 			matches = append(matches, *sg)

@@ -73,7 +73,10 @@ func TestSchemaAttributes(t *testing.T) {
 	if !attachments.Computed {
 		t.Error("attachments must be computed")
 	}
-	for _, attr := range []string{"id", "volume_id", "instance_id", "device", "attached_at"} {
+	if _, ok := attachments.NestedObject.Attributes["id"]; ok {
+		t.Error("attachments[].id is gone: a Cinder attachment id has no public kind, and storage drops it")
+	}
+	for _, attr := range []string{"volume_id", "instance_id", "device", "attached_at"} {
 		row, ok := attachments.NestedObject.Attributes[attr]
 		if !ok {
 			t.Errorf("row attribute %s missing from the schema", attr)
@@ -347,8 +350,10 @@ func TestReadByID(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("attachments has %d rows, want 1", len(rows))
 	}
-	if rows[0].ID.ValueString() != "att-1" || rows[0].VolumeID.ValueString() != "vol-1" {
-		t.Errorf("row identity is %s/%s", rows[0].ID.ValueString(), rows[0].VolumeID.ValueString())
+	// The wire still carries the attachment id ("att-1" above) until storage
+	// drops it; the data source does not read it.
+	if rows[0].VolumeID.ValueString() != "vol-1" {
+		t.Errorf("row volume is %s", rows[0].VolumeID.ValueString())
 	}
 	if rows[0].InstanceID.ValueString() != "inst-7" || rows[0].Device.ValueString() != "/dev/vdb" {
 		t.Errorf("consumer is %s/%s", rows[0].InstanceID.ValueString(), rows[0].Device.ValueString())

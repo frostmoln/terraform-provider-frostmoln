@@ -13,7 +13,7 @@ provider "frostmoln" {
   # Optional: select the tenant to manage resources in (defaults to your
   # account's default tenant). Targeting another tenant needs an fm CLI / OIDC
   # session — an API key is bound to a single tenant. Also FROSTMOLN_TENANT_ID.
-  # tenant_id = "00000000-0000-0000-0000-000000000000"
+  # tenant_id = "ten_EinDrepZgsHnfR1fkH6Q8w"
 
   # Optional: tags applied to every taggable resource this provider manages. A
   # key a resource sets in its own `tags` wins; each resource's `tags_all`

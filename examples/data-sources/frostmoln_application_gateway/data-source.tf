@@ -1,5 +1,5 @@
 # Resolve an Application Gateway that Terraform did not create
-# (provisioned in the portal or with `fm`) by NAME — no hardcoded UUID.
+# (provisioned in the portal or with `fm`) by NAME — no hardcoded id.
 #
 # The offer's child resources all take a required `gateway_id` with no other
 # path to it, so this lookup is what lets a listener, backend pool, certificate
@@ -16,7 +16,7 @@ resource "frostmoln_appgw_listener" "https" {
   port       = 443
 }
 
-# A lookup by id behaves identically for gateways whose UUID is already known
+# A lookup by id behaves identically for gateways whose id is already known
 # (e.g. the gateway this configuration itself created).
 resource "frostmoln_application_gateway" "self_served" {
   name      = "self-served"
