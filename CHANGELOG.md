@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.96.0] - 2026-10-21
+
+### 🚀 Features
+
+- *(api_key)* Retire flat scopes — deprecation + apply-time migration diagnostic (retire-scopes step 3) (#725)
+
 ## [0.95.0] - 2026-10-21
 
 ### 🚀 Features
