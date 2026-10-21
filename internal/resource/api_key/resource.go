@@ -2,6 +2,7 @@ package api_key
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -39,7 +40,17 @@ func (r *apiKeyResource) Metadata(_ context.Context, req resource.MetadataReques
 
 func (r *apiKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages an API key in the Frostmoln platform." + "\n\n" + scopedecl.Summary("frostmoln_api_key"),
+		Description: "Manages an API key in the Frostmoln platform." +
+			"\n\n" +
+			"~> **Upgrade note (scopes retirement).** Flat `scopes` no longer exist as a grant " +
+			"language an API key can be given: the API refuses every non-empty value on create " +
+			"and update with 400 `API_KEY_SCOPES_RETIRED`. Remove the attribute from your " +
+			"configuration and grant the key with an access policy attached using " +
+			"`frostmoln_iam_policy_attachment` instead. A migrated key's stored scopes stay " +
+			"while `scopes` is omitted (unchanged server-side); to retire them too, set " +
+			"`scopes = []` once — the API's clear arm — after the replacement policy is " +
+			"attached and verified." +
+			"\n\n" + scopedecl.Summary("frostmoln_api_key"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the API key.",
@@ -57,18 +68,31 @@ func (r *apiKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Optional:    true,
 			},
 			"scopes": schema.ListAttribute{
-				Description: "The permission scopes granted to the API key, as `<service>:<action>` strings (e.g. `compute:read`, `storage:write`). " +
-					"At least one is required, and a key can never exceed the permissions of the identity that created it. " +
-					"Grant `:read` and `:write` — for almost every service those are the actions enforced, and `:write` covers every mutation including start/stop/restart. " +
-					"THE EXCEPTION IS THE INTERACTIVE-SESSION SCOPES, WHICH ARE ENFORCED AS THEIR OWN CLASS: `sessions:forward` (fm forward / the managed-DB console), " +
-					"`sessions:pty` (a shell inside an instance-access instance) and `sessions:write` (the managed-Kubernetes API proxy). Nothing substitutes for them — " +
-					"`compute:action` does not open a shell and `kubernetes:*` does not open the cluster-API proxy. " +
-					"The global `*` wildcard is REJECTED (`WILDCARD_SCOPE_NOT_ALLOWED`) — keys are least-privilege — but a per-service wildcard such as `compute:*` is accepted. " +
-					"The grantable set with a description of each is served by the platform: read it with the `frostmoln_api_key_scopes` data source, or `fm account api-key scopes`. " +
-					"NOTE: identity also ACCEPTS the finer `service:resource:action` form here, but no service ENFORCES it as a key scope — a key holding only those applies cleanly and is then denied on every call. " +
-					"For per-resource targets, constraints or explicit denies, attach an access policy with `frostmoln_iam_policy_attachment` instead.",
+				// Deliberately NO emptyListNotAllowed validator and NO
+				// ModifyPlan drop-warning, unlike the workload-identity binding.
+				// There the PUT is a full replacement, so a configuration that
+				// drops `scopes` EMPTIES the grant — hence the warning and the
+				// refusal of `[]`. Here the PATCH reads an omitted scopes field
+				// as UNCHANGED server-side: dropping the attribute narrows
+				// nothing, and `scopes = []` is not an invalid spelling at all
+				// but the API's one explicit clear arm. See the ModifyPlan note.
+				Description: "RETIRED — flat scopes are no longer a grant language an API key can be " +
+					"given. A create or update carrying any value is rejected by the API with 400 " +
+					"API_KEY_SCOPES_RETIRED and the apply fails; the deprecation warning in the plan " +
+					"already names the migration. " +
+					"Remove the attribute from your configuration to stop sending scopes — on a " +
+					"PATCH an omitted field is read server-side as UNCHANGED, so a migrated key's " +
+					"stored scopes persist until you clear them explicitly by setting `scopes = []` " +
+					"once (the API's clear arm; zero-scope creates are legal). " +
+					"Grant the key with an access policy attached using `frostmoln_iam_policy_attachment` instead. " +
+					"Kept Optional (never Required) so a carrying configuration migrates by deletion, " +
+					"not by replacement, and pre-retirement state still reads.",
 				Optional:    true,
 				ElementType: types.StringType,
+				DeprecationMessage: "scopes is retired: API-key scopes are no longer a grant language " +
+					"and any value is rejected by the API with 400 API_KEY_SCOPES_RETIRED at apply. " +
+					"Remove the attribute from your configuration and grant the key with an access " +
+					"policy attached using frostmoln_iam_policy_attachment.",
 			},
 			"expires_at": schema.StringAttribute{
 				Description: "The expiration for the API key. Accepts a bare date (`YYYY-MM-DD`, interpreted as the end of that day in UTC — e.g. `2027-01-01` becomes `2027-01-01T23:59:59Z`) or a full RFC3339 timestamp. The expiry must be at most 2 years in the future — the server rejects a later value with `API_KEY_LIFETIME_EXCEEDS_MAX`. Note: the fm CLI's `--expires` uses the operator's local timezone for the end-of-day, so the same bare date may resolve to an instant up to a day apart between the two tools; this provider uses UTC so plans are reproducible across machines. Omit to use the server default (~1 year), which is then reflected in state. Once set, this cannot be changed (changing it replaces the key).",
@@ -135,8 +159,42 @@ func (r *apiKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 	}
 }
 
+// scopesRetiredErrorMessage renders the API-key scopes retirement's 400 as the
+// migration it is, instead of the bare "<code>: <message>" passthrough — the
+// api-key twin of the workload-identity binding's BINDING_SCOPES_RETIRED branch.
+// A create or PATCH that still carries a non-empty `scopes` fails at APPLY with
+// this (the plan itself only WARNS, via the schema DeprecationMessage — a
+// warning alone must never be load-bearing). Unlike the binding, the refusal is
+// about the ARGUMENT only: a migrated key's stored scopes keep working, and the
+// PATCH's clear arm (`scopes = []`) is how Terraform retires them.
+func scopesRetiredErrorMessage(err error) (string, bool) {
+	var apiErr *client.APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != "API_KEY_SCOPES_RETIRED" {
+		return "", false
+	}
+	return "Flat scopes are retired on API keys: the API now refuses every non-empty " +
+		"`scopes` value on create and update with 400 API_KEY_SCOPES_RETIRED.\n\n" +
+		"Grant the key with an access policy attached using frostmoln_iam_policy_attachment " +
+		"instead: attach a policy carrying the operations the key actually used, verify the key " +
+		"still authenticates and is authorized as before, then apply the configuration with " +
+		"`scopes` removed. An omitted `scopes` attribute sends no scopes at all, and the server " +
+		"leaves a migrated key's stored scopes UNCHANGED; to clear a migrated key's stored scopes " +
+		"explicitly, set `scopes = []` once — the API's clear arm — then remove the attribute " +
+		"(keeping `[]` is harmless: it clears again).", true
+}
+
 // ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,
 // plans an in-place update of the key's tags.
+//
+// Deliberately NO drop-direction scopes warning, unlike the workload-identity
+// binding — the PATCH/PUT asymmetry. There the PUT carries `scopes` as a FULL
+// replacement, so a configuration that silently drops the attribute empties the
+// binding's grant, and the plan is the last place to say so. Here the PATCH
+// reads an omitted scopes field as UNCHANGED server-side: a configuration that
+// drops the attribute narrows nothing, so a drop-warning would cry wolf on every
+// deprecation migration. Narrowing happens only when the practitioner spells
+// `scopes = []` — a deliberate, visible act (the API's clear arm), not a silent
+// side effect of deleting a line.
 func (r *apiKeyResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
 	tftags.WarnOfferTagBudget(ctx, r.client.DefaultTags(), req, resp)
@@ -176,6 +234,10 @@ func (r *apiKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/api-keys"), apiReq)
 	if err != nil {
+		if msg, retired := scopesRetiredErrorMessage(err); retired {
+			resp.Diagnostics.AddError("API key scopes are retired (API_KEY_SCOPES_RETIRED)", msg)
+			return
+		}
 		resp.Diagnostics.AddError("Failed to create API key", err.Error())
 		return
 	}
@@ -301,6 +363,10 @@ func (r *apiKeyResource) Update(ctx context.Context, req resource.UpdateRequest,
 		_, err = r.client.Patch(ctx, keyPath, updateReq)
 	}
 	if err != nil {
+		if msg, retired := scopesRetiredErrorMessage(err); retired {
+			resp.Diagnostics.AddError("API key scopes are retired (API_KEY_SCOPES_RETIRED)", msg)
+			return
+		}
 		resp.Diagnostics.AddError("Failed to update API key", err.Error())
 		return
 	}

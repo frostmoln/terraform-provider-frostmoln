@@ -1,10 +1,12 @@
 package api_key
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -113,7 +115,7 @@ func TestAPIKeyModelToUpdateRequest(t *testing.T) {
 	if req.Description == nil || *req.Description != "Updated description" {
 		t.Errorf("expected description 'Updated description', got %v", req.Description)
 	}
-	if len(req.Scopes) != 1 || req.Scopes[0] != "compute:read" {
+	if req.Scopes == nil || len(*req.Scopes) != 1 || (*req.Scopes)[0] != "compute:read" {
 		t.Errorf("expected scope compute:read, got %v", req.Scopes)
 	}
 	if req.RateLimit == nil || *req.RateLimit != 200 {
@@ -140,6 +142,87 @@ func TestAPIKeyModelToUpdateRequestClearDescription(t *testing.T) {
 	// Description should be set to empty string to clear it.
 	if req.Description == nil || *req.Description != "" {
 		t.Errorf("expected empty description to clear, got %v", req.Description)
+	}
+}
+
+// TestAPIKeyModelScopesOptional mirrors the workload-identity binding suite's
+// TestModelScopesOptional for the api-key's PATCH semantics: a NULL scopes list
+// (the config spelling of the deprecation migration) must raise no diagnostics
+// and must be OMITTED from both request bodies. On a PATCH an omitted key means
+// UNCHANGED server-side, so the migration must never silently clear a migrated
+// key's stored scopes — and the published contract defines no "scopes": null
+// either, so the field must be absent from the JSON outright.
+func TestAPIKeyModelScopesOptional(t *testing.T) {
+	ctx := context.Background()
+	diags := diag.Diagnostics{}
+	m := APIKeyModel{
+		Name:   types.StringValue("migrated-key"),
+		Scopes: types.ListNull(types.StringType),
+	}
+	createReq := m.toCreateRequest(ctx, &diags)
+	updateReq := m.toUpdateRequest(ctx, &diags)
+	if diags.HasError() {
+		t.Fatalf("a null scopes list must not produce diagnostics: %v", diags.Errors())
+	}
+	if createReq.Scopes != nil || updateReq.Scopes != nil {
+		t.Errorf("scopes = create %v / update %v, want none sent", createReq.Scopes, updateReq.Scopes)
+	}
+	for name, req := range map[string]any{"create": createReq, "update": updateReq} {
+		body, err := json.Marshal(req)
+		if err != nil {
+			t.Fatalf("marshal %s: %v", name, err)
+		}
+		if bytes.Contains(body, []byte(`"scopes"`)) {
+			t.Errorf("%s body = %s, want the scopes field omitted", name, body)
+		}
+	}
+}
+
+// TestAPIKeyModelUpdateScopesEmptyClears pins the clear arm the retirement docs
+// promise: an explicit `scopes = []` must reach the PATCH as a literal
+// "scopes":[] — the API's clear arm — and never be elided like omitted, nor
+// degrade to a bare null. (With []string +omitempty the empty slice used to be
+// dropped from the body, making the documented spelling a silent no-op.)
+// Create has no "unchanged" to preserve, so a zero-scope create keeps the
+// omitted spelling.
+func TestAPIKeyModelUpdateScopesEmptyClears(t *testing.T) {
+	ctx := context.Background()
+	diags := diag.Diagnostics{}
+	empty, d := types.ListValueFrom(ctx, types.StringType, []string{})
+	diags.Append(d...)
+
+	m := APIKeyModel{
+		Name:   types.StringValue("clearing-key"),
+		Scopes: empty,
+	}
+	updateReq := m.toUpdateRequest(ctx, &diags)
+	if diags.HasError() {
+		t.Fatalf("diags: %v", diags.Errors())
+	}
+	if updateReq.Scopes == nil {
+		t.Fatal("an explicit scopes = [] must send the clear arm, not omit the field")
+	}
+	body, err := json.Marshal(updateReq)
+	if err != nil {
+		t.Fatalf("marshal update: %v", err)
+	}
+	if !bytes.Contains(body, []byte(`"scopes":[]`)) {
+		t.Errorf("update body = %s, want a literal \"scopes\":[] (the clear arm)", body)
+	}
+	if bytes.Contains(body, []byte(`"scopes":null`)) {
+		t.Errorf("update body = %s, want \"scopes\":[] — a bare null is not a defined PATCH spelling", body)
+	}
+
+	createReq := m.toCreateRequest(ctx, &diags)
+	if diags.HasError() {
+		t.Fatalf("diags: %v", diags.Errors())
+	}
+	createBody, err := json.Marshal(createReq)
+	if err != nil {
+		t.Fatalf("marshal create: %v", err)
+	}
+	if bytes.Contains(createBody, []byte(`"scopes"`)) {
+		t.Errorf("create body = %s, want the scopes field omitted (a zero-scope create is legal)", createBody)
 	}
 }
 
@@ -759,6 +842,37 @@ func TestAPIKeyResource_Schema_Attributes(t *testing.T) {
 	}
 }
 
+// TestAPIKeySchemaScopesOptionalAndDeprecated guards the scopes retirement's
+// schema contract, mirroring the binding suite's TestSchemaScopesOptional. The
+// DeprecationMessage must exist (the plan-time warning is the only warning the
+// practitioner gets before the apply-time refusal — DeprecationMessage alone
+// only WARNS, so it must exist AND be checked here), the attribute must stay
+// Optional (a carrying configuration migrates by config DELETION, never by
+// replacement, and pre-retirement state still reads), and it must carry NO
+// validators — unlike the binding's emptyListNotAllowed — because `scopes = []`
+// is here a legitimate, documented spelling: the API's clear arm.
+func TestAPIKeySchemaScopesOptionalAndDeprecated(t *testing.T) {
+	attr, ok := apiKeySchema(t).Attributes["scopes"].(schema.ListAttribute)
+	if !ok {
+		t.Fatalf("scopes is not a ListAttribute: %T", apiKeySchema(t).Attributes["scopes"])
+	}
+	if attr.Required {
+		t.Error("scopes must not be Required — a carrying configuration migrates by deletion")
+	}
+	if !attr.Optional {
+		t.Error("scopes must be Optional")
+	}
+	if attr.DeprecationMessage == "" {
+		t.Error("scopes must carry a DeprecationMessage warning the practitioner at plan time")
+	}
+	if !strings.Contains(attr.DeprecationMessage, "API_KEY_SCOPES_RETIRED") {
+		t.Errorf("DeprecationMessage %q must name the refusal code", attr.DeprecationMessage)
+	}
+	if len(attr.Validators) != 0 {
+		t.Errorf("scopes must carry no validators — scopes = [] is the API's clear arm, not an invalid spelling (got %d)", len(attr.Validators))
+	}
+}
+
 func TestAPIKeyResource_Configure_NilProviderData(t *testing.T) {
 	r := &apiKeyResource{}
 	req := resource.ConfigureRequest{ProviderData: nil}
@@ -1191,6 +1305,150 @@ func TestAPIKeyResource_Update_APIError(t *testing.T) {
 
 	if !updateResp.Diagnostics.HasError() {
 		t.Fatal("expected error from API failure")
+	}
+}
+
+// TestAPIKeyResourceCreateWithScopesFailsAtApply pins the scopes-retirement wire
+// contract for the API key, mirroring the binding suite's
+// TestResourceCreateWithScopesFailsAtApply: identity refuses every non-empty
+// scopes body with 400 API_KEY_SCOPES_RETIRED, and the provider answers with the
+// migration-shaped diagnostic — never a silent drop, never the bare passthrough.
+func TestAPIKeyResourceCreateWithScopesFailsAtApply(t *testing.T) {
+	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/api-keys" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{
+				"code":    "API_KEY_SCOPES_RETIRED",
+				"message": "flat scopes are retired on API keys",
+			}})
+			return
+		}
+		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredAPIKeyResource(t, server.URL)
+	s := apiKeySchema(t)
+	tfType := apiKeyTFType(t)
+
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":        tftypes.NewValue(tftypes.String, "my-key"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, []tftypes.Value{tftypes.NewValue(tftypes.String, "compute:read")}),
+		"expires_at":  tftypes.NewValue(tftypes.String, nil),
+		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
+		"key":         tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"key_prefix":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, tftypes.UnknownValue),
+	})
+
+	createReq := resource.CreateRequest{Plan: tfsdk.Plan{Schema: s, Raw: planVal}}
+	createResp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
+	res.Create(ctx, createReq, createResp)
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("a scoped create must fail at apply against the post-retirement API")
+	}
+	if !strings.Contains(createResp.Diagnostics[0].Summary(), "API key scopes are retired") {
+		t.Errorf("diagnostic summary %q must name the retirement", createResp.Diagnostics[0].Summary())
+	}
+	msg := createResp.Diagnostics[0].Detail()
+	for _, want := range []string{"API_KEY_SCOPES_RETIRED", "frostmoln_iam_policy_attachment", "scopes = []"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("diagnostic detail %q must carry the migration (%q missing)", msg, want)
+		}
+	}
+	var m APIKeyModel
+	createResp.State.Get(ctx, &m)
+	if m.ID.ValueString() != "" {
+		t.Errorf("a refused create must leave nothing in state, got id %q", m.ID.ValueString())
+	}
+}
+
+// TestAPIKeyResourceUpdateScopesAtApplyFails pins the PATCH-side retirement
+// contract, mirroring the binding suite's TestResourceUpdateScopesAtApplyFails: a
+// "re-scope" PATCH is refused with 400 API_KEY_SCOPES_RETIRED, surfaced as the
+// migration diagnostic, and the prior state is left exactly in place. The tags
+// ride the SAME PATCH here — unlike the binding's separate verbs — so one
+// refusal stops the whole update; the read-back GET after it must never run.
+func TestAPIKeyResourceUpdateScopesAtApplyFails(t *testing.T) {
+	server := apiKeyMeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && r.URL.Path == "/v1/tenants/tenant-456/api-keys/ak-123" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{
+				"code":    "API_KEY_SCOPES_RETIRED",
+				"message": "flat scopes are retired on API keys",
+			}})
+			return
+		}
+		// ANY unexpected request (the read-back GET, in particular) fails the
+		// run — a refused PATCH must not continue past itself.
+		t.Errorf("unexpected %s %s — the refused update must not continue past the PATCH", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	res := configuredAPIKeyResource(t, server.URL)
+	s := apiKeySchema(t)
+	tfType := apiKeyTFType(t)
+
+	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "ak-123"),
+		"name":        tftypes.NewValue(tftypes.String, "old-key"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"scopes":      tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, []tftypes.Value{tftypes.NewValue(tftypes.String, "compute:read")}),
+		"expires_at":  tftypes.NewValue(tftypes.String, nil),
+		"rate_limit":  tftypes.NewValue(tftypes.Number, nil),
+		"key":         tftypes.NewValue(tftypes.String, "fmk_saved"), // pragma: allowlist secret
+		"key_prefix":  tftypes.NewValue(tftypes.String, "fmk_test"),
+		"status":      tftypes.NewValue(tftypes.String, "active"),
+		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+	})
+
+	// The plan re-scopes (and renames, a realistic mixed PATCH). Built as its
+	// own literal: decoding stateVal into a map and tweaking it would ALIAS
+	// stateVal's internal attr map, silently making plan == state.
+	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"id":          tftypes.NewValue(tftypes.String, "ak-123"),
+		"name":        tftypes.NewValue(tftypes.String, "renamed-key"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"scopes": tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, []tftypes.Value{
+			tftypes.NewValue(tftypes.String, "compute:read"),
+			tftypes.NewValue(tftypes.String, "storage:read"),
+		}),
+		"expires_at": tftypes.NewValue(tftypes.String, nil),
+		"rate_limit": tftypes.NewValue(tftypes.Number, nil),
+		"key":        tftypes.NewValue(tftypes.String, "fmk_saved"), // pragma: allowlist secret
+		"key_prefix": tftypes.NewValue(tftypes.String, "fmk_test"),
+		"status":     tftypes.NewValue(tftypes.String, "active"),
+		"created_at": tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"tags":       tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":   tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+	})
+
+	req := resource.UpdateRequest{Plan: tfsdk.Plan{Schema: s, Raw: planVal}, State: tfsdk.State{Schema: s, Raw: stateVal}}
+	// The framework seeds the response state with the PRIOR state; a failed
+	// update must leave it exactly there.
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s, Raw: stateVal}}
+	res.Update(ctx, req, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a scoped PATCH must fail at apply against the post-retirement API")
+	}
+	if !strings.Contains(resp.Diagnostics[0].Detail(), "API_KEY_SCOPES_RETIRED") {
+		t.Errorf("diagnostic detail %q must name the retirement code", resp.Diagnostics[0].Detail())
+	}
+	var m APIKeyModel
+	resp.State.Get(ctx, &m)
+	if m.Name.ValueString() != "old-key" {
+		t.Errorf("a refused re-scope must leave the prior state untouched, got name %q", m.Name.ValueString())
 	}
 }
 

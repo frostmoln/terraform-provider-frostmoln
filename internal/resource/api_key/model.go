@@ -143,10 +143,21 @@ type apiCreateAPIKeyResponse struct {
 
 // apiUpdateAPIKeyRequest is the API request to update an API key.
 type apiUpdateAPIKeyRequest struct {
-	Name        *string  `json:"name,omitempty"`
-	Description *string  `json:"description,omitempty"`
-	Scopes      []string `json:"scopes,omitempty"`
-	RateLimit   *int     `json:"rateLimit,omitempty"`
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	// Scopes is a pointer so the PATCH can hold the three meanings the scopes
+	// retirement gives the field apart: nil (config omits the attribute) is
+	// OMITTED from the body and leaves the stored scopes UNCHANGED server-side;
+	// a pointer to an empty slice (config `scopes = []`) sends `"scopes": []`,
+	// the API's clear arm; a filled slice is refused by the server with 400
+	// API_KEY_SCOPES_RETIRED, which the resource renders as the migration
+	// diagnostic. omitempty elides a nil pointer but NOT a pointer to an empty
+	// slice — with a plain []string + omitempty the empty slice was elided too
+	// and the clear arm was unreachable. (The workload-identity binding's PUT is
+	// the opposite shape: omitting there is a full replacement that CLEARS — see
+	// the resource's ModifyPlan note on the asymmetry.)
+	Scopes    *[]string `json:"scopes,omitempty"`
+	RateLimit *int      `json:"rateLimit,omitempty"`
 	// Tags, when set, replaces the key's whole tag set ({} clears).
 	Tags *map[string]string `json:"tags,omitempty"`
 }
@@ -200,10 +211,22 @@ func (m *APIKeyModel) toUpdateRequest(ctx context.Context, diags *diag.Diagnosti
 		req.Description = &empty
 	}
 
+	// scopes stays nil when the config omits the attribute: an omitted key on a
+	// PATCH is read as UNCHANGED server-side, which is the migration's behavior.
+	// A non-null list (empty included) points at the slice so it reaches the
+	// wire — an explicit `scopes = []` is the API's clear arm and must marshal
+	// as "scopes": [], never be elided; ElementsAs can hand back a nil slice for
+	// an empty list, and a non-nil pointer to a nil slice would marshal a bare
+	// null, a spelling the PATCH contract does not define. A non-empty list is
+	// still SENT — the server refuses it with 400 API_KEY_SCOPES_RETIRED, which
+	// the resource renders as the migration diagnostic.
 	if !m.Scopes.IsNull() && !m.Scopes.IsUnknown() {
 		var scopes []string
 		diags.Append(m.Scopes.ElementsAs(ctx, &scopes, false)...)
-		req.Scopes = scopes
+		if scopes == nil {
+			scopes = []string{}
+		}
+		req.Scopes = &scopes
 	}
 
 	if !m.RateLimit.IsNull() && !m.RateLimit.IsUnknown() {

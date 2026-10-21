@@ -4,6 +4,7 @@ page_title: "frostmoln_api_key Resource - Frostmoln"
 subcategory: ""
 description: |-
   Manages an API key in the Frostmoln platform.
+  ~> Upgrade note (scopes retirement). Flat scopes no longer exist as a grant language an API key can be given: the API refuses every non-empty value on create and update with 400 API_KEY_SCOPES_RETIRED. Remove the attribute from your configuration and grant the key with an access policy attached using frostmoln_iam_policy_attachment instead. A migrated key's stored scopes stay while scopes is omitted (unchanged server-side); to retire them too, set scopes = [] once — the API's clear arm — after the replacement policy is attached and verified.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — expires_at: the key's expiry is fixed when it is minted.
@@ -13,6 +14,8 @@ description: |-
 # frostmoln_api_key (Resource)
 
 Manages an API key in the Frostmoln platform.
+
+~> **Upgrade note (scopes retirement).** Flat `scopes` no longer exist as a grant language an API key can be given: the API refuses every non-empty value on create and update with 400 `API_KEY_SCOPES_RETIRED`. Remove the attribute from your configuration and grant the key with an access policy attached using `frostmoln_iam_policy_attachment` instead. A migrated key's stored scopes stay while `scopes` is omitted (unchanged server-side); to retire them too, set `scopes = []` once — the API's clear arm — after the replacement policy is attached and verified.
 
 **Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
 
@@ -25,10 +28,13 @@ Manages an API key in the Frostmoln platform.
 ## Example Usage
 
 ```terraform
+# An API key. Flat scopes are RETIRED: the API refuses every non-empty `scopes`
+# value with 400 API_KEY_SCOPES_RETIRED, so the attribute is removed and the
+# key's continuing authority is an access policy attached with
+# frostmoln_iam_policy_attachment.
 resource "frostmoln_api_key" "ci" {
   name        = "ci-deploy-key"
   description = "API key for CI/CD pipeline deployments"
-  scopes      = ["compute:write", "network:read", "storage:read"]
   # expires_at is optional. A bare date means end of that day (UTC); RFC3339 is
   # also accepted. A date already in the past is accepted and yields an
   # immediately expired key, so set one that is still ahead of today:
@@ -53,7 +59,7 @@ output "api_key_prefix" {
 - `description` (String) A description of the API key.
 - `expires_at` (String) The expiration for the API key. Accepts a bare date (`YYYY-MM-DD`, interpreted as the end of that day in UTC — e.g. `2027-01-01` becomes `2027-01-01T23:59:59Z`) or a full RFC3339 timestamp. The expiry must be at most 2 years in the future — the server rejects a later value with `API_KEY_LIFETIME_EXCEEDS_MAX`. Note: the fm CLI's `--expires` uses the operator's local timezone for the end-of-day, so the same bare date may resolve to an instant up to a day apart between the two tools; this provider uses UTC so plans are reproducible across machines. Omit to use the server default (~1 year), which is then reflected in state. Once set, this cannot be changed (changing it replaces the key).
 - `rate_limit` (Number) The rate limit for the API key (requests per minute). Omit to use the server default, which is then reflected in state.
-- `scopes` (List of String) The permission scopes granted to the API key, as `<service>:<action>` strings (e.g. `compute:read`, `storage:write`). At least one is required, and a key can never exceed the permissions of the identity that created it. Grant `:read` and `:write` — for almost every service those are the actions enforced, and `:write` covers every mutation including start/stop/restart. THE EXCEPTION IS THE INTERACTIVE-SESSION SCOPES, WHICH ARE ENFORCED AS THEIR OWN CLASS: `sessions:forward` (fm forward / the managed-DB console), `sessions:pty` (a shell inside an instance-access instance) and `sessions:write` (the managed-Kubernetes API proxy). Nothing substitutes for them — `compute:action` does not open a shell and `kubernetes:*` does not open the cluster-API proxy. The global `*` wildcard is REJECTED (`WILDCARD_SCOPE_NOT_ALLOWED`) — keys are least-privilege — but a per-service wildcard such as `compute:*` is accepted. The grantable set with a description of each is served by the platform: read it with the `frostmoln_api_key_scopes` data source, or `fm account api-key scopes`. NOTE: identity also ACCEPTS the finer `service:resource:action` form here, but no service ENFORCES it as a key scope — a key holding only those applies cleanly and is then denied on every call. For per-resource targets, constraints or explicit denies, attach an access policy with `frostmoln_iam_policy_attachment` instead.
+- `scopes` (List of String, Deprecated) RETIRED — flat scopes are no longer a grant language an API key can be given. A create or update carrying any value is rejected by the API with 400 API_KEY_SCOPES_RETIRED and the apply fails; the deprecation warning in the plan already names the migration. Remove the attribute from your configuration to stop sending scopes — on a PATCH an omitted field is read server-side as UNCHANGED, so a migrated key's stored scopes persist until you clear them explicitly by setting `scopes = []` once (the API's clear arm; zero-scope creates are legal). Grant the key with an access policy attached using `frostmoln_iam_policy_attachment` instead. Kept Optional (never Required) so a carrying configuration migrates by deletion, not by replacement, and pre-retirement state still reads.
 - `tags` (Map of String) Resource tags on the API key: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI). Labels only — they change no scope, expiry or rate limit, and a tags-only change is accepted even on a revoked or expired key. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 
 ### Read-Only

@@ -71,11 +71,16 @@ func (d *apiKeyScopesDataSource) Metadata(_ context.Context, req datasource.Meta
 
 func (d *apiKeyScopesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "List the scopes an API key (frostmoln_api_key) or workload identity (frostmoln_workload_identity_binding) can be granted, with a description of what each allows. " +
+		Description: "List the scopes the platform enforces, with a description of what each allows. " +
+			"Flat scopes can no longer be minted onto keys or bindings — frostmoln_api_key and " +
+			"frostmoln_workload_identity_binding refuse every non-empty `scopes` value with 400 " +
+			"(API_KEY_SCOPES_RETIRED / BINDING_SCOPES_RETIRED) and grant through access policies " +
+			"instead — but the vocabulary stays enforced on every call, and this catalog is what " +
+			"`fm account api-key scopes` reads. " +
 			"The catalog is server-owned, so it needs no provider release to change. " +
 			"A scope is `<service>:<action>`; grant `:read` and `:write`, which are what the services enforce — except the interactive-session scopes " +
 			"(`sessions:forward`, `sessions:pty`, `sessions:write`), which are their own enforced class and are not covered by any other service's wildcard. " +
-			"The global \"*\" wildcard is excluded: keys are least-privilege and the API rejects it. Per-service wildcards such as `compute:*` are listed and are accepted on an API key, but a workload identity rejects every `:*` — filter those out when feeding a binding. " +
+			"The global \"*\" wildcard is excluded: keys are least-privilege and the API rejects it. Per-service wildcards such as `compute:*` are listed, but feed them nowhere: a workload identity rejects every `:*`, and since the scopes retirement an API key refuses every flat `scopes` value (API_KEY_SCOPES_RETIRED). " +
 			"For per-resource targets, constraints or explicit denies, use an access policy (frostmoln_iam_policy_document) rather than a finer scope string.",
 		Attributes: map[string]schema.Attribute{
 			"scopes": schema.ListNestedAttribute{
@@ -84,7 +89,7 @@ func (d *apiKeyScopesDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
 						"scope": schema.StringAttribute{
-							Description: "The scope string to put in a `scopes` list (e.g. \"compute:read\").",
+							Description: "The scope string as the services enforce it (e.g. \"compute:read\"); the `scopes` list on a key or binding is retired — grant through an access policy instead.",
 							Computed:    true,
 						},
 						"service": schema.StringAttribute{

@@ -3,32 +3,45 @@
 page_title: "frostmoln_api_key_scopes Data Source - Frostmoln"
 subcategory: ""
 description: |-
-  List the scopes an API key (frostmoln_api_key) or workload identity (frostmoln_workload_identity_binding) can be granted, with a description of what each allows. The catalog is server-owned, so it needs no provider release to change. A scope is <service>:<action>; grant :read and :write, which are what the services enforce — except the interactive-session scopes (sessions:forward, sessions:pty, sessions:write), which are their own enforced class and are not covered by any other service's wildcard. The global "*" wildcard is excluded: keys are least-privilege and the API rejects it. Per-service wildcards such as compute:* are listed and are accepted on an API key, but a workload identity rejects every :* — filter those out when feeding a binding. For per-resource targets, constraints or explicit denies, use an access policy (frostmoln_iam_policy_document) rather than a finer scope string.
+  List the scopes the platform enforces, with a description of what each allows. Flat scopes can no longer be minted onto keys or bindings — frostmoln_api_key and frostmoln_workload_identity_binding refuse every non-empty scopes value with 400 (API_KEY_SCOPES_RETIRED / BINDING_SCOPES_RETIRED) and grant through access policies instead — but the vocabulary stays enforced on every call, and this catalog is what fm account api-key scopes reads. The catalog is server-owned, so it needs no provider release to change. A scope is <service>:<action>; grant :read and :write, which are what the services enforce — except the interactive-session scopes (sessions:forward, sessions:pty, sessions:write), which are their own enforced class and are not covered by any other service's wildcard. The global "*" wildcard is excluded: keys are least-privilege and the API rejects it. Per-service wildcards such as compute:* are listed, but feed them nowhere: a workload identity rejects every :*, and since the scopes retirement an API key refuses every flat scopes value (API_KEY_SCOPES_RETIRED). For per-resource targets, constraints or explicit denies, use an access policy (frostmoln_iam_policy_document) rather than a finer scope string.
 ---
 
 # frostmoln_api_key_scopes (Data Source)
 
-List the scopes an API key (frostmoln_api_key) or workload identity (frostmoln_workload_identity_binding) can be granted, with a description of what each allows. The catalog is server-owned, so it needs no provider release to change. A scope is `<service>:<action>`; grant `:read` and `:write`, which are what the services enforce — except the interactive-session scopes (`sessions:forward`, `sessions:pty`, `sessions:write`), which are their own enforced class and are not covered by any other service's wildcard. The global "*" wildcard is excluded: keys are least-privilege and the API rejects it. Per-service wildcards such as `compute:*` are listed and are accepted on an API key, but a workload identity rejects every `:*` — filter those out when feeding a binding. For per-resource targets, constraints or explicit denies, use an access policy (frostmoln_iam_policy_document) rather than a finer scope string.
+List the scopes the platform enforces, with a description of what each allows. Flat scopes can no longer be minted onto keys or bindings — frostmoln_api_key and frostmoln_workload_identity_binding refuse every non-empty `scopes` value with 400 (API_KEY_SCOPES_RETIRED / BINDING_SCOPES_RETIRED) and grant through access policies instead — but the vocabulary stays enforced on every call, and this catalog is what `fm account api-key scopes` reads. The catalog is server-owned, so it needs no provider release to change. A scope is `<service>:<action>`; grant `:read` and `:write`, which are what the services enforce — except the interactive-session scopes (`sessions:forward`, `sessions:pty`, `sessions:write`), which are their own enforced class and are not covered by any other service's wildcard. The global "*" wildcard is excluded: keys are least-privilege and the API rejects it. Per-service wildcards such as `compute:*` are listed, but feed them nowhere: a workload identity rejects every `:*`, and since the scopes retirement an API key refuses every flat `scopes` value (API_KEY_SCOPES_RETIRED). For per-resource targets, constraints or explicit denies, use an access policy (frostmoln_iam_policy_document) rather than a finer scope string.
 
 ## Example Usage
 
 ```terraform
 data "frostmoln_api_key_scopes" "all" {}
 
-# Discover what can be granted, and what each scope allows:
-#   terraform console
-#   > data.frostmoln_api_key_scopes.all.scopes
+# The scope operation catalog (GET /v1/scopes) — since the API-key scopes
+# retirement (retire-scopes step 3, 2026-10-21) this is the AUTHORING
+# vocabulary for access policies, not a grant list: any non-empty `scopes` on
+# an api-key resource is refused 400 API_KEY_SCOPES_RETIRED at apply.
 output "available_scopes" {
   value = { for s in data.frostmoln_api_key_scopes.all.scopes : s.scope => s.description }
 }
 
-# Grant explicitly. Do NOT derive a key's scopes from the catalog with a filter
-# such as `if endswith(s.scope, ":read")`: the catalog is server-owned, so a
-# scope added upstream would silently widen this key on the next apply.
-resource "frostmoln_api_key" "ci" {
-  name   = "ci-deploy"
-  scopes = ["compute:read", "compute:write"]
-}
+# A key is granted with an access policy attached to it — zero-scope create is
+# the living lane. Compose the document with the frostmoln_iam_policy_document
+# data source (the operations it takes are the same operation catalog this
+# data source reads), then attach:
+#
+#   resource "frostmoln_api_key" "ci" {
+#     name = "ci-deploy"
+#   }
+#
+#   resource "frostmoln_iam_policy" "ci" {
+#     name     = "ci-deploy"
+#     document = data.frostmoln_iam_policy_document.ci.json
+#   }
+#
+#   resource "frostmoln_iam_policy_attachment" "ci" {
+#     policy_id     = frostmoln_iam_policy.ci.id
+#     attachee_type = "api_key"
+#     attachee_id   = frostmoln_api_key.ci.id
+#   }
 ```
 
 <!-- schema generated by tfplugindocs -->
@@ -44,5 +57,5 @@ resource "frostmoln_api_key" "ci" {
 Read-Only:
 
 - `description` (String) What the scope allows.
-- `scope` (String) The scope string to put in a `scopes` list (e.g. "compute:read").
+- `scope` (String) The scope string as the services enforce it (e.g. "compute:read"); the `scopes` list on a key or binding is retired — grant through an access policy instead.
 - `service` (String) The service the scope belongs to — the part before the first colon (e.g. "compute").
