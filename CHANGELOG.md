@@ -2,7 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.91.0] - 2026-10-20
+## [0.92.0] - 2026-10-21
+
+### 🚀 Features
+
+- *(messaging)* RequireTls (TLS required by default) - no plaintext endpoint for TLS-required instances (#717)
+
+## [0.91.0] - 2026-10-21
 
 ### 🚀 Features
 
