@@ -84,6 +84,10 @@ type mysqlInstanceModel struct {
 	UpdatedAt           types.String `tfsdk:"updated_at"`
 	Tags                types.Map    `tfsdk:"tags"`
 	TenantID            types.String `tfsdk:"tenant_id"`
+	// TLS (MANAGED-OFFER-TLS-AND-INTERNAL-DNS-PLAN §8, Phase 4c).
+	RequireTLS types.Bool   `tfsdk:"require_tls"`
+	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
+	Hostname   types.String `tfsdk:"hostname"`
 }
 
 // apiDatabaseInstance is the API representation of one database instance —
@@ -115,6 +119,10 @@ type apiDatabaseInstance struct {
 	// Tags are the resource's customer resource tags ({} when untagged).
 	Tags     map[string]string `json:"tags"`
 	TenantID string            `json:"tenantId,omitempty"`
+	// TLS (Phase 4c): absent (an older service, an instance built before TLS) reads false.
+	RequireTLS bool   `json:"requireTls"`
+	TLSEnabled bool   `json:"tlsEnabled"`
+	Hostname   string `json:"hostname,omitempty"`
 }
 
 type apiDatabaseInstanceList struct {
@@ -250,6 +258,24 @@ func (d *mysqlInstanceDataSource) Schema(_ context.Context, _ datasource.SchemaR
 			"tenant_id": schema.StringAttribute{
 				Description: "The tenant ID that owns this instance.",
 				Computed:    true,
+			},
+			"require_tls": schema.BoolAttribute{
+				Description: "Whether the server accepts TLS connections only (plaintext refused). MySQL serves TLS " +
+					"and plaintext on the same `port`. Fixed at create; false on instances created before the setting " +
+					"existed. True with `tls_enabled` false means the instance has no usable endpoint.",
+				Computed: true,
+			},
+			"tls_enabled": schema.BoolAttribute{
+				Description: "Whether the server presents a certificate for `hostname` from the Frostmoln customer CA, so a " +
+					"client can connect with `ssl-mode=VERIFY_IDENTITY` (see the `frostmoln_ca_bundle` data source). False " +
+					"on an instance built before TLS.",
+				Computed: true,
+			},
+			"hostname": schema.StringAttribute{
+				Description: "The instance's internal DNS name (`<label>.db.<vpc-label>.<tenant-label>.<org-label>.fm.internal`), " +
+					"resolvable inside its VPC; its TLS certificate is issued for this name. Fixed once assigned. Null on an " +
+					"instance built before TLS.",
+				Computed: true,
 			},
 		},
 	}
@@ -546,6 +572,9 @@ func setInstanceState(state *mysqlInstanceModel, inst *apiDatabaseInstance) {
 	state.Tags = tftags.OfferTagsValue(inst.Tags)
 	state.UpdatedAt = stringFromWire(inst.UpdatedAt)
 	state.TenantID = stringFromWire(inst.TenantID)
+	state.RequireTLS = types.BoolValue(inst.RequireTLS)
+	state.TLSEnabled = types.BoolValue(inst.TLSEnabled)
+	state.Hostname = stringFromWire(inst.Hostname)
 }
 
 // int64FromWire maps an absent optional count to null, not zero.

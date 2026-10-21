@@ -9,18 +9,24 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tlsattr"
 )
 
 // NginxInstanceModel is the Terraform state model for a managed Nginx webserver instance.
 type NginxInstanceModel struct {
-	ID              types.String `tfsdk:"id"`
-	Name            types.String `tfsdk:"name"`
-	Version         types.String `tfsdk:"version"`
-	FlavorID        types.String `tfsdk:"flavor_id"`
-	StorageGB       types.Int64  `tfsdk:"storage_gb"`
-	VPCID           types.String `tfsdk:"vpc_id"`
-	SubnetID        types.String `tfsdk:"subnet_id"`
-	TLSEnabled      types.Bool   `tfsdk:"tls_enabled"`
+	ID         types.String `tfsdk:"id"`
+	Name       types.String `tfsdk:"name"`
+	Version    types.String `tfsdk:"version"`
+	FlavorID   types.String `tfsdk:"flavor_id"`
+	StorageGB  types.Int64  `tfsdk:"storage_gb"`
+	VPCID      types.String `tfsdk:"vpc_id"`
+	SubnetID   types.String `tfsdk:"subnet_id"`
+	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
+	// RequireTLS (MANAGED-OFFER-TLS-AND-INTERNAL-DNS-PLAN §8, D1, Phase 4e) decides port 80
+	// only: true = 80 redirects to https. Set at create (server default false), fixed (see
+	// tlsattr). Hostname is the internal name the certificate is issued for, read-only.
+	RequireTLS      types.Bool   `tfsdk:"require_tls"`
+	Hostname        types.String `tfsdk:"hostname"`
 	PHPEnabled      types.Bool   `tfsdk:"php_enabled"`
 	PHPVersion      types.String `tfsdk:"php_version"`
 	Config          types.Map    `tfsdk:"config"`
@@ -42,21 +48,23 @@ type NginxInstanceModel struct {
 	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
-// tls_enabled is OBSERVED and read-only (Ambix 01a10bc7): no managed webserver
-// serves TLS yet — every instance listens on plain HTTP on `port` — and the
-// webserver API refuses tlsEnabled: true with 400 tls_not_available. The
-// provider refuses `true` at plan time (unenacted.BoolTrue) and again in
-// Create/Update (a value that resolved only at apply), and never sends the
-// field: the instance reports true only once the platform actually serves a
-// certificate for it.
+// tls_enabled is OBSERVED and read-only (Ambix 01a10bc7, Phase 4e): it reports whether
+// the instance serves HTTPS on 443 with a Frostmoln-issued certificate for `hostname`.
+// Once TLS for managed webservers is available EVERY new instance does, whatever the
+// create says, so the value flips false -> true when the create completes: it carries no
+// pinning plan modifier. The webserver API refuses tlsEnabled: true with 400
+// tls_not_available; the provider refuses `true` at plan time (unenacted.BoolTrue) and
+// again in Create/Update (a value that resolved only at apply), and never sends the field.
+// A configured `false` cannot be kept either where the platform serves a certificate:
+// ModifyPlan refuses it on a create and against a prior `true` (tlsEnabledConfigRefusal).
 const tlsEnabledRefusalTitle = "tls_enabled cannot be set on a managed webserver"
 
 const tlsEnabledRefusalDetail = tlsEnabledRefusalTitle +
-	": TLS is not available for managed webservers yet. The instance serves plain HTTP on `port`, " +
-	"and the platform refuses a request for TLS (tls_not_available). tls_enabled is read-only: it " +
-	"reports whether the instance serves a certificate.\n\n" +
-	"Remove tls_enabled from the configuration (or set false). Serve HTTPS through an " +
-	"`frostmoln_application_gateway` meanwhile."
+	": tls_enabled is read-only. It reports whether the instance serves HTTPS on 443 with a " +
+	"certificate for `hostname`, which the platform decides (every new instance does once TLS for " +
+	"managed webservers is available); the platform refuses a request for it (tls_not_available).\n\n" +
+	"Remove tls_enabled from the configuration. To serve the site over HTTPS only (port 80 " +
+	"redirecting to https), set require_tls = true."
 
 // apiWebserverInstance is the API representation of a managed webserver instance.
 // Field names match the webserver service (webserver/internal/domain/instance.go):
@@ -64,18 +72,22 @@ const tlsEnabledRefusalDetail = tlsEnabledRefusalTitle +
 // JSON object (not a string). The workerProcesses/gzipEnabled/tryFiles/proxyPass
 // fields are NOT part of the contract (they only ever live inside typeConfig).
 type apiWebserverInstance struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Type        string            `json:"type"`
-	TypeVersion string            `json:"typeVersion"`
-	FlavorID    string            `json:"flavorId"`
-	StorageGB   int               `json:"storageGb"`
-	VPCID       string            `json:"vpcId"`
-	SubnetID    string            `json:"subnetId"`
-	TLSEnabled  bool              `json:"tlsEnabled"`
-	PHPEnabled  bool              `json:"phpEnabled"`
-	PHPVersion  string            `json:"phpVersion,omitempty"`
-	TypeConfig  map[string]string `json:"typeConfig,omitempty"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	TypeVersion string `json:"typeVersion"`
+	FlavorID    string `json:"flavorId"`
+	StorageGB   int    `json:"storageGb"`
+	VPCID       string `json:"vpcId"`
+	SubnetID    string `json:"subnetId"`
+	TLSEnabled  bool   `json:"tlsEnabled"`
+	// RequireTLS and Hostname (Phase 4e): requireTls is always sent by a TLS-aware webserver
+	// service, absent reads false (no requirement); hostname only when assigned.
+	RequireTLS bool              `json:"requireTls"`
+	Hostname   string            `json:"hostname,omitempty"`
+	PHPEnabled bool              `json:"phpEnabled"`
+	PHPVersion string            `json:"phpVersion,omitempty"`
+	TypeConfig map[string]string `json:"typeConfig,omitempty"`
 	// Public is OBSERVED (ADR-0097): true when a Public IP is currently
 	// associated to the instance's service port. PublicIP is that FIP. Both are
 	// set by the create saga (create with public=true) or the expose/unexpose
@@ -115,6 +127,10 @@ type apiCreateWebserverInstanceRequest struct {
 	// the create saga associates a Public IP and surfaces publicIp. Post-create,
 	// exposure toggles via the POST /expose and /unexpose actions, never here.
 	Public *bool `json:"public,omitempty"`
+	// RequireTLS (Phase 4e) is sent only when configured. Omitted, the service applies its
+	// default, false (the site is served on port 80 beside HTTPS on 443); an explicit true
+	// while TLS for managed webservers is not available is refused (require_tls_unavailable).
+	RequireTLS *bool `json:"requireTls,omitempty"`
 	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
 	// merges the tenant's default tags in.
 	Tags map[string]string `json:"tags,omitempty"`
@@ -200,6 +216,8 @@ func (m *NginxInstanceModel) toCreateRequest(ctx context.Context, diags *diag.Di
 		v := m.Public.ValueBool()
 		req.Public = &v
 	}
+	// Sent ONLY when configured, so the platform default applies to an omission.
+	req.RequireTLS = tlsattr.RequireTLSForCreate(m.RequireTLS)
 
 	return req
 }
@@ -243,6 +261,8 @@ func (m *NginxInstanceModel) fromAPI(ctx context.Context, inst *apiWebserverInst
 	m.VPCID = types.StringValue(inst.VPCID)
 	m.SubnetID = types.StringValue(inst.SubnetID)
 	m.TLSEnabled = types.BoolValue(inst.TLSEnabled)
+	m.RequireTLS = types.BoolValue(inst.RequireTLS)
+	m.Hostname = tlsattr.StringFromWire(inst.Hostname)
 	m.PHPEnabled = types.BoolValue(inst.PHPEnabled)
 	m.Public = types.BoolValue(inst.Public)
 	m.Status = types.StringValue(inst.Status)

@@ -6,9 +6,10 @@ description: |-
   Manages a managed Redis instance in the Frostmoln platform.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — require_tls: the TLS requirement is fixed at create (the platform refuses a change with REQUIRE_TLS_IMMUTABLE); a change re-creates the instance, and an instance whose state predates the attribute is never replaced for it.
   Create-immutable — subnet_id, version, vpc_id: the platform has no in-place migration for it — a change re-creates the instance.
   Create-only, change refused (not replaced) — eviction_policy, persistence_mode: the value reaches the running server only in the create render and no workflow re-renders it — a change is validated, stored and echoed while the running server keeps its previous behaviour, so it is warned about at plan and refused at apply; replace the instance to change it.
-  Observed, not enacted — private_ip: platform-assigned from the subnet at create. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
+  Observed, not enacted — hostname: platform-derived at create from name's DNS label, the VPC, tenant and organization; fixed for life (a rename does not move it), null on an instance built before TLS. port: the plaintext listener (6379), null when require_tls is true (the platform closes it). private_ip: platform-assigned from the subnet at create. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed. tls_enabled: whether the instance serves TLS on tls_port with a Frostmoln-issued certificate: set when the platform issues one at create, false for an instance built before TLS. tls_port: the TLS listener (6380) while the instance serves TLS, null otherwise.
 ---
 
 # frostmoln_redis_instance (Resource)
@@ -19,11 +20,13 @@ Manages a managed Redis instance in the Frostmoln platform.
 
 **Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
 
+**Create-immutable** — `require_tls`: the TLS requirement is fixed at create (the platform refuses a change with REQUIRE_TLS_IMMUTABLE); a change re-creates the instance, and an instance whose state predates the attribute is never replaced for it.
+
 **Create-immutable** — `subnet_id`, `version`, `vpc_id`: the platform has no in-place migration for it — a change re-creates the instance.
 
 **Create-only, change refused (not replaced)** — `eviction_policy`, `persistence_mode`: the value reaches the running server only in the create render and no workflow re-renders it — a change is validated, stored and echoed while the running server keeps its previous behaviour, so it is warned about at plan and refused at apply; replace the instance to change it.
 
-**Observed, not enacted** — `private_ip`: platform-assigned from the subnet at create. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
+**Observed, not enacted** — `hostname`: platform-derived at create from `name`'s DNS label, the VPC, tenant and organization; fixed for life (a rename does not move it), null on an instance built before TLS. `port`: the plaintext listener (6379), null when `require_tls` is true (the platform closes it). `private_ip`: platform-assigned from the subnet at create. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed. `tls_enabled`: whether the instance serves TLS on `tls_port` with a Frostmoln-issued certificate: set when the platform issues one at create, false for an instance built before TLS. `tls_port`: the TLS listener (6380) while the instance serves TLS, null otherwise.
 
 ## Example Usage
 
@@ -38,6 +41,13 @@ resource "frostmoln_redis_instance" "cache" {
   persistence_mode = "rdb"
   eviction_policy  = "allkeys-lru"
 
+  # TLS: omit require_tls for the platform default (TLS only, on tls_port 6380,
+  # with the plaintext port 6379 closed and `port` null, once TLS for managed
+  # caches is available in the deployment). Set it to false only for clients
+  # that cannot do TLS (6379 then stays open beside 6380). Fixed at create;
+  # changing it replaces the instance.
+  # require_tls = false
+
   # Scheduled backups require a persistence_mode other than "none".
   backup_enabled        = true
   backup_schedule       = "0 2 * * *"
@@ -48,6 +58,13 @@ resource "frostmoln_redis_instance" "cache" {
   tags = {
     env = "prod"
   }
+}
+
+# With TLS: rediss:// on the hostname, verified against the bundle from the
+# frostmoln_ca_bundle data source (redis-cli --tls --cacert <bundle> --sni <hostname>).
+# port is null when the instance requires TLS.
+output "redis_tls_endpoint" {
+  value = frostmoln_redis_instance.cache.tls_enabled ? "rediss://${frostmoln_redis_instance.cache.hostname}:${frostmoln_redis_instance.cache.tls_port}" : null
 }
 ```
 
@@ -69,6 +86,7 @@ resource "frostmoln_redis_instance" "cache" {
 - `backup_schedule` (String) Cron expression for the backup schedule. Defaults to "0 2 * * *".
 - `eviction_policy` (String) The eviction policy for the Redis instance (e.g. "noeviction", "allkeys-lru"). Defaults to "noeviction", rendered into the instance at creation only — changing it later is refused, because no platform workflow re-renders a running instance (replace the instance to change it).
 - `persistence_mode` (String) The persistence mode for the Redis instance ("rdb", "aof", or "none"). Defaults to "rdb". Rendered into the instance at creation only — changing it later is refused, because no platform workflow re-renders a running instance (replace the instance to change it).
+- `require_tls` (Boolean) Whether the instance serves TLS only: true serves TLS on `tls_port` (6380) with the plaintext port 6379 closed (`port` is null); false serves plaintext on `port` beside TLS. When omitted the platform default applies: TLS required once TLS for managed caches is available in the deployment; while it is not, the instance is created without TLS and reports false, and an explicit `true` is refused (`REQUIRE_TLS_UNAVAILABLE`). Set false only for clients that cannot do TLS. Fixed at create: changing it replaces the instance. Instances created before the setting existed report false. True with `tls_enabled` false means the instance has no usable endpoint (it is in status `error`); recreate it.
 - `storage_gb` (Number) The storage size in gigabytes (defaults to 10 if unset). Can only be increased (grow-only); volumes cannot be shrunk.
 - `tags` (Map of String) Resource tags on the instance: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only and never applied to the cache server. Changing them updates the instance in place and does not restart or reconfigure it. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
@@ -77,11 +95,14 @@ resource "frostmoln_redis_instance" "cache" {
 
 - `admin_username` (String) The admin username for the Redis instance.
 - `created_at` (String) The timestamp when the instance was created.
+- `hostname` (String) The instance's internal DNS name (`<label>.cache.<vpc-label>.<tenant-label>.<org-label>.fm.internal`, the label derived from the name at create), resolvable inside its VPC; its TLS certificate is issued for this name. Fixed once assigned: a rename does not move it. Null on an instance built before TLS.
 - `id` (String) The unique identifier of the Redis instance.
-- `port` (Number) The port number the Redis instance is listening on.
+- `port` (Number) The plaintext port (6379). Null when `require_tls` is true: the plaintext port is closed and the instance serves TLS on `tls_port` only.
 - `private_ip` (String) The private IP address of the Redis instance.
 - `status` (String) The current status of the Redis instance.
 - `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
+- `tls_enabled` (Boolean) Whether the instance serves TLS on `tls_port` with a certificate for `hostname` from the Frostmoln customer CA (trust the bundle from the `frostmoln_ca_bundle` data source; e.g. `redis-cli --tls --cacert <bundle> --sni <hostname>`). False on an instance built before TLS: it gets no certificate retroactively; recreate it to get one.
+- `tls_port` (Number) The TLS port (6380) while the instance serves TLS; null otherwise.
 - `updated_at` (String) The timestamp when the instance was last updated.
 
 <a id="nestedblock--timeouts"></a>

@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -21,6 +22,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tlsattr"
 )
 
 var (
@@ -230,8 +232,9 @@ func (r *valkeyInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 				Computed:    true,
 			},
 			"port": schema.Int64Attribute{
-				Description: "The port number the Valkey instance is listening on.",
-				Computed:    true,
+				Description: "The plaintext port (6379). Null when `require_tls` is true: the plaintext port is closed " +
+					"and the instance serves TLS on `tls_port` only.",
+				Computed: true,
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.UseStateForUnknown(),
 				},
@@ -253,6 +256,49 @@ func (r *valkeyInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 			"updated_at": schema.StringAttribute{
 				Description: "The timestamp when the instance was last updated.",
 				Computed:    true,
+			},
+			// TLS (MANAGED-OFFER-TLS-AND-INTERNAL-DNS-PLAN §8, D1, Phase 4d). require_tls as
+			// frostmoln_postgres_instance's; the read-only three are pinned with
+			// UseNonNullStateForUnknown (fixed once the create completes; a state written
+			// before they existed plans unknown, never null).
+			"require_tls": schema.BoolAttribute{
+				Description: "Whether the instance serves TLS only: true serves TLS on `tls_port` (6380) with the " +
+					"plaintext port 6379 closed (`port` is null); false serves plaintext on `port` beside TLS. When " +
+					"omitted the platform default applies: TLS required once TLS for managed caches is available in the " +
+					"deployment; while it is not, the instance is created without TLS and reports false, and an explicit " +
+					"`true` is refused (`REQUIRE_TLS_UNAVAILABLE`). Set false only for clients that cannot do TLS. Fixed " +
+					"at create: changing it replaces the instance. Instances created before the setting existed report " +
+					"false. True with `tls_enabled` false means the instance has no usable endpoint (it is in status " +
+					"`error`); recreate it.",
+				Optional:      true,
+				Computed:      true,
+				PlanModifiers: tlsattr.RequireTLSPlanModifiers(),
+			},
+			"tls_enabled": schema.BoolAttribute{
+				Description: "Whether the instance serves TLS on `tls_port` with a certificate for `hostname` from the " +
+					"Frostmoln customer CA (trust the bundle from the `frostmoln_ca_bundle` data source; e.g. `redis-cli " +
+					"--tls --cacert <bundle> --sni <hostname>`). False on an instance built before TLS: it gets no " +
+					"certificate retroactively; recreate it to get one.",
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseNonNullStateForUnknown(),
+				},
+			},
+			"hostname": schema.StringAttribute{
+				Description: "The instance's internal DNS name (`<label>.cache.<vpc-label>.<tenant-label>.<org-label>.fm.internal`, " +
+					"the label derived from the name at create), resolvable inside its VPC; its TLS certificate is issued " +
+					"for this name. Fixed once assigned: a rename does not move it. Null on an instance built before TLS.",
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseNonNullStateForUnknown(),
+				},
+			},
+			"tls_port": schema.Int64Attribute{
+				Description: "The TLS port (6380) while the instance serves TLS; null otherwise.",
+				Computed:    true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseNonNullStateForUnknown(),
+				},
 			},
 		},
 		Blocks: map[string]schema.Block{
@@ -563,6 +609,23 @@ func (r *valkeyInstanceResource) Update(ctx context.Context, req resource.Update
 	}
 
 	id := state.ID.ValueString()
+
+	// require_tls against a state that predates it: checked before anything is written.
+	tlsattr.CheckRequireTLSUnchanged(ctx, plan.RequireTLS, state.RequireTLS, "Valkey instance",
+		func(ctx context.Context) (bool, error) {
+			apiResp, err := r.client.Get(ctx, r.client.TenantPath("/caches/"+id), nil)
+			if err != nil {
+				return false, err
+			}
+			inst, err := client.ParseResponse[apiValkeyInstance](apiResp)
+			if err != nil {
+				return false, err
+			}
+			return inst.RequireTLS, nil
+		}, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	budgets := r.resolveBudgets(plan.Timeouts)
 

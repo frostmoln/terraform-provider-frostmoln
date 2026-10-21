@@ -21,8 +21,18 @@ output "valkey_private_ip" {
   value = data.frostmoln_valkey_instance.cache.private_ip
 }
 
+# Null when the instance requires TLS (the plaintext port is closed).
 output "valkey_port" {
   value = data.frostmoln_valkey_instance.cache.port
+}
+
+output "valkey_tls" {
+  value = {
+    required = data.frostmoln_valkey_instance.cache.require_tls
+    enabled  = data.frostmoln_valkey_instance.cache.tls_enabled
+    hostname = data.frostmoln_valkey_instance.cache.hostname
+    port     = data.frostmoln_valkey_instance.cache.tls_port
+  }
 }
 ```
 
@@ -39,13 +49,17 @@ output "valkey_port" {
 - `created_at` (String) The timestamp when the instance was created.
 - `eviction_policy` (String) The eviction policy of the Valkey instance.
 - `flavor_id` (String) The flavor/size of the Valkey instance.
+- `hostname` (String) The instance's internal DNS name (`<label>.cache.<vpc-label>.<tenant-label>.<org-label>.fm.internal`), resolvable inside its VPC; its TLS certificate is issued for this name. Null on an instance built before TLS.
 - `name` (String) The name of the Valkey instance.
 - `persistence_mode` (String) The persistence mode of the Valkey instance.
-- `port` (Number) The port number the Valkey instance is listening on.
+- `port` (Number) The plaintext port (6379). Null when `require_tls` is true (the plaintext port is closed; connect with TLS on `tls_port`).
 - `private_ip` (String) The private IP address of the Valkey instance.
+- `require_tls` (Boolean) Whether the instance serves TLS only (on `tls_port`, the plaintext port closed). Fixed at create; false on instances created before the setting existed. True with `tls_enabled` false means the instance has no usable endpoint.
 - `status` (String) The current status of the Valkey instance.
 - `subnet_id` (String) The subnet ID where the Valkey instance is deployed.
 - `tags` (Map of String) Every resource tag on the Valkey instance — the same set as the resource's `tags_all`: your own key/value metadata, never applied to the service itself. An empty map when it has none.
+- `tls_enabled` (Boolean) Whether the instance serves TLS on `tls_port` with a certificate for `hostname` from the Frostmoln customer CA (see the `frostmoln_ca_bundle` data source). False on an instance built before TLS.
+- `tls_port` (Number) The TLS port (6380) while the instance serves TLS; null otherwise.
 - `updated_at` (String) The timestamp when the instance was last updated.
 - `version` (String) The Valkey version.
 - `vpc_id` (String) The VPC ID where the Valkey instance is deployed.

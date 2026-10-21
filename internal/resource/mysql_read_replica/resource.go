@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -160,6 +161,36 @@ func (r *mysqlReadReplicaResource) Schema(_ context.Context, _ resource.SchemaRe
 			"replication_lag_bytes": schema.Int64Attribute{
 				Description: "The replication lag in bytes between primary and replica.",
 				Computed:    true,
+			},
+			// TLS (Phase 4c). UseNonNullStateForUnknown, NOT UseStateForUnknown: a state
+			// written before these attributes existed must plan unknown, not null (see
+			// internal/tlsattr).
+			"require_tls": schema.BoolAttribute{
+				Description: "Whether the replica accepts TLS connections only (plaintext refused). It is always its " +
+					"primary's `require_tls`, fixed at create; false on replicas created before the setting existed " +
+					"and on every replica of a primary built before TLS.",
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseNonNullStateForUnknown(),
+				},
+			},
+			"tls_enabled": schema.BoolAttribute{
+				Description: "Whether the replica presents its own certificate for `hostname` from the Frostmoln customer " +
+					"CA, so a client can connect with `ssl-mode=VERIFY_IDENTITY` (see the `frostmoln_ca_bundle` data " +
+					"source). False on a replica built before TLS.",
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseNonNullStateForUnknown(),
+				},
+			},
+			"hostname": schema.StringAttribute{
+				Description: "The replica's own internal DNS name (`<label>.db.<vpc-label>.<tenant-label>.<org-label>.fm.internal`, " +
+					"the label derived from the replica's name), resolvable inside its VPC; its TLS certificate is issued for " +
+					"this name. Fixed once assigned. Null on a replica built before TLS.",
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseNonNullStateForUnknown(),
+				},
 			},
 		},
 		Blocks: map[string]schema.Block{

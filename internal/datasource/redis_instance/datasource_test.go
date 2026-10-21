@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -177,6 +178,10 @@ func TestTFSDK_ReadRedisInstanceByID(t *testing.T) {
 		"created_at":       tftypes.NewValue(tftypes.String, nil),
 		"updated_at":       tftypes.NewValue(tftypes.String, nil),
 		"tags":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"require_tls":      tftypes.NewValue(tftypes.Bool, nil),
+		"tls_enabled":      tftypes.NewValue(tftypes.Bool, nil),
+		"hostname":         tftypes.NewValue(tftypes.String, nil),
+		"tls_port":         tftypes.NewValue(tftypes.Number, nil),
 	})
 
 	readReq := datasource.ReadRequest{
@@ -252,6 +257,10 @@ func TestTFSDK_ReadRedisInstanceNotFound(t *testing.T) {
 		"created_at":       tftypes.NewValue(tftypes.String, nil),
 		"updated_at":       tftypes.NewValue(tftypes.String, nil),
 		"tags":             tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"require_tls":      tftypes.NewValue(tftypes.Bool, nil),
+		"tls_enabled":      tftypes.NewValue(tftypes.Bool, nil),
+		"hostname":         tftypes.NewValue(tftypes.String, nil),
+		"tls_port":         tftypes.NewValue(tftypes.Number, nil),
 	})
 
 	readReq := datasource.ReadRequest{
@@ -315,5 +324,49 @@ func TestAPIRedisInstanceSerialization(t *testing.T) {
 	}
 	if decoded.Port != inst.Port {
 		t.Errorf("expected Port %d, got %d", inst.Port, decoded.Port)
+	}
+}
+
+// Phase 4d: a TLS-required instance reads back with no plaintext port, its TLS port and
+// hostname; a pre-TLS one with its port and false/false/null/null.
+func TestTFSDK_ReadRedisInstanceTLS(t *testing.T) {
+	server := newTestServer(t, map[string]apiRedisInstance{
+		"r-tls": {ID: "r-tls", Name: "s", Status: "running", RequireTLS: true, TLSEnabled: true,
+			Hostname: "s.cache.prod.omkcmw.ck4to7f6.fm.internal", TLSPort: 6380},
+		"r-old": {ID: "r-old", Name: "o", Status: "running", Port: 6379},
+	})
+	defer server.Close()
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+	for id, want := range map[string][4]string{
+		"r-tls": {"<null>", "6380", "true", "s.cache.prod.omkcmw.ck4to7f6.fm.internal"},
+		"r-old": {"6379", "<null>", "false", "<null>"},
+	} {
+		ds := NewDataSource()
+		configureRedisInstanceDS(t, ds, c)
+		schemaResp := getRedisInstanceDSSchema(t)
+		tfType := schemaResp.Schema.Type().TerraformType(context.Background()).(tftypes.Object)
+		vals := map[string]tftypes.Value{}
+		for name, typ := range tfType.AttributeTypes {
+			vals[name] = tftypes.NewValue(typ, nil)
+		}
+		vals["id"] = tftypes.NewValue(tftypes.String, id)
+		var readResp datasource.ReadResponse
+		readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+		ds.Read(context.Background(), datasource.ReadRequest{Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: tftypes.NewValue(tfType, vals)}}, &readResp)
+		if readResp.Diagnostics.HasError() {
+			t.Fatalf("%s: %v", id, readResp.Diagnostics)
+		}
+		var st redisInstanceModel
+		readResp.State.Get(context.Background(), &st)
+		got := [4]string{st.Port.String(), st.TLSPort.String(), st.RequireTLS.String(), strings.Trim(st.Hostname.String(), `"`)}
+		if got != want {
+			t.Errorf("%s: port/tls_port/require_tls/hostname = %v, want %v", id, got, want)
+		}
+		if st.TLSEnabled.IsNull() {
+			t.Errorf("%s: tls_enabled must be known", id)
+		}
 	}
 }

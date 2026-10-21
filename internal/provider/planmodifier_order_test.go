@@ -56,7 +56,7 @@ var mustReplaceOnRealChange = map[string][]string{
 	// rule that already exists. Changing it changes what a destroy will do to
 	// other backends, so it is create-only rather than flippable in place.
 	"frostmoln_appgw_backend_authorization": {"adopt_existing"},
-	"frostmoln_apache_instance":             {"php_enabled", "php_version"},
+	"frostmoln_apache_instance":             {"php_enabled", "php_version", "require_tls"},
 	// A registry credential has no update route at all: capability is fixed
 	// when the credential is minted, so changing it replaces the credential
 	// and issues a new secret.
@@ -74,13 +74,15 @@ var mustReplaceOnRealChange = map[string][]string{
 	"frostmoln_load_balancer":         {"scheme", "type"},
 	"frostmoln_messaging_instance":    {"require_tls", "type", "version"},
 	"frostmoln_mysql_backup":          {"type"},
-	"frostmoln_mysql_instance":        {"ha_enabled"},
+	"frostmoln_mysql_instance":        {"ha_enabled", "require_tls"},
 	"frostmoln_mysql_read_replica":    {"flavor_id"},
-	"frostmoln_nginx_instance":        {"php_enabled", "php_version"},
+	"frostmoln_nginx_instance":        {"php_enabled", "php_version", "require_tls"},
 	"frostmoln_postgres_backup":       {"type"},
 	"frostmoln_postgres_instance":     {"ha_enabled", "require_tls"},
 	"frostmoln_postgres_read_replica": {"flavor_id"},
+	"frostmoln_redis_instance":        {"require_tls"},
 	"frostmoln_subnet":                {"zone", "gateway_ip", "dns_servers"},
+	"frostmoln_valkey_instance":       {"require_tls"},
 	"frostmoln_volume":                {"volume_type", "zone", "encrypted"},
 	"frostmoln_volume_attachment":     {"device_path"},
 	"frostmoln_webserver_domain":      {"tls_enabled", "is_default"},

@@ -42,6 +42,11 @@ type valkeyInstanceModel struct {
 	CreatedAt       types.String `tfsdk:"created_at"`
 	UpdatedAt       types.String `tfsdk:"updated_at"`
 	Tags            types.Map    `tfsdk:"tags"`
+	// TLS (MANAGED-OFFER-TLS-AND-INTERNAL-DNS-PLAN §8, Phase 4d).
+	RequireTLS types.Bool   `tfsdk:"require_tls"`
+	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
+	Hostname   types.String `tfsdk:"hostname"`
+	TLSPort    types.Int64  `tfsdk:"tls_port"`
 }
 
 // apiValkeyInstance is the API representation of a managed Valkey instance.
@@ -61,6 +66,12 @@ type apiValkeyInstance struct {
 	AdminUsername   string `json:"adminUsername,omitempty"`
 	CreatedAt       string `json:"createdAt"`
 	UpdatedAt       string `json:"updatedAt,omitempty"`
+	// TLS (Phase 4d): absent (an older service, an instance built before TLS) reads false;
+	// port is absent when requireTls, tlsPort and hostname only while TLS is served.
+	RequireTLS bool   `json:"requireTls"`
+	TLSEnabled bool   `json:"tlsEnabled"`
+	Hostname   string `json:"hostname,omitempty"`
+	TLSPort    int    `json:"tlsPort,omitempty"`
 	// Tags are the resource's customer resource tags ({} when untagged).
 	Tags map[string]string `json:"tags"`
 }
@@ -114,7 +125,28 @@ func (d *valkeyInstanceDataSource) Schema(_ context.Context, _ datasource.Schema
 				Computed:    true,
 			},
 			"port": schema.Int64Attribute{
-				Description: "The port number the Valkey instance is listening on.",
+				Description: "The plaintext port (6379). Null when `require_tls` is true (the plaintext port is closed; " +
+					"connect with TLS on `tls_port`).",
+				Computed: true,
+			},
+			"require_tls": schema.BoolAttribute{
+				Description: "Whether the instance serves TLS only (on `tls_port`, the plaintext port closed). Fixed at " +
+					"create; false on instances created before the setting existed. True with `tls_enabled` false means " +
+					"the instance has no usable endpoint.",
+				Computed: true,
+			},
+			"tls_enabled": schema.BoolAttribute{
+				Description: "Whether the instance serves TLS on `tls_port` with a certificate for `hostname` from the " +
+					"Frostmoln customer CA (see the `frostmoln_ca_bundle` data source). False on an instance built before TLS.",
+				Computed: true,
+			},
+			"hostname": schema.StringAttribute{
+				Description: "The instance's internal DNS name (`<label>.cache.<vpc-label>.<tenant-label>.<org-label>.fm.internal`), " +
+					"resolvable inside its VPC; its TLS certificate is issued for this name. Null on an instance built before TLS.",
+				Computed: true,
+			},
+			"tls_port": schema.Int64Attribute{
+				Description: "The TLS port (6380) while the instance serves TLS; null otherwise.",
 				Computed:    true,
 			},
 			"admin_username": schema.StringAttribute{
@@ -209,6 +241,19 @@ func (d *valkeyInstanceDataSource) Read(ctx context.Context, req datasource.Read
 		state.UpdatedAt = types.StringValue(inst.UpdatedAt)
 	} else {
 		state.UpdatedAt = types.StringNull()
+	}
+
+	state.RequireTLS = types.BoolValue(inst.RequireTLS)
+	state.TLSEnabled = types.BoolValue(inst.TLSEnabled)
+	if inst.Hostname != "" {
+		state.Hostname = types.StringValue(inst.Hostname)
+	} else {
+		state.Hostname = types.StringNull()
+	}
+	if inst.TLSPort > 0 {
+		state.TLSPort = types.Int64Value(int64(inst.TLSPort))
+	} else {
+		state.TLSPort = types.Int64Null()
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)

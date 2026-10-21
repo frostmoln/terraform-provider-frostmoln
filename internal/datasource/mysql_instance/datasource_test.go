@@ -172,6 +172,9 @@ func readWith(t *testing.T, serverURL string, id, name *string) readResult {
 		"updated_at":            tftypes.NewValue(tftypes.String, nil),
 		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"tenant_id":             tftypes.NewValue(tftypes.String, nil),
+		"require_tls":           tftypes.NewValue(tftypes.Bool, nil),
+		"tls_enabled":           tftypes.NewValue(tftypes.Bool, nil),
+		"hostname":              tftypes.NewValue(tftypes.String, nil),
 	})
 
 	var readResp datasource.ReadResponse
@@ -622,5 +625,42 @@ func TestReadMapsAbsentOptionalsToNull(t *testing.T) {
 		if !check() {
 			t.Errorf("%s must render as null when the wire omits it", name)
 		}
+	}
+}
+
+// Phase 4c: the TLS state reads back as the service sends it; a body without the fields
+// (a pre-TLS instance or service) reads false, false, null.
+func TestReadByIDTLS(t *testing.T) {
+	for _, tc := range []struct {
+		name, body       string
+		require, enabled bool
+		hostname         string
+	}{
+		{"tls", `"requireTls":true,"tlsEnabled":true,"hostname":"shop.db.prod.omkcmw.ck4to7f6.fm.internal",`, true, true, "shop.db.prod.omkcmw.ck4to7f6.fm.internal"},
+		{"pre-TLS", ``, false, false, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"db-1","name":"shop","type":"mysql","typeVersion":"8.4","port":3306,` + tc.body +
+					`"status":"running","createdAt":"2026-01-01T00:00:00Z"}`))
+			})
+			defer server.Close()
+			id := "db-1"
+			res := readWith(t, server.URL, &id, nil)
+			if res.diagnostics.HasError() {
+				t.Fatalf("read: %v", res.diagnostics.Errors())
+			}
+			m := res.model
+			if m.RequireTLS.IsNull() || m.RequireTLS.ValueBool() != tc.require || m.TLSEnabled.IsNull() || m.TLSEnabled.ValueBool() != tc.enabled {
+				t.Errorf("require_tls=%v tls_enabled=%v", m.RequireTLS, m.TLSEnabled)
+			}
+			if (tc.hostname == "") != m.Hostname.IsNull() || (tc.hostname != "" && m.Hostname.ValueString() != tc.hostname) {
+				t.Errorf("hostname = %v, want %q", m.Hostname, tc.hostname)
+			}
+			if m.Port.ValueInt64() != 3306 {
+				t.Errorf("port = %v, want 3306 (TLS shares the port)", m.Port)
+			}
+		})
 	}
 }

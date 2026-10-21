@@ -13,7 +13,8 @@ description: |-
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — php_enabled, php_version, subnet_id, version, vpc_id: the managed offer has no in-place migration for it — a change re-creates the instance.
-  Observed, not enacted — private_ip: platform-assigned from the subnet at create. public_ip: platform-allocated and attached when public is true. security_group_id: the platform creates and owns the managed group; reads succeed but every write is refused (409 resource_in_use), permanently. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
+  Create-immutable — require_tls: the TLS requirement (port 80 redirecting to https) is fixed at create (the platform refuses a change with require_tls_immutable); a change re-creates the instance, and an instance whose state predates the attribute is never replaced for it.
+  Observed, not enacted — hostname: platform-derived at create from name's DNS label, the VPC, tenant and organization; the only name the certificate carries, fixed for life, null on an instance built without TLS. private_ip: platform-assigned from the subnet at create. public_ip: platform-allocated and attached when public is true. security_group_id: the platform creates and owns the managed group; reads succeed but every write is refused (409 resource_in_use), permanently. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
   Platform-invented default — security group provisioned for the managed web server: keep-with-docs. Platform-provisioned and platform-owned; do not import it as a frostmoln_security_group — applies including destroy are refused.
 ---
 
@@ -39,7 +40,9 @@ It changes ORDER only: nothing is created and nothing is released. It does not a
 
 **Create-immutable** — `php_enabled`, `php_version`, `subnet_id`, `version`, `vpc_id`: the managed offer has no in-place migration for it — a change re-creates the instance.
 
-**Observed, not enacted** — `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-allocated and attached when `public` is true. `security_group_id`: the platform creates and owns the managed group; reads succeed but every write is refused (`409 resource_in_use`), permanently. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
+**Create-immutable** — `require_tls`: the TLS requirement (port 80 redirecting to https) is fixed at create (the platform refuses a change with require_tls_immutable); a change re-creates the instance, and an instance whose state predates the attribute is never replaced for it.
+
+**Observed, not enacted** — `hostname`: platform-derived at create from `name`'s DNS label, the VPC, tenant and organization; the only name the certificate carries, fixed for life, null on an instance built without TLS. `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-allocated and attached when `public` is true. `security_group_id`: the platform creates and owns the managed group; reads succeed but every write is refused (`409 resource_in_use`), permanently. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 **Platform-invented default** — security group provisioned for the managed web server: **keep-with-docs**. Platform-provisioned and platform-owned; do not import it as a `frostmoln_security_group` — applies including destroy are refused.
 
@@ -69,6 +72,14 @@ resource "frostmoln_apache_instance" "site" {
   # A public IP is billed for as long as it is held.
   public = true
 
+  # TLS: once TLS for managed webservers is available, every new instance
+  # serves HTTPS on 443 with a certificate for its internal hostname
+  # (tls_enabled is read-only: do not set it). require_tls = true makes port 80
+  # only redirect to https; omitted (false) the site is served on 80 too.
+  # Fixed at create; changing it replaces the instance. Public HTTPS (a public
+  # name) is the frostmoln_application_gateway's.
+  # require_tls = true
+
   # Resource tags: your own metadata for search and filtering. Merged with
   # the provider's default_tags; changing them updates in place.
   tags = {
@@ -78,6 +89,12 @@ resource "frostmoln_apache_instance" "site" {
 
 output "apache_site_public_ip" {
   value = frostmoln_apache_instance.site.public_ip
+}
+
+# The internal HTTPS endpoint (inside the VPC), verified against the bundle
+# from the frostmoln_ca_bundle data source; null on an instance without TLS.
+output "apache_site_internal_https" {
+  value = frostmoln_apache_instance.site.tls_enabled ? "https://${frostmoln_apache_instance.site.hostname}/" : null
 }
 ```
 
@@ -101,13 +118,15 @@ output "apache_site_public_ip" {
 - `public` (Boolean) Whether the instance is publicly exposed: when true a Public IP is associated to the instance's service port so the deployed site is reachable on the public internet, and public_ip is populated. Set at create to expose immediately; toggling it afterwards runs the platform's expose (true) or unexpose (false) action.
 
 Setting it true makes this instance depend on the VPC having a gateway, which Terraform cannot see — see the ordering note on this resource above.
+- `require_tls` (Boolean) Whether the site is served over HTTPS only: true makes port 80 only redirect to https; false (the default when omitted) serves the site on port 80 beside HTTPS on 443. It never decides whether HTTPS is served (see `tls_enabled`), and `port` stays 80 either way. An explicit `true` while TLS for managed webservers is not available in the deployment is refused (`require_tls_unavailable`). Fixed at create: changing it replaces the instance. Instances created before the setting existed report false. True with `tls_enabled` false means the instance serves no usable site (it is in status `error`); recreate it.
 - `tags` (Map of String) Resource tags on the instance: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only and never applied to the web server. Changing them updates the instance in place and does not restart or reconfigure it. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
-- `tls_enabled` (Boolean) Whether the instance serves TLS (a certificate). Read-only: it is reported by the platform, which serves no TLS on managed webservers yet, so it is false; the instance serves plain HTTP on `port`. Setting `true` is refused at plan time. Serve HTTPS through an `frostmoln_application_gateway` meanwhile.
+- `tls_enabled` (Boolean) Whether the instance serves HTTPS on 443 with a certificate for `hostname` from the Frostmoln customer CA (trust the bundle from the `frostmoln_ca_bundle` data source). Read-only: once TLS for managed webservers is available every new instance serves it; an instance built before TLS reports false and gets no certificate later. Do not set it: `true` is refused at plan time, and so is `false` on a new instance or against an instance that serves TLS. Public HTTPS (a public name) is the `frostmoln_application_gateway`'s, or your own certificate's.
 
 ### Read-Only
 
 - `created_at` (String) The timestamp when the instance was created.
+- `hostname` (String) The instance's internal DNS name (`<label>.web.<vpc-label>.<tenant-label>.<org-label>.fm.internal`, the label derived from the name at create), resolvable inside its VPC only; its TLS certificate is issued for this name alone. Fixed once assigned: a rename does not move it. Null on an instance built without TLS.
 - `id` (String) The unique identifier of the Apache instance.
 - `port` (Number) The port number the Apache instance is listening on.
 - `private_ip` (String) The private IP address of the Apache instance.

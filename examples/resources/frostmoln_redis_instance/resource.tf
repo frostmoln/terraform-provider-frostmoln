@@ -8,6 +8,13 @@ resource "frostmoln_redis_instance" "cache" {
   persistence_mode = "rdb"
   eviction_policy  = "allkeys-lru"
 
+  # TLS: omit require_tls for the platform default (TLS only, on tls_port 6380,
+  # with the plaintext port 6379 closed and `port` null, once TLS for managed
+  # caches is available in the deployment). Set it to false only for clients
+  # that cannot do TLS (6379 then stays open beside 6380). Fixed at create;
+  # changing it replaces the instance.
+  # require_tls = false
+
   # Scheduled backups require a persistence_mode other than "none".
   backup_enabled        = true
   backup_schedule       = "0 2 * * *"
@@ -18,4 +25,11 @@ resource "frostmoln_redis_instance" "cache" {
   tags = {
     env = "prod"
   }
+}
+
+# With TLS: rediss:// on the hostname, verified against the bundle from the
+# frostmoln_ca_bundle data source (redis-cli --tls --cacert <bundle> --sni <hostname>).
+# port is null when the instance requires TLS.
+output "redis_tls_endpoint" {
+  value = frostmoln_redis_instance.cache.tls_enabled ? "rediss://${frostmoln_redis_instance.cache.hostname}:${frostmoln_redis_instance.cache.tls_port}" : null
 }

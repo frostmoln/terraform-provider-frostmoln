@@ -8,8 +8,9 @@ description: |-
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — ha_enabled, subnet_id, version, vpc_id: the platform has no in-place migration for it — a change re-creates the instance.
+  Create-immutable — require_tls: the TLS requirement is fixed at create (the platform refuses a change with REQUIRE_TLS_IMMUTABLE); a change re-creates the instance, and an instance whose state predates the attribute is never replaced for it.
   Create-only, change refused (not replaced) — parameter_group_id: the platform stores the parameter group reference but its parameter-apply is an unimplemented stub — the values never reach the running server on create or on update, so any value is refused outright at plan and apply instead of recorded as intent that is not enacted.
-  Observed, not enacted — private_ip: platform-assigned from the subnet at create. public_ip: platform-assigned where the offer exposes one. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
+  Observed, not enacted — hostname: platform-derived at create from name's DNS label, the VPC, tenant and organization; fixed for life (a rename does not move it), null on an instance built before TLS. private_ip: platform-assigned from the subnet at create. public_ip: platform-assigned where the offer exposes one. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed. tls_enabled: whether the instance serves a Frostmoln-issued certificate: set when the platform issues one at create, false for an instance built before TLS.
 ---
 
 # frostmoln_mysql_instance (Resource)
@@ -24,9 +25,11 @@ Destroying an instance is refused while a restore FROM it to another instance is
 
 **Create-immutable** — `ha_enabled`, `subnet_id`, `version`, `vpc_id`: the platform has no in-place migration for it — a change re-creates the instance.
 
+**Create-immutable** — `require_tls`: the TLS requirement is fixed at create (the platform refuses a change with REQUIRE_TLS_IMMUTABLE); a change re-creates the instance, and an instance whose state predates the attribute is never replaced for it.
+
 **Create-only, change refused (not replaced)** — `parameter_group_id`: the platform stores the parameter group reference but its parameter-apply is an unimplemented stub — the values never reach the running server on create or on update, so any value is refused outright at plan and apply instead of recorded as intent that is not enacted.
 
-**Observed, not enacted** — `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-assigned where the offer exposes one. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
+**Observed, not enacted** — `hostname`: platform-derived at create from `name`'s DNS label, the VPC, tenant and organization; fixed for life (a rename does not move it), null on an instance built before TLS. `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-assigned where the offer exposes one. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed. `tls_enabled`: whether the instance serves a Frostmoln-issued certificate: set when the platform issues one at create, false for an instance built before TLS.
 
 ## Example Usage
 
@@ -43,6 +46,12 @@ resource "frostmoln_mysql_instance" "main" {
   backup_schedule       = "0 2 * * *"
   backup_retention_days = 35
 
+  # TLS: omit require_tls for the platform default (TLS required, plaintext
+  # refused, once TLS for managed MySQL is available in the deployment).
+  # Fixed at create; set it to false only for clients that cannot do TLS.
+  # Changing it replaces the instance.
+  # require_tls = false
+
   # Resource tags: your own metadata for search and filtering. Merged with
   # the provider's default_tags; changing them updates in place.
   tags = {
@@ -52,6 +61,15 @@ resource "frostmoln_mysql_instance" "main" {
 
 output "mysql_endpoint" {
   value = "${frostmoln_mysql_instance.main.private_ip}:${frostmoln_mysql_instance.main.port}"
+}
+
+# With TLS the server's certificate is issued for its hostname by the
+# Frostmoln customer CA: connect with ssl-mode=VERIFY_IDENTITY against the
+# bundle from the frostmoln_ca_bundle data source (from inside the VPC, where
+# the hostname resolves). hostname is null, with tls_enabled false, on an
+# instance built before TLS.
+output "mysql_verify_identity_endpoint" {
+  value = frostmoln_mysql_instance.main.tls_enabled ? "${frostmoln_mysql_instance.main.hostname}:${frostmoln_mysql_instance.main.port}" : null
 }
 ```
 
@@ -74,6 +92,7 @@ output "mysql_endpoint" {
 - `backup_schedule` (String) Cron expression for the backup schedule. Defaults to "0 2 * * *" server-side.
 - `ha_enabled` (Boolean, Deprecated) Not supported for MySQL. High availability is available for PostgreSQL only; setting this to true is rejected.
 - `parameter_group_id` (String) The ID of the parameter group to reference on the instance. The platform stores the reference but never applies it — its parameter-apply endpoint is an unimplemented stub, so the group's values never reach the running server on create or on update. Setting it is refused at plan time, with the constraint and remedy in the refusal terraform prints; leave it unset until the platform ships a working apply path.
+- `require_tls` (Boolean) Whether the server accepts TLS connections only (plaintext refused). MySQL serves TLS and plaintext on the same `port`, so this changes no port; it decides whether a plaintext session is accepted. When omitted the platform default applies: TLS required once TLS for managed MySQL is available in the deployment; while it is not, the instance is created without TLS and reports false, and an explicit `true` is refused (`REQUIRE_TLS_UNAVAILABLE`). Set false only for clients that cannot do TLS. Fixed at create: changing it replaces the instance. Instances created before the setting existed report false. True with `tls_enabled` false means the instance has no usable endpoint (it is in status `error`); recreate it.
 - `tags` (Map of String) Resource tags on the instance: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only and never applied to the database server. Changing them updates the instance in place and does not restart or reconfigure it. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
@@ -82,6 +101,7 @@ output "mysql_endpoint" {
 - `admin_username` (String) The admin username for the MySQL instance.
 - `created_at` (String) The timestamp when the instance was created.
 - `ha_status` (String) Availability state of the instance. Always "disabled" for MySQL, which does not support high availability.
+- `hostname` (String) The instance's internal DNS name (`<label>.db.<vpc-label>.<tenant-label>.<org-label>.fm.internal`, the label derived from the name at create), resolvable inside its VPC; its TLS certificate is issued for this name. Fixed once assigned: a rename does not move it. Null on an instance built before TLS.
 - `id` (String) The unique identifier of the MySQL instance.
 - `port` (Number) The port number the MySQL instance is listening on.
 - `private_ip` (String) The private IP address of the MySQL instance.
@@ -89,6 +109,7 @@ output "mysql_endpoint" {
 - `status` (String) The current status of the MySQL instance.
 - `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `tenant_id` (String) The tenant ID that owns this instance.
+- `tls_enabled` (Boolean) Whether the server presents a certificate for `hostname` from the Frostmoln customer CA, so a client can connect with `ssl-mode=VERIFY_IDENTITY` (trust the bundle from the `frostmoln_ca_bundle` data source). False on an instance built before TLS: it gets no certificate retroactively; recreate it to get one.
 - `updated_at` (String) The timestamp when the instance was last updated.
 
 <a id="nestedblock--timeouts"></a>

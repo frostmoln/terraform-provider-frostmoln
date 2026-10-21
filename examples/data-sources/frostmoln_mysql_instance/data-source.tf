@@ -18,3 +18,14 @@ data "frostmoln_mysql_instance" "by_id" {
 
 # A name that matches nothing — or more than one MySQL instance — fails
 # the read loudly rather than picking an instance for you.
+
+# TLS, as the platform reports it: require_tls (plaintext refused),
+# tls_enabled (a certificate for hostname from the Frostmoln customer CA) and
+# hostname (null on an instance built before TLS).
+output "orders_tls" {
+  value = {
+    required = data.frostmoln_mysql_instance.orders.require_tls
+    enabled  = data.frostmoln_mysql_instance.orders.tls_enabled
+    hostname = data.frostmoln_mysql_instance.orders.hostname
+  }
+}

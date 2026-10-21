@@ -27,14 +27,17 @@ type apacheInstanceDataSource struct {
 
 // apacheInstanceModel is the Terraform state model for an Apache instance data source.
 type apacheInstanceModel struct {
-	ID              types.String `tfsdk:"id"`
-	Name            types.String `tfsdk:"name"`
-	Version         types.String `tfsdk:"version"`
-	FlavorID        types.String `tfsdk:"flavor_id"`
-	StorageGB       types.Int64  `tfsdk:"storage_gb"`
-	VPCID           types.String `tfsdk:"vpc_id"`
-	SubnetID        types.String `tfsdk:"subnet_id"`
-	TLSEnabled      types.Bool   `tfsdk:"tls_enabled"`
+	ID         types.String `tfsdk:"id"`
+	Name       types.String `tfsdk:"name"`
+	Version    types.String `tfsdk:"version"`
+	FlavorID   types.String `tfsdk:"flavor_id"`
+	StorageGB  types.Int64  `tfsdk:"storage_gb"`
+	VPCID      types.String `tfsdk:"vpc_id"`
+	SubnetID   types.String `tfsdk:"subnet_id"`
+	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
+	// TLS (MANAGED-OFFER-TLS-AND-INTERNAL-DNS-PLAN §8, Phase 4e).
+	RequireTLS      types.Bool   `tfsdk:"require_tls"`
+	Hostname        types.String `tfsdk:"hostname"`
 	PHPEnabled      types.Bool   `tfsdk:"php_enabled"`
 	PHPVersion      types.String `tfsdk:"php_version"`
 	Config          types.Map    `tfsdk:"config"`
@@ -54,25 +57,28 @@ type apacheInstanceModel struct {
 // The flavor is `flavorId`, vpcId/subnetId are returned, and `typeConfig` is a
 // JSON object (webserver/internal/domain/instance.go).
 type apiWebserverInstance struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Type        string            `json:"type"`
-	TypeVersion string            `json:"typeVersion"`
-	FlavorID    string            `json:"flavorId"`
-	StorageGB   int               `json:"storageGb"`
-	VPCID       string            `json:"vpcId"`
-	SubnetID    string            `json:"subnetId"`
-	TLSEnabled  bool              `json:"tlsEnabled"`
-	PHPEnabled  bool              `json:"phpEnabled"`
-	PHPVersion  string            `json:"phpVersion,omitempty"`
-	TypeConfig  map[string]string `json:"typeConfig,omitempty"`
-	Public      bool              `json:"public"`
-	PublicIP    string            `json:"publicIp,omitempty"`
-	Status      string            `json:"status"`
-	PrivateIP   string            `json:"privateIp,omitempty"`
-	Port        int               `json:"port,omitempty"`
-	CreatedAt   string            `json:"createdAt"`
-	UpdatedAt   string            `json:"updatedAt,omitempty"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	TypeVersion string `json:"typeVersion"`
+	FlavorID    string `json:"flavorId"`
+	StorageGB   int    `json:"storageGb"`
+	VPCID       string `json:"vpcId"`
+	SubnetID    string `json:"subnetId"`
+	TLSEnabled  bool   `json:"tlsEnabled"`
+	// Phase 4e: absent (an older service, an instance built before TLS) reads false / "".
+	RequireTLS bool              `json:"requireTls"`
+	Hostname   string            `json:"hostname,omitempty"`
+	PHPEnabled bool              `json:"phpEnabled"`
+	PHPVersion string            `json:"phpVersion,omitempty"`
+	TypeConfig map[string]string `json:"typeConfig,omitempty"`
+	Public     bool              `json:"public"`
+	PublicIP   string            `json:"publicIp,omitempty"`
+	Status     string            `json:"status"`
+	PrivateIP  string            `json:"privateIp,omitempty"`
+	Port       int               `json:"port,omitempty"`
+	CreatedAt  string            `json:"createdAt"`
+	UpdatedAt  string            `json:"updatedAt,omitempty"`
 	// Tags are the resource's customer resource tags ({} when untagged).
 	Tags     map[string]string `json:"tags"`
 	TenantID string            `json:"tenantId,omitempty"`
@@ -118,8 +124,19 @@ func (d *apacheInstanceDataSource) Schema(_ context.Context, _ datasource.Schema
 				Computed:    true,
 			},
 			"tls_enabled": schema.BoolAttribute{
-				Description: "Whether the instance serves TLS (a certificate). Reported by the platform, which " +
-					"serves no TLS on managed webservers yet, so it is false; the instance serves plain HTTP on `port`.",
+				Description: "Whether the instance serves HTTPS on 443 with a certificate for `hostname` from the Frostmoln " +
+					"customer CA (see the `frostmoln_ca_bundle` data source). False on an instance built before TLS.",
+				Computed: true,
+			},
+			"require_tls": schema.BoolAttribute{
+				Description: "Whether port 80 only redirects to https (the site served over HTTPS only). False: the site " +
+					"is served on port 80 beside HTTPS. Fixed at create; false on instances created before the setting existed.",
+				Computed: true,
+			},
+			"hostname": schema.StringAttribute{
+				Description: "The instance's internal DNS name (`<label>.web.<vpc-label>.<tenant-label>.<org-label>.fm.internal`), " +
+					"resolvable inside its VPC only; its TLS certificate is issued for this name. Null on an instance built " +
+					"without TLS.",
 				Computed: true,
 			},
 			"php_enabled": schema.BoolAttribute{
@@ -223,6 +240,12 @@ func (d *apacheInstanceDataSource) Read(ctx context.Context, req datasource.Read
 	state.VPCID = types.StringValue(inst.VPCID)
 	state.SubnetID = types.StringValue(inst.SubnetID)
 	state.TLSEnabled = types.BoolValue(inst.TLSEnabled)
+	state.RequireTLS = types.BoolValue(inst.RequireTLS)
+	if inst.Hostname != "" {
+		state.Hostname = types.StringValue(inst.Hostname)
+	} else {
+		state.Hostname = types.StringNull()
+	}
 	state.PHPEnabled = types.BoolValue(inst.PHPEnabled)
 	state.Public = types.BoolValue(inst.Public)
 	state.Status = types.StringValue(inst.Status)

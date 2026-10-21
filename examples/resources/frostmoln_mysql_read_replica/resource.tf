@@ -12,3 +12,9 @@ resource "frostmoln_mysql_read_replica" "reader" {
 output "mysql_reader_endpoint" {
   value = "${frostmoln_mysql_read_replica.reader.private_ip}:${frostmoln_mysql_read_replica.reader.port}"
 }
+
+# A replica has its own hostname and certificate (VERIFY_IDENTITY against it),
+# and its primary's require_tls.
+output "mysql_reader_hostname" {
+  value = frostmoln_mysql_read_replica.reader.tls_enabled ? frostmoln_mysql_read_replica.reader.hostname : null
+}

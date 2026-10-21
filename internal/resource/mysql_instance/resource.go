@@ -23,6 +23,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tlsattr"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/unenacted"
 )
 
@@ -394,6 +395,43 @@ func (r *mysqlInstanceResource) Schema(_ context.Context, _ resource.SchemaReque
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			// TLS (MANAGED-OFFER-TLS-AND-INTERNAL-DNS-PLAN §8, D1, Phase 4c), as
+			// frostmoln_postgres_instance's. All three plan with UseNonNullStateForUnknown:
+			// a state written before these attributes existed plans unknown, never null.
+			// tls_enabled is pinned too, unlike PostgreSQL's: MySQL has no high
+			// availability, so no standby rebuild can change it after the create.
+			"require_tls": schema.BoolAttribute{
+				Description: "Whether the server accepts TLS connections only (plaintext refused). MySQL serves TLS and " +
+					"plaintext on the same `port`, so this changes no port; it decides whether a plaintext session is " +
+					"accepted. When omitted the platform default applies: TLS required once TLS for managed MySQL is " +
+					"available in the deployment; while it is not, the instance is created without TLS and reports " +
+					"false, and an explicit `true` is refused (`REQUIRE_TLS_UNAVAILABLE`). Set false only for clients " +
+					"that cannot do TLS. Fixed at create: changing it replaces the instance. Instances created before " +
+					"the setting existed report false. True with `tls_enabled` false means the instance has no usable " +
+					"endpoint (it is in status `error`); recreate it.",
+				Optional:      true,
+				Computed:      true,
+				PlanModifiers: tlsattr.RequireTLSPlanModifiers(),
+			},
+			"tls_enabled": schema.BoolAttribute{
+				Description: "Whether the server presents a certificate for `hostname` from the Frostmoln customer CA, so a " +
+					"client can connect with `ssl-mode=VERIFY_IDENTITY` (trust the bundle from the `frostmoln_ca_bundle` " +
+					"data source). False on an instance built before TLS: it gets no certificate retroactively; recreate " +
+					"it to get one.",
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseNonNullStateForUnknown(),
+				},
+			},
+			"hostname": schema.StringAttribute{
+				Description: "The instance's internal DNS name (`<label>.db.<vpc-label>.<tenant-label>.<org-label>.fm.internal`, " +
+					"the label derived from the name at create), resolvable inside its VPC; its TLS certificate is issued " +
+					"for this name. Fixed once assigned: a rename does not move it. Null on an instance built before TLS.",
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseNonNullStateForUnknown(),
+				},
+			},
 		},
 		Blocks: map[string]schema.Block{
 			// Customer-tunable wait budgets: default 30m per verb (15m before
@@ -662,6 +700,19 @@ func (r *mysqlInstanceResource) Update(ctx context.Context, req resource.UpdateR
 
 	id := state.ID.ValueString()
 
+	// require_tls against a state that predates it: checked before anything is written.
+	tlsattr.CheckRequireTLSUnchanged(ctx, plan.RequireTLS, state.RequireTLS, "MySQL instance",
+		func(ctx context.Context) (bool, error) {
+			inst, err := r.getInstance(ctx, id)
+			if err != nil {
+				return false, err
+			}
+			return inst.RequireTLS, nil
+		}, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	// flavor_id cannot change in place — the platform has no flavor-resize path and the
 	// PUT below would silently drop it. The plan-time modifier only WARNS (an error there
 	// would also block `terraform destroy`; see planmod.StringWarnOnChange), so the change
@@ -765,6 +816,15 @@ func (r *mysqlInstanceResource) Update(ctx context.Context, req resource.UpdateR
 
 	plan.fromAPI(ctx, inst, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// getInstance reads one instance by id and parses it.
+func (r *mysqlInstanceResource) getInstance(ctx context.Context, id string) (*apiMysqlInstance, error) {
+	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/databases/"+id), nil)
+	if err != nil {
+		return nil, err
+	}
+	return client.ParseResponse[apiMysqlInstance](apiResp)
 }
 
 func (r *mysqlInstanceResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

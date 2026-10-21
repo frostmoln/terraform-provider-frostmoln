@@ -9,6 +9,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tlsattr"
 )
 
 // MysqlReadReplicaModel is the Terraform state model for a MySQL read replica.
@@ -21,6 +22,11 @@ type MysqlReadReplicaModel struct {
 	PrivateIP           types.String `tfsdk:"private_ip"`
 	Port                types.Int64  `tfsdk:"port"`
 	ReplicationLagBytes types.Int64  `tfsdk:"replication_lag_bytes"`
+	// TLS (MANAGED-OFFER-TLS-AND-INTERNAL-DNS-PLAN §8, Phase 4c), all read-only: the
+	// replica has its own hostname and certificate, and its primary's requirement.
+	RequireTLS types.Bool   `tfsdk:"require_tls"`
+	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
+	Hostname   types.String `tfsdk:"hostname"`
 	// Tags / TagsAll are the replica's OWN customer resource tags (internal/tftags),
 	// never copied from or to the primary.
 	Tags    types.Map `tfsdk:"tags"`
@@ -45,6 +51,10 @@ type apiMysqlReadReplica struct {
 	PrivateIP           string `json:"privateIp,omitempty"`
 	Port                int    `json:"port,omitempty"`
 	ReplicationLagBytes int64  `json:"replicationLagBytes,omitempty"`
+	// TLS (Phase 4c): absent (an older service, a replica built before TLS) reads false.
+	RequireTLS bool   `json:"requireTls"`
+	TLSEnabled bool   `json:"tlsEnabled"`
+	Hostname   string `json:"hostname,omitempty"`
 	// Tags are the replica's customer resource tags ({} when untagged).
 	Tags map[string]string `json:"tags"`
 }
@@ -111,4 +121,8 @@ func (m *MysqlReadReplicaModel) fromAPI(ctx context.Context, replica *apiMysqlRe
 	} else {
 		m.ReplicationLagBytes = types.Int64Null()
 	}
+
+	m.RequireTLS = types.BoolValue(replica.RequireTLS)
+	m.TLSEnabled = types.BoolValue(replica.TLSEnabled)
+	m.Hostname = tlsattr.StringFromWire(replica.Hostname)
 }

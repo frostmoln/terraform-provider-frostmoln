@@ -8,6 +8,10 @@ description: |-
 
 # Upgrading: `tls_enabled` is read-only on managed webservers
 
+-> Managed webservers now serve TLS: see "Upgrading: TLS on
+`frostmoln_nginx_instance` and `frostmoln_apache_instance`". The rest of this
+page describes the earlier change, which made `tls_enabled` read-only.
+
 `tls_enabled` on `frostmoln_nginx_instance` and `frostmoln_apache_instance`
 was accepted on create and update, but no managed webserver has ever served
 TLS: every instance serves plain HTTP on `port`, whatever the attribute said.

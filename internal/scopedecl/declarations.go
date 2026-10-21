@@ -21,12 +21,20 @@ package scopedecl
 var Declarations = map[string]Decl{
 	"frostmoln_apache_instance": {
 		ImmutableWhy: "the managed offer has no in-place migration for it — a change re-creates the instance",
-		Immutable:    fields("php_enabled", "php_version", "subnet_id", "version", "vpc_id"),
+		Immutable: []Field{
+			{Path: "php_enabled"},
+			{Path: "php_version"},
+			{Path: "require_tls", Why: "the TLS requirement (port 80 redirecting to https) is fixed at create (the platform refuses a change with require_tls_immutable); a change re-creates the instance, and an instance whose state predates the attribute is never replaced for it"},
+			{Path: "subnet_id"},
+			{Path: "version"},
+			{Path: "vpc_id"},
+		},
 		Observes: []Field{
 			tagsAllObserved,
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
 			{Path: "public_ip", Why: "platform-allocated and attached when `public` is true"},
 			{Path: "security_group_id", Why: "the platform creates and owns the managed group; reads succeed but every write is refused (`409 resource_in_use`), permanently"},
+			{Path: "hostname", Why: "platform-derived at create from `name`'s DNS label, the VPC, tenant and organization; the only name the certificate carries, fixed for life, null on an instance built without TLS"},
 		},
 		Defaults: []PlatformDefault{
 			{
@@ -350,7 +358,13 @@ var Declarations = map[string]Decl{
 	},
 	"frostmoln_mysql_instance": {
 		ImmutableWhy: "the platform has no in-place migration for it — a change re-creates the instance",
-		Immutable:    fields("ha_enabled", "subnet_id", "version", "vpc_id"),
+		Immutable: []Field{
+			{Path: "ha_enabled"},
+			{Path: "require_tls", Why: "the TLS requirement is fixed at create (the platform refuses a change with REQUIRE_TLS_IMMUTABLE); a change re-creates the instance, and an instance whose state predates the attribute is never replaced for it"},
+			{Path: "subnet_id"},
+			{Path: "version"},
+			{Path: "vpc_id"},
+		},
 		ImmutableWithoutReplace: []Field{
 			{Path: "parameter_group_id", Why: "the platform stores the parameter group reference but its parameter-apply is an unimplemented stub — the values never reach the running server on create or on update, so any value is refused outright at plan and apply instead of recorded as intent that is not enacted"},
 		},
@@ -358,6 +372,8 @@ var Declarations = map[string]Decl{
 			tagsAllObserved,
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
 			{Path: "public_ip", Why: "platform-assigned where the offer exposes one"},
+			{Path: "tls_enabled", Why: "whether the instance serves a Frostmoln-issued certificate: set when the platform issues one at create, false for an instance built before TLS"},
+			{Path: "hostname", Why: "platform-derived at create from `name`'s DNS label, the VPC, tenant and organization; fixed for life (a rename does not move it), null on an instance built before TLS"},
 		},
 	},
 	"frostmoln_mysql_read_replica": {
@@ -366,16 +382,27 @@ var Declarations = map[string]Decl{
 		Observes: []Field{
 			tagsAllObserved,
 			{Path: "replication_lag_bytes", Why: "the live replication position as the platform reports it — it moves continuously"},
+			{Path: "require_tls", Why: "the primary's TLS requirement, inherited at create and fixed"},
+			{Path: "tls_enabled", Why: "whether the platform issued the replica its own certificate at create; false for a replica built before TLS"},
+			{Path: "hostname", Why: "platform-derived at create from the replica's `name`, the VPC, tenant and organization; fixed for life, null on a replica built before TLS"},
 		},
 	},
 	"frostmoln_nginx_instance": {
 		ImmutableWhy: "the managed offer has no in-place migration for it — a change re-creates the instance",
-		Immutable:    fields("php_enabled", "php_version", "subnet_id", "version", "vpc_id"),
+		Immutable: []Field{
+			{Path: "php_enabled"},
+			{Path: "php_version"},
+			{Path: "require_tls", Why: "the TLS requirement (port 80 redirecting to https) is fixed at create (the platform refuses a change with require_tls_immutable); a change re-creates the instance, and an instance whose state predates the attribute is never replaced for it"},
+			{Path: "subnet_id"},
+			{Path: "version"},
+			{Path: "vpc_id"},
+		},
 		Observes: []Field{
 			tagsAllObserved,
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
 			{Path: "public_ip", Why: "platform-allocated and attached when `public` is true"},
 			{Path: "security_group_id", Why: "the platform creates and owns the managed group; reads succeed but every write is refused (`409 resource_in_use`), permanently"},
+			{Path: "hostname", Why: "platform-derived at create from `name`'s DNS label, the VPC, tenant and organization; the only name the certificate carries, fixed for life, null on an instance built without TLS"},
 		},
 		Defaults: []PlatformDefault{
 			{
@@ -450,7 +477,12 @@ var Declarations = map[string]Decl{
 	},
 	"frostmoln_redis_instance": {
 		ImmutableWhy: "the platform has no in-place migration for it — a change re-creates the instance",
-		Immutable:    fields("subnet_id", "version", "vpc_id"),
+		Immutable: []Field{
+			{Path: "require_tls", Why: "the TLS requirement is fixed at create (the platform refuses a change with REQUIRE_TLS_IMMUTABLE); a change re-creates the instance, and an instance whose state predates the attribute is never replaced for it"},
+			{Path: "subnet_id"},
+			{Path: "version"},
+			{Path: "vpc_id"},
+		},
 		ImmutableWithoutReplace: []Field{
 			{Path: "eviction_policy", Why: "the value reaches the running server only in the create render and no workflow re-renders it — a change is validated, stored and echoed while the running server keeps its previous behaviour, so it is warned about at plan and refused at apply; replace the instance to change it"},
 			{Path: "persistence_mode", Why: "the value reaches the running server only in the create render and no workflow re-renders it — a change is validated, stored and echoed while the running server keeps its previous behaviour, so it is warned about at plan and refused at apply; replace the instance to change it"},
@@ -458,6 +490,10 @@ var Declarations = map[string]Decl{
 		Observes: []Field{
 			tagsAllObserved,
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
+			{Path: "tls_enabled", Why: "whether the instance serves TLS on `tls_port` with a Frostmoln-issued certificate: set when the platform issues one at create, false for an instance built before TLS"},
+			{Path: "hostname", Why: "platform-derived at create from `name`'s DNS label, the VPC, tenant and organization; fixed for life (a rename does not move it), null on an instance built before TLS"},
+			{Path: "tls_port", Why: "the TLS listener (6380) while the instance serves TLS, null otherwise"},
+			{Path: "port", Why: "the plaintext listener (6379), null when `require_tls` is true (the platform closes it)"},
 		},
 	},
 	"frostmoln_s3_credential": {
@@ -557,7 +593,12 @@ var Declarations = map[string]Decl{
 	},
 	"frostmoln_valkey_instance": {
 		ImmutableWhy: "the platform has no in-place migration for it — a change re-creates the instance",
-		Immutable:    fields("subnet_id", "version", "vpc_id"),
+		Immutable: []Field{
+			{Path: "require_tls", Why: "the TLS requirement is fixed at create (the platform refuses a change with REQUIRE_TLS_IMMUTABLE); a change re-creates the instance, and an instance whose state predates the attribute is never replaced for it"},
+			{Path: "subnet_id"},
+			{Path: "version"},
+			{Path: "vpc_id"},
+		},
 		ImmutableWithoutReplace: []Field{
 			{Path: "eviction_policy", Why: "the value reaches the running server only in the create render and no workflow re-renders it — a change is validated, stored and echoed while the running server keeps its previous behaviour, so it is warned about at plan and refused at apply; replace the instance to change it"},
 			{Path: "persistence_mode", Why: "the value reaches the running server only in the create render and no workflow re-renders it — a change is validated, stored and echoed while the running server keeps its previous behaviour, so it is warned about at plan and refused at apply; replace the instance to change it"},
@@ -565,6 +606,10 @@ var Declarations = map[string]Decl{
 		Observes: []Field{
 			tagsAllObserved,
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
+			{Path: "tls_enabled", Why: "whether the instance serves TLS on `tls_port` with a Frostmoln-issued certificate: set when the platform issues one at create, false for an instance built before TLS"},
+			{Path: "hostname", Why: "platform-derived at create from `name`'s DNS label, the VPC, tenant and organization; fixed for life (a rename does not move it), null on an instance built before TLS"},
+			{Path: "tls_port", Why: "the TLS listener (6380) while the instance serves TLS, null otherwise"},
+			{Path: "port", Why: "the plaintext listener (6379), null when `require_tls` is true (the platform closes it)"},
 		},
 	},
 	"frostmoln_volume": {

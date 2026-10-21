@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
@@ -28,6 +29,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tlsattr"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/unenacted"
 )
 
@@ -421,6 +423,12 @@ func (r *apacheInstanceResource) ModifyPlan(ctx context.Context, req resource.Mo
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if req.State.Raw.IsNull() {
+		tlsEnabledCreateRefusal(ctx, req, resp)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
 	// Only the in-place update case matters (create marks computed attrs unknown
 	// already; destroy has no plan).
 	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
@@ -435,7 +443,62 @@ func (r *apacheInstanceResource) ModifyPlan(ctx context.Context, req resource.Mo
 	if !plan.Public.Equal(state.Public) {
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("public_ip"), types.StringUnknown())...)
 	}
+	tlsEnabledUpdateWarning(ctx, req, resp)
 }
+
+// configuredTLSEnabled is the configuration's tls_enabled when it is a known `false`
+// (`true` is the validator's, unenacted.BoolTrue): a value the platform may contradict.
+func configuredTLSEnabled(ctx context.Context, cfg tfsdk.Config, diags *diag.Diagnostics) (types.Bool, bool) {
+	var v types.Bool
+	diags.Append(cfg.GetAttribute(ctx, path.Root("tls_enabled"), &v)...)
+	return v, !diags.HasError() && !v.IsNull() && !v.IsUnknown() && !v.ValueBool()
+}
+
+// tlsEnabledCreateRefusal refuses a configured tls_enabled on a create: once TLS for
+// managed webservers is available every new instance serves HTTPS, whatever the create
+// says, so a configured `false` would fail the apply as an inconsistent result after the
+// instance exists. Create-only (the caller guards it with req.State.Raw.IsNull()), so it
+// never blocks a destroy.
+func tlsEnabledCreateRefusal(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+	if _, set := configuredTLSEnabled(ctx, req.Config, &resp.Diagnostics); !set {
+		return
+	}
+	resp.Diagnostics.AddAttributeError(path.Root("tls_enabled"), tlsEnabledRefusalTitle, tlsEnabledCreateRefusalDetail)
+}
+
+// tlsEnabledUpdateWarning warns, at plan, about a configured tls_enabled other than the
+// instance's known value (it serves a certificate; the configuration says false). Update
+// refuses it before any request (tlsEnabledMismatch); an error here would also block a
+// destroy.
+func tlsEnabledUpdateWarning(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	cfg, set := configuredTLSEnabled(ctx, req.Config, &resp.Diagnostics)
+	if !set {
+		return
+	}
+	var prior types.Bool
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("tls_enabled"), &prior)...)
+	if msg := tlsEnabledMismatch(cfg, prior); msg != "" {
+		resp.Diagnostics.AddAttributeWarning(path.Root("tls_enabled"), tlsEnabledRefusalTitle, msg+" The apply will refuse it.")
+	}
+}
+
+// tlsEnabledMismatch is the refusal of a configured tls_enabled against the instance's
+// known prior value, or "" when there is none to refuse.
+func tlsEnabledMismatch(cfg, prior types.Bool) string {
+	if cfg.IsNull() || cfg.IsUnknown() || prior.IsNull() || prior.IsUnknown() || prior.Equal(cfg) {
+		return ""
+	}
+	return fmt.Sprintf("tls_enabled is read-only and the instance reports %t: it serves HTTPS on 443 with a "+
+		"certificate for its hostname. Remove tls_enabled from the configuration.", prior.ValueBool())
+}
+
+const tlsEnabledCreateRefusalDetail = "tls_enabled is read-only, and on a new instance the platform decides it: once " +
+	"TLS for managed webservers is available every new instance serves HTTPS on 443, so a configured false could " +
+	"not be kept.\n\nRemove tls_enabled from the configuration (it reads back the observed value). To serve the " +
+	"site over HTTPS only, set require_tls = true."
 
 func (r *apacheInstanceResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_apache_instance"
@@ -498,18 +561,44 @@ func (r *apacheInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
+			// tls_enabled carries NO pinning plan modifier (UseStateForUnknown before Phase 4e):
+			// the platform sets it once the instance serves a certificate, so a prior value
+			// pinned into an update plan would fail the apply as an inconsistent result.
+			// Optional (not Computed-only) so an existing `tls_enabled = false` configuration
+			// on an instance that serves no certificate keeps planning; see ModifyPlan.
 			"tls_enabled": schema.BoolAttribute{
-				Description: "Whether the instance serves TLS (a certificate). Read-only: it is reported by the " +
-					"platform, which serves no TLS on managed webservers yet, so it is false; the instance " +
-					"serves plain HTTP on `port`. Setting `true` is refused at plan time. Serve HTTPS through " +
-					"an `frostmoln_application_gateway` meanwhile.",
+				Description: "Whether the instance serves HTTPS on 443 with a certificate for `hostname` from the Frostmoln " +
+					"customer CA (trust the bundle from the `frostmoln_ca_bundle` data source). Read-only: once TLS for " +
+					"managed webservers is available every new instance serves it; an instance built before TLS reports " +
+					"false and gets no certificate later. Do not set it: `true` is refused at plan time, and so is " +
+					"`false` on a new instance or against an instance that serves TLS. Public HTTPS (a public name) is " +
+					"the `frostmoln_application_gateway`'s, or your own certificate's.",
 				Optional: true,
 				Computed: true,
-				PlanModifiers: []planmodifier.Bool{
-					boolplanmodifier.UseStateForUnknown(),
-				},
 				Validators: []validator.Bool{
 					unenacted.BoolTrue(tlsEnabledRefusalTitle, tlsEnabledRefusalDetail),
+				},
+			},
+			"require_tls": schema.BoolAttribute{
+				Description: "Whether the site is served over HTTPS only: true makes port 80 only redirect to https; false " +
+					"(the default when omitted) serves the site on port 80 beside HTTPS on 443. It never decides whether " +
+					"HTTPS is served (see `tls_enabled`), and `port` stays 80 either way. An explicit `true` while TLS for " +
+					"managed webservers is not available in the deployment is refused (`require_tls_unavailable`). Fixed " +
+					"at create: changing it replaces the instance. Instances created before the setting existed report " +
+					"false. True with `tls_enabled` false means the instance serves no usable site (it is in status " +
+					"`error`); recreate it.",
+				Optional:      true,
+				Computed:      true,
+				PlanModifiers: tlsattr.RequireTLSPlanModifiers(),
+			},
+			"hostname": schema.StringAttribute{
+				Description: "The instance's internal DNS name (`<label>.web.<vpc-label>.<tenant-label>.<org-label>.fm.internal`, " +
+					"the label derived from the name at create), resolvable inside its VPC only; its TLS certificate is " +
+					"issued for this name alone. Fixed once assigned: a rename does not move it. Null on an instance " +
+					"built without TLS.",
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseNonNullStateForUnknown(),
 				},
 			},
 			"php_enabled": schema.BoolAttribute{
@@ -941,10 +1030,27 @@ func (r *apacheInstanceResource) Update(ctx context.Context, req resource.Update
 
 	id := state.ID.ValueString()
 
+	// require_tls against a state that predates it: checked before anything is written.
+	tlsattr.CheckRequireTLSUnchanged(ctx, plan.RequireTLS, state.RequireTLS, "Apache instance",
+		func(ctx context.Context) (bool, error) {
+			apiResp, err := r.client.Get(ctx, r.client.TenantPath("/webservers/"+id), nil)
+			if err != nil {
+				return false, err
+			}
+			inst, err := client.ParseResponse[apiWebserverInstance](apiResp)
+			if err != nil {
+				return false, err
+			}
+			return inst.RequireTLS, nil
+		}, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	// tls_enabled is read-only: the same belt as Create, before any mutation. It reads the
-	// CONFIGURATION, not the plan: Optional+Computed with UseStateForUnknown carries a stale
-	// state `true` (written by an older provider, kept by -refresh=false) into the plan of a
-	// config that never set the attribute, and that must not be refused.
+	// CONFIGURATION, not the plan: a state `true` can reach the plan of a config that never
+	// set the attribute (a -refresh=false plan of an older provider's state, pinned by the
+	// UseStateForUnknown it carried before Phase 4e), and that must not be refused.
 	var configTLS types.Bool
 	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("tls_enabled"), &configTLS)...)
 	if resp.Diagnostics.HasError() {
@@ -952,6 +1058,12 @@ func (r *apacheInstanceResource) Update(ctx context.Context, req resource.Update
 	}
 	if configTLS.ValueBool() {
 		resp.Diagnostics.AddAttributeError(path.Root("tls_enabled"), tlsEnabledRefusalTitle, tlsEnabledRefusalDetail)
+		return
+	}
+	// A configured false against an instance that serves a certificate (warned about at
+	// plan): the read-back would contradict the plan, so it is refused before any request.
+	if msg := tlsEnabledMismatch(configTLS, state.TLSEnabled); msg != "" {
+		resp.Diagnostics.AddAttributeError(path.Root("tls_enabled"), tlsEnabledRefusalTitle, msg+" Nothing was changed.")
 		return
 	}
 

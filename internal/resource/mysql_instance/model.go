@@ -9,6 +9,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tlsattr"
 )
 
 // The backup policy the database service applies itself when backups are enabled without an
@@ -48,6 +49,13 @@ type MysqlInstanceModel struct {
 	CreatedAt           types.String `tfsdk:"created_at"`
 	UpdatedAt           types.String `tfsdk:"updated_at"`
 	TenantID            types.String `tfsdk:"tenant_id"`
+	// TLS (MANAGED-OFFER-TLS-AND-INTERNAL-DNS-PLAN §8, D1, Phase 4c). RequireTLS is the
+	// instance's TLS requirement: set at create (server default), fixed afterwards;
+	// Optional+Computed, see tlsattr for the replace rule. TLSEnabled and Hostname are
+	// read-only and, MySQL having no high availability, fixed once the create completes.
+	RequireTLS types.Bool   `tfsdk:"require_tls"`
+	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
+	Hostname   types.String `tfsdk:"hostname"`
 	// Tags / TagsAll are the instance's customer resource tags (internal/tftags).
 	Tags    types.Map `tfsdk:"tags"`
 	TagsAll types.Map `tfsdk:"tags_all"`
@@ -81,6 +89,12 @@ type apiMysqlInstance struct {
 	CreatedAt           string `json:"createdAt"`
 	UpdatedAt           string `json:"updatedAt,omitempty"`
 	TenantID            string `json:"tenantId,omitempty"`
+	// TLS (Phase 4c): requireTls and tlsEnabled are always sent by a TLS-aware database
+	// service; absent (an older service, or an instance built before TLS) reads false, the
+	// truth for those instances. hostname only when assigned.
+	RequireTLS bool   `json:"requireTls"`
+	TLSEnabled bool   `json:"tlsEnabled"`
+	Hostname   string `json:"hostname,omitempty"`
 	// Tags are the instance's customer resource tags ({} when untagged).
 	Tags map[string]string `json:"tags"`
 }
@@ -99,6 +113,10 @@ type apiCreateMysqlInstanceRequest struct {
 	BackupSchedule      string `json:"backupSchedule,omitempty"`
 	BackupRetentionDays *int   `json:"backupRetentionDays,omitempty"`
 	ParameterGroupID    string `json:"parameterGroupId,omitempty"`
+	// RequireTLS is sent only when configured. Omitted, the service applies its default:
+	// TLS required once TLS for managed MySQL is available in the deployment, the pre-TLS
+	// create while it is not (where an explicit true is REQUIRE_TLS_UNAVAILABLE).
+	RequireTLS *bool `json:"requireTls,omitempty"`
 	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
 	// merges the tenant's default tags in.
 	Tags map[string]string `json:"tags,omitempty"`
@@ -166,6 +184,9 @@ func (m *MysqlInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnost
 	if !m.ParameterGroupID.IsNull() && !m.ParameterGroupID.IsUnknown() {
 		req.ParameterGroupID = m.ParameterGroupID.ValueString()
 	}
+	// Sent ONLY when configured: an omission must reach the service as an omission so
+	// the platform default applies.
+	req.RequireTLS = tlsattr.RequireTLSForCreate(m.RequireTLS)
 
 	return req
 }
@@ -303,4 +324,10 @@ func (m *MysqlInstanceModel) fromAPI(ctx context.Context, inst *apiMysqlInstance
 	} else {
 		m.TenantID = types.StringNull()
 	}
+
+	// TLS, as the service reports it. MySQL negotiates TLS on its one port, so no port
+	// is nulled under require_tls.
+	m.RequireTLS = types.BoolValue(inst.RequireTLS)
+	m.TLSEnabled = types.BoolValue(inst.TLSEnabled)
+	m.Hostname = tlsattr.StringFromWire(inst.Hostname)
 }

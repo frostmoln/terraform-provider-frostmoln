@@ -9,6 +9,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tlsattr"
 )
 
 // RedisInstanceModel is the Terraform state model for a managed Redis instance.
@@ -33,6 +34,14 @@ type RedisInstanceModel struct {
 	AdminUsername types.String `tfsdk:"admin_username"`
 	CreatedAt     types.String `tfsdk:"created_at"`
 	UpdatedAt     types.String `tfsdk:"updated_at"`
+	// TLS (MANAGED-OFFER-TLS-AND-INTERNAL-DNS-PLAN §8, D1, Phase 4d). RequireTLS is set at
+	// create (server default), fixed afterwards (see tlsattr). TLSEnabled, Hostname and
+	// TLSPort are read-only and fixed once the create completes (a cache has no standby,
+	// and a restore is a new instance). With require_tls the plaintext Port is null.
+	RequireTLS types.Bool   `tfsdk:"require_tls"`
+	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
+	Hostname   types.String `tfsdk:"hostname"`
+	TLSPort    types.Int64  `tfsdk:"tls_port"`
 	// Tags / TagsAll are the instance's customer resource tags (internal/tftags).
 	Tags    types.Map `tfsdk:"tags"`
 	TagsAll types.Map `tfsdk:"tags_all"`
@@ -64,6 +73,13 @@ type apiRedisInstance struct {
 	AdminUsername string `json:"adminUsername,omitempty"`
 	CreatedAt     string `json:"createdAt"`
 	UpdatedAt     string `json:"updatedAt,omitempty"`
+	// TLS (Phase 4d): requireTls and tlsEnabled are always sent by a TLS-aware cache
+	// service; absent (an older service, an instance built before TLS) reads false. port is
+	// absent when requireTls (6379 closed); tlsPort and hostname only while TLS is served.
+	RequireTLS bool   `json:"requireTls"`
+	TLSEnabled bool   `json:"tlsEnabled"`
+	Hostname   string `json:"hostname,omitempty"`
+	TLSPort    int    `json:"tlsPort,omitempty"`
 	// Tags are the instance's customer resource tags ({} when untagged).
 	Tags map[string]string `json:"tags"`
 }
@@ -83,6 +99,10 @@ type apiCreateRedisInstanceRequest struct {
 	BackupEnabled       *bool  `json:"backupEnabled,omitempty"`
 	BackupSchedule      string `json:"backupSchedule,omitempty"`
 	BackupRetentionDays *int   `json:"backupRetentionDays,omitempty"`
+	// RequireTLS is sent only when configured. Omitted, the service applies its default:
+	// TLS required once TLS for managed caches is available in the deployment, the pre-TLS
+	// create while it is not (where an explicit true is REQUIRE_TLS_UNAVAILABLE).
+	RequireTLS *bool `json:"requireTls,omitempty"`
 	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
 	// merges the tenant's default tags in.
 	Tags map[string]string `json:"tags,omitempty"`
@@ -148,6 +168,9 @@ func (m *RedisInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagnost
 		v := int(m.BackupRetentionDays.ValueInt64())
 		req.BackupRetentionDays = &v
 	}
+
+	// Sent ONLY when configured, so the platform default applies to an omission.
+	req.RequireTLS = tlsattr.RequireTLSForCreate(m.RequireTLS)
 
 	return req
 }
@@ -244,6 +267,13 @@ func (m *RedisInstanceModel) fromAPI(ctx context.Context, inst *apiRedisInstance
 	} else {
 		m.UpdatedAt = types.StringNull()
 	}
+
+	// TLS, as the service reports it. port above is null when the cache requires TLS (the
+	// plaintext 6379 is closed and not sent); tls_port is the TLS listener while it serves.
+	m.RequireTLS = types.BoolValue(inst.RequireTLS)
+	m.TLSEnabled = types.BoolValue(inst.TLSEnabled)
+	m.Hostname = tlsattr.StringFromWire(inst.Hostname)
+	m.TLSPort = tlsattr.Int64FromWire(inst.TLSPort)
 }
 
 // apiInstanceRef is the slice of the family listing's item shape that the

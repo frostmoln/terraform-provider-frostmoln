@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -129,6 +130,8 @@ func configVal(t *testing.T, id string) tftypes.Value {
 		"created_at":        tftypes.NewValue(tftypes.String, nil),
 		"updated_at":        tftypes.NewValue(tftypes.String, nil),
 		"tags":              tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"require_tls":       tftypes.NewValue(tftypes.Bool, nil),
+		"hostname":          tftypes.NewValue(tftypes.String, nil),
 		"tenant_id":         tftypes.NewValue(tftypes.String, nil),
 		"security_group_id": tftypes.NewValue(tftypes.String, nil),
 	})
@@ -355,5 +358,43 @@ func TestReadBadResponseBody(t *testing.T) {
 	ds.Read(ctx, readReq, &readResp)
 	if !readResp.Diagnostics.HasError() {
 		t.Error("expected error for bad response body")
+	}
+}
+
+// Phase 4e: the TLS state reads back as the service sends it.
+func TestReadTLS(t *testing.T) {
+	server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/w-tls") {
+			_, _ = w.Write([]byte(`{"id":"w-tls","name":"s","type":"nginx","status":"running","port":80,"tlsEnabled":true,` +
+				`"requireTls":true,"hostname":"s.web.prod.omkcmw.ck4to7f6.fm.internal","tags":{}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"w-old","name":"o","type":"nginx","status":"running","port":80,"tlsEnabled":false,"tags":{}}`))
+	})
+	defer server.Close()
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+	for id, want := range map[string][3]string{
+		"w-tls": {"true", "true", "s.web.prod.omkcmw.ck4to7f6.fm.internal"},
+		"w-old": {"false", "false", "<null>"},
+	} {
+		ds := NewDataSource()
+		configureDS(t, ds, c)
+		schemaResp := getDSSchema(t)
+		var readResp datasource.ReadResponse
+		readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+		ds.Read(context.Background(), datasource.ReadRequest{Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal(t, id)}}, &readResp)
+		if readResp.Diagnostics.HasError() {
+			t.Fatalf("%s: %v", id, readResp.Diagnostics)
+		}
+		var st nginxInstanceModel
+		readResp.State.Get(context.Background(), &st)
+		got := [3]string{st.TLSEnabled.String(), st.RequireTLS.String(), strings.Trim(st.Hostname.String(), `"`)}
+		if got != want {
+			t.Errorf("%s: tls_enabled/require_tls/hostname = %v, want %v", id, got, want)
+		}
 	}
 }
