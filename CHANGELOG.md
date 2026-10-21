@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.95.0] - 2026-10-21
+
+### 🚀 Features
+
+- *(postgres)* Require_tls, tls_enabled, hostname (Phase 4b) (#723)
+
 ## [0.94.0] - 2026-10-21
 
 ### 🚀 Features
