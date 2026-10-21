@@ -132,7 +132,6 @@ var descriptionDebtTable = []string{
 	"frostmoln_security_group:delete_default_egress",
 	"frostmoln_vpc_route:destination",
 	"frostmoln_vpc_route:next_hop",
-	"frostmoln_workload_identity_binding:scopes",
 }
 
 // pinnedBehaviorSentences lists, per resource type, per attribute path, the

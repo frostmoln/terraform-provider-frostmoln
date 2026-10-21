@@ -1,22 +1,20 @@
 # A Workload Identity Federation binding: a pod running as the given
 # Kubernetes service account can exchange its projected token for a short-lived,
-# scoped Frostmoln credential — no long-lived secret in the pod.
+# policy-scoped Frostmoln credential — no long-lived secret in the pod.
+#
+# Flat scopes are RETIRED (retire-scopes step 2, ADR-0102): a binding's grant is
+# its access policies, and a configuration that still sets `scopes` fails at
+# apply with 400 BINDING_SCOPES_RETIRED. Remove the attribute; grant with a
+# policy below.
 resource "frostmoln_workload_identity_binding" "app" {
   cluster_id      = frostmoln_kubernetes_cluster.prod.id
   namespace       = "default"
   service_account = "my-app"
-
-  # Least-privilege scopes only. Wildcards ("*" or "<resource>:*") are rejected.
-  scopes = [
-    "compute:read",
-    "storage:read",
-  ]
 }
 
-# A POLICY-GRANTED binding: omit `scopes` entirely and let an attached access
-# policy be the workload's sole authority. Prefer this — a flat scope grants a
-# verb across every resource of a service, while a policy names individual
-# targets, adds constraints and can deny explicitly.
+# A policy-granted binding: the attachment below is the workload's authority.
+# A policy names individual targets, adds constraints and can deny explicitly —
+# flat scopes never could grant a verb across every resource of a service.
 #
 # The binding is INERT until the attachment exists: with no grant at all the
 # token exchange refuses it rather than minting a credential that grants nothing.

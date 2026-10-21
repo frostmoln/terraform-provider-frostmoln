@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -185,6 +186,13 @@ func TestSchemaScopesOptional(t *testing.T) {
 	if !attr.Optional {
 		t.Error("scopes must be Optional")
 	}
+	// The retirement demands TWO surfaces: the plan warms with the deprecation
+	// message, and the apply fails with the server's 400 (the bespoke diagnostic
+	// branch). DeprecationMessage alone only WARNS — the mysql_instance
+	// ha_enabled precedent's lesson — so it must exist AND be checked here.
+	if attr.DeprecationMessage == "" {
+		t.Error("scopes must carry a DeprecationMessage warning the practitioner at plan time")
+	}
 
 	empty, d := types.ListValueFrom(context.Background(), types.StringType, []string{})
 	if d.HasError() {
@@ -285,22 +293,19 @@ func TestResourceMetadata(t *testing.T) {
 	}
 }
 
-func TestResourceCreate(t *testing.T) {
+// TestResourceCreateWithScopesFailsAtApply pins the scopes-retirement wire
+// contract: identity refuses every non-empty scopes body with 400
+// BINDING_SCOPES_RETIRED, and the provider answers with the migration-shaped
+// diagnostic (never with a silent drop, never with the bare passthrough).
+// A configuration without scopes keeps creating (TestResourceCreatePolicyGranted).
+func TestResourceCreateWithScopesFailsAtApply(t *testing.T) {
 	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/workload-identity/bindings" {
-			var req apiCreateWorkloadIdentityBindingRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode: %v", err)
-			}
-			if req.ClusterID != "cl-1" || req.ServiceAccount != "app" {
-				t.Errorf("unexpected create body: %+v", req)
-			}
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(apiWorkloadIdentityBinding{
-				ID: "b-9", ClusterID: req.ClusterID, TenantID: "tenant-456",
-				Namespace: req.Namespace, ServiceAccount: req.ServiceAccount,
-				Scopes: req.Scopes, CreatedAt: "t0", UpdatedAt: "t0",
-			})
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{
+				"code":    "BINDING_SCOPES_RETIRED",
+				"message": "flat scopes are retired on workload-identity bindings",
+			}})
 			return
 		}
 		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
@@ -316,54 +321,19 @@ func TestResourceCreate(t *testing.T) {
 	req := resource.CreateRequest{Plan: tfsdk.Plan{Schema: s, Raw: bindingValue(tfType, "", "cl-1", "default", "app", []string{"compute:read"})}}
 	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
 	res.Create(ctx, req, resp)
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("create diags: %v", resp.Diagnostics.Errors())
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a scoped create must fail at apply against the post-retirement API")
 	}
-	var m WorkloadIdentityBindingModel
-	resp.State.Get(ctx, &m)
-	if m.ID.ValueString() != "b-9" || m.TenantID.ValueString() != "tenant-456" {
-		t.Errorf("unexpected state: %+v", m)
-	}
-}
-
-// TestResourceCreatePreservesPlanScopeOrder guards the M1 fix: if the server
-// echoes scopes in a different order than submitted, the Required scopes attr
-// keeps the plan's order so Terraform doesn't error "inconsistent result".
-func TestResourceCreatePreservesPlanScopeOrder(t *testing.T) {
-	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.URL.Path == "/v1/tenants/tenant-456/workload-identity/bindings" {
-			var req apiCreateWorkloadIdentityBindingRequest
-			_ = json.NewDecoder(r.Body).Decode(&req)
-			w.WriteHeader(http.StatusCreated)
-			// Deliberately return the scopes REVERSED.
-			_ = json.NewEncoder(w).Encode(apiWorkloadIdentityBinding{
-				ID: "b-9", ClusterID: req.ClusterID, TenantID: "tenant-456",
-				Namespace: req.Namespace, ServiceAccount: req.ServiceAccount,
-				Scopes: []string{"storage:read", "compute:read"}, CreatedAt: "t0", UpdatedAt: "t0",
-			})
-			return
+	msg := resp.Diagnostics[0].Detail()
+	for _, want := range []string{"BINDING_SCOPES_RETIRED", "frostmoln_iam_policy_attachment", "Remove the `scopes` attribute"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("diagnostic detail %q must carry the migration (%q missing)", msg, want)
 		}
-		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
-	})
-	defer server.Close()
-
-	ctx := context.Background()
-	res := configuredResource(t, server.URL)
-	s := bindingSchema(t)
-	tfType := bindingTFType(t)
-
-	req := resource.CreateRequest{Plan: tfsdk.Plan{Schema: s, Raw: bindingValue(tfType, "", "cl-1", "default", "app", []string{"compute:read", "storage:read"})}}
-	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s}}
-	res.Create(ctx, req, resp)
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("create diags: %v", resp.Diagnostics.Errors())
 	}
 	var m WorkloadIdentityBindingModel
 	resp.State.Get(ctx, &m)
-	var scopes []string
-	m.Scopes.ElementsAs(ctx, &scopes, false)
-	if len(scopes) != 2 || scopes[0] != "compute:read" || scopes[1] != "storage:read" {
-		t.Errorf("expected plan scope order preserved [compute:read storage:read], got %v", scopes)
+	if m.ID.ValueString() != "" {
+		t.Errorf("a refused create must leave nothing in state, got id %q", m.ID.ValueString())
 	}
 }
 
@@ -562,28 +532,34 @@ func TestResourceReadNotFound(t *testing.T) {
 	}
 }
 
-// TestResourceUpdatePUT verifies scope changes go out as a PUT and the returned
-// binding refreshes state without a second GET.
-func TestResourceUpdatePUT(t *testing.T) {
-	putCalled := false
+// TestResourceUpdateScopesAtApplyFails pins the PUT-side retirement contract:
+// an in-place "re-scope" is refused with 400 BINDING_SCOPES_RETIRED, surfaced as
+// the migration diagnostic, and the prior state is left untouched. The PUT happy
+// paths left in the suite are the empty-set replacements the migration rides
+// (TestResourceUpdateDropsScopes, TestResourceUpdateLastGrantRejected).
+func TestResourceUpdateScopesAtApplyFails(t *testing.T) {
 	server := meServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut && r.URL.Path == "/v1/tenants/tenant-456/workload-identity/bindings/b-9" {
-			putCalled = true
-			var req apiUpdateWorkloadIdentityBindingRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode: %v", err)
-			}
-			if len(req.Scopes) != 2 {
-				t.Errorf("expected 2 scopes in PUT, got %v", req.Scopes)
-			}
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{
+				"code":    "BINDING_SCOPES_RETIRED",
+				"message": "flat scopes are retired on workload-identity bindings",
+			}})
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-456/workload-identity/bindings/b-9" {
+			// The tags write reads the binding's current customer tags first
+			// (OfferTagsToWrite) — an expected pre-write read, not a half-apply.
 			_ = json.NewEncoder(w).Encode(apiWorkloadIdentityBinding{
 				ID: "b-9", ClusterID: "cl-1", TenantID: "tenant-456",
 				Namespace: "default", ServiceAccount: "app",
-				Scopes: req.Scopes, CreatedAt: "t0", UpdatedAt: "t1",
+				Scopes: []string{"compute:read"}, Tags: map[string]string{}, CreatedAt: "t0", UpdatedAt: "t0",
 			})
 			return
 		}
-		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		// ANY unexpected write verb (the tags PATCH, in particular) fails the
+		// run — a refused scope write must not half-apply the tags change either.
+		t.Errorf("unexpected %s %s — the refused update must not continue to the tags PATCH", r.Method, r.URL.Path)
 		w.WriteHeader(http.StatusNotFound)
 	})
 	defer server.Close()
@@ -593,27 +569,56 @@ func TestResourceUpdatePUT(t *testing.T) {
 	s := bindingSchema(t)
 	tfType := bindingTFType(t)
 
-	state := bindingValue(tfType, "b-9", "cl-1", "default", "app", []string{"compute:read"})
-	plan := bindingValue(tfType, "b-9", "cl-1", "default", "app", []string{"compute:read", "storage:read"})
-	req := resource.UpdateRequest{Plan: tfsdk.Plan{Schema: s, Raw: plan}, State: tfsdk.State{Schema: s, Raw: state}}
-	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s}}
-	res.Update(ctx, req, resp)
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("update diags: %v", resp.Diagnostics.Errors())
+	// Give the plan a tags change too, so the run would PATCH if the refusal
+	// failed to stop it — the refusal must stop the WHOLE update.
+	stateVal := bindingValue(tfType, "b-9", "cl-1", "default", "app", []string{"compute:read"})
+	planObj := map[string]tftypes.Value{}
+	if err := stateVal.As(&planObj); err != nil {
+		t.Fatalf("decode state: %v", err)
 	}
-	if !putCalled {
-		t.Error("expected PUT to be called")
+	widenedPlan := bindingValue(tfType, "b-9", "cl-1", "default", "app", []string{"compute:read", "storage:read"})
+	wideObj := map[string]tftypes.Value{}
+	if err := widenedPlan.As(&wideObj); err != nil {
+		t.Fatalf("decode plan: %v", err)
+	}
+	tagsVal, d := types.MapValueFrom(context.Background(), types.StringType, map[string]string{"team": "writers"})
+	if d.HasError() {
+		t.Fatalf("tags map: %v", d.Errors())
+	}
+	var rawTags tftypes.Value
+	if err := tfValueFromTypes(t, tagsVal, &rawTags); err != nil {
+		t.Fatalf("tags raw: %v", err)
+	}
+	wideObj["tags"] = rawTags
+	plan := tftypes.NewValue(tfType, wideObj)
+	req := resource.UpdateRequest{Plan: tfsdk.Plan{Schema: s, Raw: plan}, State: tfsdk.State{Schema: s, Raw: stateVal}}
+	// A failed update must leave the PRIOR state exactly in place — the drop
+	// path must not half-apply to a binding the server refused.
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s, Raw: stateVal}}
+	res.Update(ctx, req, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a scoped PUT must fail at apply against the post-retirement API")
+	}
+	if !strings.Contains(resp.Diagnostics[0].Detail(), "BINDING_SCOPES_RETIRED") {
+		t.Errorf("diagnostic detail %q must name the retirement code", resp.Diagnostics[0].Detail())
 	}
 	var m WorkloadIdentityBindingModel
 	resp.State.Get(ctx, &m)
-	if m.UpdatedAt.ValueString() != "t1" {
-		t.Errorf("expected refreshed updatedAt t1, got %s", m.UpdatedAt.ValueString())
+	if m.Scopes.IsNull() {
+		t.Error("a refused re-scope must leave the prior scopes in state")
 	}
-	var scopes []string
-	m.Scopes.ElementsAs(ctx, &scopes, false)
-	if len(scopes) != 2 {
-		t.Errorf("expected 2 scopes after update, got %v", scopes)
+}
+
+// tfValueFromTypes converts a framework value to its raw tftypes form (the test
+// fixtures are built raw elsewhere; the tags map needs the raw shape).
+func tfValueFromTypes(t *testing.T, v types.Map, out *tftypes.Value) error {
+	t.Helper()
+	raw, err := v.ToTerraformValue(context.Background())
+	if err != nil {
+		return err
 	}
+	*out = raw
+	return nil
 }
 
 func TestResourceDeleteAlreadyGone(t *testing.T) {

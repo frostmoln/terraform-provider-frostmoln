@@ -3,8 +3,9 @@
 page_title: "frostmoln_workload_identity_binding Resource - Frostmoln"
 subcategory: ""
 description: |-
-  Manages a Workload Identity Federation binding, mapping a managed Kubernetes (namespace, service account) to a least-privilege Frostmoln grant. A pod running as that service account can exchange its projected token for a short-lived, scoped Frostmoln credential. The grant is either flat scopes or an access policy attached with frostmoln_iam_policy_attachment — a policy expresses far narrower least privilege (per-resource targets, constraints, explicit denies), so prefer it for new bindings. The binding is owned by the provider's selected tenant (tenant_id, else the credential's default), and its cluster_id must belong to that same tenant.
+  Manages a Workload Identity Federation binding, mapping a managed Kubernetes (namespace, service account) to a Frostmoln grant. A pod running as that service account can exchange its projected token for a short-lived, policy-scoped Frostmoln credential. The binding's grant is its access policies — attach one with frostmoln_iam_policy_attachment (directly, or through a group). Flat scopes are retired: a configuration that still sets them fails at apply with BINDING_SCOPES_RETIRED. The binding is owned by the provider's selected tenant (tenant_id, else the credential's default), and its cluster_id must belong to that same tenant.
   ~> Upgrade note. Before provider v0.37.9 this resource ignored tenant_id and always acted on the credential's home tenant — a binding for a non-home cluster failed at apply rather than landing in the wrong place. A configuration that sets a non-home tenant_id and previously applied has its bindings in the HOME tenant: the first plan after upgrading reads a 404, drops them from state and proposes a create in the selected tenant. terraform state rm + re-import against the selected tenant, or point tenant_id at the home tenant.
+  ~> Upgrade note (scopes retirement, retire-scopes step 2). Flat scopes no longer exist as a grant language. Remove the attribute from your configuration and grant the binding with an access policy instead; the state normalizes to null (the server always answers scopes: []). A carrying configuration fails at apply — see the scopes attribute. To migrate an existing pre-retirement binding: attach a policy carrying the same operations, verify the workload still passes, then apply the configuration with scopes removed (that drop is the migration landing the server guards).
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — cluster_id, namespace, service_account: the binding is identified by its cluster, namespace and service account; changing one is a different binding.
@@ -13,9 +14,11 @@ description: |-
 
 # frostmoln_workload_identity_binding (Resource)
 
-Manages a Workload Identity Federation binding, mapping a managed Kubernetes (namespace, service account) to a least-privilege Frostmoln grant. A pod running as that service account can exchange its projected token for a short-lived, scoped Frostmoln credential. The grant is either flat `scopes` or an access policy attached with `frostmoln_iam_policy_attachment` — a policy expresses far narrower least privilege (per-resource targets, constraints, explicit denies), so prefer it for new bindings. The binding is owned by the provider's selected tenant (`tenant_id`, else the credential's default), and its `cluster_id` must belong to that same tenant.
+Manages a Workload Identity Federation binding, mapping a managed Kubernetes (namespace, service account) to a Frostmoln grant. A pod running as that service account can exchange its projected token for a short-lived, policy-scoped Frostmoln credential. The binding's grant is its access policies — attach one with `frostmoln_iam_policy_attachment` (directly, or through a group). Flat `scopes` are retired: a configuration that still sets them fails at apply with `BINDING_SCOPES_RETIRED`. The binding is owned by the provider's selected tenant (`tenant_id`, else the credential's default), and its `cluster_id` must belong to that same tenant.
 
 ~> **Upgrade note.** Before provider v0.37.9 this resource ignored `tenant_id` and always acted on the credential's home tenant — a binding for a non-home cluster failed at apply rather than landing in the wrong place. A configuration that sets a non-home `tenant_id` and previously applied has its bindings in the HOME tenant: the first plan after upgrading reads a 404, drops them from state and proposes a create in the selected tenant. `terraform state rm` + re-`import` against the selected tenant, or point `tenant_id` at the home tenant.
+
+~> **Upgrade note (scopes retirement, retire-scopes step 2).** Flat `scopes` no longer exist as a grant language. Remove the attribute from your configuration and grant the binding with an access policy instead; the state normalizes to null (the server always answers `scopes: []`). A carrying configuration fails at apply — see the `scopes` attribute. To migrate an existing pre-retirement binding: attach a policy carrying the same operations, verify the workload still passes, then apply the configuration with `scopes` removed (that drop is the migration landing the server guards).
 
 **Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
 
@@ -30,23 +33,21 @@ Manages a Workload Identity Federation binding, mapping a managed Kubernetes (na
 ```terraform
 # A Workload Identity Federation binding: a pod running as the given
 # Kubernetes service account can exchange its projected token for a short-lived,
-# scoped Frostmoln credential — no long-lived secret in the pod.
+# policy-scoped Frostmoln credential — no long-lived secret in the pod.
+#
+# Flat scopes are RETIRED (retire-scopes step 2, ADR-0102): a binding's grant is
+# its access policies, and a configuration that still sets `scopes` fails at
+# apply with 400 BINDING_SCOPES_RETIRED. Remove the attribute; grant with a
+# policy below.
 resource "frostmoln_workload_identity_binding" "app" {
   cluster_id      = frostmoln_kubernetes_cluster.prod.id
   namespace       = "default"
   service_account = "my-app"
-
-  # Least-privilege scopes only. Wildcards ("*" or "<resource>:*") are rejected.
-  scopes = [
-    "compute:read",
-    "storage:read",
-  ]
 }
 
-# A POLICY-GRANTED binding: omit `scopes` entirely and let an attached access
-# policy be the workload's sole authority. Prefer this — a flat scope grants a
-# verb across every resource of a service, while a policy names individual
-# targets, adds constraints and can deny explicitly.
+# A policy-granted binding: the attachment below is the workload's authority.
+# A policy names individual targets, adds constraints and can deny explicitly —
+# flat scopes never could grant a verb across every resource of a service.
 #
 # The binding is INERT until the attachment exists: with no grant at all the
 # token exchange refuses it rather than minting a credential that grants nothing.
@@ -99,13 +100,7 @@ resource "frostmoln_iam_policy_attachment" "reaper" {
 
 ### Optional
 
-- `scopes` (List of String) The least-privilege scopes granted to the workload (e.g. `compute:read`). The grantable set, with a description of each, is served by the platform — read it with the `frostmoln_api_key_scopes` data source or `fm account api-key scopes`. Wildcards (`*` or `<resource>:*`) are rejected. Changing the scopes updates the binding in place. Optional: omit it to author a **policy-granted** binding, whose authority comes entirely from an access policy attached with `frostmoln_iam_policy_attachment` (directly, or through a group). Write `null` or omit the attribute for no scopes; an empty list is not a valid spelling.
-
-Notes on the policy-granted path:
-- Until a policy is attached the binding is inert — the token exchange refuses it rather than minting a credential that grants nothing.
-- While a binding carries BOTH scopes and a policy, its scopes stay authoritative and the policy's *additional* authority does not take effect. It goes live only once `scopes` is dropped, so verify after the drop, not after the attach.
-- Dropping `scopes` NARROWS the workload to whatever the policy allows, and the API only checks that *some* grant survives — never that the policy covers what the scopes covered. Enumerate the binding's effective access before dropping them.
-- Removing the LAST grant is rejected outright. A binding whose only grant is an attached policy must therefore be destroyed BEFORE that attachment; a plain `terraform destroy` tries the attachment first and fails. Destroy the binding with `-target` first — that removes its attachments with it.
+- `scopes` (List of String, Deprecated) RETIRED — flat scopes are no longer a grant language a binding can be given. A create or update carrying any value is rejected by the API with 400 BINDING_SCOPES_RETIRED and the apply fails; the deprecation warning in the plan already names the migration. A binding's grant is its access policies: attach one with `frostmoln_iam_policy_attachment` (directly, or through a group). Remove the attribute from your configuration — state normalizes to null (the server always answers `scopes: []`). An empty list remains an invalid spelling: omit the attribute instead. Kept Optional (never Required) so a carrying configuration migrates by deletion, not by replacement, and pre-retirement state still reads.
 - `tags` (Map of String) Resource tags on the binding: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI). Labels only — the token exchange never reads them, and a tags change (its own tags-only update) never touches the binding's scopes. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 
 ### Read-Only

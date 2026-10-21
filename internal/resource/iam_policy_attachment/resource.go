@@ -242,8 +242,8 @@ func (r *iamPolicyAttachmentResource) Delete(ctx context.Context, req resource.D
 						"To tear the pair down, destroy the BINDING first — that removes its "+
 						"attachments with it:\n"+
 						"  terraform destroy -target=frostmoln_workload_identity_binding.<name>\n\n"+
-						"To keep the binding, give it another grant (scopes, or a second policy "+
-						"attachment) before removing this one.",
+						"To keep the binding, give it another policy grant (a second policy "+
+						"attachment, or an inline policy on the binding) before removing this one.",
 					err.Error(), state.AttacheeID.ValueString(),
 				),
 			)

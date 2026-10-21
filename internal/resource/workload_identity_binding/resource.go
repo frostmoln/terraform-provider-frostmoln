@@ -2,6 +2,7 @@ package workload_identity_binding
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 
@@ -62,6 +63,28 @@ func basePath(c *client.Client) string {
 	return c.TenantPath("/workload-identity/bindings")
 }
 
+// scopesRetiredErrorMessage renders the scopes retirement's 400 as the migration
+// it is, instead of the bare "<code>: <message>" passthrough — same house shape
+// as the attachment resource's BINDING_WOULD_HAVE_NO_GRANT branch. A plan that
+// still carries `scopes` fails at APPLY with this (the plan itself only WARNS,
+// via the schema DeprecationMessage — a warning alone must never be load-bearing).
+func scopesRetiredErrorMessage(err error) (string, bool) {
+	var apiErr *client.APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != "BINDING_SCOPES_RETIRED" {
+		return "", false
+	}
+	return "Flat scopes are retired on workload-identity bindings (retire-scopes step 2, ADR-0102): " +
+		"a binding's grant is its access policies, and the API now refuses every non-empty `scopes` " +
+		"value with 400 BINDING_SCOPES_RETIRED.\n\n" +
+		"Remove the `scopes` attribute from the configuration (the deprecation warning in the plan " +
+		"naming it is expected) and grant the binding with an access policy attached using " +
+		"frostmoln_iam_policy_attachment. For a pre-retirement binding that still carries scopes, " +
+		"migrate it per binding: attach a policy carrying the same operations first, verify the " +
+		"workload still passes, then apply the configuration with `scopes` removed — the removal " +
+		"is guarded server-side (BINDING_WOULD_HAVE_NO_GRANT) so the binding is never left with " +
+		"no grant at all.", true
+}
+
 // bindingPath returns the path for a single binding, escaping the id so it can
 // only ever be a single path segment.
 func bindingPath(c *client.Client, id string) string {
@@ -84,11 +107,11 @@ func (r *workloadIdentityBindingResource) Metadata(_ context.Context, req resour
 func (r *workloadIdentityBindingResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Manages a Workload Identity Federation binding, mapping a managed " +
-			"Kubernetes (namespace, service account) to a least-privilege Frostmoln grant. " +
+			"Kubernetes (namespace, service account) to a Frostmoln grant. " +
 			"A pod running as that service account can exchange its projected token for a short-lived, " +
-			"scoped Frostmoln credential. The grant is either flat `scopes` or an access policy attached " +
-			"with `frostmoln_iam_policy_attachment` — a policy expresses far narrower least privilege " +
-			"(per-resource targets, constraints, explicit denies), so prefer it for new bindings. " +
+			"policy-scoped Frostmoln credential. The binding's grant is its access policies — attach " +
+			"one with `frostmoln_iam_policy_attachment` (directly, or through a group). Flat `scopes` " +
+			"are retired: a configuration that still sets them fails at apply with `BINDING_SCOPES_RETIRED`. " +
 			"The binding is owned by the provider's selected tenant (`tenant_id`, else the " +
 			"credential's default), and its `cluster_id` must belong to that same tenant.\n\n" +
 			"~> **Upgrade note.** Before provider v0.37.9 this resource ignored `tenant_id` and " +
@@ -98,6 +121,14 @@ func (r *workloadIdentityBindingResource) Schema(_ context.Context, _ resource.S
 			"the first plan after upgrading reads a 404, drops them from state and proposes a " +
 			"create in the selected tenant. `terraform state rm` + re-`import` against the " +
 			"selected tenant, or point `tenant_id` at the home tenant." +
+			"\n\n" +
+			"~> **Upgrade note (scopes retirement, retire-scopes step 2).** Flat `scopes` no longer " +
+			"exist as a grant language. Remove the attribute from your configuration and grant the " +
+			"binding with an access policy instead; the state normalizes to null (the server always " +
+			"answers `scopes: []`). A carrying configuration fails at apply — see the `scopes` " +
+			"attribute. To migrate an existing pre-retirement binding: attach a policy carrying the " +
+			"same operations, verify the workload still passes, then apply the configuration with " +
+			"`scopes` removed (that drop is the migration landing the server guards)." +
 			"\n\n" + scopedecl.Summary("frostmoln_workload_identity_binding"),
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -129,29 +160,22 @@ func (r *workloadIdentityBindingResource) Schema(_ context.Context, _ resource.S
 				},
 			},
 			"scopes": schema.ListAttribute{
-				Description: "The least-privilege scopes granted to the workload (e.g. `compute:read`). " +
-					"The grantable set, with a description of each, is served by the platform — read it " +
-					"with the `frostmoln_api_key_scopes` data source or `fm account api-key scopes`. " +
-					"Wildcards (`*` or `<resource>:*`) are rejected. Changing the scopes updates the " +
-					"binding in place. Optional: omit it to author a **policy-granted** binding, whose " +
-					"authority comes entirely from an access policy attached with " +
-					"`frostmoln_iam_policy_attachment` (directly, or through a group). Write `null` or " +
-					"omit the attribute for no scopes; an empty list is not a valid spelling.\n\n" +
-					"Notes on the policy-granted path:\n" +
-					"- Until a policy is attached the binding is inert — the token exchange refuses it " +
-					"rather than minting a credential that grants nothing.\n" +
-					"- While a binding carries BOTH scopes and a policy, its scopes stay authoritative " +
-					"and the policy's *additional* authority does not take effect. It goes live only " +
-					"once `scopes` is dropped, so verify after the drop, not after the attach.\n" +
-					"- Dropping `scopes` NARROWS the workload to whatever the policy allows, and the " +
-					"API only checks that *some* grant survives — never that the policy covers what the " +
-					"scopes covered. Enumerate the binding's effective access before dropping them.\n" +
-					"- Removing the LAST grant is rejected outright. A binding whose only grant is an " +
-					"attached policy must therefore be destroyed BEFORE that attachment; a plain " +
-					"`terraform destroy` tries the attachment first and fails. Destroy the binding with " +
-					"`-target` first — that removes its attachments with it.",
+				Description: "RETIRED — flat scopes are no longer a grant language a binding can be " +
+					"given. A create or update carrying any value is rejected by the API with 400 " +
+					"BINDING_SCOPES_RETIRED and the apply fails; the deprecation warning in the plan " +
+					"already names the migration. A binding's grant is its access policies: attach " +
+					"one with `frostmoln_iam_policy_attachment` (directly, or through a group). " +
+					"Remove the attribute from your configuration — state normalizes to null (the " +
+					"server always answers `scopes: []`). An empty list remains an invalid spelling: " +
+					"omit the attribute instead. Kept Optional (never Required) so a carrying " +
+					"configuration migrates by deletion, not by replacement, and pre-retirement " +
+					"state still reads.",
 				Optional:    true,
 				ElementType: types.StringType,
+				DeprecationMessage: "scopes is retired: binding scopes are no longer a grant language " +
+					"and any value is rejected by the API with 400 BINDING_SCOPES_RETIRED at apply. " +
+					"Remove the attribute from your configuration and grant the binding with an access " +
+					"policy attached using frostmoln_iam_policy_attachment.",
 				Validators: []validator.List{
 					// Rejects `scopes = []`. Omitted/null is the ONE spelling for
 					// "no flat scopes", so state can be normalized to null in
@@ -265,6 +289,10 @@ func (r *workloadIdentityBindingResource) Create(ctx context.Context, req resour
 
 	apiResp, err := r.client.Post(ctx, basePath(r.client), apiReq)
 	if err != nil {
+		if msg, retired := scopesRetiredErrorMessage(err); retired {
+			resp.Diagnostics.AddError("Workload identity binding scopes are retired (BINDING_SCOPES_RETIRED)", msg)
+			return
+		}
 		resp.Diagnostics.AddError("Failed to create workload identity binding", err.Error())
 		return
 	}
@@ -366,6 +394,10 @@ func (r *workloadIdentityBindingResource) Update(ctx context.Context, req resour
 		}
 		apiResp, err := r.client.Put(ctx, bindingPath(r.client, id), updateReq)
 		if err != nil {
+			if msg, retired := scopesRetiredErrorMessage(err); retired {
+				resp.Diagnostics.AddError("Workload identity binding scopes are retired (BINDING_SCOPES_RETIRED)", msg)
+				return
+			}
 			resp.Diagnostics.AddError("Failed to update workload identity binding", err.Error())
 			return
 		}
