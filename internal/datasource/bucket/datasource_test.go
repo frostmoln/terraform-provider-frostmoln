@@ -327,6 +327,25 @@ func TestReadMapsCountedZeroesAndAbsentOptionals(t *testing.T) {
 	}
 }
 
+// TestReadRendersAnOmittedACLAsNull: storage omits `acl` when it could not
+// read the bucket's real policy. That is "unknown", rendered null — never ""
+// and never a guessed "private" that would hide a public bucket.
+func TestReadRendersAnOmittedACLAsNull(t *testing.T) {
+	srv := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"name":"no-acl-bucket","tenantId":"tenant-1","versioning":"disabled","defaultStorageClass":"STANDARD","objectCount":0,"totalSize":0,"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z"}`))
+	})
+	defer srv.Close()
+	name := "no-acl-bucket"
+	res := readWith(t, srv.URL, &name)
+	if res.diagnostics.HasError() {
+		t.Fatalf("unexpected diagnostics: %s", res.text())
+	}
+	if !res.model.ACL.IsNull() {
+		t.Errorf("an omitted acl must render null, got %v", res.model.ACL)
+	}
+}
+
 func TestRead404ErrorsThatTheBucketDoesNotExist(t *testing.T) {
 	var requests atomic.Int32
 	server := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {

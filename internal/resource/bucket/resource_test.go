@@ -82,7 +82,7 @@ func TestBucketModelToUpdateRequest(t *testing.T) {
 		TagsAll:    types.MapNull(types.StringType),
 	}
 
-	req := model.toUpdateRequest()
+	req := model.toUpdateRequest(&model, &BucketModel{})
 
 	if req.Versioning == nil || *req.Versioning != "suspended" {
 		t.Errorf("expected versioning suspended, got %v", req.Versioning)
@@ -111,7 +111,7 @@ func TestBucketModelToUpdateRequestClearsTags(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			model := BucketModel{Tags: tc.tags, TagsAll: types.MapNull(types.StringType)}
-			req := model.toUpdateRequest()
+			req := model.toUpdateRequest(&model, &BucketModel{})
 			var diags diag.Diagnostics
 			req.Tags, _ = tftags.ForUpdate(ctx, tftags.Defaults{}, model.Tags, tftags.Prior{Tags: prior, TagsAll: prior}, &diags)
 			if diags.HasError() {
@@ -418,6 +418,7 @@ func bucketObjectType() tftypes.Object {
 			"region":        tftypes.String,
 			"storage_class": tftypes.String,
 			"versioning":    tftypes.String,
+			"acl":           tftypes.String,
 			"tags":          tftypes.Map{ElementType: tftypes.String},
 			"tags_all":      tftypes.Map{ElementType: tftypes.String},
 			"object_count":  tftypes.Number,
@@ -519,6 +520,7 @@ func TestBucketResourceCreate(t *testing.T) {
 		"region":        tftypes.NewValue(tftypes.String, "sweden"),
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
+		"acl":           tftypes.NewValue(tftypes.String, "private"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
@@ -578,6 +580,7 @@ func TestBucketResourceRead(t *testing.T) {
 		"region":        tftypes.NewValue(tftypes.String, "sweden"),
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
+		"acl":           tftypes.NewValue(tftypes.String, "private"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 0),
@@ -622,6 +625,7 @@ func TestBucketResourceReadNotFoundRemovesState(t *testing.T) {
 		"region":        tftypes.NewValue(tftypes.String, "sweden"),
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
+		"acl":           tftypes.NewValue(tftypes.String, "private"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 0),
@@ -686,6 +690,7 @@ func TestBucketResourceUpdate(t *testing.T) {
 		"region":        tftypes.NewValue(tftypes.String, "sweden"),
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
+		"acl":           tftypes.NewValue(tftypes.String, "private"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 10),
@@ -698,6 +703,7 @@ func TestBucketResourceUpdate(t *testing.T) {
 		"region":        tftypes.NewValue(tftypes.String, "sweden"),
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "suspended"),
+		"acl":           tftypes.NewValue(tftypes.String, "private"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
@@ -708,7 +714,7 @@ func TestBucketResourceUpdate(t *testing.T) {
 	state := tfsdk.State{Schema: s, Raw: stateVal}
 	plan := tfsdk.Plan{Schema: s, Raw: planVal}
 	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: s}}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, resp)
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state, Config: tfsdk.Config(plan)}, resp)
 
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
@@ -746,6 +752,7 @@ func TestBucketResourceDelete(t *testing.T) {
 		"region":        tftypes.NewValue(tftypes.String, "sweden"),
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
+		"acl":           tftypes.NewValue(tftypes.String, "private"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 0),
@@ -784,6 +791,7 @@ func TestBucketResourceDeleteAlreadyGone(t *testing.T) {
 		"region":        tftypes.NewValue(tftypes.String, "sweden"),
 		"storage_class": tftypes.NewValue(tftypes.String, "standard"),
 		"versioning":    tftypes.NewValue(tftypes.String, "enabled"),
+		"acl":           tftypes.NewValue(tftypes.String, "private"),
 		"tags":          tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"tags_all":      tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"object_count":  tftypes.NewValue(tftypes.Number, 0),

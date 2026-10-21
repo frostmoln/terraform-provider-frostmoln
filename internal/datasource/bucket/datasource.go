@@ -85,7 +85,7 @@ type apiBucket struct {
 	Name                string            `json:"name"`
 	TenantID            string            `json:"tenantId"`
 	Region              string            `json:"region,omitempty"`
-	ACL                 string            `json:"acl"`
+	ACL                 *string           `json:"acl,omitempty"`
 	Versioning          string            `json:"versioning"`
 	DefaultStorageClass string            `json:"defaultStorageClass"`
 	ObjectCount         int64             `json:"objectCount"`
@@ -141,8 +141,13 @@ func (d *bucketDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 				Computed: true,
 			},
 			"acl": schema.StringAttribute{
-				Description: "The access control setting of the bucket (private, public-read, " +
-					"public-read-write, or authenticated-read).",
+				Description: "Anonymous access to the bucket's objects: `private` (objects are " +
+					"reachable only with S3 credentials or a presigned URL) or `public-read` (anyone " +
+					"can download any object in the bucket by its URL without credentials — including " +
+					"objects uploaded later — while listing the bucket still requires credentials; " +
+					"unlike the AWS S3 canned ACL of the same name, which grants anonymous listing). " +
+					"Read from the bucket's real access policy; null when the platform could not read " +
+					"it, never a guessed `private`.",
 				Computed: true,
 			},
 			"versioning": schema.StringAttribute{
@@ -337,7 +342,10 @@ func (b *apiBucket) renderInto(ctx context.Context, state *bucketModel, diags *d
 	state.Name = types.StringValue(b.Name)
 	state.ID = types.StringValue(b.Name)
 	state.Region = stringFromWire(b.Region)
-	state.ACL = types.StringValue(b.ACL)
+	// storage omits acl when its read of the bucket's real access policy
+	// failed: null ("could not be read"), never "" and never a guessed
+	// "private" that could hide a public bucket.
+	state.ACL = types.StringPointerValue(b.ACL)
 	state.Versioning = types.StringValue(b.Versioning)
 	state.DefaultStorageClass = types.StringValue(b.DefaultStorageClass)
 	state.ObjectCount = types.Int64Value(b.ObjectCount)

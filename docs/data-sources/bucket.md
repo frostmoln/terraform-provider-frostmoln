@@ -59,7 +59,7 @@ output "billing_backups_usage" {
 
 ### Read-Only
 
-- `acl` (String) The access control setting of the bucket (private, public-read, public-read-write, or authenticated-read).
+- `acl` (String) Anonymous access to the bucket's objects: `private` (objects are reachable only with S3 credentials or a presigned URL) or `public-read` (anyone can download any object in the bucket by its URL without credentials — including objects uploaded later — while listing the bucket still requires credentials; unlike the AWS S3 canned ACL of the same name, which grants anonymous listing). Read from the bucket's real access policy; null when the platform could not read it, never a guessed `private`.
 - `created_at` (String) The timestamp when the bucket was created.
 - `default_storage_class` (String) The default storage class for new objects in the bucket (STANDARD, STANDARD_IA, REDUCED_REDUNDANCY, or GLACIER).
 - `id` (String) The identifier of the bucket — the same string as `name`, deliberately mirrored rather than distinct: the object-storage surface has no server-side id beyond the name.

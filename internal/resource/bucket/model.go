@@ -16,6 +16,7 @@ type BucketModel struct {
 	Region       types.String `tfsdk:"region"`
 	StorageClass types.String `tfsdk:"storage_class"`
 	Versioning   types.String `tfsdk:"versioning"`
+	ACL          types.String `tfsdk:"acl"`
 	Tags         types.Map    `tfsdk:"tags"`
 	TagsAll      types.Map    `tfsdk:"tags_all"`
 	ObjectCount  types.Int64  `tfsdk:"object_count"`
@@ -27,12 +28,15 @@ type BucketModel struct {
 // service (storage/internal/domain/bucket.go): the storage class is
 // `defaultStorageClass`, the size is `totalSize`, versioning is a string enum on
 // read, and there is no endpoint/accessKey (S3 creds come from the dedicated
-// credentials endpoint, ADR-0030).
+// credentials endpoint, ADR-0030). ACL is a pointer because storage OMITS it
+// when its read of the bucket's real access policy failed (a transient backend
+// error): absent means "could not be read", never "private" — see fromAPI.
 type apiBucket struct {
 	Name                string            `json:"name"`
 	Region              string            `json:"region,omitempty"`
 	DefaultStorageClass string            `json:"defaultStorageClass"`
 	Versioning          string            `json:"versioning"`
+	ACL                 *string           `json:"acl,omitempty"`
 	ObjectCount         int64             `json:"objectCount"`
 	TotalSize           int64             `json:"totalSize"`
 	Tags                map[string]string `json:"tags,omitempty"`
@@ -47,6 +51,7 @@ type apiCreateBucketRequest struct {
 	Region              string            `json:"region,omitempty"`
 	DefaultStorageClass string            `json:"defaultStorageClass,omitempty"`
 	Versioning          bool              `json:"versioning,omitempty"`
+	ACL                 string            `json:"acl,omitempty"`
 	Tags                map[string]string `json:"tags,omitempty"`
 }
 
@@ -59,6 +64,7 @@ type apiCreateBucketRequest struct {
 // none is an inconsistent-result error with no HCL that can fix it.
 type apiUpdateBucketRequest struct {
 	Versioning *string           `json:"versioning,omitempty"`
+	ACL        *string           `json:"acl,omitempty"`
 	Tags       map[string]string `json:"tags"`
 }
 
@@ -80,6 +86,10 @@ func (m *BucketModel) toCreateRequest() apiCreateBucketRequest {
 	if !m.Versioning.IsNull() && !m.Versioning.IsUnknown() {
 		req.Versioning = m.Versioning.ValueString() == "enabled"
 	}
+	// An unset acl is left to the server, which creates the bucket private.
+	if !m.ACL.IsNull() && !m.ACL.IsUnknown() {
+		req.ACL = m.ACL.ValueString()
+	}
 
 	// Tags are set by Create, which merges the provider's default_tags into
 	// them (tftags.ForCreate).
@@ -91,12 +101,23 @@ func (m *BucketModel) toCreateRequest() apiCreateBucketRequest {
 // default_tags and the keys it does not manage (tftags.ForUpdate), so a
 // removed tags block or an empty map clears the bucket's tags rather than
 // silently leaving them in place.
-func (m *BucketModel) toUpdateRequest() apiUpdateBucketRequest {
+//
+// acl is sent only when the configuration sets it AND the plan changes it.
+// Re-sending the state value when the configuration is silent would re-apply
+// a stale access setting: a bucket made private in the portal after the
+// configuration dropped `acl = "public-read"` would turn public again on the
+// next unrelated change (with -refresh=false, or when the refresh could not
+// read the access setting and kept the last known value).
+func (m *BucketModel) toUpdateRequest(config, state *BucketModel) apiUpdateBucketRequest {
 	req := apiUpdateBucketRequest{}
 
 	if !m.Versioning.IsNull() && !m.Versioning.IsUnknown() {
 		v := m.Versioning.ValueString()
 		req.Versioning = &v
+	}
+	if !config.ACL.IsNull() && !config.ACL.IsUnknown() && !m.ACL.Equal(state.ACL) {
+		a := m.ACL.ValueString()
+		req.ACL = &a
 	}
 
 	return req
@@ -111,6 +132,18 @@ func (m *BucketModel) fromAPI(ctx context.Context, b *apiBucket) diag.Diagnostic
 	m.ObjectCount = types.Int64Value(b.ObjectCount)
 	m.SizeBytes = types.Int64Value(b.TotalSize)
 	m.CreatedAt = types.StringValue(b.CreatedAt)
+
+	// storage omits acl when it could not read the bucket's real access policy.
+	// Keep what the model already holds (prior state on Read, the plan on
+	// Create/Update): writing "" would be a spurious diff, and writing
+	// "private" could hide a public bucket. Only a value with nothing to keep
+	// (unknown — a first read with no prior) becomes null.
+	switch {
+	case b.ACL != nil:
+		m.ACL = types.StringValue(*b.ACL)
+	case m.ACL.IsUnknown():
+		m.ACL = types.StringNull()
+	}
 
 	// storage omits an empty tag map, so an absent `tags` is "no tags", never
 	// "unchanged": keeping the model's tags here hid an out-of-band removal.

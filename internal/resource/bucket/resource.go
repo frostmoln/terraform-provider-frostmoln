@@ -6,6 +6,7 @@ import (
 	"net/url"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -79,6 +80,26 @@ func (r *bucketResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Computed: true,
 				Validators: []validator.String{
 					stringvalidator.OneOf("enabled", "suspended"),
+				},
+			},
+			"acl": schema.StringAttribute{
+				Description: "Anonymous access to the bucket's objects: `private` or `public-read`. " +
+					"`private` (the platform default for a new bucket): objects are reachable only with " +
+					"S3 credentials or a presigned URL. `public-read`: anyone on the internet can download " +
+					"ANY object in the bucket by its URL, without credentials — every object already in " +
+					"the bucket and every object uploaded later — while listing the bucket's contents " +
+					"still requires credentials. This is NOT the AWS S3 canned ACL of the same name, " +
+					"which grants anonymous listing of the bucket and leaves object downloads to " +
+					"per-object ACLs. Changed in place, without replacing the bucket. When omitted, " +
+					"Terraform does not manage it: a new bucket is created `private`, and an existing " +
+					"bucket keeps whatever access it has.",
+				Optional: true,
+				Computed: true,
+				Validators: []validator.String{
+					stringvalidator.OneOf("private", "public-read"),
+				},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
 			"tags": schema.MapAttribute{
@@ -182,6 +203,9 @@ func (r *bucketResource) Read(ctx context.Context, req resource.ReadRequest, res
 		return
 	}
 
+	if b.ACL == nil {
+		resp.Diagnostics.Append(aclUnverifiedWarning(state.ACL))
+	}
 	resp.Diagnostics.Append(state.fromAPI(ctx, b)...)
 	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
@@ -204,8 +228,14 @@ func (r *bucketResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
+	var config BucketModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	defaults := r.client.DefaultTags()
-	apiReq := plan.toUpdateRequest()
+	apiReq := plan.toUpdateRequest(&config, &state)
 	current, err := r.currentTags(ctx, r.client.TenantPath("/buckets/"+url.PathEscape(state.Name.ValueString())))
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
@@ -265,8 +295,52 @@ func (r *bucketResource) ImportState(ctx context.Context, req resource.ImportSta
 
 // ModifyPlan predicts tags_all: unknown whenever the next write changes the
 // platform's tag set, including a change to the provider's default_tags.
+//
+// It also warns when a public bucket's configuration sets no acl. Omitting
+// acl means "not managed", so removing `acl = "public-read"` plans nothing
+// and the bucket stays public — a silent empty plan is exactly the wrong
+// signal for that, so the plan says it.
 func (r *bucketResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	tftags.PlanTagsAll(ctx, r.client.DefaultTags(), req, resp)
+
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return // create or destroy: nothing to warn about
+	}
+
+	var configACL, stateACL types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("acl"), &configACL)...)
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("acl"), &stateACL)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if configACL.IsNull() && stateACL.ValueString() == aclPublicRead {
+		resp.Diagnostics.AddAttributeWarning(path.Root("acl"), aclStaysPublicSummary, aclStaysPublicDetail)
+	}
+}
+
+const (
+	aclPublicRead = "public-read"
+
+	aclStaysPublicSummary = "Bucket Stays Public"
+	aclStaysPublicDetail  = "This bucket is public-read: anyone can download its objects by URL, " +
+		"without credentials. The configuration sets no acl, so Terraform leaves the bucket's access " +
+		"as it is and the bucket stays public. To make it private, set acl = \"private\"."
+
+	aclUnverifiedSummary = "Bucket Access Could Not Be Verified"
+)
+
+// aclUnverifiedWarning is the refresh-time warning for a read that came back
+// without the bucket's access setting: state keeps the last known value, and
+// the practitioner must be told that value is not a fresh answer.
+func aclUnverifiedWarning(prior types.String) diag.Diagnostic {
+	last := "no value"
+	if !prior.IsNull() && !prior.IsUnknown() {
+		last = fmt.Sprintf("%q", prior.ValueString())
+	}
+	return diag.NewAttributeWarningDiagnostic(path.Root("acl"), aclUnverifiedSummary,
+		fmt.Sprintf("The platform could not read this bucket's access setting during this refresh, "+
+			"so acl shows the last known value (%s), which may no longer be current. Refresh again "+
+			"to verify it.", last))
 }
 
 // currentTags reads the tags the platform holds right now, at memberPath. An update
