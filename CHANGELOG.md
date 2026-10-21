@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.0] - 2026-10-20
+
+### 🚀 Features
+
+- *(messaging)* TLS fields (tlsEnabled, hostname, server-built URIs), DNS-name 409 (#715)
+
 ## [0.90.0] - 2026-10-20
 
 ### 🚀 Features
