@@ -104,7 +104,7 @@ output "nginx_site_public_ip" {
 Setting it true makes this instance depend on the VPC having a gateway, which Terraform cannot see — see the ordering note on this resource above.
 - `tags` (Map of String) Resource tags on the instance: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only and never applied to the web server. Changing them updates the instance in place and does not restart or reconfigure it. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
-- `tls_enabled` (Boolean) Whether TLS is enabled for the webserver.
+- `tls_enabled` (Boolean) Whether the instance serves TLS (a certificate). Read-only: it is reported by the platform, which serves no TLS on managed webservers yet, so it is false; the instance serves plain HTTP on `port`. Setting `true` is refused at plan time. Serve HTTPS through an `frostmoln_application_gateway` meanwhile.
 
 ### Read-Only
 

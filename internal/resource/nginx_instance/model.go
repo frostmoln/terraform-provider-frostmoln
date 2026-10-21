@@ -42,6 +42,22 @@ type NginxInstanceModel struct {
 	Timeouts *timeouts.Model `tfsdk:"timeouts"`
 }
 
+// tls_enabled is OBSERVED and read-only (Ambix 01a10bc7): no managed webserver
+// serves TLS yet — every instance listens on plain HTTP on `port` — and the
+// webserver API refuses tlsEnabled: true with 400 tls_not_available. The
+// provider refuses `true` at plan time (unenacted.BoolTrue) and again in
+// Create/Update (a value that resolved only at apply), and never sends the
+// field: the instance reports true only once the platform actually serves a
+// certificate for it.
+const tlsEnabledRefusalTitle = "tls_enabled cannot be set on a managed webserver"
+
+const tlsEnabledRefusalDetail = tlsEnabledRefusalTitle +
+	": TLS is not available for managed webservers yet. The instance serves plain HTTP on `port`, " +
+	"and the platform refuses a request for TLS (tls_not_available). tls_enabled is read-only: it " +
+	"reports whether the instance serves a certificate.\n\n" +
+	"Remove tls_enabled from the configuration (or set false). Serve HTTPS through an " +
+	"`frostmoln_application_gateway` meanwhile."
+
 // apiWebserverInstance is the API representation of a managed webserver instance.
 // Field names match the webserver service (webserver/internal/domain/instance.go):
 // the flavor is `flavorId`, vpcId/subnetId are returned, and `typeConfig` is a
@@ -92,7 +108,6 @@ type apiCreateWebserverInstanceRequest struct {
 	StorageGB   int               `json:"storageGb"`
 	VPCID       string            `json:"vpcId"`
 	SubnetID    string            `json:"subnetId"`
-	TLSEnabled  *bool             `json:"tlsEnabled,omitempty"`
 	PHPEnabled  *bool             `json:"phpEnabled,omitempty"`
 	PHPVersion  string            `json:"phpVersion,omitempty"`
 	TypeConfig  map[string]string `json:"typeConfig,omitempty"`
@@ -118,13 +133,14 @@ type apiUpdateWebserverInstanceRequest struct {
 	// No typeConfig either: this PUT rejects it with 400 ("use PUT /:id/config to
 	// change configuration") because a write here would never be validated,
 	// rendered or actuated on the VM. Config goes through apiUpdateTypeConfigRequest.
-	Name       *string `json:"name,omitempty"`
-	TLSEnabled *bool   `json:"tlsEnabled,omitempty"`
+	//
+	// No tlsEnabled: it is read-only (see tlsEnabledRefusalTitle), never written.
+	Name *string `json:"name,omitempty"`
 }
 
 // hasChanges reports whether the update request carries any field to PUT.
 func (r apiUpdateWebserverInstanceRequest) hasChanges() bool {
-	return r.Name != nil || r.TLSEnabled != nil
+	return r.Name != nil
 }
 
 // apiResizeWebserverInstanceRequest is the body for POST /webservers/{id}/resize.
@@ -168,10 +184,6 @@ func (m *NginxInstanceModel) toCreateRequest(ctx context.Context, diags *diag.Di
 		SubnetID:    m.SubnetID.ValueString(),
 	}
 
-	if !m.TLSEnabled.IsNull() && !m.TLSEnabled.IsUnknown() {
-		v := m.TLSEnabled.ValueBool()
-		req.TLSEnabled = &v
-	}
 	if !m.PHPEnabled.IsNull() && !m.PHPEnabled.IsUnknown() {
 		v := m.PHPEnabled.ValueBool()
 		req.PHPEnabled = &v
@@ -199,10 +211,6 @@ func (m *NginxInstanceModel) toUpdateRequest(state *NginxInstanceModel) apiUpdat
 	if !m.Name.Equal(state.Name) {
 		v := m.Name.ValueString()
 		req.Name = &v
-	}
-	if !m.TLSEnabled.Equal(state.TLSEnabled) {
-		v := m.TLSEnabled.ValueBool()
-		req.TLSEnabled = &v
 	}
 
 	return req

@@ -80,9 +80,7 @@ func TestApacheInstanceModelToCreateRequest(t *testing.T) {
 	if req.SubnetID != "sn-1" {
 		t.Errorf("expected subnetId sn-1, got %s", req.SubnetID)
 	}
-	if req.TLSEnabled != nil {
-		t.Error("expected nil tlsEnabled for null value")
-	}
+	requireNoTLSEnabledOnWire(t, req)
 	if req.PHPEnabled != nil {
 		t.Error("expected nil phpEnabled for null value")
 	}
@@ -113,9 +111,8 @@ func TestApacheInstanceModelToCreateRequestWithOptionals(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
 	}
 
-	if req.TLSEnabled == nil || !*req.TLSEnabled {
-		t.Error("expected tlsEnabled true")
-	}
+	// tls_enabled is read-only: even a (plan-time refused) true never reaches the wire.
+	requireNoTLSEnabledOnWire(t, req)
 	if req.PHPEnabled == nil || !*req.PHPEnabled {
 		t.Error("expected phpEnabled true")
 	}
@@ -154,9 +151,8 @@ func TestApacheInstanceModelToUpdateRequest(t *testing.T) {
 	if req.Name == nil || *req.Name != "new-name" {
 		t.Error("expected name update")
 	}
-	if req.TLSEnabled == nil || !*req.TLSEnabled {
-		t.Error("expected tlsEnabled update")
-	}
+	// A tls_enabled difference is never PUT: the field is read-only.
+	requireNoTLSEnabledOnWire(t, req)
 
 	// Type config is NOT part of the instance PUT (the backend rejects it there with
 	// 400); it is reported separately so Update can route it to PUT /:id/config.
@@ -223,7 +219,7 @@ func TestApacheInstanceModelToUpdateRequestNoChanges(t *testing.T) {
 	}
 
 	req := same.toUpdateRequest(&same)
-	if req.Name != nil || req.TLSEnabled != nil {
+	if req.Name != nil || req.hasChanges() {
 		t.Error("expected no changes in update request")
 	}
 	if _, changed := same.typeConfigChange(ctx, &same, &diags); changed {
@@ -588,7 +584,7 @@ func baseApacheModel() ApacheInstanceModel {
 		StorageGB:  types.Int64Value(20),
 		VPCID:      types.StringValue("vpc-1"),
 		SubnetID:   types.StringValue("sn-1"),
-		TLSEnabled: types.BoolValue(true),
+		TLSEnabled: types.BoolValue(false),
 		PHPEnabled: types.BoolValue(false),
 		PHPVersion: types.StringNull(),
 		Config:     mustCfgMap(map[string]string{"ServerTokens": "Prod"}),
@@ -930,7 +926,7 @@ func TestUpdate(t *testing.T) {
 	plan := buildApacheInstancePlan(t, planModel)
 
 	updateResp := resource.UpdateResponse{State: state}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, Config: configOf(plan), State: state}, &updateResp)
 
 	if updateResp.Diagnostics.HasError() {
 		t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
@@ -1000,7 +996,7 @@ func TestUpdateConfigUsesConfigRoute(t *testing.T) {
 	plan := buildApacheInstancePlan(t, planModel)
 
 	updateResp := resource.UpdateResponse{State: state}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, Config: configOf(plan), State: state}, &updateResp)
 
 	if updateResp.Diagnostics.HasError() {
 		t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
@@ -1069,7 +1065,7 @@ func TestUpdateConfigEmptyMapResets(t *testing.T) {
 	plan := buildApacheInstancePlan(t, planModel)
 
 	updateResp := resource.UpdateResponse{State: state}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, Config: configOf(plan), State: state}, &updateResp)
 
 	if updateResp.Diagnostics.HasError() {
 		t.Fatalf("update failed: %v", updateResp.Diagnostics.Errors())
@@ -1139,7 +1135,7 @@ func TestUpdateConfigSupersededByAnotherClient(t *testing.T) {
 	plan := buildApacheInstancePlan(t, planModel)
 
 	updateResp := resource.UpdateResponse{State: state}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, Config: configOf(plan), State: state}, &updateResp)
 
 	if !updateResp.Diagnostics.HasError() {
 		t.Fatal("expected the update to fail when another client superseded the revision")
@@ -1196,7 +1192,7 @@ func TestUpdateConfigApplyFailed(t *testing.T) {
 	plan := buildApacheInstancePlan(t, planModel)
 
 	updateResp := resource.UpdateResponse{State: state}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, Config: configOf(plan), State: state}, &updateResp)
 
 	if !updateResp.Diagnostics.HasError() {
 		t.Fatal("expected the update to fail when the server rejects the config")
@@ -1281,7 +1277,7 @@ func TestUpdateStorageResize(t *testing.T) {
 	plan := buildApacheInstancePlan(t, planModel)
 
 	updateResp := resource.UpdateResponse{State: state}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, Config: configOf(plan), State: state}, &updateResp)
 
 	if updateResp.Diagnostics.HasError() {
 		t.Fatalf("resize update failed: %v", updateResp.Diagnostics.Errors())
@@ -1322,7 +1318,7 @@ func TestUpdateStorageShrinkRejected(t *testing.T) {
 	plan := buildApacheInstancePlan(t, planModel)
 
 	updateResp := resource.UpdateResponse{State: state}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, Config: configOf(plan), State: state}, &updateResp)
 	if !updateResp.Diagnostics.HasError() {
 		t.Error("expected error when shrinking storage_gb")
 	}
@@ -1355,7 +1351,7 @@ func TestUpdateAPIError(t *testing.T) {
 	plan := buildApacheInstancePlan(t, planModel)
 
 	updateResp := resource.UpdateResponse{State: state}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, Config: configOf(plan), State: state}, &updateResp)
 	if !updateResp.Diagnostics.HasError() {
 		t.Error("expected error for API failure on update")
 	}
@@ -1587,7 +1583,7 @@ func TestUpdateFlavorChangeRejected(t *testing.T) {
 	plan := buildApacheInstancePlan(t, planModel)
 
 	updateResp := resource.UpdateResponse{State: state}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, Config: configOf(plan), State: state}, &updateResp)
 	if !updateResp.Diagnostics.HasError() {
 		t.Error("expected error rejecting a flavor_id change")
 	}
@@ -2021,7 +2017,7 @@ func TestUpdateSwallowedExposeSagaIsNotRecordedGreen(t *testing.T) {
 	plan := buildApacheInstancePlan(t, planModel)
 
 	updateResp := resource.UpdateResponse{State: state}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &updateResp)
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, Config: configOf(plan), State: state}, &updateResp)
 
 	if updateResp.Diagnostics.HasError() {
 		t.Fatalf("an in-flight saga that converges must land green only after convergence: %v", updateResp.Diagnostics.Errors())

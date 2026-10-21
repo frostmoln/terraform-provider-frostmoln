@@ -51,7 +51,7 @@ output "nginx_existing_public_ip" {
 - `subnet_id` (String) The subnet ID where the instance is deployed.
 - `tags` (Map of String) Every resource tag on the Nginx instance — the same set as the resource's `tags_all`: your own key/value metadata, never applied to the service itself. An empty map when it has none.
 - `tenant_id` (String) The tenant ID that owns this instance.
-- `tls_enabled` (Boolean) Whether TLS is enabled.
+- `tls_enabled` (Boolean) Whether the instance serves TLS (a certificate). Reported by the platform, which serves no TLS on managed webservers yet, so it is false; the instance serves plain HTTP on `port`.
 - `updated_at` (String) The timestamp when the instance was last updated.
 - `version` (String) The Nginx version.
 - `vpc_id` (String) The VPC ID where the instance is deployed.

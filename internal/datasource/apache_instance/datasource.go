@@ -118,8 +118,9 @@ func (d *apacheInstanceDataSource) Schema(_ context.Context, _ datasource.Schema
 				Computed:    true,
 			},
 			"tls_enabled": schema.BoolAttribute{
-				Description: "Whether TLS is enabled.",
-				Computed:    true,
+				Description: "Whether the instance serves TLS (a certificate). Reported by the platform, which " +
+					"serves no TLS on managed webservers yet, so it is false; the instance serves plain HTTP on `port`.",
+				Computed: true,
 			},
 			"php_enabled": schema.BoolAttribute{
 				Description: "Whether PHP support is enabled.",

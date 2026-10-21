@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
@@ -27,6 +28,7 @@ import (
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/stateupgrade"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/unenacted"
 )
 
 var (
@@ -291,7 +293,7 @@ func configApplyResult(resp *apiTypeConfigResponse) error {
 }
 
 // refreshStateAfterPartialUpdate persists what an Update actually accomplished before it
-// returns an error, so mutations that already succeeded (a storage resize, a name/TLS PUT)
+// returns an error, so mutations that already succeeded (a storage resize, a name PUT)
 // are not lost from state. Best-effort: a failure to read back leaves the prior state,
 // which is exactly where the caller would have been anyway, so it adds no diagnostic of
 // its own and lets the caller's real error stand.
@@ -497,11 +499,17 @@ func (r *apacheInstanceResource) Schema(_ context.Context, _ resource.SchemaRequ
 				},
 			},
 			"tls_enabled": schema.BoolAttribute{
-				Description: "Whether TLS is enabled for the webserver.",
-				Optional:    true,
-				Computed:    true,
+				Description: "Whether the instance serves TLS (a certificate). Read-only: it is reported by the " +
+					"platform, which serves no TLS on managed webservers yet, so it is false; the instance " +
+					"serves plain HTTP on `port`. Setting `true` is refused at plan time. Serve HTTPS through " +
+					"an `frostmoln_application_gateway` meanwhile.",
+				Optional: true,
+				Computed: true,
 				PlanModifiers: []planmodifier.Bool{
 					boolplanmodifier.UseStateForUnknown(),
+				},
+				Validators: []validator.Bool{
+					unenacted.BoolTrue(tlsEnabledRefusalTitle, tlsEnabledRefusalDetail),
 				},
 			},
 			"php_enabled": schema.BoolAttribute{
@@ -641,6 +649,13 @@ func (r *apacheInstanceResource) Create(ctx context.Context, req resource.Create
 	var plan ApacheInstanceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Belt for the plan-time tls_enabled refusal: a value that resolved only at
+	// apply was unknown when the plan was validated. Refused before any request.
+	if plan.TLSEnabled.ValueBool() {
+		resp.Diagnostics.AddAttributeError(path.Root("tls_enabled"), tlsEnabledRefusalTitle, tlsEnabledRefusalDetail)
 		return
 	}
 
@@ -926,6 +941,20 @@ func (r *apacheInstanceResource) Update(ctx context.Context, req resource.Update
 
 	id := state.ID.ValueString()
 
+	// tls_enabled is read-only: the same belt as Create, before any mutation. It reads the
+	// CONFIGURATION, not the plan: Optional+Computed with UseStateForUnknown carries a stale
+	// state `true` (written by an older provider, kept by -refresh=false) into the plan of a
+	// config that never set the attribute, and that must not be refused.
+	var configTLS types.Bool
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("tls_enabled"), &configTLS)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if configTLS.ValueBool() {
+		resp.Diagnostics.AddAttributeError(path.Root("tls_enabled"), tlsEnabledRefusalTitle, tlsEnabledRefusalDetail)
+		return
+	}
+
 	// flavor_id cannot change in place — the platform has no flavor-resize path and the
 	// PUT below would silently drop it. The plan-time modifier only WARNS (an error there
 	// would also block `terraform destroy`; see planmod.StringWarnOnChange), so the change
@@ -997,7 +1026,7 @@ func (r *apacheInstanceResource) Update(ctx context.Context, req resource.Update
 	// write it; that also ends an import's pending state.
 	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
 
-	// In-place field updates (name, TLS) via PUT. Skip the call entirely when nothing
+	// In-place field updates (name) via PUT. Skip the call entirely when nothing
 	// PUT-able changed (e.g. a storage-only resize). Type config is NOT part of this
 	// PUT — see the config apply below.
 	updateReq := plan.toUpdateRequest(&state)
