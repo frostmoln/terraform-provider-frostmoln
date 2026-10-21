@@ -235,8 +235,9 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			refuse(w, http.StatusServiceUnavailable, "unavailable", "try again")
 			return
 		}
+		// The server's shape for a new (TLS-required, D1) instance: no plaintext amqpPort.
 		writeJSON(w, http.StatusOK, messagingobj.Credentials{
-			Host: "10.0.0.5", AMQPPort: 5672, AMQPSPort: 5671, Username: o.name, Password: "pw-" + o.name,
+			Host: "10.0.0.5", AMQPSPort: 5671, Username: o.name, Password: "pw-" + o.name,
 		})
 	case len(segs) == 3 && segs[2] == "permissions":
 		list := messagingobj.PermissionList{Permissions: []messagingobj.Permission{}}

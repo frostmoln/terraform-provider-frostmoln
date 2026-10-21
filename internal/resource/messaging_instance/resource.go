@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
@@ -169,8 +171,9 @@ func (r *messagingInstanceResource) Schema(_ context.Context, _ resource.SchemaR
 				Computed:    true,
 			},
 			"port": schema.Int64Attribute{
-				Description: "The AMQP port number the messaging instance is listening on.",
-				Computed:    true,
+				Description: "The plaintext AMQP port. Null when `require_tls` is true (the broker refuses plaintext; " +
+					"connect with AMQPS on `amqps_port`).",
+				Computed: true,
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.UseStateForUnknown(),
 				},
@@ -183,8 +186,9 @@ func (r *messagingInstanceResource) Schema(_ context.Context, _ resource.SchemaR
 				},
 			},
 			"management_port": schema.Int64Attribute{
-				Description: "The HTTP management/API port number the messaging instance is listening on.",
-				Computed:    true,
+				Description: "The plaintext HTTP management/API port. Null when `require_tls` is true (the broker serves " +
+					"HTTPS management only).",
+				Computed: true,
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.UseStateForUnknown(),
 				},
@@ -198,8 +202,30 @@ func (r *messagingInstanceResource) Schema(_ context.Context, _ resource.SchemaR
 			"tls_enabled": schema.BoolAttribute{
 				Description: "Whether the instance serves TLS: AMQPS on `amqps_port` and HTTPS management, with a certificate for " +
 					"`hostname` from the Frostmoln customer CA (see the `frostmoln_ca_bundle` data source). Plaintext AMQP " +
-					"and HTTP management stay served beside it. False on an instance without a certificate.",
+					"and HTTP management are served beside it only when `require_tls` is false. False on an instance without " +
+					"a certificate.",
 				Computed: true,
+			},
+			"require_tls": schema.BoolAttribute{
+				Description: "Whether the broker refuses plaintext: true serves AMQPS and HTTPS management only (`port` and " +
+					"`management_port` are null, the plaintext ports closed); false serves plaintext AMQP and HTTP management " +
+					"as well (beside TLS when `tls_enabled`). Defaults to true when omitted. Fixed at create: changing it " +
+					"replaces the instance. Instances created before the setting existed report false. True with " +
+					"`tls_enabled` false means the instance has no usable endpoint (the instance is in status `error`); " +
+					"recreate it.",
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					// UseNonNullStateForUnknown, NOT UseStateForUnknown: the latter copies a
+					// NULL prior value too (framework v1.19), so a legacy state (written before
+					// the attribute existed) planned with -refresh=false would plan null and
+					// the apply, which reads the real value, would fail as an inconsistent
+					// result. A null prior must leave the plan unknown.
+					boolplanmodifier.UseNonNullStateForUnknown(),
+					boolplanmodifier.RequiresReplaceIf(requireTLSChanged,
+						"Changing require_tls replaces the instance: the requirement is fixed at create.",
+						"Changing `require_tls` replaces the instance: the requirement is fixed at create."),
+				},
 			},
 			"hostname": schema.StringAttribute{
 				Description: "The instance's internal DNS name (`<label>.mq.<vpc-label>.<tenant-label>.<org-label>.fm.internal`, the label being the name at create lowercased, every run of characters other than `a-z0-9` turned into one `-`, `-` trimmed at both ends and cut to 63 characters), resolvable " +
@@ -552,6 +578,11 @@ func (r *messagingInstanceResource) Update(ctx context.Context, req resource.Upd
 
 	id := state.ID.ValueString()
 
+	r.checkRequireTLSUnchanged(ctx, id, &plan, &state, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	// flavor_id cannot change in place — the platform has no flavor-resize path and the
 	// PUT below would silently drop it. The plan-time modifier only WARNS (an error there
 	// would also block `terraform destroy`; see planmod.StringWarnOnChange), so the change
@@ -727,6 +758,52 @@ func (r *messagingInstanceResource) pollRunning(ctx context.Context, id string, 
 			return current.Status, nil
 		},
 	})
+}
+
+// requireTLSChanged is require_tls's RequiresReplaceIf: a replacement only for a REAL
+// change, a known planned value against a known, non-null prior value that differs.
+//
+// A NULL prior value is never a change. It is the state an older provider wrote (the
+// attribute did not exist), and under `terraform plan -refresh=false` no Read fills it
+// in, so a plain RequiresReplace() would destroy the broker on the first plan after
+// the upgrade (unknown or configured vs null). Update instead checks the configured
+// value against the instance before it writes anything (checkRequireTLSUnchanged).
+// It reads PlanValue, not ConfigValue: after UseNonNullStateForUnknown an omitted
+// attribute plans the (non-null) prior value, so only a configured different value
+// differs; against a null prior it stays unknown and is never a change.
+func requireTLSChanged(_ context.Context, req planmodifier.BoolRequest, resp *boolplanmodifier.RequiresReplaceIfFuncResponse) {
+	if req.StateValue.IsNull() || req.StateValue.IsUnknown() || req.PlanValue.IsUnknown() || req.PlanValue.IsNull() {
+		return
+	}
+	resp.RequiresReplace = req.PlanValue.ValueBool() != req.StateValue.ValueBool()
+}
+
+// checkRequireTLSUnchanged is the apply-time half of requireTLSChanged: with no prior
+// value (state from an older provider, planned without refresh) a configured
+// require_tls is checked against the instance before Update writes anything. The
+// platform fixes the requirement at create (REQUIRE_TLS_IMMUTABLE), so a mismatch is
+// refused here, naming the value the instance holds, instead of failing later as an
+// inconsistent result.
+func (r *messagingInstanceResource) checkRequireTLSUnchanged(ctx context.Context, id string, plan, state *MessagingInstanceModel, diags *diag.Diagnostics) {
+	if !state.RequireTLS.IsNull() || plan.RequireTLS.IsNull() || plan.RequireTLS.IsUnknown() {
+		return
+	}
+	apiResp, err := r.client.Get(ctx, r.client.TenantPath("/messaging/"+id), nil)
+	if err != nil {
+		diags.AddError("Failed to read messaging instance", err.Error())
+		return
+	}
+	inst, err := client.ParseResponse[apiMessagingInstance](apiResp)
+	if err != nil {
+		diags.AddError("Failed to parse messaging instance response", err.Error())
+		return
+	}
+	if inst.RequireTLS != plan.RequireTLS.ValueBool() {
+		diags.AddAttributeError(path.Root("require_tls"), "require_tls cannot be changed",
+			fmt.Sprintf("The instance's require_tls is %t and is fixed at create (REQUIRE_TLS_IMMUTABLE). Set "+
+				"require_tls = %t, or run a refreshed plan, which replaces the instance to change it. Nothing was changed.",
+				inst.RequireTLS, inst.RequireTLS))
+	}
 }
 
 // ModifyPlan plans tags_all: a default_tags change, or a managed key's drift,

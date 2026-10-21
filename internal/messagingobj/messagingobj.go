@@ -124,9 +124,11 @@ type PermissionList struct {
 
 // Credentials is GET .../users/{user}/credentials. Never logged.
 type Credentials struct {
-	Host      string `json:"host"`
-	AMQPPort  int    `json:"amqpPort"`
-	AMQPSPort int    `json:"amqpsPort"`
+	Host string `json:"host"`
+	// AMQPPort is the plaintext port, sent only when the instance does not require TLS
+	// (D1); AMQPSPort is absent only when the instance has no usable endpoint.
+	AMQPPort  int    `json:"amqpPort,omitempty"`
+	AMQPSPort int    `json:"amqpsPort,omitempty"`
 	Username  string `json:"username"`
 	Password  string `json:"password"`
 }

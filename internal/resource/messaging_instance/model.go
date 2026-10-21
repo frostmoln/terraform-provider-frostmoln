@@ -27,7 +27,10 @@ type MessagingInstanceModel struct {
 	AMQPSPort       types.Int64  `tfsdk:"amqps_port"`
 	ManagementPort  types.Int64  `tfsdk:"management_port"`
 	// TLS (MANAGED-OFFER-TLS-AND-INTERNAL-DNS-PLAN §8, Phase 4a), all read-only.
-	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
+	TLSEnabled types.Bool `tfsdk:"tls_enabled"`
+	// RequireTLS (D1) is the instance's TLS requirement: set at create (server default
+	// true), fixed afterwards. Optional+Computed; see requireTLSChanged for the replace rule.
+	RequireTLS types.Bool   `tfsdk:"require_tls"`
 	Hostname   types.String `tfsdk:"hostname"`
 	PublicName types.String `tfsdk:"public_name"`
 	CreatedAt  types.String `tfsdk:"created_at"`
@@ -58,7 +61,11 @@ type apiMessagingInstance struct {
 	ManagementPort  int    `json:"managementPort,omitempty"`
 	// TLSEnabled is always sent by a TLS-aware messaging service; Hostname and
 	// PublicName only when assigned.
-	TLSEnabled bool   `json:"tlsEnabled"`
+	TLSEnabled bool `json:"tlsEnabled"`
+	// RequireTLS is always sent by a D1-aware messaging service; absent (an older
+	// service, or an instance created before the setting existed) reads false, the
+	// truth for those instances: they serve plaintext.
+	RequireTLS bool   `json:"requireTls"`
 	Hostname   string `json:"hostname,omitempty"`
 	PublicName string `json:"publicName,omitempty"`
 	CreatedAt  string `json:"createdAt"`
@@ -79,6 +86,9 @@ type apiCreateMessagingInstanceRequest struct {
 	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
 	// merges the tenant's default tags in.
 	Tags map[string]string `json:"tags,omitempty"`
+	// RequireTLS is sent only when configured; omitted, the service defaults it to
+	// true (D1: TLS required by default on new instances).
+	RequireTLS *bool `json:"requireTls,omitempty"`
 }
 
 // apiUpdateMessagingInstanceRequest is the API request to update a managed
@@ -109,6 +119,10 @@ func (m *MessagingInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diag
 
 	if !m.PersistenceMode.IsNull() && !m.PersistenceMode.IsUnknown() {
 		req.PersistenceMode = m.PersistenceMode.ValueString()
+	}
+	if !m.RequireTLS.IsNull() && !m.RequireTLS.IsUnknown() {
+		v := m.RequireTLS.ValueBool()
+		req.RequireTLS = &v
 	}
 
 	return req
@@ -152,7 +166,9 @@ func (m *MessagingInstanceModel) fromAPI(ctx context.Context, inst *apiMessaging
 		m.PrivateIP = types.StringNull()
 	}
 
-	if inst.Port > 0 {
+	// The plaintext ports are null whenever TLS is required: the broker refuses
+	// plaintext there, so a port the service still reports is not an endpoint.
+	if inst.Port > 0 && !inst.RequireTLS {
 		m.Port = types.Int64Value(int64(inst.Port))
 	} else {
 		m.Port = types.Int64Null()
@@ -164,7 +180,7 @@ func (m *MessagingInstanceModel) fromAPI(ctx context.Context, inst *apiMessaging
 		m.AMQPSPort = types.Int64Null()
 	}
 
-	if inst.ManagementPort > 0 {
+	if inst.ManagementPort > 0 && !inst.RequireTLS {
 		m.ManagementPort = types.Int64Value(int64(inst.ManagementPort))
 	} else {
 		m.ManagementPort = types.Int64Null()
@@ -179,6 +195,7 @@ func (m *MessagingInstanceModel) fromAPI(ctx context.Context, inst *apiMessaging
 	// What the instance serves, as the service reports it: an absent tlsEnabled (a
 	// service predating TLS) reads as false, the truth for every instance it holds.
 	m.TLSEnabled = types.BoolValue(inst.TLSEnabled)
+	m.RequireTLS = types.BoolValue(inst.RequireTLS)
 	m.Hostname = stringOrNull(inst.Hostname)
 	m.PublicName = stringOrNull(inst.PublicName)
 }

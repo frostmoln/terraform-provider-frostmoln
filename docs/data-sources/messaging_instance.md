@@ -21,16 +21,10 @@ output "messaging_private_ip" {
   value = data.frostmoln_messaging_instance.broker.private_ip
 }
 
-output "messaging_amqp_port" {
-  value = data.frostmoln_messaging_instance.broker.port
-}
-
+# AMQPS: the endpoint every instance with a certificate serves. Verify the
+# server against hostname with the frostmoln_ca_bundle data source.
 output "messaging_amqps_port" {
   value = data.frostmoln_messaging_instance.broker.amqps_port
-}
-
-output "messaging_management_port" {
-  value = data.frostmoln_messaging_instance.broker.management_port
 }
 
 output "messaging_tls_enabled" {
@@ -39,6 +33,17 @@ output "messaging_tls_enabled" {
 
 output "messaging_hostname" {
   value = data.frostmoln_messaging_instance.broker.hostname
+}
+
+# require_tls true (the default for new instances): plaintext is refused and
+# port / management_port are null.
+output "messaging_require_tls" {
+  value = data.frostmoln_messaging_instance.broker.require_tls
+}
+
+# The plaintext AMQP port, served only when require_tls is false.
+output "messaging_plaintext_amqp_port" {
+  value = data.frostmoln_messaging_instance.broker.require_tls ? null : data.frostmoln_messaging_instance.broker.port
 }
 ```
 
@@ -55,16 +60,17 @@ output "messaging_hostname" {
 - `created_at` (String) The timestamp when the instance was created.
 - `flavor_id` (String) The flavor/size of the messaging instance.
 - `hostname` (String) The instance's internal DNS name (`<label>.mq.<vpc-label>.<tenant-label>.<org-label>.fm.internal`, the label being the name at create lowercased, every run of characters other than `a-z0-9` turned into one `-`, `-` trimmed at both ends and cut to 63 characters), resolvable inside its VPC; its TLS certificate is issued for this name. Fixed once assigned: a rename does not move it. Null on an instance without a certificate (it gets none retroactively; recreate it to get one).
-- `management_port` (Number) The HTTP management/API port number the messaging instance is listening on.
+- `management_port` (Number) The plaintext HTTP management/API port. Null when `require_tls` is true (the broker serves HTTPS management only).
 - `name` (String) The name of the messaging instance.
 - `persistence_mode` (String) The persistence mode of the messaging instance.
-- `port` (Number) The AMQP port number the messaging instance is listening on.
+- `port` (Number) The plaintext AMQP port. Null when `require_tls` is true (the broker refuses plaintext; connect with AMQPS on `amqps_port`).
 - `private_ip` (String) The private IP address of the messaging instance.
 - `public_name` (String) The instance's public DNS name under `mq.svc.frostmoln.cloud`. Null unless it has a public IP.
+- `require_tls` (Boolean) Whether the broker refuses plaintext: true serves AMQPS and HTTPS management only (`port` and `management_port` are null); false serves plaintext AMQP and HTTP management as well. Fixed at create; false on instances created before the setting existed.
 - `status` (String) The current status of the messaging instance.
 - `subnet_id` (String) The subnet ID where the messaging instance is deployed.
 - `tags` (Map of String) Every resource tag on the messaging instance — the same set as the resource's `tags_all`: your own key/value metadata, never applied to the service itself. An empty map when it has none.
-- `tls_enabled` (Boolean) Whether the instance serves TLS: AMQPS on `amqps_port` and HTTPS management, with a certificate for `hostname` from the Frostmoln customer CA (see the `frostmoln_ca_bundle` data source). Plaintext AMQP and HTTP management stay served beside it. False on an instance without a certificate.
+- `tls_enabled` (Boolean) Whether the instance serves TLS: AMQPS on `amqps_port` and HTTPS management, with a certificate for `hostname` from the Frostmoln customer CA (see the `frostmoln_ca_bundle` data source). Plaintext AMQP and HTTP management are served beside it only when `require_tls` is false. False on an instance without a certificate.
 - `type` (String) The messaging type (e.g. "lavinmq").
 - `updated_at` (String) The timestamp when the instance was last updated.
 - `version` (String) The version.

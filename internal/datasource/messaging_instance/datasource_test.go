@@ -124,6 +124,7 @@ func configVal(t *testing.T, id string) tftypes.Value {
 		"amqps_port":       tftypes.NewValue(tftypes.Number, nil),
 		"management_port":  tftypes.NewValue(tftypes.Number, nil),
 		"tls_enabled":      tftypes.NewValue(tftypes.Bool, nil),
+		"require_tls":      tftypes.NewValue(tftypes.Bool, nil),
 		"hostname":         tftypes.NewValue(tftypes.String, nil),
 		"public_name":      tftypes.NewValue(tftypes.String, nil),
 		"created_at":       tftypes.NewValue(tftypes.String, nil),
@@ -212,6 +213,53 @@ func TestReadByID(t *testing.T) {
 	}
 	if state.ManagementPort.ValueInt64() != 15672 {
 		t.Errorf("expected ManagementPort 15672, got %d", state.ManagementPort.ValueInt64())
+	}
+	if state.RequireTLS.IsNull() || state.RequireTLS.ValueBool() {
+		t.Errorf("expected require_tls false (not sent), got %v", state.RequireTLS)
+	}
+}
+
+// D1: an instance that requires TLS reads require_tls true and no plaintext port, even
+// from a service that still reports one.
+func TestReadByIDRequireTLS(t *testing.T) {
+	server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/tenant-1/messaging/mq-1" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(apiMessagingInstance{
+				ID: "mq-1", Name: "my-broker", Type: "lavinmq", Status: "running",
+				Port: 5672, AMQPSPort: 5671, ManagementPort: 15672,
+				TLSEnabled: true, RequireTLS: true, CreatedAt: "2025-01-01T00:00:00Z",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key") // pragma: allowlist secret
+	if err := c.Configure(context.Background()); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+	ds := NewDataSource()
+	configureDS(t, ds, c)
+	schemaResp := getDSSchema(t)
+	ctx := context.Background()
+	var readResp datasource.ReadResponse
+	readResp.State = tfsdk.State{Schema: schemaResp.Schema}
+	ds.Read(ctx, datasource.ReadRequest{Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal(t, "mq-1")}}, &readResp)
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read failed: %v", readResp.Diagnostics.Errors())
+	}
+	var state messagingInstanceModel
+	readResp.State.Get(ctx, &state)
+	if !state.RequireTLS.ValueBool() {
+		t.Errorf("expected require_tls true, got %v", state.RequireTLS)
+	}
+	if !state.Port.IsNull() || !state.ManagementPort.IsNull() {
+		t.Errorf("expected null plaintext ports, got %v / %v", state.Port, state.ManagementPort)
+	}
+	if state.AMQPSPort.ValueInt64() != 5671 {
+		t.Errorf("expected amqps_port 5671, got %v", state.AMQPSPort)
 	}
 }
 

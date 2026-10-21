@@ -6,6 +6,7 @@ description: |-
   Manages a managed messaging (LavinMQ) instance in the Frostmoln platform.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+  Create-immutable — require_tls: the TLS requirement is fixed at create (the platform refuses a change with REQUIRE_TLS_IMMUTABLE); a change re-creates the instance, and an instance whose state predates the attribute is never replaced for it.
   Create-immutable — type: the type is chosen at create — one type's instance does not become another's in place.
   Create-immutable — subnet_id, version, vpc_id: the platform has no in-place migration for it — a change re-creates the instance.
   Observed, not enacted — hostname: platform-derived at create from name's DNS label, the VPC, tenant and organization; fixed for life (a rename does not move it), null on an instance without a certificate. private_ip: platform-assigned from the subnet at create. public_name: platform-derived from the DNS label at create and frozen; present only while the instance has a public IP. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed. tls_enabled: whether the platform issued the instance a certificate at create; false for an instance without a certificate.
@@ -18,6 +19,8 @@ Manages a managed messaging (LavinMQ) instance in the Frostmoln platform.
 **Authoritative scope** — who owns what on this resource, declared in `internal/scopedecl` and machine-checked against the schema.
 
 **Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
+
+**Create-immutable** — `require_tls`: the TLS requirement is fixed at create (the platform refuses a change with REQUIRE_TLS_IMMUTABLE); a change re-creates the instance, and an instance whose state predates the attribute is never replaced for it.
 
 **Create-immutable** — `type`: the type is chosen at create — one type's instance does not become another's in place.
 
@@ -37,6 +40,11 @@ resource "frostmoln_messaging_instance" "broker" {
   subnet_id = frostmoln_subnet.private.id
 
   persistence_mode = "persistent"
+
+  # TLS only (the default): plaintext AMQP and HTTP management are closed and
+  # port / management_port are null. Fixed at create; set false only for
+  # clients that cannot do TLS.
+  require_tls = true
 
   # Resource tags: your own metadata for search and filtering. Merged with
   # the provider's default_tags; changing them updates in place.
@@ -69,6 +77,7 @@ output "broker_hostname" {
 ### Optional
 
 - `persistence_mode` (String) The persistence mode for the messaging instance ("none" or "persistent"). Defaults to "persistent".
+- `require_tls` (Boolean) Whether the broker refuses plaintext: true serves AMQPS and HTTPS management only (`port` and `management_port` are null, the plaintext ports closed); false serves plaintext AMQP and HTTP management as well (beside TLS when `tls_enabled`). Defaults to true when omitted. Fixed at create: changing it replaces the instance. Instances created before the setting existed report false. True with `tls_enabled` false means the instance has no usable endpoint (the instance is in status `error`); recreate it.
 - `tags` (Map of String) Resource tags on the instance: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only and never applied to the broker. Changing them updates the instance in place and does not restart or reconfigure it. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `type` (String) The messaging type. Only "lavinmq" is currently supported. Defaults to "lavinmq".
@@ -80,13 +89,13 @@ output "broker_hostname" {
 - `created_at` (String) The timestamp when the instance was created.
 - `hostname` (String) The instance's internal DNS name (`<label>.mq.<vpc-label>.<tenant-label>.<org-label>.fm.internal`, the label being the name at create lowercased, every run of characters other than `a-z0-9` turned into one `-`, `-` trimmed at both ends and cut to 63 characters), resolvable inside its VPC; its TLS certificate is issued for this name. Fixed once assigned: a rename does not move it. Null on an instance without a certificate (it gets none retroactively; recreate it to get one).
 - `id` (String) The unique identifier of the messaging instance.
-- `management_port` (Number) The HTTP management/API port number the messaging instance is listening on.
-- `port` (Number) The AMQP port number the messaging instance is listening on.
+- `management_port` (Number) The plaintext HTTP management/API port. Null when `require_tls` is true (the broker serves HTTPS management only).
+- `port` (Number) The plaintext AMQP port. Null when `require_tls` is true (the broker refuses plaintext; connect with AMQPS on `amqps_port`).
 - `private_ip` (String) The private IP address of the messaging instance.
 - `public_name` (String) The instance's public DNS name under `mq.svc.frostmoln.cloud`. Null unless it has a public IP.
 - `status` (String) The current status of the messaging instance.
 - `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
-- `tls_enabled` (Boolean) Whether the instance serves TLS: AMQPS on `amqps_port` and HTTPS management, with a certificate for `hostname` from the Frostmoln customer CA (see the `frostmoln_ca_bundle` data source). Plaintext AMQP and HTTP management stay served beside it. False on an instance without a certificate.
+- `tls_enabled` (Boolean) Whether the instance serves TLS: AMQPS on `amqps_port` and HTTPS management, with a certificate for `hostname` from the Frostmoln customer CA (see the `frostmoln_ca_bundle` data source). Plaintext AMQP and HTTP management are served beside it only when `require_tls` is false. False on an instance without a certificate.
 - `updated_at` (String) The timestamp when the instance was last updated.
 
 <a id="nestedblock--timeouts"></a>

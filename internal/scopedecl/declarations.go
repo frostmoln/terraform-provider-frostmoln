@@ -312,6 +312,7 @@ var Declarations = map[string]Decl{
 	"frostmoln_messaging_instance": {
 		ImmutableWhy: "the platform has no in-place migration for it — a change re-creates the instance",
 		Immutable: []Field{
+			{Path: "require_tls", Why: "the TLS requirement is fixed at create (the platform refuses a change with REQUIRE_TLS_IMMUTABLE); a change re-creates the instance, and an instance whose state predates the attribute is never replaced for it"},
 			{Path: "type", Why: "the type is chosen at create — one type's instance does not become another's in place"},
 			{Path: "subnet_id"},
 			{Path: "version"},

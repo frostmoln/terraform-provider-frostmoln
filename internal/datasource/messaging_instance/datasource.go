@@ -41,6 +41,7 @@ type messagingInstanceModel struct {
 	AMQPSPort       types.Int64  `tfsdk:"amqps_port"`
 	ManagementPort  types.Int64  `tfsdk:"management_port"`
 	TLSEnabled      types.Bool   `tfsdk:"tls_enabled"`
+	RequireTLS      types.Bool   `tfsdk:"require_tls"`
 	Hostname        types.String `tfsdk:"hostname"`
 	PublicName      types.String `tfsdk:"public_name"`
 	CreatedAt       types.String `tfsdk:"created_at"`
@@ -64,6 +65,7 @@ type apiMessagingInstance struct {
 	AMQPSPort       int    `json:"amqpsPort,omitempty"`
 	ManagementPort  int    `json:"managementPort,omitempty"`
 	TLSEnabled      bool   `json:"tlsEnabled"`
+	RequireTLS      bool   `json:"requireTls"`
 	Hostname        string `json:"hostname,omitempty"`
 	PublicName      string `json:"publicName,omitempty"`
 	CreatedAt       string `json:"createdAt"`
@@ -121,21 +123,30 @@ func (d *messagingInstanceDataSource) Schema(_ context.Context, _ datasource.Sch
 				Computed:    true,
 			},
 			"port": schema.Int64Attribute{
-				Description: "The AMQP port number the messaging instance is listening on.",
-				Computed:    true,
+				Description: "The plaintext AMQP port. Null when `require_tls` is true (the broker refuses plaintext; " +
+					"connect with AMQPS on `amqps_port`).",
+				Computed: true,
 			},
 			"amqps_port": schema.Int64Attribute{
 				Description: "The AMQPS (TLS) port number the messaging instance is listening on.",
 				Computed:    true,
 			},
 			"management_port": schema.Int64Attribute{
-				Description: "The HTTP management/API port number the messaging instance is listening on.",
-				Computed:    true,
+				Description: "The plaintext HTTP management/API port. Null when `require_tls` is true (the broker serves " +
+					"HTTPS management only).",
+				Computed: true,
 			},
 			"tls_enabled": schema.BoolAttribute{
 				Description: "Whether the instance serves TLS: AMQPS on `amqps_port` and HTTPS management, with a certificate for " +
 					"`hostname` from the Frostmoln customer CA (see the `frostmoln_ca_bundle` data source). Plaintext AMQP " +
-					"and HTTP management stay served beside it. False on an instance without a certificate.",
+					"and HTTP management are served beside it only when `require_tls` is false. False on an instance without " +
+					"a certificate.",
+				Computed: true,
+			},
+			"require_tls": schema.BoolAttribute{
+				Description: "Whether the broker refuses plaintext: true serves AMQPS and HTTPS management only (`port` and " +
+					"`management_port` are null); false serves plaintext AMQP and HTTP management as well. Fixed at create; " +
+					"false on instances created before the setting existed.",
 				Computed: true,
 			},
 			"hostname": schema.StringAttribute{
@@ -212,6 +223,7 @@ func (d *messagingInstanceDataSource) Read(ctx context.Context, req datasource.R
 	state.Status = types.StringValue(inst.Status)
 	state.CreatedAt = types.StringValue(inst.CreatedAt)
 	state.TLSEnabled = types.BoolValue(inst.TLSEnabled)
+	state.RequireTLS = types.BoolValue(inst.RequireTLS)
 	state.Hostname = types.StringNull()
 	if inst.Hostname != "" {
 		state.Hostname = types.StringValue(inst.Hostname)
@@ -227,7 +239,9 @@ func (d *messagingInstanceDataSource) Read(ctx context.Context, req datasource.R
 		state.PrivateIP = types.StringNull()
 	}
 
-	if inst.Port > 0 {
+	// The plaintext ports are null whenever TLS is required: the broker refuses
+	// plaintext there, so a port the service still reports is not an endpoint.
+	if inst.Port > 0 && !inst.RequireTLS {
 		state.Port = types.Int64Value(int64(inst.Port))
 	} else {
 		state.Port = types.Int64Null()
@@ -239,7 +253,7 @@ func (d *messagingInstanceDataSource) Read(ctx context.Context, req datasource.R
 		state.AMQPSPort = types.Int64Null()
 	}
 
-	if inst.ManagementPort > 0 {
+	if inst.ManagementPort > 0 && !inst.RequireTLS {
 		state.ManagementPort = types.Int64Value(int64(inst.ManagementPort))
 	} else {
 		state.ManagementPort = types.Int64Null()
