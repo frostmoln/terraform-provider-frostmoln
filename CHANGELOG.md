@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.96.1] - 2026-10-21
+
+### 🐛 Bug Fixes
+
+- *(webserver)* Tls_enabled is read-only until TLS is served (01a10bc7) (#727)
+
 ## [0.96.0] - 2026-10-21
 
 ### 🚀 Features
