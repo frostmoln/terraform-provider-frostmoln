@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.93.0] - 2026-10-21
+
+### 🚀 Features
+
+- *(iam)* WI binding scopes retired — scopes attr Optional+deprecated, apply-time migration diagnostic (retire-scopes step 2) (#718)
+
 ## [0.92.0] - 2026-10-21
 
 ### 🚀 Features
