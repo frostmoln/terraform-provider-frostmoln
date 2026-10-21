@@ -8,10 +8,11 @@ description: |-
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — ha_enabled, subnet_id, version, vpc_id: the platform has no in-place migration for it — a change re-creates the instance.
+  Create-immutable — require_tls: the TLS requirement is fixed at create (the platform refuses a change with REQUIRE_TLS_IMMUTABLE); a change re-creates the instance, and an instance whose state predates the attribute is never replaced for it.
   Create-immutable — restore_from: (maintainer note: if TestScopeDeclarations reports this path is "not an attribute of this resource", the plan modifier was deleted, not the attribute renamed — the walk only records a nested object that carries its own modifiers) a restore is how the instance came into existence, not a setting on it — the platform never reports one back and nothing can re-run it in place, so changing it from one source or point in time to another can only mean a different database. Removing it clears the record in a single in-place update, and importing an instance that was restored records nothing — neither is a replacement.
   Create-only, change refused (not replaced) — parameter_group_id: the platform stores the parameter group reference but its parameter-apply is an unimplemented stub — the values never reach the running server on create or on update, so any value is refused outright at plan and apply instead of recorded as intent that is not enacted.
   Not enacted state — restore_from.backup_id: create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards. restore_from.point_in_time: create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards. restore_from.source_instance_id: create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards.
-  Observed, not enacted — earliest_restorable_time: the platform moves it as write-ahead log is reaped and as newer base backups supersede older ones. latest_restorable_time: the platform advances it with every archived write-ahead log segment, continuously, whether or not anything is being applied. pitr_archive_paused_reason: the platform pauses write-ahead log archiving under the customer (a tenant storage cap, or a fleet-wide pause) and clears it again on its own. pitr_capable: stamped by the platform when the instance is created and never changed afterwards — it says whether point-in-time recovery can ever be turned on, which no configuration can grant. private_ip: platform-assigned from the subnet at create. public_ip: platform-assigned where the offer exposes one. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
+  Observed, not enacted — earliest_restorable_time: the platform moves it as write-ahead log is reaped and as newer base backups supersede older ones. hostname: platform-derived at create from name's DNS label, the VPC, tenant and organization; fixed for life (a rename does not move it), null on an instance built before TLS. latest_restorable_time: the platform advances it with every archived write-ahead log segment, continuously, whether or not anything is being applied. pitr_archive_paused_reason: the platform pauses write-ahead log archiving under the customer (a tenant storage cap, or a fleet-wide pause) and clears it again on its own. pitr_capable: stamped by the platform when the instance is created and never changed afterwards — it says whether point-in-time recovery can ever be turned on, which no configuration can grant. private_ip: platform-assigned from the subnet at create. public_ip: platform-assigned where the offer exposes one. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed. tls_enabled: whether the instance serves a Frostmoln-issued certificate: set when the platform issues one at create, false for an instance built before TLS; for a high-availability pair the platform clears and restores it across standby rebuilds.
 ---
 
 # frostmoln_postgres_instance (Resource)
@@ -26,13 +27,15 @@ Destroying an instance is refused while a restore FROM it to another instance is
 
 **Create-immutable** — `ha_enabled`, `subnet_id`, `version`, `vpc_id`: the platform has no in-place migration for it — a change re-creates the instance.
 
+**Create-immutable** — `require_tls`: the TLS requirement is fixed at create (the platform refuses a change with REQUIRE_TLS_IMMUTABLE); a change re-creates the instance, and an instance whose state predates the attribute is never replaced for it.
+
 **Create-immutable** — `restore_from`: (maintainer note: if TestScopeDeclarations reports this path is "not an attribute of this resource", the plan modifier was deleted, not the attribute renamed — the walk only records a nested object that carries its own modifiers) a restore is how the instance came into existence, not a setting on it — the platform never reports one back and nothing can re-run it in place, so changing it from one source or point in time to another can only mean a different database. Removing it clears the record in a single in-place update, and importing an instance that was restored records nothing — neither is a replacement.
 
 **Create-only, change refused (not replaced)** — `parameter_group_id`: the platform stores the parameter group reference but its parameter-apply is an unimplemented stub — the values never reach the running server on create or on update, so any value is refused outright at plan and apply instead of recorded as intent that is not enacted.
 
 **Not enacted state** — `restore_from.backup_id`: create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards. `restore_from.point_in_time`: create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards. `restore_from.source_instance_id`: create-time input recorded in state, not a setting the apply pushes — the restore reads it once and the platform has nothing to reconcile it against afterwards.
 
-**Observed, not enacted** — `earliest_restorable_time`: the platform moves it as write-ahead log is reaped and as newer base backups supersede older ones. `latest_restorable_time`: the platform advances it with every archived write-ahead log segment, continuously, whether or not anything is being applied. `pitr_archive_paused_reason`: the platform pauses write-ahead log archiving under the customer (a tenant storage cap, or a fleet-wide pause) and clears it again on its own. `pitr_capable`: stamped by the platform when the instance is created and never changed afterwards — it says whether point-in-time recovery can ever be turned on, which no configuration can grant. `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-assigned where the offer exposes one. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
+**Observed, not enacted** — `earliest_restorable_time`: the platform moves it as write-ahead log is reaped and as newer base backups supersede older ones. `hostname`: platform-derived at create from `name`'s DNS label, the VPC, tenant and organization; fixed for life (a rename does not move it), null on an instance built before TLS. `latest_restorable_time`: the platform advances it with every archived write-ahead log segment, continuously, whether or not anything is being applied. `pitr_archive_paused_reason`: the platform pauses write-ahead log archiving under the customer (a tenant storage cap, or a fleet-wide pause) and clears it again on its own. `pitr_capable`: stamped by the platform when the instance is created and never changed afterwards — it says whether point-in-time recovery can ever be turned on, which no configuration can grant. `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-assigned where the offer exposes one. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed. `tls_enabled`: whether the instance serves a Frostmoln-issued certificate: set when the platform issues one at create, false for an instance built before TLS; for a high-availability pair the platform clears and restores it across standby rebuilds.
 
 ## Example Usage
 
@@ -69,6 +72,12 @@ resource "frostmoln_postgres_instance" "main" {
   # extension.
   extensions = ["timescaledb", "pg_stat_statements"]
 
+  # TLS: omit require_tls for the platform default (TLS required, plaintext
+  # refused, once TLS for managed databases is available in the deployment).
+  # Fixed at create; set it to false only for clients that cannot do TLS.
+  # Changing it replaces the instance.
+  # require_tls = false
+
   # Customer-tunable wait budgets. Defaults: create/update/delete = 30m.
   # Raise for slow provisions (e.g. multi-VM HA pairs) without waiting on a
   # provider release; a timeouts change is an in-place no-op on live data.
@@ -87,6 +96,14 @@ resource "frostmoln_postgres_instance" "main" {
 
 output "postgres_endpoint" {
   value = "${frostmoln_postgres_instance.main.private_ip}:${frostmoln_postgres_instance.main.port}"
+}
+
+# With TLS the server's certificate is issued for its hostname by the
+# Frostmoln customer CA: connect with sslmode=verify-full against the bundle
+# from the frostmoln_ca_bundle data source. hostname is null, with
+# tls_enabled false, on an instance built before TLS.
+output "postgres_verify_full_dsn" {
+  value = frostmoln_postgres_instance.main.tls_enabled ? "host=${frostmoln_postgres_instance.main.hostname} port=${frostmoln_postgres_instance.main.port} dbname=postgres sslmode=verify-full" : null
 }
 
 output "postgres_restorable_window" {
@@ -119,6 +136,8 @@ resource "frostmoln_postgres_instance" "recovered" {
   vpc_id     = frostmoln_postgres_instance.main.vpc_id
   subnet_id  = frostmoln_postgres_instance.main.subnet_id
 
+  # require_tls cannot be set here: a restore target takes the platform's
+  # default TLS requirement, and require_tls reads it back after the restore.
   restore_from = {
     source_instance_id = frostmoln_postgres_instance.main.id
     point_in_time      = "2026-09-20T14:30:00Z"
@@ -151,6 +170,7 @@ resource "frostmoln_postgres_instance" "recovered" {
     SET IT EXPLICITLY TO GET IT. The platform stamps point-in-time recovery at CREATE and the stamp is permanent: an instance created without it can never be given it, and the only remedy is to create another instance (restoring this one produces a capable target, see `restore_from`). Terraform therefore sends this field only when your configuration writes it — omit it and you get whatever the platform resolves for the instance's shape, which may be ON, and its archiving is billed. Write `pitr_enabled = true` or `pitr_enabled = false` on create to decide it yourself.
 
     It can be turned off and on again in place on an instance that is capable of it (`pitr_capable`). Turning it off stops restores to earlier times; the backups already retained are kept, and billed, until their retention ends. Turning it back on within 24 hours of turning it (or `backup_enabled`) off is refused, and the window restarts from the next base backup rather than resuming.
+- `require_tls` (Boolean) Whether the server accepts TLS connections only (plaintext refused). PostgreSQL serves TLS and plaintext on the same `port`, so this changes no port; it decides whether a plaintext session is accepted. When omitted the platform default applies: TLS required once TLS for managed databases is available in the deployment; while it is not, the instance is created without TLS and reports false, and an explicit `true` is refused (`REQUIRE_TLS_UNAVAILABLE`). Set false only for clients that cannot do TLS. Fixed at create: changing it replaces the instance. Instances created before the setting existed report false. True with `tls_enabled` false means the instance has no usable endpoint (it is in status `error`); recreate it. Cannot be set together with `restore_from`: a restore target takes the platform default.
 - `restore_from` (Attributes) Create this instance by restoring another one, instead of creating an empty database. The platform provisions a NEW instance from the source's backups; the source is untouched.
 
     The platform builds the target from the source's own shape, so the source must be a PostgreSQL instance and this resource's `version`, `flavor_id`, `vpc_id`, `subnet_id` and `ha_enabled` must equal the source's. Terraform reads the source first and refuses with the mismatch named, rather than quietly creating a plain empty database instead. `storage_gb` may be larger than the source's and is grown in place after the restore; it may not be smaller.
@@ -165,6 +185,7 @@ resource "frostmoln_postgres_instance" "recovered" {
 - `created_at` (String) The timestamp when the instance was created.
 - `earliest_restorable_time` (String) The earliest instant this instance can be restored to (RFC 3339, UTC), null when there is no restorable window right now — point-in-time recovery is off, or the first base backup has not finished, or a gap restarted the window, or archiving is paused at the tenant's cap (see `pitr_archive_paused_reason`), which leaves no window until the tenant is back under it. Read from the instance GET only, and shows as "known after apply" whenever anything else on the instance changes, because the platform moves it as write-ahead log is reaped.
 - `ha_status` (String) Availability state of the instance: disabled, provisioning, healthy, degraded, failing_over or no_standby. This is what the platform actually has, as opposed to ha_enabled, which records what was requested at create time. An instance created before high availability was built reports ha_enabled = true with ha_status = no_standby.
+- `hostname` (String) The instance's internal DNS name (`<label>.db.<vpc-label>.<tenant-label>.<org-label>.fm.internal`, the label derived from the name at create), resolvable inside its VPC; its TLS certificate is issued for this name. For a high-availability instance it is the stable name that follows the primary on failover. Fixed once assigned: a rename does not move it. Null on an instance built before TLS.
 - `id` (String) The unique identifier of the PostgreSQL instance.
 - `latest_restorable_time` (String) The latest instant this instance can be restored to (RFC 3339, UTC), null when there is no restorable window right now. It advances continuously while archiving runs, so it is ALWAYS "known after apply" on a changing instance and is a snapshot, never a promise: quote it, then restore against the platform's own check, which refuses a target outside the window and names both bounds. Read from the instance GET only.
 - `pitr_archive_paused_reason` (String) Why the platform has paused write-ahead log archiving for this instance, null when it is not paused. `tenant_cap` means the tenant's retained point-in-time-recovery storage has reached its cap — there is no restorable window until the tenant is back under its cap; scheduled base backups continue, but none forms a window while the cap holds. `platform_disabled` means the platform has archiving switched off fleet-wide. Any other value means archiving is paused for a reason this provider release does not know about. Read from the instance GET only, and shows as "known after apply" whenever anything else on the instance changes.
@@ -175,6 +196,7 @@ resource "frostmoln_postgres_instance" "recovered" {
 - `status` (String) The current status of the PostgreSQL instance.
 - `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `tenant_id` (String) The tenant ID that owns this instance.
+- `tls_enabled` (Boolean) Whether the server presents a certificate for `hostname` from the Frostmoln customer CA, so a client can connect with `sslmode=verify-full` (trust the bundle from the `frostmoln_ca_bundle` data source). False on an instance built before TLS: it gets no certificate retroactively; recreate it to get one. For a high-availability instance it can change after a standby rebuild (false while the rebuilt standby has no certificate, true again once a rebuild restores one).
 - `updated_at` (String) The timestamp when the instance was last updated.
 
 <a id="nestedatt--restore_from"></a>

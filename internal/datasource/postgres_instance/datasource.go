@@ -91,6 +91,10 @@ type postgresInstanceModel struct {
 	PITRArchivePausedReason types.String `tfsdk:"pitr_archive_paused_reason"`
 	EarliestRestorableTime  types.String `tfsdk:"earliest_restorable_time"`
 	LatestRestorableTime    types.String `tfsdk:"latest_restorable_time"`
+	// TLS (MANAGED-OFFER-TLS-AND-INTERNAL-DNS-PLAN §8, Phase 4b).
+	RequireTLS types.Bool   `tfsdk:"require_tls"`
+	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
+	Hostname   types.String `tfsdk:"hostname"`
 }
 
 // apiDatabaseInstance is the API representation of one database instance —
@@ -134,6 +138,10 @@ type apiDatabaseInstance struct {
 	PITRArchivePausedReason string `json:"pitrArchivePausedReason,omitempty"`
 	EarliestRestorableTime  string `json:"earliestRestorableTime,omitempty"`
 	LatestRestorableTime    string `json:"latestRestorableTime,omitempty"`
+	// TLS (Phase 4b): absent (an older service, an instance built before TLS) reads false.
+	RequireTLS bool   `json:"requireTls"`
+	TLSEnabled bool   `json:"tlsEnabled"`
+	Hostname   string `json:"hostname,omitempty"`
 }
 
 type apiDatabaseInstanceList struct {
@@ -269,6 +277,24 @@ func (d *postgresInstanceDataSource) Schema(_ context.Context, _ datasource.Sche
 			"tenant_id": schema.StringAttribute{
 				Description: "The tenant ID that owns this instance.",
 				Computed:    true,
+			},
+			"require_tls": schema.BoolAttribute{
+				Description: "Whether the server accepts TLS connections only (plaintext refused). PostgreSQL serves TLS " +
+					"and plaintext on the same `port`. Fixed at create; false on instances created before the setting " +
+					"existed. True with `tls_enabled` false means the instance has no usable endpoint.",
+				Computed: true,
+			},
+			"tls_enabled": schema.BoolAttribute{
+				Description: "Whether the server presents a certificate for `hostname` from the Frostmoln customer CA, so a " +
+					"client can connect with `sslmode=verify-full` (see the `frostmoln_ca_bundle` data source). False on an " +
+					"instance built before TLS. For a high-availability instance it can change after a standby rebuild.",
+				Computed: true,
+			},
+			"hostname": schema.StringAttribute{
+				Description: "The instance's internal DNS name (`<label>.db.<vpc-label>.<tenant-label>.<org-label>.fm.internal`), " +
+					"resolvable inside its VPC; its TLS certificate is issued for this name. Fixed once assigned. Null on an " +
+					"instance built before TLS.",
+				Computed: true,
 			},
 			"pitr_enabled": schema.BoolAttribute{
 				Description: "Whether point-in-time recovery is on for this instance, null when the " +
@@ -613,6 +639,9 @@ func setInstanceState(state *postgresInstanceModel, inst *apiDatabaseInstance) {
 	state.PITRArchivePausedReason = stringFromWire(inst.PITRArchivePausedReason)
 	state.EarliestRestorableTime = stringFromWire(inst.EarliestRestorableTime)
 	state.LatestRestorableTime = stringFromWire(inst.LatestRestorableTime)
+	state.RequireTLS = types.BoolValue(inst.RequireTLS)
+	state.TLSEnabled = types.BoolValue(inst.TLSEnabled)
+	state.Hostname = stringFromWire(inst.Hostname)
 }
 
 // boolFromWire maps an absent optional boolean to null, not false.

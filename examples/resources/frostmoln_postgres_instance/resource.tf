@@ -30,6 +30,12 @@ resource "frostmoln_postgres_instance" "main" {
   # extension.
   extensions = ["timescaledb", "pg_stat_statements"]
 
+  # TLS: omit require_tls for the platform default (TLS required, plaintext
+  # refused, once TLS for managed databases is available in the deployment).
+  # Fixed at create; set it to false only for clients that cannot do TLS.
+  # Changing it replaces the instance.
+  # require_tls = false
+
   # Customer-tunable wait budgets. Defaults: create/update/delete = 30m.
   # Raise for slow provisions (e.g. multi-VM HA pairs) without waiting on a
   # provider release; a timeouts change is an in-place no-op on live data.
@@ -48,6 +54,14 @@ resource "frostmoln_postgres_instance" "main" {
 
 output "postgres_endpoint" {
   value = "${frostmoln_postgres_instance.main.private_ip}:${frostmoln_postgres_instance.main.port}"
+}
+
+# With TLS the server's certificate is issued for its hostname by the
+# Frostmoln customer CA: connect with sslmode=verify-full against the bundle
+# from the frostmoln_ca_bundle data source. hostname is null, with
+# tls_enabled false, on an instance built before TLS.
+output "postgres_verify_full_dsn" {
+  value = frostmoln_postgres_instance.main.tls_enabled ? "host=${frostmoln_postgres_instance.main.hostname} port=${frostmoln_postgres_instance.main.port} dbname=postgres sslmode=verify-full" : null
 }
 
 output "postgres_restorable_window" {
@@ -80,6 +94,8 @@ resource "frostmoln_postgres_instance" "recovered" {
   vpc_id     = frostmoln_postgres_instance.main.vpc_id
   subnet_id  = frostmoln_postgres_instance.main.subnet_id
 
+  # require_tls cannot be set here: a restore target takes the platform's
+  # default TLS requirement, and require_tls reads it back after the restore.
   restore_from = {
     source_instance_id = frostmoln_postgres_instance.main.id
     point_in_time      = "2026-09-20T14:30:00Z"

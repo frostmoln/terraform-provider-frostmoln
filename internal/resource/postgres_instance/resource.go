@@ -39,10 +39,11 @@ import (
 )
 
 var (
-	_ resource.Resource                 = &postgresInstanceResource{}
-	_ resource.ResourceWithImportState  = &postgresInstanceResource{}
-	_ resource.ResourceWithUpgradeState = &postgresInstanceResource{}
-	_ resource.ResourceWithModifyPlan   = &postgresInstanceResource{}
+	_ resource.Resource                   = &postgresInstanceResource{}
+	_ resource.ResourceWithImportState    = &postgresInstanceResource{}
+	_ resource.ResourceWithUpgradeState   = &postgresInstanceResource{}
+	_ resource.ResourceWithModifyPlan     = &postgresInstanceResource{}
+	_ resource.ResourceWithValidateConfig = &postgresInstanceResource{}
 )
 
 // NewResource returns a new postgres_instance resource factory.
@@ -478,6 +479,55 @@ func (r *postgresInstanceResource) Schema(_ context.Context, _ resource.SchemaRe
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			// TLS (MANAGED-OFFER-TLS-AND-INTERNAL-DNS-PLAN §8, D1, Phase 4b), mirroring
+			// frostmoln_messaging_instance's require_tls. All three plan with
+			// UseNonNullStateForUnknown, NOT UseStateForUnknown: the latter copies a NULL
+			// prior value too (framework v1.19), so a state written before these attributes
+			// existed, planned with -refresh=false, would plan null and the apply, which
+			// reads the real value, would fail as an inconsistent result. A null prior
+			// leaves the plan unknown.
+			"require_tls": schema.BoolAttribute{
+				Description: "Whether the server accepts TLS connections only (plaintext refused). PostgreSQL serves TLS " +
+					"and plaintext on the same `port`, so this changes no port; it decides whether a plaintext session " +
+					"is accepted. When omitted the platform default applies: TLS required once TLS for managed databases " +
+					"is available in the deployment; while it is not, the instance is created without TLS and reports " +
+					"false, and an explicit `true` is refused (`REQUIRE_TLS_UNAVAILABLE`). Set false only for clients " +
+					"that cannot do TLS. Fixed at create: changing it replaces the instance. Instances created before " +
+					"the setting existed report false. True with `tls_enabled` false means the instance has no usable " +
+					"endpoint (it is in status `error`); recreate it. Cannot be set together with `restore_from`: a " +
+					"restore target takes the platform default.",
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseNonNullStateForUnknown(),
+					boolplanmodifier.RequiresReplaceIf(requireTLSChanged,
+						"Changing require_tls replaces the instance: the requirement is fixed at create.",
+						"Changing `require_tls` replaces the instance: the requirement is fixed at create."),
+				},
+			},
+			// tls_enabled carries NO plan modifier, unlike hostname: for a high-availability
+			// pair it is not fixed at create. A standby rebuild that installs no leaf clears
+			// the pair's TLS marker (true -> false) and a later rebuild restores it, so an
+			// update planned around one would fail as an inconsistent result if the prior
+			// value were pinned. Plain Computed is planned unknown on every update.
+			"tls_enabled": schema.BoolAttribute{
+				Description: "Whether the server presents a certificate for `hostname` from the Frostmoln customer CA, so a " +
+					"client can connect with `sslmode=verify-full` (trust the bundle from the `frostmoln_ca_bundle` data " +
+					"source). False on an instance built before TLS: it gets no certificate retroactively; recreate it " +
+					"to get one. For a high-availability instance it can change after a standby rebuild (false while the " +
+					"rebuilt standby has no certificate, true again once a rebuild restores one).",
+				Computed: true,
+			},
+			"hostname": schema.StringAttribute{
+				Description: "The instance's internal DNS name (`<label>.db.<vpc-label>.<tenant-label>.<org-label>.fm.internal`, " +
+					"the label derived from the name at create), resolvable inside its VPC; its TLS certificate is issued " +
+					"for this name. For a high-availability instance it is the stable name that follows the primary on " +
+					"failover. Fixed once assigned: a rename does not move it. Null on an instance built before TLS.",
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseNonNullStateForUnknown(),
+				},
+			},
 			// CREATE-ONLY, AND A CHANGE TO IT DESTROYS A DATABASE. Everything
 			// unusual about this attribute follows from that.
 			//
@@ -607,7 +657,90 @@ func (r *postgresInstanceResource) ModifyPlan(ctx context.Context, req resource.
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// ValidateConfig's refusal again, at plan time: a require_tls that was unknown during
+	// validation (a variable, another resource's attribute) is known here on a create.
+	if req.State.Raw.IsNull() {
+		var cfgRequireTLS types.Bool
+		var cfgRestore types.Object
+		resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("require_tls"), &cfgRequireTLS)...)
+		resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("restore_from"), &cfgRestore)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		addRequireTLSWithRestoreError(cfgRequireTLS, cfgRestore, &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
 	planPlatformRecomputedAttributes(ctx, req, resp)
+}
+
+// requireTLSChanged is require_tls's RequiresReplaceIf: a replacement only for a REAL
+// change, a known planned value against a known, non-null prior value that differs.
+//
+// A NULL prior value is never a change. It is the state an older provider wrote (the
+// attribute did not exist), and under `terraform plan -refresh=false` no Read fills it
+// in, so a plain RequiresReplace() would destroy the database on the first plan after
+// the upgrade (unknown or configured vs null). Update instead checks the configured
+// value against the instance before it writes anything (checkRequireTLSUnchanged).
+// It reads PlanValue, not ConfigValue: after UseNonNullStateForUnknown an omitted
+// attribute plans the (non-null) prior value, so only a configured different value
+// differs; against a null prior it stays unknown and is never a change.
+func requireTLSChanged(_ context.Context, req planmodifier.BoolRequest, resp *boolplanmodifier.RequiresReplaceIfFuncResponse) {
+	if req.StateValue.IsNull() || req.StateValue.IsUnknown() || req.PlanValue.IsUnknown() || req.PlanValue.IsNull() {
+		return
+	}
+	resp.RequiresReplace = req.PlanValue.ValueBool() != req.StateValue.ValueBool()
+}
+
+// checkRequireTLSUnchanged is the apply-time half of requireTLSChanged: with no prior
+// value (state from an older provider, planned without refresh) a configured
+// require_tls is checked against the instance before Update writes anything. The
+// platform fixes the requirement at create (REQUIRE_TLS_IMMUTABLE), so a mismatch is
+// refused here, naming the value the instance holds, instead of failing later as an
+// inconsistent result.
+func (r *postgresInstanceResource) checkRequireTLSUnchanged(ctx context.Context, id string, plan, state *PostgresInstanceModel, diags *diag.Diagnostics) {
+	if !state.RequireTLS.IsNull() || plan.RequireTLS.IsNull() || plan.RequireTLS.IsUnknown() {
+		return
+	}
+	inst, err := r.getInstance(ctx, id)
+	if err != nil {
+		diags.AddError("Failed to read PostgreSQL instance", err.Error())
+		return
+	}
+	if inst.RequireTLS != plan.RequireTLS.ValueBool() {
+		diags.AddAttributeError(path.Root("require_tls"), "require_tls cannot be changed",
+			fmt.Sprintf("The instance's require_tls is %t and is fixed at create (REQUIRE_TLS_IMMUTABLE). Set "+
+				"require_tls = %t, or run a refreshed plan, which replaces the instance to change it. Nothing was changed.",
+				inst.RequireTLS, inst.RequireTLS))
+	}
+}
+
+// ValidateConfig refuses require_tls together with restore_from. A restore target is a
+// NEW instance that takes the platform's create default (the restore request carries no
+// requireTls), so a configured value could only be recorded, never enacted, and would
+// fail the create as an inconsistent result after the restored database exists.
+func (r *postgresInstanceResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var requireTLS types.Bool
+	var restore types.Object
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("require_tls"), &requireTLS)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("restore_from"), &restore)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	addRequireTLSWithRestoreError(requireTLS, restore, &resp.Diagnostics)
+}
+
+// addRequireTLSWithRestoreError is the refusal itself, shared by ValidateConfig and the
+// create half of ModifyPlan. Unknown values cannot be judged and pass.
+func addRequireTLSWithRestoreError(requireTLS types.Bool, restore types.Object, diags *diag.Diagnostics) {
+	if requireTLS.IsNull() || requireTLS.IsUnknown() || restore.IsNull() || restore.IsUnknown() {
+		return
+	}
+	diags.AddAttributeError(path.Root("require_tls"), "require_tls cannot be set with restore_from",
+		"A restore target is a new instance that takes the platform's default TLS requirement; the restore "+
+			"cannot carry a different one. Remove require_tls: after the restore it reads back the value the "+
+			"instance holds.")
 }
 
 // restoreSourceChanged is `restore_from`'s RequiresReplaceIf: a replacement is
@@ -2006,6 +2139,12 @@ func (r *postgresInstanceResource) Update(ctx context.Context, req resource.Upda
 	// leaves the instance exactly as it is.
 	if !cfg.RestoreFrom.IsNull() && !cfg.RestoreFrom.IsUnknown() && state.RestoreFrom.IsNull() {
 		resp.Diagnostics.AddAttributeError(path.Root("restore_from"), restoreFromAddedTitle, restoreFromAddedDetail)
+		return
+	}
+
+	// require_tls against a state that predates it: checked before anything is written.
+	r.checkRequireTLSUnchanged(ctx, state.ID.ValueString(), &plan, &state, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
 		return
 	}
 

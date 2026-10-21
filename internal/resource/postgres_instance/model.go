@@ -80,6 +80,13 @@ type PostgresInstanceModel struct {
 	PITRArchivePausedReason types.String `tfsdk:"pitr_archive_paused_reason"`
 	EarliestRestorableTime  types.String `tfsdk:"earliest_restorable_time"`
 	LatestRestorableTime    types.String `tfsdk:"latest_restorable_time"`
+	// TLS (MANAGED-OFFER-TLS-AND-INTERNAL-DNS-PLAN §8, D1, Phase 4b). RequireTLS is the
+	// instance's TLS requirement: set at create (server default), fixed afterwards;
+	// Optional+Computed, see requireTLSChanged for the replace rule. TLSEnabled and
+	// Hostname are read-only.
+	RequireTLS types.Bool   `tfsdk:"require_tls"`
+	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
+	Hostname   types.String `tfsdk:"hostname"`
 	// RestoreFrom is create-only input, carried as types.Object rather than a
 	// pointer-to-struct because an Optional+Computed object is UNKNOWN in the
 	// plan of every create that omits it, and the framework's reflection
@@ -150,6 +157,14 @@ type apiPostgresInstance struct {
 	PITRArchivePausedReason string `json:"pitrArchivePausedReason,omitempty"`
 	EarliestRestorableTime  string `json:"earliestRestorableTime,omitempty"`
 	LatestRestorableTime    string `json:"latestRestorableTime,omitempty"`
+
+	// TLS (Phase 4b). requireTls and tlsEnabled are always sent by a TLS-aware database
+	// service; absent (an older service, or an instance built before TLS) reads false,
+	// the truth for those instances: no requirement, no certificate. hostname only when
+	// assigned.
+	RequireTLS bool   `json:"requireTls"`
+	TLSEnabled bool   `json:"tlsEnabled"`
+	Hostname   string `json:"hostname,omitempty"`
 }
 
 // apiCreatePostgresInstanceRequest is the API request to create a managed PostgreSQL instance.
@@ -166,6 +181,10 @@ type apiCreatePostgresInstanceRequest struct {
 	BackupRetentionDays *int   `json:"backupRetentionDays,omitempty"`
 	ParameterGroupID    string `json:"parameterGroupId,omitempty"`
 	PITREnabled         *bool  `json:"pitrEnabled,omitempty"`
+	// RequireTLS is sent only when configured. Omitted, the service applies its default:
+	// TLS required once TLS for managed databases is available in the deployment, the
+	// pre-TLS create while it is not (where an explicit true is REQUIRE_TLS_UNAVAILABLE).
+	RequireTLS *bool `json:"requireTls,omitempty"`
 	// Tags is default_tags ∪ tags (tftags.ForCreate), omitted when empty; the API
 	// merges the tenant's default tags in.
 	Tags map[string]string `json:"tags,omitempty"`
@@ -268,6 +287,12 @@ func (m *PostgresInstanceModel) toCreateRequest(_ context.Context, _ *diag.Diagn
 	if !m.PITREnabled.IsNull() && !m.PITREnabled.IsUnknown() {
 		v := m.PITREnabled.ValueBool()
 		req.PITREnabled = &v
+	}
+	// Sent ONLY when configured, for the reason pitr_enabled is: an omission must reach
+	// the service as an omission so the platform default applies.
+	if !m.RequireTLS.IsNull() && !m.RequireTLS.IsUnknown() {
+		v := m.RequireTLS.ValueBool()
+		req.RequireTLS = &v
 	}
 
 	return req
@@ -443,6 +468,13 @@ func (m *PostgresInstanceModel) fromAPI(ctx context.Context, inst *apiPostgresIn
 	m.PITRArchivePausedReason = stringFromWire(inst.PITRArchivePausedReason)
 	m.EarliestRestorableTime = stringFromWire(inst.EarliestRestorableTime)
 	m.LatestRestorableTime = stringFromWire(inst.LatestRestorableTime)
+
+	// TLS, as the service reports it. Unlike messaging, no port is nulled under
+	// require_tls: PostgreSQL negotiates TLS on its one port, and require_tls only
+	// refuses the plaintext session on it.
+	m.RequireTLS = types.BoolValue(inst.RequireTLS)
+	m.TLSEnabled = types.BoolValue(inst.TLSEnabled)
+	m.Hostname = stringFromWire(inst.Hostname)
 }
 
 // boolFromWire maps an absent optional boolean to null, not false.

@@ -394,6 +394,7 @@ var Declarations = map[string]Decl{
 		ImmutableWhy: "the platform has no in-place migration for it — a change re-creates the instance",
 		Immutable: []Field{
 			{Path: "ha_enabled"},
+			{Path: "require_tls", Why: "the TLS requirement is fixed at create (the platform refuses a change with REQUIRE_TLS_IMMUTABLE); a change re-creates the instance, and an instance whose state predates the attribute is never replaced for it"},
 			{Path: "subnet_id"},
 			{Path: "version"},
 			{Path: "vpc_id"},
@@ -415,6 +416,8 @@ var Declarations = map[string]Decl{
 			{Path: "pitr_archive_paused_reason", Why: "the platform pauses write-ahead log archiving under the customer (a tenant storage cap, or a fleet-wide pause) and clears it again on its own"},
 			{Path: "earliest_restorable_time", Why: "the platform moves it as write-ahead log is reaped and as newer base backups supersede older ones"},
 			{Path: "latest_restorable_time", Why: "the platform advances it with every archived write-ahead log segment, continuously, whether or not anything is being applied"},
+			{Path: "tls_enabled", Why: "whether the instance serves a Frostmoln-issued certificate: set when the platform issues one at create, false for an instance built before TLS; for a high-availability pair the platform clears and restores it across standby rebuilds"},
+			{Path: "hostname", Why: "platform-derived at create from `name`'s DNS label, the VPC, tenant and organization; fixed for life (a rename does not move it), null on an instance built before TLS"},
 		},
 	},
 	"frostmoln_postgres_read_replica": {
@@ -423,6 +426,9 @@ var Declarations = map[string]Decl{
 		Observes: []Field{
 			tagsAllObserved,
 			{Path: "replication_lag_bytes", Why: "the live replication position as the platform reports it — it moves continuously"},
+			{Path: "require_tls", Why: "the primary's TLS requirement, inherited at create and fixed"},
+			{Path: "tls_enabled", Why: "whether the platform issued the replica its own certificate at create; false for a replica built before TLS"},
+			{Path: "hostname", Why: "platform-derived at create from the replica's `name`, the VPC, tenant and organization; fixed for life, null on a replica built before TLS"},
 		},
 	},
 	"frostmoln_public_ip": {

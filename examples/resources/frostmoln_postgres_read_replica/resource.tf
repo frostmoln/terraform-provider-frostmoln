@@ -15,3 +15,9 @@ resource "frostmoln_postgres_read_replica" "reader" {
 output "postgres_reader_endpoint" {
   value = "${frostmoln_postgres_read_replica.reader.private_ip}:${frostmoln_postgres_read_replica.reader.port}"
 }
+
+# A replica has its own hostname and certificate (verify-full against it), and
+# its primary's require_tls.
+output "postgres_reader_hostname" {
+  value = frostmoln_postgres_read_replica.reader.tls_enabled ? frostmoln_postgres_read_replica.reader.hostname : null
+}

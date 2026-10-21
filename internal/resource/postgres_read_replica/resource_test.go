@@ -11,7 +11,10 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -172,6 +175,84 @@ func TestPostgresReadReplicaModelFromAPINulls(t *testing.T) {
 	}
 	if !model.ReplicationLagBytes.IsNull() {
 		t.Error("expected null replication_lag_bytes")
+	}
+	// A replica built before TLS (or a service that predates the fields).
+	if model.RequireTLS.IsNull() || model.RequireTLS.ValueBool() || model.TLSEnabled.IsNull() || model.TLSEnabled.ValueBool() || !model.Hostname.IsNull() {
+		t.Errorf("pre-TLS replica: require_tls=%v tls_enabled=%v hostname=%v", model.RequireTLS, model.TLSEnabled, model.Hostname)
+	}
+}
+
+// Phase 4b: a replica's own hostname and certificate state, and its primary's
+// requirement, read back as the service sends them.
+func TestPostgresReadReplicaModelFromAPITLS(t *testing.T) {
+	var model PostgresReadReplicaModel
+	diags := diag.Diagnostics{}
+	model.fromAPI(context.Background(), &apiPostgresReadReplica{
+		ID: "rr-1", InstanceID: "pg-1", Name: "ro", Status: "running", Port: 5432,
+		RequireTLS: true, TLSEnabled: true, Hostname: "ro.db.prod.omkcmw.ck4to7f6.fm.internal",
+	}, &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+	}
+	if !model.RequireTLS.ValueBool() || !model.TLSEnabled.ValueBool() || model.Hostname.ValueString() != "ro.db.prod.omkcmw.ck4to7f6.fm.internal" {
+		t.Errorf("TLS read: require_tls=%v tls_enabled=%v hostname=%v", model.RequireTLS, model.TLSEnabled, model.Hostname)
+	}
+}
+
+// The replica's TLS attributes are read-only, and a NULL prior (state from an older
+// provider) plans unknown, never null.
+func TestSchemaTLSAttributesComputedOnly(t *testing.T) {
+	var resp resource.SchemaResponse
+	NewResource().Schema(context.Background(), resource.SchemaRequest{}, &resp)
+	for _, name := range []string{"require_tls", "tls_enabled", "hostname"} {
+		a, ok := resp.Schema.Attributes[name]
+		if !ok {
+			t.Fatalf("attribute %q missing", name)
+		}
+		if !a.IsComputed() || a.IsOptional() || a.IsRequired() {
+			t.Errorf("%s must be computed only", name)
+		}
+	}
+	// Non-null raw state/plan objects: the UseStateForUnknown family returns early on a
+	// resource being created.
+	stateObj, planObj := buildState(t, planModel()), buildPlan(t, planModel())
+	for _, name := range []string{"require_tls", "tls_enabled"} {
+		a := resp.Schema.Attributes[name].(rschema.BoolAttribute)
+		for _, prior := range []types.Bool{types.BoolNull(), types.BoolValue(true)} {
+			planned := types.BoolUnknown()
+			for _, m := range a.PlanModifiers {
+				r := &planmodifier.BoolResponse{PlanValue: planned}
+				m.PlanModifyBool(context.Background(), planmodifier.BoolRequest{
+					Path: path.Root(name), State: stateObj, Plan: planObj,
+					StateValue: prior, PlanValue: planned, ConfigValue: types.BoolNull(),
+				}, r)
+				planned = r.PlanValue
+			}
+			if prior.IsNull() && !planned.IsUnknown() {
+				t.Errorf("%s: a null prior must plan unknown, got %v", name, planned)
+			}
+			if !prior.IsNull() && !planned.Equal(prior) {
+				t.Errorf("%s: a known prior must be kept, got %v", name, planned)
+			}
+		}
+	}
+	hn := resp.Schema.Attributes["hostname"].(rschema.StringAttribute)
+	for _, prior := range []types.String{types.StringNull(), types.StringValue("ro.db.v.t.o.fm.internal")} {
+		planned := types.StringUnknown()
+		for _, m := range hn.PlanModifiers {
+			r := &planmodifier.StringResponse{PlanValue: planned}
+			m.PlanModifyString(context.Background(), planmodifier.StringRequest{
+				Path: path.Root("hostname"), State: stateObj, Plan: planObj,
+				StateValue: prior, PlanValue: planned, ConfigValue: types.StringNull(),
+			}, r)
+			planned = r.PlanValue
+		}
+		if prior.IsNull() && !planned.IsUnknown() {
+			t.Errorf("hostname: a null prior must plan unknown, got %v", planned)
+		}
+		if !prior.IsNull() && !planned.Equal(prior) {
+			t.Errorf("hostname: a known prior must be kept, got %v", planned)
+		}
 	}
 }
 

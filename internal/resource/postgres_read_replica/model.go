@@ -21,6 +21,11 @@ type PostgresReadReplicaModel struct {
 	PrivateIP           types.String `tfsdk:"private_ip"`
 	Port                types.Int64  `tfsdk:"port"`
 	ReplicationLagBytes types.Int64  `tfsdk:"replication_lag_bytes"`
+	// TLS (MANAGED-OFFER-TLS-AND-INTERNAL-DNS-PLAN §8, Phase 4b), all read-only: the
+	// replica has its own hostname and certificate, and its primary's requirement.
+	RequireTLS types.Bool   `tfsdk:"require_tls"`
+	TLSEnabled types.Bool   `tfsdk:"tls_enabled"`
+	Hostname   types.String `tfsdk:"hostname"`
 	// Tags / TagsAll are the replica's OWN customer resource tags (internal/tftags),
 	// never copied from or to the primary.
 	Tags    types.Map `tfsdk:"tags"`
@@ -45,6 +50,10 @@ type apiPostgresReadReplica struct {
 	PrivateIP           string `json:"privateIp,omitempty"`
 	Port                int    `json:"port,omitempty"`
 	ReplicationLagBytes int64  `json:"replicationLagBytes,omitempty"`
+	// TLS (Phase 4b): absent (an older service, a replica built before TLS) reads false.
+	RequireTLS bool   `json:"requireTls"`
+	TLSEnabled bool   `json:"tlsEnabled"`
+	Hostname   string `json:"hostname,omitempty"`
 	// Tags are the replica's customer resource tags ({} when untagged).
 	Tags map[string]string `json:"tags"`
 }
@@ -110,5 +119,13 @@ func (m *PostgresReadReplicaModel) fromAPI(ctx context.Context, replica *apiPost
 		m.ReplicationLagBytes = types.Int64Value(replica.ReplicationLagBytes)
 	} else {
 		m.ReplicationLagBytes = types.Int64Null()
+	}
+
+	m.RequireTLS = types.BoolValue(replica.RequireTLS)
+	m.TLSEnabled = types.BoolValue(replica.TLSEnabled)
+	if replica.Hostname != "" {
+		m.Hostname = types.StringValue(replica.Hostname)
+	} else {
+		m.Hostname = types.StringNull()
 	}
 }

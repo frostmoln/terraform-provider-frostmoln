@@ -34,3 +34,14 @@ output "billing_pitr" {
     paused_why      = data.frostmoln_postgres_instance.billing.pitr_archive_paused_reason
   }
 }
+
+# TLS, as the platform reports it: require_tls (plaintext refused),
+# tls_enabled (a certificate for hostname from the Frostmoln customer CA) and
+# hostname (null on an instance built before TLS).
+output "billing_tls" {
+  value = {
+    required = data.frostmoln_postgres_instance.billing.require_tls
+    enabled  = data.frostmoln_postgres_instance.billing.tls_enabled
+    hostname = data.frostmoln_postgres_instance.billing.hostname
+  }
+}

@@ -78,7 +78,7 @@ var mustReplaceOnRealChange = map[string][]string{
 	"frostmoln_mysql_read_replica":    {"flavor_id"},
 	"frostmoln_nginx_instance":        {"php_enabled", "php_version"},
 	"frostmoln_postgres_backup":       {"type"},
-	"frostmoln_postgres_instance":     {"ha_enabled"},
+	"frostmoln_postgres_instance":     {"ha_enabled", "require_tls"},
 	"frostmoln_postgres_read_replica": {"flavor_id"},
 	"frostmoln_subnet":                {"zone", "gateway_ip", "dns_servers"},
 	"frostmoln_volume":                {"volume_type", "zone", "encrypted"},

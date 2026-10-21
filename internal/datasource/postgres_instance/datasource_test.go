@@ -154,6 +154,9 @@ func readWith(t *testing.T, serverURL string, id, name *string) readResult {
 		"id":                    stringOr(id),
 		"name":                  stringOr(name),
 		"type":                  tftypes.NewValue(tftypes.String, nil),
+		"require_tls":           tftypes.NewValue(tftypes.Bool, nil),
+		"tls_enabled":           tftypes.NewValue(tftypes.Bool, nil),
+		"hostname":              tftypes.NewValue(tftypes.String, nil),
 		"version":               tftypes.NewValue(tftypes.String, nil),
 		"flavor_id":             tftypes.NewValue(tftypes.String, nil),
 		"storage_gb":            tftypes.NewValue(tftypes.Number, nil),
@@ -338,6 +341,35 @@ func TestReadByID(t *testing.T) {
 	}
 	if m.CreatedAt.ValueString() != "2026-01-01T00:00:00Z" || m.UpdatedAt.ValueString() != "2026-02-01T00:00:00Z" {
 		t.Errorf("timestamps are %s/%s", m.CreatedAt.ValueString(), m.UpdatedAt.ValueString())
+	}
+	// A body without the TLS fields (a pre-TLS instance or service): false, false, null.
+	if m.RequireTLS.IsNull() || m.RequireTLS.ValueBool() || m.TLSEnabled.IsNull() || m.TLSEnabled.ValueBool() || !m.Hostname.IsNull() {
+		t.Errorf("pre-TLS read: require_tls=%v tls_enabled=%v hostname=%v", m.RequireTLS, m.TLSEnabled, m.Hostname)
+	}
+}
+
+// Phase 4b: the TLS state reads back as the service sends it.
+func TestReadByIDTLS(t *testing.T) {
+	server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"db-1","name":"orders","type":"postgresql","typeVersion":"16","port":5432,"status":"running",
+			"requireTls":true,"tlsEnabled":true,"hostname":"orders.db.prod.omkcmw.ck4to7f6.fm.internal",
+			"createdAt":"2026-01-01T00:00:00Z"
+		}`))
+	})
+	defer server.Close()
+	id := "db-1"
+	readResp := readWith(t, server.URL, &id, nil)
+	if readResp.diagnostics.HasError() {
+		t.Fatalf("read: %v", readResp.diagnostics.Errors())
+	}
+	m := readResp.model
+	if !m.RequireTLS.ValueBool() || !m.TLSEnabled.ValueBool() || m.Hostname.ValueString() != "orders.db.prod.omkcmw.ck4to7f6.fm.internal" {
+		t.Errorf("TLS read: require_tls=%v tls_enabled=%v hostname=%v", m.RequireTLS, m.TLSEnabled, m.Hostname)
+	}
+	if m.Port.ValueInt64() != 5432 {
+		t.Errorf("port = %v, want 5432 (TLS shares the port)", m.Port)
 	}
 }
 
