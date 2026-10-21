@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.97.0] - 2026-10-21
+
+### 🚀 Features
+
+- *(tls)* MySQL, Redis/Valkey and webserver TLS (Phases 4c/4d/4e) (#729)
+
 ## [0.96.1] - 2026-10-21
 
 ### 🐛 Bug Fixes
