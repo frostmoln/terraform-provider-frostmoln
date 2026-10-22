@@ -206,6 +206,10 @@ func (r *bucketResource) Read(ctx context.Context, req resource.ReadRequest, res
 	if b.ACL == nil {
 		resp.Diagnostics.Append(aclUnverifiedWarning(state.ACL))
 	}
+	if b.Versioning == nil {
+		resp.Diagnostics.Append(unverifiedWarning("versioning", versioningUnverifiedSummary,
+			"versioning state", state.Versioning))
+	}
 	resp.Diagnostics.Append(state.fromAPI(ctx, b)...)
 	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
@@ -326,21 +330,28 @@ const (
 		"without credentials. The configuration sets no acl, so Terraform leaves the bucket's access " +
 		"as it is and the bucket stays public. To make it private, set acl = \"private\"."
 
-	aclUnverifiedSummary = "Bucket Access Could Not Be Verified"
+	aclUnverifiedSummary        = "Bucket Access Could Not Be Verified"
+	versioningUnverifiedSummary = "Bucket Versioning Could Not Be Verified"
 )
 
 // aclUnverifiedWarning is the refresh-time warning for a read that came back
-// without the bucket's access setting: state keeps the last known value, and
-// the practitioner must be told that value is not a fresh answer.
+// without the bucket's access setting.
 func aclUnverifiedWarning(prior types.String) diag.Diagnostic {
+	return unverifiedWarning("acl", aclUnverifiedSummary, "access setting", prior)
+}
+
+// unverifiedWarning is the refresh-time warning for a read that came back
+// without one of the bucket's settings: state keeps the last known value, and
+// the practitioner must be told that value is not a fresh answer.
+func unverifiedWarning(attr, summary, what string, prior types.String) diag.Diagnostic {
 	last := "no value"
 	if !prior.IsNull() && !prior.IsUnknown() {
 		last = fmt.Sprintf("%q", prior.ValueString())
 	}
-	return diag.NewAttributeWarningDiagnostic(path.Root("acl"), aclUnverifiedSummary,
-		fmt.Sprintf("The platform could not read this bucket's access setting during this refresh, "+
-			"so acl shows the last known value (%s), which may no longer be current. Refresh again "+
-			"to verify it.", last))
+	return diag.NewAttributeWarningDiagnostic(path.Root(attr), summary,
+		fmt.Sprintf("The platform could not read this bucket's %s during this refresh, "+
+			"so %s shows the last known value (%s), which may no longer be current. Refresh again "+
+			"to verify it.", what, attr, last))
 }
 
 // currentTags reads the tags the platform holds right now, at memberPath. An update

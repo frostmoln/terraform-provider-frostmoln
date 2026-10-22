@@ -28,14 +28,15 @@ type BucketModel struct {
 // service (storage/internal/domain/bucket.go): the storage class is
 // `defaultStorageClass`, the size is `totalSize`, versioning is a string enum on
 // read, and there is no endpoint/accessKey (S3 creds come from the dedicated
-// credentials endpoint, ADR-0030). ACL is a pointer because storage OMITS it
-// when its read of the bucket's real access policy failed (a transient backend
-// error): absent means "could not be read", never "private" — see fromAPI.
+// credentials endpoint, ADR-0030). ACL and Versioning are pointers because
+// storage OMITS each when its read of the bucket failed (a transient backend
+// error): absent means "could not be read", never "private" or "disabled" —
+// see fromAPI.
 type apiBucket struct {
 	Name                string            `json:"name"`
 	Region              string            `json:"region,omitempty"`
 	DefaultStorageClass string            `json:"defaultStorageClass"`
-	Versioning          string            `json:"versioning"`
+	Versioning          *string           `json:"versioning,omitempty"`
 	ACL                 *string           `json:"acl,omitempty"`
 	ObjectCount         int64             `json:"objectCount"`
 	TotalSize           int64             `json:"totalSize"`
@@ -128,7 +129,6 @@ func (m *BucketModel) fromAPI(ctx context.Context, b *apiBucket) diag.Diagnostic
 	m.Name = types.StringValue(b.Name)
 	m.Region = types.StringValue(b.Region)
 	m.StorageClass = types.StringValue(b.DefaultStorageClass)
-	m.Versioning = types.StringValue(b.Versioning)
 	m.ObjectCount = types.Int64Value(b.ObjectCount)
 	m.SizeBytes = types.Int64Value(b.TotalSize)
 	m.CreatedAt = types.StringValue(b.CreatedAt)
@@ -138,12 +138,9 @@ func (m *BucketModel) fromAPI(ctx context.Context, b *apiBucket) diag.Diagnostic
 	// Create/Update): writing "" would be a spurious diff, and writing
 	// "private" could hide a public bucket. Only a value with nothing to keep
 	// (unknown — a first read with no prior) becomes null.
-	switch {
-	case b.ACL != nil:
-		m.ACL = types.StringValue(*b.ACL)
-	case m.ACL.IsUnknown():
-		m.ACL = types.StringNull()
-	}
+	m.ACL = keepIfOmitted(b.ACL, m.ACL)
+	// Same for versioning: "" would be a spurious diff and "disabled" a guess.
+	m.Versioning = keepIfOmitted(b.Versioning, m.Versioning)
 
 	// storage omits an empty tag map, so an absent `tags` is "no tags", never
 	// "unchanged": keeping the model's tags here hid an out-of-band removal.
@@ -161,4 +158,17 @@ func (m *BucketModel) fromAPI(ctx context.Context, b *apiBucket) diag.Diagnostic
 // it, so the two cannot disagree about what counts as a tag.
 func (a *apiBucket) customerTags() map[string]string {
 	return a.Tags
+}
+
+// keepIfOmitted is the read-back of a setting storage omits when it could not
+// read it: the wire value when present, else what the model already holds, and
+// null only when that is unknown (a first read with nothing to keep).
+func keepIfOmitted(wire *string, held types.String) types.String {
+	switch {
+	case wire != nil:
+		return types.StringValue(*wire)
+	case held.IsUnknown():
+		return types.StringNull()
+	}
+	return held
 }

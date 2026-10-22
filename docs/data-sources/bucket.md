@@ -70,4 +70,4 @@ output "billing_backups_usage" {
 - `tenant_id` (String) The tenant ID that owns this bucket.
 - `total_size` (Number) The total size of all objects in the bucket, in bytes. Zero renders as 0 — an empty bucket is a measured answer, not an absence.
 - `updated_at` (String) The timestamp when the bucket was last updated.
-- `versioning` (String) The versioning state of the bucket (disabled, enabled, or suspended).
+- `versioning` (String) The versioning state of the bucket (disabled, enabled, or suspended); null when the platform could not read it, never a guessed `disabled`.

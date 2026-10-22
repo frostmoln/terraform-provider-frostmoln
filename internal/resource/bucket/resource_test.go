@@ -141,7 +141,7 @@ func TestBucketModelFromAPI(t *testing.T) {
 		Name:                "test-bucket",
 		Region:              "sweden",
 		DefaultStorageClass: "standard",
-		Versioning:          "enabled",
+		Versioning:          strPtr("enabled"),
 		ObjectCount:         42,
 		TotalSize:           1024000,
 		Tags:                map[string]string{"env": "staging"},
@@ -198,7 +198,7 @@ func TestBucketCreate(t *testing.T) {
 				Name:                req.Name,
 				Region:              "sweden",
 				DefaultStorageClass: "standard",
-				Versioning:          "enabled",
+				Versioning:          strPtr("enabled"),
 				CreatedAt:           "2025-03-01T10:00:00Z",
 			})
 		default:
@@ -245,7 +245,7 @@ func TestBucketRead(t *testing.T) {
 				Name:                "test-bucket",
 				Region:              "sweden",
 				DefaultStorageClass: "standard",
-				Versioning:          "enabled",
+				Versioning:          strPtr("enabled"),
 				ObjectCount:         10,
 				TotalSize:           5000,
 				CreatedAt:           "2025-03-01T10:00:00Z",
@@ -300,7 +300,7 @@ func TestBucketUpdate(t *testing.T) {
 				Name:                "test-bucket",
 				Region:              "sweden",
 				DefaultStorageClass: "standard",
-				Versioning:          "suspended",
+				Versioning:          strPtr("suspended"),
 				CreatedAt:           "2025-03-01T10:00:00Z",
 			})
 		default:
@@ -327,8 +327,8 @@ func TestBucketUpdate(t *testing.T) {
 		t.Fatalf("parse failed: %v", err)
 	}
 
-	if b.Versioning != "suspended" {
-		t.Errorf("expected versioning suspended, got %s", b.Versioning)
+	if b.Versioning == nil || *b.Versioning != "suspended" {
+		t.Errorf("expected versioning suspended, got %v", b.Versioning)
 	}
 }
 
@@ -491,7 +491,7 @@ func TestBucketResourceCreate(t *testing.T) {
 		Name:                "my-bucket",
 		Region:              "sweden",
 		DefaultStorageClass: "standard",
-		Versioning:          "enabled",
+		Versioning:          strPtr("enabled"),
 		ObjectCount:         0,
 		TotalSize:           0,
 		CreatedAt:           "2025-06-01T12:00:00Z",
@@ -552,7 +552,7 @@ func TestBucketResourceRead(t *testing.T) {
 		Name:                "read-bucket",
 		Region:              "sweden",
 		DefaultStorageClass: "standard",
-		Versioning:          "enabled",
+		Versioning:          strPtr("enabled"),
 		ObjectCount:         42,
 		TotalSize:           1024000,
 		CreatedAt:           "2025-06-01T12:00:00Z",
@@ -651,7 +651,7 @@ func TestBucketResourceUpdate(t *testing.T) {
 		Name:                "upd-bucket",
 		Region:              "sweden",
 		DefaultStorageClass: "standard",
-		Versioning:          "suspended",
+		Versioning:          strPtr("suspended"),
 		ObjectCount:         10,
 		TotalSize:           5000,
 		CreatedAt:           "2025-06-01T12:00:00Z",

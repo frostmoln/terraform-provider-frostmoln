@@ -346,6 +346,24 @@ func TestReadRendersAnOmittedACLAsNull(t *testing.T) {
 	}
 }
 
+// TestReadRendersAnOmittedVersioningAsNull: storage omits `versioning` when
+// it could not read it. Null, never "" and never a guessed "disabled".
+func TestReadRendersAnOmittedVersioningAsNull(t *testing.T) {
+	srv := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"name":"no-ver-bucket","tenantId":"tenant-1","acl":"private","defaultStorageClass":"STANDARD","objectCount":0,"totalSize":0,"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z"}`))
+	})
+	defer srv.Close()
+	name := "no-ver-bucket"
+	res := readWith(t, srv.URL, &name)
+	if res.diagnostics.HasError() {
+		t.Fatalf("unexpected diagnostics: %s", res.text())
+	}
+	if !res.model.Versioning.IsNull() {
+		t.Errorf("an omitted versioning must render null, got %v", res.model.Versioning)
+	}
+}
+
 func TestRead404ErrorsThatTheBucketDoesNotExist(t *testing.T) {
 	var requests atomic.Int32
 	server := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {

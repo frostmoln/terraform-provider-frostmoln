@@ -415,3 +415,44 @@ func TestBucketModifyPlanWarnsWhenAPublicBucketDropsACL(t *testing.T) {
 		})
 	}
 }
+
+// TestBucketResourceReadOmittedVersioningKeepsPriorAndWarns is the refresh a
+// transient failure produces for versioning: state keeps "enabled" (no plan
+// to re-enable it, no "disabled" guess) and the refresh says it was not verified.
+func TestBucketResourceReadOmittedVersioningKeepsPriorAndWarns(t *testing.T) {
+	r := aclTestResource(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == aclBucketPath {
+			_, _ = w.Write([]byte(`{"name":"acl-bucket","region":"sweden","acl":"private","defaultStorageClass":"STANDARD","createdAt":"2026-10-01T00:00:00Z"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	state := tfsdk.State{Schema: bucketSchema(t), Raw: bucketVal(map[string]tftypes.Value{"versioning": str("enabled")})}
+	resp := &resource.ReadResponse{State: state}
+	r.Read(context.Background(), resource.ReadRequest{State: state}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected errors: %v", resp.Diagnostics)
+	}
+	var model BucketModel
+	resp.Diagnostics.Append(resp.State.Get(context.Background(), &model)...)
+	if model.Versioning.ValueString() != "enabled" {
+		t.Errorf("an omitted versioning must keep the prior enabled, got %v", model.Versioning)
+	}
+	warns := warningsOf(resp.Diagnostics)
+	if len(warns) != 1 || warns[0].Summary() != versioningUnverifiedSummary {
+		t.Fatalf("expected one %q warning, got %v", versioningUnverifiedSummary, resp.Diagnostics)
+	}
+	if !strings.Contains(warns[0].Detail(), `"enabled"`) {
+		t.Errorf("the warning must name the last known value, got %q", warns[0].Detail())
+	}
+}
+
+func TestBucketModelFromAPIVersioningOmittedResolvesUnknownToNull(t *testing.T) {
+	m := BucketModel{Versioning: types.StringUnknown(), Tags: types.MapNull(types.StringType), TagsAll: types.MapNull(types.StringType)}
+	if diags := m.fromAPI(context.Background(), &apiBucket{Name: "b"}); diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	if !m.Versioning.IsNull() {
+		t.Errorf("an omitted versioning with nothing to keep must be null, got %v", m.Versioning)
+	}
+}

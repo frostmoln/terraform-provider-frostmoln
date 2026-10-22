@@ -86,7 +86,7 @@ type apiBucket struct {
 	TenantID            string            `json:"tenantId"`
 	Region              string            `json:"region,omitempty"`
 	ACL                 *string           `json:"acl,omitempty"`
-	Versioning          string            `json:"versioning"`
+	Versioning          *string           `json:"versioning,omitempty"`
 	DefaultStorageClass string            `json:"defaultStorageClass"`
 	ObjectCount         int64             `json:"objectCount"`
 	TotalSize           int64             `json:"totalSize"`
@@ -152,7 +152,7 @@ func (d *bucketDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 			},
 			"versioning": schema.StringAttribute{
 				Description: "The versioning state of the bucket (disabled, enabled, or " +
-					"suspended).",
+					"suspended); null when the platform could not read it, never a guessed `disabled`.",
 				Computed: true,
 			},
 			"default_storage_class": schema.StringAttribute{
@@ -346,7 +346,8 @@ func (b *apiBucket) renderInto(ctx context.Context, state *bucketModel, diags *d
 	// failed: null ("could not be read"), never "" and never a guessed
 	// "private" that could hide a public bucket.
 	state.ACL = types.StringPointerValue(b.ACL)
-	state.Versioning = types.StringValue(b.Versioning)
+	// versioning is omitted the same way: null, never a guessed "disabled".
+	state.Versioning = types.StringPointerValue(b.Versioning)
 	state.DefaultStorageClass = types.StringValue(b.DefaultStorageClass)
 	state.ObjectCount = types.Int64Value(b.ObjectCount)
 	state.TotalSize = types.Int64Value(b.TotalSize)
