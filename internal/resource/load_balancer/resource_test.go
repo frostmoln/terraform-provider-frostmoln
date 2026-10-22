@@ -50,7 +50,6 @@ func TestLoadBalancerModelFromAPI(t *testing.T) {
 		VIPAddress:         "10.0.0.5",
 		VIPPortID:          "port-1",
 		Type:               "l7",
-		FlavorID:           "flv-1",
 		Status:             "active",
 		ProvisioningStatus: "ACTIVE",
 		OperatingStatus:    "ONLINE",
@@ -101,7 +100,6 @@ func TestLoadBalancerModelToCreateRequest(t *testing.T) {
 		SubnetID:    types.StringValue("subnet-9"),
 		Description: types.StringValue("My LB"),
 		Type:        types.StringValue("l4"),
-		FlavorID:    types.StringNull(),
 		VIPAddress:  types.StringNull(),
 		Tags:        tags,
 		TagsAll:     types.MapNull(types.StringType),
@@ -155,7 +153,6 @@ func planValue(t *testing.T, schemaResp resource.SchemaResponse, ctx context.Con
 		"public_ip_id":        tftypes.NewValue(tftypes.String, nil),
 		"public_ip_address":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"type":                tftypes.NewValue(tftypes.String, "l7"),
-		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"tags_all":            tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"vip_port_id":         tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
@@ -185,7 +182,6 @@ func schemeConfigValue(t *testing.T, schemaResp resource.SchemaResponse, ctx con
 		"public_ip_id":        tftypes.NewValue(tftypes.String, publicIPID),
 		"public_ip_address":   tftypes.NewValue(tftypes.String, nil),
 		"type":                tftypes.NewValue(tftypes.String, nil),
-		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"tags_all":            tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"vip_port_id":         tftypes.NewValue(tftypes.String, nil),
@@ -438,7 +434,6 @@ func TestLoadBalancerDeleteAsyncOperationPoll(t *testing.T) {
 		"public_ip_id":        tftypes.NewValue(tftypes.String, nil),
 		"public_ip_address":   tftypes.NewValue(tftypes.String, nil),
 		"type":                tftypes.NewValue(tftypes.String, "l7"),
-		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"tags_all":            tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"vip_port_id":         tftypes.NewValue(tftypes.String, "port-1"),
@@ -597,5 +592,16 @@ func TestLoadBalancerCreateRefusedByOperation(t *testing.T) {
 	}
 	if !createResp.State.Raw.IsNull() {
 		t.Error("expected null state after a refused create")
+	}
+}
+
+// TestFromAPINullsADetachedPublicIP: public_ip_id reflects absence on the wire
+// as null, because an address CAN be detached out-of-band and reporting that is
+// real drift detection.
+func TestFromAPINullsADetachedPublicIP(t *testing.T) {
+	m := &LoadBalancerModel{PublicIPID: types.StringValue("pip-1"), TagsAll: types.MapNull(types.StringType)}
+	m.fromAPI(context.Background(), &apiLoadBalancer{ID: "lb-1", Name: "web", Type: "l7"}, &diag.Diagnostics{})
+	if !m.PublicIPID.IsNull() {
+		t.Error("public_ip_id must reflect detachment; an address CAN go away out-of-band")
 	}
 }

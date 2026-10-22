@@ -62,7 +62,7 @@ resource "frostmoln_subnet" "test" {
   cidr   = "10.10.1.0/24"
 }
 
-# type and flavor_id are ForceNew. There is no in-place migration between the
+# type is ForceNew. There is no in-place migration between the
 # l7 and l4 types; switching them destroys and recreates.
 resource "frostmoln_load_balancer" "test" {
   name          = %q

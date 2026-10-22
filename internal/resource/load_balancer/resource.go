@@ -91,7 +91,9 @@ func (r *loadBalancerResource) Metadata(_ context.Context, req resource.Metadata
 
 func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Version: 1,
+		// Version 2 retired flavor_id (see state_upgrade.go). Version 1 renamed
+		// provider_type to type.
+		Version: 2,
 		Description: "Manages a load balancer in the Frostmoln Cloud Platform. Load balancer creation and " +
 			"deletion are asynchronous, so applies wait on the provisioning operation to complete.\n\n" +
 			schemadoc.GatewayOrderingNote("frostmoln_load_balancer") + "\n\n" +
@@ -193,13 +195,6 @@ func (r *loadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 					// "amphora" now gets a validation error naming the allowed
 					// values instead of a silent destroy plan.
 					stringvalidator.OneOf("l7", "l4"),
-				},
-			},
-			"flavor_id": schema.StringAttribute{
-				Description: "The flavor ID for the load balancer (type l7 only). Changing this forces a new resource.",
-				Optional:    true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"tags": schema.MapAttribute{

@@ -66,7 +66,6 @@ data "frostmoln_load_balancer" "edge_internal" {
 
 - `created_at` (String) The timestamp when the load balancer was created.
 - `description` (String) The description of the load balancer, null when it has none.
-- `flavor_id` (String) The flavor the load balancer runs on, null for the platform's default flavor.
 - `operating_status` (String) The data-plane operating status, verbatim from the wire.
 - `provisioning_status` (String) The control-plane provisioning status, verbatim from the wire.
 - `public_ip_address` (String) The public IP address attached to the load balancer, null when the load balancer is not publicly reachable.

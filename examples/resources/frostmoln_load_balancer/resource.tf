@@ -1,6 +1,6 @@
 # An l7 load balancer.
 #
-# type and flavor_id are ForceNew: there is no in-place migration between the
+# type is ForceNew: there is no in-place migration between the
 # l7 (default; terminates HTTP/HTTPS and TLS, can insert headers) and l4
 # (TCP/UDP/SCTP only, preserves the client source IP) types. Switching types
 # destroys and recreates the load balancer. Choose l7 unless you specifically

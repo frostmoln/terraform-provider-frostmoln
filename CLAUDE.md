@@ -276,6 +276,13 @@ coming managed Kubernetes) follow one HCL surface — keep new ones consistent:
   old key is dropped from state, the Default plans against null, and
   `RequiresReplace` fires. See `messaging_instance` (engine → type),
   `load_balancer` (provider_type → type) and `mysql_instance` (flavor → flavor_id).
+- **Removing an HCL attribute also bumps `Version`** with an upgrader that
+  drops it, and every older upgrader must drop it too (each upgrades straight
+  to the current schema). Prove it with a literal prior-version state row
+  through the real `UpgradeResourceState` + `PlanResourceChange` RPCs, at the
+  WIRE versions (idform adds one, so the last release's rows sit at own+1 and
+  reach idform's id-rewrite step, not your new upgrader): see `load_balancer`
+  own v1 → v2 (flavor_id retired), `upgrade_rpc_test.go`.
 - **Flavor is `flavor_id` everywhere.** All managed-service resources expose
   `flavor_id` (the value is a flavor id, e.g. `db.gp1.small`; the wire tag is
   `flavorId`). The db/web resources (mysql/postgres/apache/nginx) were

@@ -12,7 +12,7 @@ description: |-
   It changes ORDER only: nothing is created and nothing is released. It does not arm the gateway's own destroy either — without acknowledge_connectivity_loss the teardown stops at that refusal instead, and never reaches the ordering at all. And if a gateway was already adopted, nothing needs importing or rebuilding: it is in state already — add the ordering so it cannot recur, then give the gateway the address you meant with public_ip_id, which is applied in place.
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
-  Create-immutable — flavor_id, public_ip_id, scheme, subnet_id, type, vpc_id: the platform has no in-place migration for it — a change destroys and re-creates the load balancer.
+  Create-immutable — public_ip_id, scheme, subnet_id, type, vpc_id: the platform has no in-place migration for it — a change destroys and re-creates the load balancer.
   Observed, not enacted — public_ip_address: platform-allocated when scheme is public and the configuration names no public_ip_id. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
@@ -36,7 +36,7 @@ It changes ORDER only: nothing is created and nothing is released. It does not a
 
 **Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
 
-**Create-immutable** — `flavor_id`, `public_ip_id`, `scheme`, `subnet_id`, `type`, `vpc_id`: the platform has no in-place migration for it — a change destroys and re-creates the load balancer.
+**Create-immutable** — `public_ip_id`, `scheme`, `subnet_id`, `type`, `vpc_id`: the platform has no in-place migration for it — a change destroys and re-creates the load balancer.
 
 **Observed, not enacted** — `public_ip_address`: platform-allocated when `scheme` is `public` and the configuration names no `public_ip_id`. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
@@ -45,7 +45,7 @@ It changes ORDER only: nothing is created and nothing is released. It does not a
 ```terraform
 # An l7 load balancer.
 #
-# type and flavor_id are ForceNew: there is no in-place migration between the
+# type is ForceNew: there is no in-place migration between the
 # l7 (default; terminates HTTP/HTTPS and TLS, can insert headers) and l4
 # (TCP/UDP/SCTP only, preserves the client source IP) types. Switching types
 # destroys and recreates the load balancer. Choose l7 unless you specifically
@@ -107,7 +107,6 @@ resource "frostmoln_load_balancer" "public_web" {
 ### Optional
 
 - `description` (String) A description of the load balancer.
-- `flavor_id` (String) The flavor ID for the load balancer (type l7 only). Changing this forces a new resource.
 - `public_ip_id` (String) ID of a pre-allocated, tenant-owned, unassociated public IP to attach to the VIP. Required when scheme is public; must be omitted when scheme is internal. Changing this forces a new resource.
 
 Attaching it makes this load balancer depend on the VPC's gateway, which Terraform cannot see — see the ordering note on this resource above.

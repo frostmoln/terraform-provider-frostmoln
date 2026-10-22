@@ -45,13 +45,18 @@ func TestSchemaAttributes(t *testing.T) {
 	s := listingSchema(t)
 	for _, attr := range []string{
 		"id", "name", "vpc_id", "description", "subnet_id", "vip_address",
-		"vip_port_id", "scheme", "public_ip_id", "public_ip_address", "type", "flavor_id",
+		"vip_port_id", "scheme", "public_ip_id", "public_ip_address", "type",
 		"status", "provisioning_status", "operating_status", "created_at", "updated_at",
 		"tenant_id",
 	} {
 		if _, ok := s.Attributes[attr]; !ok {
 			t.Errorf("attribute %s missing from the schema", attr)
 		}
+	}
+	// flavor_id is retired: customers choose only the type, and the platform
+	// offers no load balancer flavors.
+	if _, ok := s.Attributes["flavor_id"]; ok {
+		t.Error("flavor_id is retired and must not be in the schema")
 	}
 	// One collection, one owner: the listeners and pools are the child
 	// resources' collections (frostmoln_lb_listener / lb_pool / lb_member /
@@ -176,7 +181,6 @@ func readWith(t *testing.T, serverURL string, id, name, vpcID *string) readResul
 		"public_ip_id":        tftypes.NewValue(tftypes.String, nil),
 		"public_ip_address":   tftypes.NewValue(tftypes.String, nil),
 		"type":                tftypes.NewValue(tftypes.String, nil),
-		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"status":              tftypes.NewValue(tftypes.String, nil),
 		"provisioning_status": tftypes.NewValue(tftypes.String, nil),
 		"operating_status":    tftypes.NewValue(tftypes.String, nil),
@@ -326,8 +330,10 @@ func TestReadByID(t *testing.T) {
 	if m.PublicIPAddress.ValueString() != "203.0.113.10" {
 		t.Errorf("public address is %s", m.PublicIPAddress.ValueString())
 	}
-	if m.Type.ValueString() != "l7" || m.FlavorID.ValueString() != "lb.gp1.small" {
-		t.Errorf("type/flavor are %s/%s", m.Type.ValueString(), m.FlavorID.ValueString())
+	// The fixture still carries a flavorId: a stray one on the wire is
+	// tolerated and ignored, since the attribute is retired.
+	if m.Type.ValueString() != "l7" {
+		t.Errorf("type is %s", m.Type.ValueString())
 	}
 	if m.Status.ValueString() != "active" ||
 		m.ProvisioningStatus.ValueString() != "ACTIVE" ||
@@ -692,7 +698,6 @@ func TestReadMapsAbsentOptionalsToNull(t *testing.T) {
 		"public_ip_id":      m.PublicIPID.IsNull,
 		"public_ip_address": m.PublicIPAddress.IsNull,
 		"type":              m.Type.IsNull,
-		"flavor_id":         m.FlavorID.IsNull,
 	} {
 		if !check() {
 			t.Errorf("%s must render as null when the wire omits it", name)

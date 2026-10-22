@@ -174,6 +174,12 @@ func TestUpgradeStatePreservesEveryOtherAttribute(t *testing.T) {
 	if _, ok := up.PriorSchema.Attributes["type"]; ok {
 		t.Error("v0 prior schema must not declare type")
 	}
+	if _, ok := up.PriorSchema.Attributes["flavor_id"]; !ok {
+		t.Error("v0 prior schema must declare flavor_id: v0 state holds it")
+	}
+	if _, ok := currentSchema.Schema.Attributes["flavor_id"]; ok {
+		t.Error("flavor_id is retired and must not be in the current schema")
+	}
 	if up.PriorSchema.Version != 0 {
 		t.Errorf("prior schema version = %d, want 0", up.PriorSchema.Version)
 	}
@@ -228,5 +234,98 @@ func TestPriorSchemaDecodesLiteralV0JSON(t *testing.T) {
 	}
 	if val.IsNull() {
 		t.Fatal("decoded v0 state is null")
+	}
+}
+
+// v1LoadBalancerJSON is a LITERAL version-1 state row, as a .tfstate holds it:
+// every current attribute plus the retired flavor_id, here set to the given
+// JSON value. Every real v1 row holds null -- no load balancer was ever created
+// with a flavor -- but the upgrade must drop the key whatever it holds.
+func v1LoadBalancerJSON(flavorID string) string {
+	return `{
+	  "id": "lb-1",
+	  "name": "web",
+	  "vpc_id": "vpc-1",
+	  "subnet_id": "subnet-1",
+	  "description": null,
+	  "vip_address": "10.0.0.5",
+	  "scheme": "internal",
+	  "public_ip_id": null,
+	  "public_ip_address": null,
+	  "type": "l7",
+	  "flavor_id": ` + flavorID + `,
+	  "tags": {"env": "prod"},
+	  "tags_all": {"env": "prod"},
+	  "vip_port_id": "port-1",
+	  "status": "active",
+	  "provisioning_status": "ACTIVE",
+	  "operating_status": "ONLINE",
+	  "created_at": "2026-01-01T00:00:00Z",
+	  "updated_at": null,
+	  "timeouts": null
+	}`
+}
+
+// TestUpgradeStateV1DropsFlavorIDAndKeepsEverythingElse runs a literal v1 row
+// through the v1 prior schema and upgrader, and compares the result with the
+// SAME row decoded straight against the current schema (which skips the
+// unknown flavor_id key). Equality means the upgrade removed flavor_id and
+// changed nothing else -- the precondition for a plan with no diff and no
+// replacement, which upgrade_rpc_test.go then checks through the real RPCs.
+func TestUpgradeStateV1DropsFlavorIDAndKeepsEverythingElse(t *testing.T) {
+	ctx := context.Background()
+	r := &loadBalancerResource{}
+	up, ok := r.UpgradeState(ctx)[1]
+	if !ok {
+		t.Fatal("no upgrader registered for schema version 1")
+	}
+	if up.PriorSchema == nil {
+		t.Fatal("v1 upgrader has no PriorSchema")
+	}
+	if _, ok := up.PriorSchema.Attributes["flavor_id"]; !ok {
+		t.Fatal("v1 prior schema must declare flavor_id")
+	}
+	if up.PriorSchema.Version != 1 {
+		t.Errorf("prior schema version = %d, want 1", up.PriorSchema.Version)
+	}
+
+	var current resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &current)
+	if current.Schema.Version != 2 {
+		t.Fatalf("current schema version = %d, want 2", current.Schema.Version)
+	}
+
+	opts := tfprotov6.UnmarshalOpts{ValueFromJSONOpts: tftypes.ValueFromJSONOpts{IgnoreUndefinedAttributes: true}}
+	for _, flavor := range []string{"null", `"lb-large"`} {
+		t.Run("flavor_id="+flavor, func(t *testing.T) {
+			raw := tfprotov6.RawState{JSON: []byte(v1LoadBalancerJSON(flavor))}
+			priorVal, err := raw.UnmarshalWithOpts(up.PriorSchema.Type().TerraformType(ctx), opts)
+			if err != nil {
+				t.Fatalf("a real v1 state does not decode against the v1 prior schema: %v", err)
+			}
+			want, err := raw.UnmarshalWithOpts(current.Schema.Type().TerraformType(ctx), opts)
+			if err != nil {
+				t.Fatalf("decoding the expectation: %v", err)
+			}
+
+			resp := &resource.UpgradeStateResponse{State: tfsdk.State{Schema: current.Schema}}
+			up.StateUpgrader(ctx, resource.UpgradeStateRequest{
+				State: &tfsdk.State{Raw: priorVal, Schema: *up.PriorSchema},
+			}, resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("upgrade produced diagnostics: %v", resp.Diagnostics)
+			}
+			if !resp.State.Raw.Equal(want) {
+				t.Errorf("upgraded state differs from the v1 row minus flavor_id:\n got  %v\n want %v", resp.State.Raw, want)
+			}
+
+			var out LoadBalancerModel
+			if diags := resp.State.Get(ctx, &out); diags.HasError() {
+				t.Fatalf("upgraded state does not fit the current model: %v", diags)
+			}
+			if out.Type.ValueString() != "l7" || out.ID.ValueString() != "lb-1" {
+				t.Errorf("type/id = %s/%s after the upgrade", out.Type.ValueString(), out.ID.ValueString())
+			}
+		})
 	}
 }

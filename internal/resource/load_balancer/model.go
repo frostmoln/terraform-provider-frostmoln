@@ -24,7 +24,6 @@ type LoadBalancerModel struct {
 	PublicIPID         types.String `tfsdk:"public_ip_id"`
 	PublicIPAddress    types.String `tfsdk:"public_ip_address"`
 	Type               types.String `tfsdk:"type"`
-	FlavorID           types.String `tfsdk:"flavor_id"`
 	Tags               types.Map    `tfsdk:"tags"`
 	TagsAll            types.Map    `tfsdk:"tags_all"`
 	VIPPortID          types.String `tfsdk:"vip_port_id"`
@@ -52,7 +51,6 @@ type apiLoadBalancer struct {
 	PublicIPID         string            `json:"publicIpId,omitempty"`
 	PublicIPAddress    string            `json:"publicIpAddress,omitempty"`
 	Type               string            `json:"type,omitempty"`
-	FlavorID           string            `json:"flavorId,omitempty"`
 	Status             string            `json:"status"`
 	ProvisioningStatus string            `json:"provisioningStatus"`
 	OperatingStatus    string            `json:"operatingStatus"`
@@ -78,7 +76,6 @@ type apiCreateLoadBalancerRequest struct {
 	Scheme      string            `json:"scheme,omitempty"`
 	PublicIPID  string            `json:"publicIpId,omitempty"`
 	Type        string            `json:"type,omitempty"`
-	FlavorID    string            `json:"flavorId,omitempty"`
 	Tags        map[string]string `json:"tags,omitempty"`
 }
 
@@ -120,9 +117,6 @@ func (m *LoadBalancerModel) toCreateRequest() apiCreateLoadBalancerRequest {
 	}
 	if !m.Type.IsNull() && !m.Type.IsUnknown() {
 		req.Type = m.Type.ValueString()
-	}
-	if !m.FlavorID.IsNull() && !m.FlavorID.IsUnknown() {
-		req.FlavorID = m.FlavorID.ValueString()
 	}
 	// Tags are set by Create, which merges the provider's default_tags into
 	// them (tftags.ForCreate).
@@ -211,26 +205,6 @@ func (m *LoadBalancerModel) fromAPI(ctx context.Context, lb *apiLoadBalancer, di
 		// freshly imported load balancer. The API always sends the field
 		// today; this is the branch that keeps that from being load-bearing.
 		m.Type = types.StringValue("l7")
-	}
-
-	// PRESERVE a configured flavor when the API omits it -- do NOT null it.
-	//
-	// flavor_id is Optional (not Computed) and forces replacement, so nulling a
-	// value the configuration sets makes the next plan propose a DESTROY AND
-	// RECREATE of a load balancer that has not changed: a new VIP and downtime,
-	// caused by a field missing from a response.
-	//
-	// Nulling is only correct when absence means the value really went away,
-	// which is why public_ip_id above DOES null: an address can be detached
-	// out-of-band, so reflecting that is genuine drift detection. A flavor
-	// cannot -- it is fixed at creation and immutable thereafter -- so an empty
-	// flavorId is an API gap, never a change. There is nothing to detect.
-	//
-	// The two arms this replaces were identical (`else if ... Null()` then
-	// `else`, both assigning null), so the distinction was intended and never
-	// finished.
-	if lb.FlavorID != "" {
-		m.FlavorID = types.StringValue(lb.FlavorID)
 	}
 
 	if lb.UpdatedAt != "" {

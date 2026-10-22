@@ -93,7 +93,7 @@ func TestLoadBalancerNewResource(t *testing.T) {
 
 func TestLoadBalancerSchema(t *testing.T) {
 	schemaResp := getSchema(t)
-	for _, attr := range []string{"id", "name", "vpc_id", "subnet_id", "description", "vip_address", "scheme", "public_ip_id", "public_ip_address", "type", "flavor_id", "tags", "vip_port_id", "status", "provisioning_status", "operating_status", "created_at", "updated_at"} {
+	for _, attr := range []string{"id", "name", "vpc_id", "subnet_id", "description", "vip_address", "scheme", "public_ip_id", "public_ip_address", "type", "tags", "vip_port_id", "status", "provisioning_status", "operating_status", "created_at", "updated_at"} {
 		if _, ok := schemaResp.Schema.Attributes[attr]; !ok {
 			t.Errorf("expected attribute %q", attr)
 		}
@@ -240,7 +240,6 @@ func lbStateValue(t *testing.T, schemaResp resource.SchemaResponse, ctx context.
 		"public_ip_id":        tftypes.NewValue(tftypes.String, nil),
 		"public_ip_address":   tftypes.NewValue(tftypes.String, nil),
 		"type":                tftypes.NewValue(tftypes.String, "l7"),
-		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"tags_all":            tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"vip_port_id":         tftypes.NewValue(tftypes.String, "port-1"),
@@ -369,7 +368,6 @@ func TestLoadBalancerUpdate(t *testing.T) {
 		"public_ip_id":        tftypes.NewValue(tftypes.String, nil),
 		"public_ip_address":   tftypes.NewValue(tftypes.String, nil),
 		"type":                tftypes.NewValue(tftypes.String, "l7"),
-		"flavor_id":           tftypes.NewValue(tftypes.String, nil),
 		"tags":                tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"tags_all":            tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		"vip_port_id":         tftypes.NewValue(tftypes.String, "port-1"),

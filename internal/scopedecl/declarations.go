@@ -311,7 +311,7 @@ var Declarations = map[string]Decl{
 	},
 	"frostmoln_load_balancer": {
 		ImmutableWhy: "the platform has no in-place migration for it — a change destroys and re-creates the load balancer",
-		Immutable:    fields("flavor_id", "public_ip_id", "scheme", "subnet_id", "type", "vpc_id"),
+		Immutable:    fields("public_ip_id", "scheme", "subnet_id", "type", "vpc_id"),
 		Observes: []Field{
 			tagsAllObserved,
 			{Path: "public_ip_address", Why: "platform-allocated when `scheme` is `public` and the configuration names no `public_ip_id`"},

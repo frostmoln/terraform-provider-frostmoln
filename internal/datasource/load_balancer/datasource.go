@@ -76,7 +76,6 @@ type loadBalancerModel struct {
 	PublicIPID         types.String `tfsdk:"public_ip_id"`
 	PublicIPAddress    types.String `tfsdk:"public_ip_address"`
 	Type               types.String `tfsdk:"type"`
-	FlavorID           types.String `tfsdk:"flavor_id"`
 	Status             types.String `tfsdk:"status"`
 	ProvisioningStatus types.String `tfsdk:"provisioning_status"`
 	OperatingStatus    types.String `tfsdk:"operating_status"`
@@ -102,7 +101,6 @@ type apiLoadBalancer struct {
 	PublicIPID         string `json:"publicIpId,omitempty"`
 	PublicIPAddress    string `json:"publicIpAddress,omitempty"`
 	Type               string `json:"type,omitempty"`
-	FlavorID           string `json:"flavorId,omitempty"`
 	Status             string `json:"status"`
 	ProvisioningStatus string `json:"provisioningStatus"`
 	OperatingStatus    string `json:"operatingStatus"`
@@ -202,11 +200,6 @@ func (d *loadBalancerDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 			"type": schema.StringAttribute{
 				Description: "The load-balancer type, `l4` or `l7` — null only if the platform " +
 					"serves a row without one (the server normalises an unset type to `l7`).",
-				Computed: true,
-			},
-			"flavor_id": schema.StringAttribute{
-				Description: "The flavor the load balancer runs on, null for the platform's " +
-					"default flavor.",
 				Computed: true,
 			},
 			"status": schema.StringAttribute{
@@ -531,7 +524,6 @@ func setInstanceState(state *loadBalancerModel, lb *apiLoadBalancer) {
 	state.PublicIPID = stringFromWire(lb.PublicIPID)
 	state.PublicIPAddress = stringFromWire(lb.PublicIPAddress)
 	state.Type = stringFromWire(lb.Type)
-	state.FlavorID = stringFromWire(lb.FlavorID)
 	state.Status = types.StringValue(lb.Status)
 	state.ProvisioningStatus = types.StringValue(lb.ProvisioningStatus)
 	state.OperatingStatus = types.StringValue(lb.OperatingStatus)

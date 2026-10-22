@@ -21,7 +21,7 @@ func tagTestLBModel() LoadBalancerModel {
 		ID: types.StringValue("lb-1"), Name: types.StringValue("lb"), VPCID: types.StringValue("vpc-1"),
 		SubnetID: types.StringValue("subnet-1"), Description: types.StringNull(), VIPAddress: types.StringValue("10.0.0.7"),
 		Scheme: types.StringValue("internal"), PublicIPID: types.StringNull(), PublicIPAddress: types.StringNull(),
-		Type: types.StringValue("l7"), FlavorID: types.StringNull(), Tags: types.MapNull(types.StringType),
+		Type: types.StringValue("l7"), Tags: types.MapNull(types.StringType),
 		VIPPortID: types.StringValue("port-1"), Status: types.StringValue("active"),
 		ProvisioningStatus: types.StringValue("ACTIVE"), OperatingStatus: types.StringValue("ONLINE"),
 		CreatedAt: types.StringValue("2025-01-01T00:00:00Z"), UpdatedAt: types.StringNull(),

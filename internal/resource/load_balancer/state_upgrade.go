@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 )
 
 // loadBalancerModelV0 is the schema-version-0 state model. It differs from the
@@ -33,8 +34,33 @@ type loadBalancerModelV0 struct {
 	UpdatedAt          types.String `tfsdk:"updated_at"`
 }
 
-// priorSchemaV0 derives the version-0 schema from the current one by renaming
-// the single attribute that changed.
+// priorSchemaV1 is the version-1 schema: the current one plus the retired
+// flavor_id. Only its Type() is ever read (see priorSchemaV0), so the attribute
+// is declared in its plainest form.
+//
+// flavor_id is declared even though the framework decodes stored state with
+// IgnoreUndefinedAttributes and would silently skip the key without it. Naming
+// it makes the drop a decision of this file rather than a side effect of a
+// decode option, and lets the upgrader see -- and the tests assert on -- the
+// value it is discarding.
+func (r *loadBalancerResource) priorSchemaV1(ctx context.Context) *schema.Schema {
+	var current resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &current)
+
+	attrs := make(map[string]schema.Attribute, len(current.Schema.Attributes)+1)
+	for name, attr := range current.Schema.Attributes {
+		attrs[name] = attr
+	}
+	attrs["flavor_id"] = schema.StringAttribute{Optional: true}
+
+	prior := current.Schema
+	prior.Attributes = attrs
+	prior.Version = 1
+	return &prior
+}
+
+// priorSchemaV0 derives the version-0 schema from the version-1 one by
+// renaming the single attribute that changed between them.
 //
 // What the framework actually uses this for is narrow: only PriorSchema.Type()
 // is read, to decode the stored JSON. Defaults, validators and plan modifiers
@@ -53,11 +79,10 @@ type loadBalancerModelV0 struct {
 // its input from this same schema, so it is tautological on types. A literal v0
 // JSON fixture is what would catch it; noted here rather than left implicit.
 func (r *loadBalancerResource) priorSchemaV0(ctx context.Context) *schema.Schema {
-	var current resource.SchemaResponse
-	r.Schema(ctx, resource.SchemaRequest{}, &current)
+	v1 := r.priorSchemaV1(ctx)
 
-	attrs := make(map[string]schema.Attribute, len(current.Schema.Attributes))
-	for name, attr := range current.Schema.Attributes {
+	attrs := make(map[string]schema.Attribute, len(v1.Attributes))
+	for name, attr := range v1.Attributes {
 		attrs[name] = attr
 	}
 	attrs["provider_type"] = attrs["type"]
@@ -65,7 +90,7 @@ func (r *loadBalancerResource) priorSchemaV0(ctx context.Context) *schema.Schema
 	// tags_all did not exist at v0 either; the upgrader derives it.
 	delete(attrs, "tags_all")
 
-	prior := current.Schema
+	prior := *v1
 	prior.Attributes = attrs
 	// v0 state PREDATES the customer-tunable timeouts block: none was ever
 	// written to disk, so the prior schema must not declare one — carrying it
@@ -77,8 +102,24 @@ func (r *loadBalancerResource) priorSchemaV0(ctx context.Context) *schema.Schema
 	return &prior
 }
 
-// UpgradeState migrates state written by a provider version that called the
-// attribute `provider_type` and stored the implementation driver name.
+// UpgradeState migrates state written by older provider versions. Each entry
+// upgrades straight to the CURRENT schema, as the framework requires:
+//
+//   - 0: `provider_type` held the implementation driver name (below).
+//   - 1: flavor_id existed. It is retired: customers choose only `type`, the
+//     platform offers no load balancer flavors, and no load balancer was ever
+//     created with one -- a configuration that set it failed at create -- so
+//     every real state holds flavor_id = null and dropping it loses nothing.
+//     A configuration still naming it fails with "Unsupported argument", which
+//     is the intended signal: there is no value it could carry.
+//
+// These are the resource's OWN versions. idform.Wrap adds one on the wire and
+// chains these upgraders under it, so the row the previous release wrote (own
+// v1, wire 2) reaches idform's id-rewrite step instead, which decodes against
+// the current schema ignoring undefined attributes and so drops flavor_id too.
+// upgrade_rpc_test.go drives all three wire versions through the real RPCs.
+//
+// Version 0, in detail:
 //
 // WHY THIS IS REQUIRED, not a nicety. `provider_type` forces replacement, and
 // it carried a schema default, so it is present in EVERY existing state
@@ -135,17 +176,18 @@ func (r *loadBalancerResource) UpgradeState(ctx context.Context) map[int64]resou
 				}
 
 				resp.Diagnostics.Append(resp.State.Set(ctx, LoadBalancerModel{
-					ID:                 old.ID,
-					Name:               old.Name,
-					VPCID:              old.VPCID,
-					SubnetID:           old.SubnetID,
-					Description:        old.Description,
-					VIPAddress:         old.VIPAddress,
-					Scheme:             old.Scheme,
-					PublicIPID:         old.PublicIPID,
-					PublicIPAddress:    old.PublicIPAddress,
-					Type:               types.StringValue(newType),
-					FlavorID:           old.FlavorID,
+					ID:              old.ID,
+					Name:            old.Name,
+					VPCID:           old.VPCID,
+					SubnetID:        old.SubnetID,
+					Description:     old.Description,
+					VIPAddress:      old.VIPAddress,
+					Scheme:          old.Scheme,
+					PublicIPID:      old.PublicIPID,
+					PublicIPAddress: old.PublicIPAddress,
+					Type:            types.StringValue(newType),
+					// flavor_id is dropped here too: v0 state skips the v1
+					// upgrader, so this is the only place its v0 copy goes.
 					Tags:               old.Tags,
 					TagsAll:            tagsAll,
 					VIPPortID:          old.VIPPortID,
@@ -157,5 +199,39 @@ func (r *loadBalancerResource) UpgradeState(ctx context.Context) map[int64]resou
 				})...)
 			},
 		},
+		1: {
+			PriorSchema:   r.priorSchemaV1(ctx),
+			StateUpgrader: dropRetiredFlavorID,
+		},
 	}
+}
+
+// dropRetiredFlavorID upgrades version-1 state by carrying every attribute and
+// block of the current schema through from the prior state and leaving
+// flavor_id behind. It is built against the CURRENT object type, so it can
+// neither keep the retired key nor lose a live one: anything current that the
+// stored state predates (tags_all, timeouts on the oldest v1 rows) arrives
+// null, exactly as the passthrough decode would have produced it.
+func dropRetiredFlavorID(ctx context.Context, req resource.UpgradeStateRequest, resp *resource.UpgradeStateResponse) {
+	var prior map[string]tftypes.Value
+	if err := req.State.Raw.As(&prior); err != nil {
+		resp.Diagnostics.AddError("Failed to read prior load balancer state for upgrade", err.Error())
+		return
+	}
+
+	objType, ok := resp.State.Schema.Type().TerraformType(ctx).(tftypes.Object)
+	if !ok {
+		resp.Diagnostics.AddError("Unexpected schema type", "the load balancer schema is not an object")
+		return
+	}
+
+	out := make(map[string]tftypes.Value, len(objType.AttributeTypes))
+	for name, attrType := range objType.AttributeTypes {
+		if v, present := prior[name]; present {
+			out[name] = v
+		} else {
+			out[name] = tftypes.NewValue(attrType, nil)
+		}
+	}
+	resp.State.Raw = tftypes.NewValue(objType, out)
 }
