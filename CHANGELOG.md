@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.98.0] - 2026-10-22
+
+### 🚀 Features
+
+- *(load_balancer)* [**breaking**] Retire flavor_id; customers choose only type (#731)
+
 ## [0.97.0] - 2026-10-21
 
 ### 🚀 Features
