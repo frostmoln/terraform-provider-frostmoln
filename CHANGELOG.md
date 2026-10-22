@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.98.1] - 2026-10-22
+
+### 🐛 Bug Fixes
+
+- *(bucket)* Keep the last known versioning when the platform could not read it (#733)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.14.6 (#734)
+
 ## [0.98.0] - 2026-10-22
 
 ### 🚀 Features
