@@ -36,7 +36,7 @@ jobs:
       - name: Install Terraform
         run: |
           # renovate: datasource=github-releases depName=hashicorp/terraform
-          TERRAFORM_VERSION=1.15.2
+          TERRAFORM_VERSION=1.16.6
           base="https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}"
           zip="terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
           curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "${base}/${zip}" -o "/tmp/${zip}"
