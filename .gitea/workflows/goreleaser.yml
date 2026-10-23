@@ -70,7 +70,7 @@ jobs:
           # Pinned digest of goreleaser_Linux_x86_64.tar.gz — not TOFU on the release's
           # own checksums.txt (this job holds the signing key + publish creds).
           # Renovate bumps the version; update this digest in the same PR.
-          GORELEASER_SHA256=eaae05b5eba07533bd0f06846b68c808399504784df00c62eb219541fc04e5e2
+          GORELEASER_SHA256=b8dee4728bca1aba0d71a832a17cd0a3799f75372878e7ffa36aef2343bce0bc
           base="https://github.com/goreleaser/goreleaser/releases/download/${GORELEASER_VERSION}"
           f=goreleaser_Linux_x86_64.tar.gz
           tmp="$(mktemp -d)"; cd "$tmp"
