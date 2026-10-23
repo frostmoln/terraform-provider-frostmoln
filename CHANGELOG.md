@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.98.5] - 2026-10-23
+
+### 🐛 Bug Fixes
+
+- *(ci)* Pin the goreleaser v2.19.0 digest (#753)
+
 ## [0.98.4] - 2026-10-23
 
 ### ⚙️ Miscellaneous Tasks
