@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -134,7 +136,7 @@ func TestVPCModelToUpdateRequest(t *testing.T) {
 		TagsAll:     types.MapNull(types.StringType),
 	}
 
-	req := model.toUpdateRequest(types.BoolNull())
+	req := model.toUpdateRequest()
 
 	if *req.Name != "updated-vpc" {
 		t.Errorf("expected Name updated-vpc, got %s", *req.Name)
@@ -1713,6 +1715,28 @@ func TestVPCResource_TFSDKImportState(t *testing.T) {
 
 	if model.ID.ValueString() != "vpc-import-1" {
 		t.Errorf("expected ID vpc-import-1, got %s", model.ID.ValueString())
+	}
+	// Retired, never read back: import records the truthful true so that
+	// `= true` or an unset attribute plans clean after the import.
+	if model.EnableDNSHostnames.IsNull() || !model.EnableDNSHostnames.ValueBool() {
+		t.Errorf("enable_dns_hostnames after import = %v, want true", model.EnableDNSHostnames)
+	}
+	for _, config := range []types.Bool{types.BoolNull(), types.BoolValue(true)} {
+		plan := config
+		if config.IsNull() {
+			plan = types.BoolUnknown() // the framework marks an unset Computed value unknown
+		}
+		pr := &planmodifier.BoolResponse{PlanValue: plan}
+		retiredHostnamesPlan{}.PlanModifyBool(ctx, planmodifier.BoolRequest{
+			Path:        path.Root("enable_dns_hostnames"),
+			State:       importResp.State,
+			StateValue:  model.EnableDNSHostnames,
+			ConfigValue: config,
+			PlanValue:   plan,
+		}, pr)
+		if !pr.PlanValue.Equal(model.EnableDNSHostnames) {
+			t.Errorf("config %v after import plans %v, want no diff against %v", config, pr.PlanValue, model.EnableDNSHostnames)
+		}
 	}
 }
 

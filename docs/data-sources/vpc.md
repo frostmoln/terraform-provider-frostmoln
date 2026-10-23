@@ -41,7 +41,7 @@ output "vpc_dns_domain" {
 - `description` (String) The description of the VPC.
 - `dns_domain` (String) The VPC's internal DNS domain, `<dns_label>.<tenant>.<org>.fm.internal.` (trailing dot). Instances resolve as `<hostname>.<dns_domain>` from inside the VPC only. Null until assigned.
 - `dns_label` (String) The VPC's DNS label (fixed at create; derived from the name unless set explicitly). Null only for a VPC the platform has not labelled yet.
-- `enable_dns_hostnames` (Boolean) Whether VMs in the VPC get internal DNS names. Managed instances are always named.
+- `enable_dns_hostnames` (Boolean, Deprecated) **Deprecated.** Always `true`: VM DNS names are always published, so every VM in the VPC has a `hostname` / `fqdn`.
 - `is_default` (Boolean) Whether this is the default VPC.
 - `status` (String) The status of the VPC.
 - `subnet_count` (Number) The number of subnets in the VPC.

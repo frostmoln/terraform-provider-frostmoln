@@ -39,7 +39,7 @@ output "instance_fqdn" {
 - `created_at` (String) The timestamp when the instance was created.
 - `flavor_id` (String) The flavor ID of the instance.
 - `flavor_name` (String) The flavor name of the instance.
-- `fqdn` (String) `hostname` followed by the VPC's DNS domain, without a trailing dot; resolves from inside the VPC only. Null when the VPC has no DNS domain or has `enable_dns_hostnames` off.
+- `fqdn` (String) `hostname` followed by the VPC's DNS domain, without a trailing dot; resolves from inside the VPC only. Null when the VPC has no DNS domain.
 - `hostname` (String) The instance's internal DNS name inside its VPC (its name as a DNS label, unique per VPC). Null when the instance holds no DNS name.
 - `image_id` (String) The image ID used to create the instance.
 - `image_name` (String) The image name used to create the instance.

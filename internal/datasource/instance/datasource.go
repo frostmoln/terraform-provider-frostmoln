@@ -143,8 +143,7 @@ func (d *instanceDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 			},
 			"fqdn": schema.StringAttribute{
 				Description: "`hostname` followed by the VPC's DNS domain, without a trailing dot; resolves " +
-					"from inside the VPC only. Null when the VPC has no DNS domain or has " +
-					"`enable_dns_hostnames` off.",
+					"from inside the VPC only. Null when the VPC has no DNS domain.",
 				Computed: true,
 			},
 			"status": schema.StringAttribute{

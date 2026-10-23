@@ -241,7 +241,7 @@ var Declarations = map[string]Decl{
 			{Path: "private_ip", Why: "platform-assigned from the subnet at create"},
 			{Path: "public_ip", Why: "platform-attached; an association made out of band is read back, not fought"},
 			{Path: "hostname", Why: "platform-derived from `name` (its DNS label, unique per VPC); moves with a rename"},
-			{Path: "fqdn", Why: "`hostname` plus the VPC's `dns_domain`; absent while the VPC has no domain or has `enable_dns_hostnames` off, so a change to the VPC changes it"},
+			{Path: "fqdn", Why: "`hostname` plus the VPC's `dns_domain`; absent while the VPC has no domain, so a change to the VPC changes it"},
 		},
 	},
 	"frostmoln_instance_port_security_groups": {

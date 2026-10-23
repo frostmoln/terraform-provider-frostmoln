@@ -27,10 +27,6 @@ resource "frostmoln_vpc" "example" {
   # name ("production-vpc"). Changing it later is refused, never a replacement.
   dns_label = "prod"
 
-  # Optional. VMs in the VPC get internal DNS names unless this is false
-  # (unset = the platform default, on). Updates in place.
-  # enable_dns_hostnames = false
-
   tags = {
     environment = "production"
   }

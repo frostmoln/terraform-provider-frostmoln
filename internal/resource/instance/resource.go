@@ -419,8 +419,7 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			},
 			// hostname / fqdn are plain Computed, like private_ip: no
 			// UseStateForUnknown, because both can move under an in-place
-			// update (a rename moves the hostname; the VPC's
-			// enable_dns_hostnames, changed in the same apply, moves the fqdn),
+			// update (a rename moves the hostname and with it the fqdn),
 			// and a pinned value would then fail the apply as an inconsistent
 			// result.
 			"hostname": schema.StringAttribute{
@@ -432,8 +431,7 @@ func (r *instanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			},
 			"fqdn": schema.StringAttribute{
 				Description: "`hostname` followed by the VPC's `dns_domain`, without a trailing dot. Resolves " +
-					"from inside the VPC only. Null when the VPC has no DNS domain yet or has " +
-					"`enable_dns_hostnames` off.",
+					"from inside the VPC only. Null when the VPC has no DNS domain yet.",
 				Computed: true,
 			},
 		},

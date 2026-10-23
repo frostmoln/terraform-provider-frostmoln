@@ -331,9 +331,13 @@ func TestTFSDK_ReadByID(t *testing.T) {
 	if state.DNSLabel.ValueString() != "prod-vpc" || state.DNSDomain.ValueString() != "prod-vpc.ck4to7.omkcmwdd.fm.internal." {
 		t.Errorf("dns_label/dns_domain = %v / %v", state.DNSLabel, state.DNSDomain)
 	}
-	// Not sent by this fixture: null, not a fabricated value.
-	if !state.EnableDNSHostnames.IsNull() {
-		t.Errorf("enable_dns_hostnames = %v, want null when the API omits it", state.EnableDNSHostnames)
+	// Retired switch: kept (references must still evaluate), deprecated, and
+	// always true although the API no longer sends it.
+	if !state.EnableDNSHostnames.ValueBool() || state.EnableDNSHostnames.IsNull() {
+		t.Errorf("enable_dns_hostnames = %v, want constant true", state.EnableDNSHostnames)
+	}
+	if attr, ok := schemaResp.Schema.Attributes["enable_dns_hostnames"].(schema.BoolAttribute); !ok || attr.DeprecationMessage == "" {
+		t.Error("enable_dns_hostnames must stay in the data source schema with a DeprecationMessage")
 	}
 }
 

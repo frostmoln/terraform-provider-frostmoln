@@ -204,15 +204,25 @@ func (r *vpcResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			// RETIRED (2026-10-23): VM DNS names are always published, so the
+			// switch is gone from the platform. The attribute is KEPT, deprecated
+			// and inert, because removing it turns every configuration that sets
+			// it into an "Unsupported argument" error at parse time. It is never
+			// sent and never read back: state holds the configured value, or null
+			// when unset (retiredHostnamesPlan), so neither setting it, keeping a
+			// value written by an older provider, nor deleting the line from HCL
+			// ever plans a change or an inconsistent result.
 			"enable_dns_hostnames": schema.BoolAttribute{
-				Description: "Whether VMs in the VPC get internal DNS names (`hostname` / `fqdn` on " +
-					"`frostmoln_instance`). Defaults to `true` (the platform's default) when unset; a " +
-					"configuration that never sets it never changes it. Controls VM names only — managed " +
-					"instances are always named. Updates in place; turning it off removes the VPC's VM records.",
+				Description: "**Deprecated and ignored.** VM DNS names are always published: every VM in " +
+					"the VPC gets its `hostname` / `fqdn` (see `frostmoln_instance`). The value is never " +
+					"sent to the platform; state keeps the configured value, or null when unset. Remove " +
+					"the attribute from your configuration — doing so plans no change.",
+				DeprecationMessage: "enable_dns_hostnames is retired and ignored: VM DNS names are always " +
+					"published. Remove the attribute from your configuration; doing so plans no change.",
 				Optional: true,
 				Computed: true,
 				PlanModifiers: []planmodifier.Bool{
-					boolplanmodifier.UseStateForUnknown(),
+					retiredHostnamesPlan{},
 				},
 			},
 		},
@@ -420,16 +430,6 @@ func (r *vpcResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		return
 	}
 
-	// Null when the configuration does not set it (and when no config is
-	// carried at all, as in a unit-level call).
-	configHostnames := types.BoolNull()
-	if !req.Config.Raw.IsNull() {
-		resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("enable_dns_hostnames"), &configHostnames)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-	}
-
 	// The apply-time half of the dns_label refusal (see dnsLabelChange):
 	// refused before anything is sent, so the VPC is left exactly as it was.
 	if summary, detail, refused := dnsLabelChange(plan.DNSLabel, state.DNSLabel); refused {
@@ -438,7 +438,7 @@ func (r *vpcResource) Update(ctx context.Context, req resource.UpdateRequest, re
 	}
 
 	defaults := r.client.DefaultTags()
-	updateReq := plan.toUpdateRequest(configHostnames)
+	updateReq := plan.toUpdateRequest()
 	current, err := r.currentTags(ctx, r.client.TenantPath(fmt.Sprintf("/vpcs/%s", state.ID.ValueString())))
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to Read Current Tags", tftags.CurrentTagsReadFailed+err.Error())
@@ -535,6 +535,11 @@ func (r *vpcResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 
 func (r *vpcResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	// The retired enable_dns_hostnames is never read from the API, so Read
+	// cannot fill it. Import records the truthful value (VM DNS names are
+	// always on), so a configuration that sets it to true or leaves it unset
+	// plans clean right after the import (retiredHostnamesPlan keeps state).
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("enable_dns_hostnames"), true)...)
 	tftags.MarkImported(ctx, resp.Private, &resp.Diagnostics)
 }
 
@@ -626,4 +631,32 @@ func (r *vpcResource) currentTags(ctx context.Context, memberPath string) (map[s
 		return nil, err
 	}
 	return obj.customerTags(), nil
+}
+
+// retiredHostnamesPlan plans the retired enable_dns_hostnames so it never
+// shows a diff or an unknown it does not have to: a configured value plans as
+// itself (the framework already did that); an unset one plans as the prior
+// state value (null on create). It replaces UseStateForUnknown, which on
+// create would leave an unset value "(known after apply)".
+type retiredHostnamesPlan struct{}
+
+func (retiredHostnamesPlan) Description(_ context.Context) string {
+	return "retired: keeps the configured value, else the value already in state (null on create)"
+}
+
+func (m retiredHostnamesPlan) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+
+func (retiredHostnamesPlan) PlanModifyBool(_ context.Context, req planmodifier.BoolRequest, resp *planmodifier.BoolResponse) {
+	// A known planned value comes from config; an unknown config value is an
+	// interpolation that resolves before apply.
+	if !req.PlanValue.IsUnknown() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	if req.State.Raw.IsNull() {
+		resp.PlanValue = types.BoolNull()
+		return
+	}
+	resp.PlanValue = req.StateValue
 }

@@ -12,7 +12,7 @@ description: |-
   Create-immutable — user_data_wo_version: it versions the first-boot user data — bumping it re-creates the instance so the new document runs.
   Create-immutable — zone: the platform pins the zone at create; there is no in-place migration between zones.
   Not enacted state — console_password_wo: write-only: sent, never stored or read back — the console_password_wo_version companion carries change detection. user_data_wo: write-only: sent, never stored or read back — the user_data_wo_version companion carries change detection.
-  Observed, not enacted — fqdn: hostname plus the VPC's dns_domain; absent while the VPC has no domain or has enable_dns_hostnames off, so a change to the VPC changes it. hostname: platform-derived from name (its DNS label, unique per VPC); moves with a rename. private_ip: platform-assigned from the subnet at create. public_ip: platform-attached; an association made out of band is read back, not fought. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
+  Observed, not enacted — fqdn: hostname plus the VPC's dns_domain; absent while the VPC has no domain, so a change to the VPC changes it. hostname: platform-derived from name (its DNS label, unique per VPC); moves with a rename. private_ip: platform-assigned from the subnet at create. public_ip: platform-attached; an association made out of band is read back, not fought. tags_all: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 ---
 
 # frostmoln_instance (Resource)
@@ -35,7 +35,7 @@ Manages a compute instance in the Frostmoln platform.
 
 **Not enacted state** — `console_password_wo`: write-only: sent, never stored or read back — the `console_password_wo_version` companion carries change detection. `user_data_wo`: write-only: sent, never stored or read back — the `user_data_wo_version` companion carries change detection.
 
-**Observed, not enacted** — `fqdn`: `hostname` plus the VPC's `dns_domain`; absent while the VPC has no domain or has `enable_dns_hostnames` off, so a change to the VPC changes it. `hostname`: platform-derived from `name` (its DNS label, unique per VPC); moves with a rename. `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-attached; an association made out of band is read back, not fought. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
+**Observed, not enacted** — `fqdn`: `hostname` plus the VPC's `dns_domain`; absent while the VPC has no domain, so a change to the VPC changes it. `hostname`: platform-derived from `name` (its DNS label, unique per VPC); moves with a rename. `private_ip`: platform-assigned from the subnet at create. `public_ip`: platform-attached; an association made out of band is read back, not fought. `tags_all`: keys set outside Terraform — in the portal, by the fm CLI, or stamped by the platform — appear only here and are kept on every apply, never removed.
 
 ## Example Usage
 
@@ -181,7 +181,7 @@ output "web_fqdn" {
 
 - `created_at` (String) The timestamp when the instance was created.
 - `flavor_name` (String) The name of the instance flavor.
-- `fqdn` (String) `hostname` followed by the VPC's `dns_domain`, without a trailing dot. Resolves from inside the VPC only. Null when the VPC has no DNS domain yet or has `enable_dns_hostnames` off.
+- `fqdn` (String) `hostname` followed by the VPC's `dns_domain`, without a trailing dot. Resolves from inside the VPC only. Null when the VPC has no DNS domain yet.
 - `hostname` (String) The instance's internal DNS name inside its VPC: the name as a DNS label (lowercased; other characters become `-`, at most 63). It is the guest's hostname and is unique per VPC. Null when the instance holds no DNS name (an instance created before names were unique that shares its name with an older one; renaming it to a free name gives it one).
 - `id` (String) The unique identifier of the instance.
 - `image_name` (String) The name of the image used to create the instance.

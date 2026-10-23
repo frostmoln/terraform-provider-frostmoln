@@ -38,9 +38,11 @@ type vpcModel struct {
 	Tags        types.Map    `tfsdk:"tags"`
 	CreatedAt   types.String `tfsdk:"created_at"`
 
-	DNSLabel           types.String `tfsdk:"dns_label"`
-	DNSDomain          types.String `tfsdk:"dns_domain"`
-	EnableDNSHostnames types.Bool   `tfsdk:"enable_dns_hostnames"`
+	DNSLabel  types.String `tfsdk:"dns_label"`
+	DNSDomain types.String `tfsdk:"dns_domain"`
+	// EnableDNSHostnames is RETIRED: kept so configurations that reference
+	// it still evaluate, always true (VM DNS names are always published).
+	EnableDNSHostnames types.Bool `tfsdk:"enable_dns_hostnames"`
 }
 
 // apiVPC is the API representation of a VPC.
@@ -55,9 +57,8 @@ type apiVPC struct {
 	Tags        map[string]string `json:"tags,omitempty"`
 	CreatedAt   string            `json:"createdAt"`
 
-	DNSLabel           string `json:"dnsLabel,omitempty"`
-	DNSDomain          string `json:"dnsDomain,omitempty"`
-	EnableDNSHostnames *bool  `json:"enableDnsHostnames,omitempty"`
+	DNSLabel  string `json:"dnsLabel,omitempty"`
+	DNSDomain string `json:"dnsDomain,omitempty"`
 }
 
 // apiVPCList is the API response for listing VPCs.
@@ -124,8 +125,11 @@ func (d *vpcDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, re
 				Computed: true,
 			},
 			"enable_dns_hostnames": schema.BoolAttribute{
-				Description: "Whether VMs in the VPC get internal DNS names. Managed instances are always named.",
-				Computed:    true,
+				Description: "**Deprecated.** Always `true`: VM DNS names are always published, so every VM " +
+					"in the VPC has a `hostname` / `fqdn`.",
+				DeprecationMessage: "enable_dns_hostnames is retired and always true: VM DNS names are always " +
+					"published. Remove references to it.",
+				Computed: true,
 			},
 		},
 	}
@@ -231,11 +235,9 @@ func (d *vpcDataSource) setVPCState(ctx context.Context, state *vpcModel, vpc *a
 	state.CreatedAt = types.StringValue(vpc.CreatedAt)
 	state.DNSLabel = nullIfEmpty(vpc.DNSLabel)
 	state.DNSDomain = nullIfEmpty(vpc.DNSDomain)
-	if vpc.EnableDNSHostnames != nil {
-		state.EnableDNSHostnames = types.BoolValue(*vpc.EnableDNSHostnames)
-	} else {
-		state.EnableDNSHostnames = types.BoolNull()
-	}
+	// Retired switch: constant true, never read from the API (network no
+	// longer returns it).
+	state.EnableDNSHostnames = types.BoolValue(true)
 
 	// Filter platform-internal metadata (the frostmoln_ namespace) so the computed
 	// tags attribute exposes only customer tags, matching the instance data source

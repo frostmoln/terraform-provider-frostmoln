@@ -12,7 +12,10 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -21,8 +24,9 @@ import (
 )
 
 // Internal DNS (MANAGED-OFFER-TLS-AND-INTERNAL-DNS-PLAN Phase 2, D10/D12):
-// dns_label (Optional+Computed, frozen, never replaces), dns_domain (Computed)
-// and enable_dns_hostnames (Optional+Computed, the platform defaults it on).
+// dns_label (Optional+Computed, frozen, never replaces) and dns_domain
+// (Computed). enable_dns_hostnames is RETIRED (VM DNS names are always on):
+// deprecated, never sent, never read back; state holds config or null.
 
 // vpcValue builds a full frostmoln_vpc object value of an EXISTING VPC with
 // the given overrides.
@@ -51,7 +55,7 @@ func vpcValue(t *testing.T, tfType tftypes.Type, overrides map[string]tftypes.Va
 	return tftypes.NewValue(tfType, vals)
 }
 
-func TestToCreateRequest_DNSFieldsOnlyWhenConfigured(t *testing.T) {
+func TestToCreateRequest_LabelOnlyWhenConfiguredAndNeverHostnames(t *testing.T) {
 	m := VPCModel{
 		Name: types.StringValue("prod"), CIDR: types.StringValue("10.0.0.0/16"),
 		DNSLabel: types.StringUnknown(), EnableDNSHostnames: types.BoolUnknown(),
@@ -63,54 +67,121 @@ func TestToCreateRequest_DNSFieldsOnlyWhenConfigured(t *testing.T) {
 		}
 	}
 
+	// A configured enable_dns_hostnames is retired and ignored: never sent.
 	m.DNSLabel = types.StringValue("prod-net")
 	m.EnableDNSHostnames = types.BoolValue(false)
-	req := m.toCreateRequest()
-	if req.DNSLabel != "prod-net" || req.EnableDNSHostnames == nil || *req.EnableDNSHostnames {
-		t.Errorf("configured DNS fields not sent: %+v", req)
+	body, _ = json.Marshal(m.toCreateRequest())
+	if !strings.Contains(string(body), `"dnsLabel":"prod-net"`) {
+		t.Errorf("configured dns_label not sent: %s", body)
+	}
+	if strings.Contains(string(body), "enableDnsHostnames") {
+		t.Errorf("the retired enable_dns_hostnames was sent: %s", body)
 	}
 }
 
-func TestToUpdateRequest_HostnamesFromConfigAndNeverALabel(t *testing.T) {
-	m := VPCModel{Name: types.StringValue("prod"), DNSLabel: types.StringValue("prod")}
+func TestToUpdateRequest_NeverHostnamesNorALabel(t *testing.T) {
+	m := VPCModel{Name: types.StringValue("prod"), DNSLabel: types.StringValue("prod"), EnableDNSHostnames: types.BoolValue(false)}
 
-	body, _ := json.Marshal(m.toUpdateRequest(types.BoolNull()))
+	body, _ := json.Marshal(m.toUpdateRequest())
 	if strings.Contains(string(body), "enableDnsHostnames") {
-		t.Errorf("an unconfigured enable_dns_hostnames was echoed: %s", body)
+		t.Errorf("the retired enable_dns_hostnames was sent: %s", body)
 	}
 	if strings.Contains(string(body), "dnsLabel") {
 		t.Errorf("an update must never carry dnsLabel: %s", body)
 	}
-
-	body, _ = json.Marshal(m.toUpdateRequest(types.BoolValue(false)))
-	if !strings.Contains(string(body), `"enableDnsHostnames":false`) {
-		t.Errorf("a configured false must be sent: %s", body)
-	}
 }
 
 func TestFromAPI_DNSFields(t *testing.T) {
-	enabled := false
+	// A platform that still sends enableDnsHostnames is ignored: the model
+	// keeps what the plan/state holds, so a configured value never reads back
+	// as something else (no "inconsistent result after apply").
+	var vpc apiVPC
+	if err := json.Unmarshal([]byte(`{"id":"vpc-1","dnsLabel":"malmo-vast",`+
+		`"dnsDomain":"malmo-vast.ck4to7.omkcmwdd.fm.internal.","enableDnsHostnames":true}`), &vpc); err != nil {
+		t.Fatal(err)
+	}
 	var m VPCModel
 	var diags diag.Diagnostics
 	m.Tags = types.MapNull(types.StringType)
-	m.fromAPI(context.Background(), &apiVPC{
-		ID: "vpc-1", DNSLabel: "malmo-vast", DNSDomain: "malmo-vast.ck4to7.omkcmwdd.fm.internal.",
-		EnableDNSHostnames: &enabled,
-	}, &diags)
-	if m.DNSLabel.ValueString() != "malmo-vast" || m.DNSDomain.ValueString() != "malmo-vast.ck4to7.omkcmwdd.fm.internal." ||
-		m.EnableDNSHostnames.ValueBool() {
-		t.Errorf("got %v / %v / %v", m.DNSLabel, m.DNSDomain, m.EnableDNSHostnames)
+	m.EnableDNSHostnames = types.BoolValue(false)
+	m.fromAPI(context.Background(), &vpc, &diags)
+	if m.DNSLabel.ValueString() != "malmo-vast" || m.DNSDomain.ValueString() != "malmo-vast.ck4to7.omkcmwdd.fm.internal." {
+		t.Errorf("got %v / %v", m.DNSLabel, m.DNSDomain)
+	}
+	if m.EnableDNSHostnames.IsNull() || m.EnableDNSHostnames.ValueBool() {
+		t.Errorf("enable_dns_hostnames must keep the planned false, got %v", m.EnableDNSHostnames)
+	}
+
+	// Null stays null whatever the platform says.
+	m.EnableDNSHostnames = types.BoolNull()
+	m.fromAPI(context.Background(), &vpc, &diags)
+	if !m.EnableDNSHostnames.IsNull() {
+		t.Errorf("an unset enable_dns_hostnames must stay null, got %v", m.EnableDNSHostnames)
 	}
 
 	// Unassigned: null, never "" (a pinned "" would fail the apply that sees
-	// the assignment as an inconsistent result).
+	// the assignment as an inconsistent result). A response without the
+	// retired field resolves an unknown to null: known after apply.
 	m.EnableDNSHostnames = types.BoolUnknown()
 	m.fromAPI(context.Background(), &apiVPC{ID: "vpc-1"}, &diags)
 	if !m.DNSLabel.IsNull() || !m.DNSDomain.IsNull() {
 		t.Errorf("unassigned label/domain must be null, got %v / %v", m.DNSLabel, m.DNSDomain)
 	}
-	if m.EnableDNSHostnames.IsUnknown() {
-		t.Error("enable_dns_hostnames must be known after a read")
+	if !m.EnableDNSHostnames.IsNull() {
+		t.Errorf("an unknown enable_dns_hostnames must resolve to null, got %v", m.EnableDNSHostnames)
+	}
+}
+
+// The retired attribute plans as its config value, else as the prior state
+// value (null on create): never "(known after apply)" and never a diff from
+// keeping, setting or deleting the line.
+func TestRetiredHostnamesPlan(t *testing.T) {
+	schemaResp := getVPCSchema(t)
+	ctx := context.Background()
+	tfType := schemaResp.Schema.Type().TerraformType(ctx)
+	existing := tfsdk.State{Schema: schemaResp.Schema, Raw: vpcValue(t, tfType, nil)}
+	creating := tfsdk.State{Schema: schemaResp.Schema, Raw: tftypes.NewValue(tfType, nil)}
+
+	cases := []struct {
+		name         string
+		state        tfsdk.State
+		stateValue   types.Bool
+		config, plan types.Bool
+		want         types.Bool
+	}{
+		{"create, unset", creating, types.BoolNull(), types.BoolNull(), types.BoolUnknown(), types.BoolNull()},
+		{"create, set", creating, types.BoolNull(), types.BoolValue(false), types.BoolValue(false), types.BoolValue(false)},
+		{"create, interpolation", creating, types.BoolNull(), types.BoolUnknown(), types.BoolUnknown(), types.BoolUnknown()},
+		{"update, unset, older provider wrote true", existing, types.BoolValue(true), types.BoolNull(), types.BoolUnknown(), types.BoolValue(true)},
+		{"update, line deleted, state false", existing, types.BoolValue(false), types.BoolNull(), types.BoolUnknown(), types.BoolValue(false)},
+		{"update, unset, state null", existing, types.BoolNull(), types.BoolNull(), types.BoolUnknown(), types.BoolNull()},
+		{"update, interpolation", existing, types.BoolValue(true), types.BoolUnknown(), types.BoolUnknown(), types.BoolUnknown()},
+		{"update, set", existing, types.BoolValue(true), types.BoolValue(false), types.BoolValue(false), types.BoolValue(false)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := &planmodifier.BoolResponse{PlanValue: tc.plan}
+			retiredHostnamesPlan{}.PlanModifyBool(ctx, planmodifier.BoolRequest{
+				Path:        path.Root("enable_dns_hostnames"),
+				State:       tc.state,
+				StateValue:  tc.stateValue,
+				ConfigValue: tc.config,
+				PlanValue:   tc.plan,
+			}, resp)
+			if !resp.PlanValue.Equal(tc.want) {
+				t.Errorf("planned %v, want %v", resp.PlanValue, tc.want)
+			}
+		})
+	}
+}
+
+func TestSchema_EnableDNSHostnamesIsDeprecatedAndOptional(t *testing.T) {
+	attr, ok := getVPCSchema(t).Schema.Attributes["enable_dns_hostnames"].(schema.BoolAttribute)
+	if !ok {
+		t.Fatal("enable_dns_hostnames must stay in the schema (removing it breaks configs that set it)")
+	}
+	if attr.DeprecationMessage == "" || !attr.Optional || !attr.Computed || attr.Required {
+		t.Errorf("want Optional+Computed with a DeprecationMessage, got %+v", attr)
 	}
 }
 
@@ -165,9 +236,9 @@ func TestModifyPlan_DNSLabelChangeWarnsAndNeverReplaces(t *testing.T) {
 	}
 }
 
-// Update refuses a changed dns_label BEFORE it sends anything, and an update
-// that leaves enable_dns_hostnames unset never echoes it.
-func TestUpdate_RefusesALabelChangeAndSendsHostnamesOnlyWhenConfigured(t *testing.T) {
+// Update refuses a changed dns_label BEFORE it sends anything, and never sends
+// the retired enable_dns_hostnames, set or not.
+func TestUpdate_RefusesALabelChangeAndNeverSendsHostnames(t *testing.T) {
 	var mu sync.Mutex
 	var puts []map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -182,12 +253,11 @@ func TestUpdate_RefusesALabelChangeAndSendsHostnamesOnlyWhenConfigured(t *testin
 				puts = append(puts, body)
 				mu.Unlock()
 			}
-			enabled := false
-			_ = json.NewEncoder(w).Encode(apiVPC{
-				ID: "vpc-1", Name: "prod", CIDR: "10.0.0.0/16", Status: "active",
-				CreatedAt: "2026-10-20T00:00:00Z", DNSLabel: "prod",
-				DNSDomain: "prod.ck4to7.omkcmwdd.fm.internal.", EnableDNSHostnames: &enabled,
-			})
+			// A platform that still echoes the retired field, with a value
+			// that disagrees with every plan below: it must be ignored.
+			_, _ = w.Write([]byte(`{"id":"vpc-1","name":"prod","cidrBlock":"10.0.0.0/16","status":"active",` +
+				`"createdAt":"2026-10-20T00:00:00Z","dnsLabel":"prod",` +
+				`"dnsDomain":"prod.ck4to7.omkcmwdd.fm.internal.","enableDnsHostnames":true}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -222,7 +292,7 @@ func TestUpdate_RefusesALabelChangeAndSendsHostnamesOnlyWhenConfigured(t *testin
 	}
 
 	// Rename with enable_dns_hostnames unset in config: the plan carries the
-	// state's value, but nothing is echoed for it.
+	// state's value, and nothing is sent for it.
 	renamed := vpcValue(t, tfType, map[string]tftypes.Value{"name": tftypes.NewValue(tftypes.String, "prod2")})
 	renamedConfig := vpcValue(t, tfType, map[string]tftypes.Value{
 		"name":                 tftypes.NewValue(tftypes.String, "prod2"),
@@ -239,19 +309,21 @@ func TestUpdate_RefusesALabelChangeAndSendsHostnamesOnlyWhenConfigured(t *testin
 		t.Errorf("an update sent dnsLabel: %v", puts[len(puts)-1])
 	}
 
-	// Configured false: sent, and the read-back lands in state.
+	// Configured false: NOT sent, and state keeps the configured false (the
+	// platform's echoed true is ignored), so the apply is consistent.
 	off := vpcValue(t, tfType, map[string]tftypes.Value{"enable_dns_hostnames": tftypes.NewValue(tftypes.Bool, false)})
 	resp = update(off, off)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("toggle: %v", resp.Diagnostics)
 	}
-	if puts[len(puts)-1]["enableDnsHostnames"] != false {
-		t.Errorf("enableDnsHostnames = %v, want false", puts[len(puts)-1]["enableDnsHostnames"])
+	if _, sent := puts[len(puts)-1]["enableDnsHostnames"]; sent {
+		t.Errorf("the retired enable_dns_hostnames was sent: %v", puts[len(puts)-1])
 	}
 	var model VPCModel
 	resp.State.Get(ctx, &model)
-	if model.EnableDNSHostnames.ValueBool() || model.DNSDomain.ValueString() != "prod.ck4to7.omkcmwdd.fm.internal." {
-		t.Errorf("state after toggle: %v / %v", model.EnableDNSHostnames, model.DNSDomain)
+	if model.EnableDNSHostnames.IsNull() || model.EnableDNSHostnames.ValueBool() ||
+		model.DNSDomain.ValueString() != "prod.ck4to7.omkcmwdd.fm.internal." {
+		t.Errorf("state after update: %v / %v", model.EnableDNSHostnames, model.DNSDomain)
 	}
 }
 

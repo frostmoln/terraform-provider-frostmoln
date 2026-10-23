@@ -72,10 +72,6 @@ resource "frostmoln_vpc" "example" {
   # name ("production-vpc"). Changing it later is refused, never a replacement.
   dns_label = "prod"
 
-  # Optional. VMs in the VPC get internal DNS names unless this is false
-  # (unset = the platform default, on). Updates in place.
-  # enable_dns_hostnames = false
-
   tags = {
     environment = "production"
   }
@@ -120,7 +116,7 @@ output "production_vpc_dns_domain" {
 - `dns_label` (String) The VPC's DNS label, the first part of its internal DNS domain. Unset, the platform derives it from `name` (diacritics transliterated, lowercased, other characters become `-`, at most 63; `vpc` if nothing is left) and a derived label never fails: one already used in the tenant gets `-2`, `-3`. Set explicitly, it must be an RFC 1123 label (a-z, 0-9, `-`, at most 63) free in the tenant, or the create fails with `VPCDNSLabelTaken`.
 
     **Fixed at create.** Renaming the VPC never changes it, and a change to this attribute is REFUSED (a warning at plan, an error at apply, before anything is sent) rather than planned as a replacement: replacing a VPC destroys everything in it. To use another label, create a new VPC.
-- `enable_dns_hostnames` (Boolean) Whether VMs in the VPC get internal DNS names (`hostname` / `fqdn` on `frostmoln_instance`). Defaults to `true` (the platform's default) when unset; a configuration that never sets it never changes it. Controls VM names only — managed instances are always named. Updates in place; turning it off removes the VPC's VM records.
+- `enable_dns_hostnames` (Boolean, Deprecated) **Deprecated and ignored.** VM DNS names are always published: every VM in the VPC gets its `hostname` / `fqdn` (see `frostmoln_instance`). The value is never sent to the platform; state keeps the configured value, or null when unset. Remove the attribute from your configuration — doing so plans no change.
 - `tags` (Map of String) Tags for the VPC. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
