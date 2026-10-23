@@ -65,12 +65,13 @@ jobs:
         run: |
           set -euo pipefail
           go version
-          # renovate: datasource=github-releases depName=goreleaser/goreleaser
-          GORELEASER_VERSION=v2.19.0
           # Pinned digest of goreleaser_Linux_x86_64.tar.gz — not TOFU on the release's
           # own checksums.txt (this job holds the signing key + publish creds).
-          # Renovate bumps the version; update this digest in the same PR.
-          GORELEASER_SHA256=b8dee4728bca1aba0d71a832a17cd0a3799f75372878e7ffa36aef2343bce0bc
+          # github-release-attachments makes Renovate move the digest WITH the version
+          # (renovate-config's release-attachment manager); keep the two lines adjacent.
+          # renovate: datasource=github-release-attachments depName=goreleaser/goreleaser
+          GORELEASER_VERSION=v2.19.0
+          GORELEASER_SHA256=ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b
           base="https://github.com/goreleaser/goreleaser/releases/download/${GORELEASER_VERSION}"
           f=goreleaser_Linux_x86_64.tar.gz
           tmp="$(mktemp -d)"; cd "$tmp"
