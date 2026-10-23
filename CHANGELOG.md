@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.98.2] - 2026-10-23
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.33 (#737)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.34 (#741)
+- *(vpc)* Retire enable_dns_hostnames (#747)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.14.7 (#739)
+- *(deps)* Update dependency goreleaser/goreleaser to v2.18.3 (#743)
+- *(deps)* Update dependency hashicorp/terraform to v1.16.6 (#744)
+
 ## [0.98.1] - 2026-10-22
 
 ### 🐛 Bug Fixes
