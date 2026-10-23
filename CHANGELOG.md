@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.98.4] - 2026-10-23
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency goreleaser/goreleaser to v2.19.0 (#751)
+
 ## [0.98.3] - 2026-10-23
 
 ### 🐛 Bug Fixes
