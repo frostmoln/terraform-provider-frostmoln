@@ -58,8 +58,8 @@ terraform-provider-frostmoln/
 ├── templates/index.md.tmpl
 ├── tools/tools.go
 ├── .gitea/workflows/
-│   ├── ci.yml
-│   └── pre-commit.yml
+│   ├── ci.yml, pre-commit.yml, docs.yml (docs drift), ai-review.yml
+│   └── acceptance.yml (nightly/dispatch), release.yml, goreleaser.yml
 ├── Makefile
 └── go.mod
 ```
@@ -341,7 +341,7 @@ Rules for new code:
 
 ### API Client
 
-The client in `internal/client/client.go` is self-contained (no dependency on fm CLI or servicekit). Auth is via `X-API-Key` header. Tenant ID is resolved once via `GET /v1/me` and cached.
+The client in `internal/client/client.go` has no dependency on fm CLI or servicekit (it does import `go.frostmoln.internal/oidc`). Auth is `Authorization: Bearer` for a CLI-session credential, else the `X-API-Key` header. Tenant ID is resolved once via `GET /v1/me` and cached.
 
 ### Async Resources
 

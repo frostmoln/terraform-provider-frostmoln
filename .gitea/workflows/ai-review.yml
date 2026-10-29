@@ -1,0 +1,26 @@
+name: AI review
+
+# Pilot of the shared AI PR review (Ambix 01a181b4). Posts inline findings on
+# every human/Claude PR; automated PRs (Renovate, release) report success
+# without a review. NOT a required check during the pilot. What the reviewer
+# should care about here lives in REVIEW.md.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+# Here, not in the called workflow: concurrency inside a called workflow does
+# not serialise on Gitea 1.27.1.
+concurrency:
+  group: ai-review-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ai-review:
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: frostmoln/workflows/.gitea/workflows/ai-review.yml@v0.15.0
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
