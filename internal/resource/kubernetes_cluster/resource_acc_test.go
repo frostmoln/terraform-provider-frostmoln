@@ -38,6 +38,56 @@ import (
 // cluster + nodes + VPC. Never opt the CI acceptance run in without also
 // raising the workflow's shared 30m go-test timeout.
 
+// TestAccKubernetesCluster_maintenanceWindow is the live half of
+// TestAccMaintenanceWindowPlans: the server's default does not diff, a set window
+// changes in place, and removing it from the configuration plans nothing. The key needs
+// kubernetes:kubernetes-clusters:update-maintenance-window.
+func TestAccKubernetesCluster_maintenanceWindow(t *testing.T) {
+	name := acctest.RandomName("k8s")
+	vpcName := acctest.RandomName("vpc")
+	subnetName := acctest.RandomName("subnet")
+	resourceName := "frostmoln_kubernetes_cluster.test"
+	config := func(window string) string {
+		return strings.Replace(testAccKubernetesClusterConfig(vpcName, subnetName, name, 1, ""),
+			"  initial_node_pool = {", window+"\n\n  initial_node_pool = {", 1)
+	}
+	const set = `  maintenance_window = {
+    days           = ["sat", "sun"]
+    start_time     = "03:00"
+    duration_hours = 6
+    time_zone      = "Europe/Stockholm"
+  }`
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.TestAccPreCheckKubernetes(t) },
+		ProtoV6ProviderFactories: acctest.TestAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckKubernetesDestroyed,
+		Steps: []resource.TestStep{
+			{
+				Config: config(""),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, "maintenance_window.start_time"),
+					resource.TestCheckResourceAttrSet(resourceName, "maintenance_window.time_zone"),
+				),
+			},
+			{
+				Config: config(set),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(resourceName, plancheck.ResourceActionUpdate)},
+				},
+				Check: resource.TestCheckResourceAttr(resourceName, "maintenance_window.start_time", "03:00"),
+			},
+			{
+				Config: config(""),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(resourceName, plancheck.ResourceActionNoop)},
+				},
+				Check: resource.TestCheckResourceAttr(resourceName, "maintenance_window.start_time", "03:00"),
+			},
+		},
+	})
+}
+
 // TestAccKubernetesCluster_full exercises the whole plan-Phase-5 flow on one
 // cluster: create (catalog data sources, no hardcoded version/flavor/tier) →
 // implicit empty re-plan → rename + scale the initial pool + add an extra

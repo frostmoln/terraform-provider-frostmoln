@@ -12,6 +12,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
@@ -296,7 +297,7 @@ func TestModifyPlanWarnsOnReplaceWithoutRetainedChoice(t *testing.T) {
 			tc.mutate(&pm)
 			plan := buildPlan(t, pm)
 			resp := &resource.ModifyPlanResponse{Plan: plan}
-			mp.ModifyPlan(ctx, resource.ModifyPlanRequest{Plan: plan, State: state}, resp)
+			mp.ModifyPlan(ctx, resource.ModifyPlanRequest{Plan: plan, State: state, Config: tfsdk.Config(plan)}, resp)
 			warned := false
 			for _, d := range resp.Diagnostics.Warnings() {
 				if strings.Contains(d.Summary(), "retained_volumes_on_destroy") {

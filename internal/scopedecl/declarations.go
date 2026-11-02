@@ -261,7 +261,15 @@ var Declarations = map[string]Decl{
 			{Path: "vpc_id"},
 		},
 		EnactsExcept: []Field{
+			{Path: "maintenance_window", Why: "stored and read back, but the platform does not schedule by it while the data source's `maintenance.enforced` is false"},
 			{Path: "addon_versions", Why: "a refresh reads a pin back only for an addon this attribute already names, and only when the platform can report pins (not while the cluster is still being created, or during a platform deployment or outage, when the recorded value is kept); a pin set outside Terraform for any other addon is neither read into state nor sent"},
+		},
+		Defaults: []PlatformDefault{
+			{
+				Name:   "maintenance window assigned at create when `maintenance_window` is unset",
+				Policy: KeepWithDocs,
+				Why:    "Every cluster has exactly one, so removing the attribute keeps the stored window; it only changes when you set another",
+			},
 		},
 		Observes: []Field{
 			{Path: "endpoint", Why: "platform-issued once the apiserver is up"},

@@ -282,7 +282,7 @@ func (r *kubernetesClusterResource) onlyDestroyChoiceChanged(ctx context.Context
 	if plan.RetainedVolumesOnDestroy.Equal(state.RetainedVolumesOnDestroy) {
 		return false
 	}
-	if !plan.Name.Equal(state.Name) {
+	if !plan.Name.Equal(state.Name) || maintenanceWindowToSend(plan.MaintenanceWindow, state.MaintenanceWindow) != nil {
 		return false
 	}
 	if !plan.Addons.IsUnknown() && !plan.Addons.IsNull() && !plan.Addons.Equal(state.Addons) {

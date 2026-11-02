@@ -55,6 +55,10 @@ type KubernetesClusterModel struct {
 	Tags    types.Map `tfsdk:"tags"`
 	TagsAll types.Map `tfsdk:"tags_all"`
 
+	// MaintenanceWindow is a types.Object, not a pointer like InitialNodePool, because
+	// a plan for a cluster that leaves it to the server holds it unknown.
+	MaintenanceWindow types.Object `tfsdk:"maintenance_window"`
+
 	// RetainedVolumesOnDestroy is CONFIGURATION ONLY ("keep" | "delete" | null): what
 	// the destroy does to the cluster's volumes with PV reclaimPolicy Retain or Unknown
 	// (K8S-PVC-VOLUME-LIFECYCLE-PLAN §2.3). Never sent or read back by the API outside
@@ -129,9 +133,11 @@ type apiKubernetesCluster struct {
 	Addons []string `json:"addons"`
 	// Tags are the cluster's customer resource tags; the backend always sends an
 	// object ({} when untagged).
-	Tags      map[string]string `json:"tags"`
-	CreatedAt string            `json:"createdAt"`
-	UpdatedAt string            `json:"updatedAt,omitempty"`
+	Tags map[string]string `json:"tags"`
+	// MaintenanceWindow is nil only on a server from before the field.
+	MaintenanceWindow *apiMaintenanceWindow `json:"maintenanceWindow,omitempty"`
+	CreatedAt         string                `json:"createdAt"`
+	UpdatedAt         string                `json:"updatedAt,omitempty"`
 	// Notices ride a successful PUT .../addons. `pinnedVersions` is deliberately NOT
 	// decoded: it is the platform's full pin map, and a field that does not exist
 	// cannot be persisted or replayed into the next request's `versions` delta.
@@ -209,6 +215,9 @@ type apiCreateClusterRequest struct {
 	// initial pool — whose own `tags` field it refuses, so apiCreateNodePoolRequest
 	// has none.
 	Tags map[string]string `json:"tags,omitempty"`
+	// MaintenanceWindow is omitted unless the configuration sets it: a caller without
+	// the operation is refused for the field's presence.
+	MaintenanceWindow *apiMaintenanceWindow `json:"maintenanceWindow,omitempty"`
 }
 
 // apiUpdateClusterRequest is PUT .../kubernetes-clusters/{id}, which has PATCH
@@ -220,6 +229,8 @@ type apiCreateClusterRequest struct {
 type apiUpdateClusterRequest struct {
 	Name *string            `json:"name,omitempty"`
 	Tags *map[string]string `json:"tags,omitempty"`
+	// MaintenanceWindow is set only by maintenanceWindowToSend.
+	MaintenanceWindow *apiMaintenanceWindow `json:"maintenanceWindow,omitempty"`
 }
 
 // apiScaleNodePoolRequest is the API request to scale a node pool.
@@ -272,6 +283,7 @@ func (m *KubernetesClusterModel) toCreateRequest() apiCreateClusterRequest {
 	}
 	// Every configured pin: create has no prior state, so the whole map is the delta.
 	req.Versions = changedPins(types.MapNull(types.StringType), m.AddonVersions)
+	req.MaintenanceWindow = maintenanceWindowToAPI(m.MaintenanceWindow)
 
 	pool := m.InitialNodePool
 	req.InitialNodePool = apiCreateNodePoolRequest{

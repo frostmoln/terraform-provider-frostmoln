@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/mapvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/objectvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -19,6 +22,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -146,6 +150,7 @@ func (r *kubernetesClusterResource) ModifyPlan(ctx context.Context, req resource
 		return
 	}
 	warnReplaceWithoutRetainedChoice(ctx, req, plan, &resp.Diagnostics)
+	warnReplaceWithMaintenanceWindow(ctx, req, plan, &resp.Diagnostics)
 	resp.Diagnostics.Append(r.checkConfiguredAddonVersions(ctx, req.Config, plan.AddonVersions)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -576,6 +581,66 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 		},
 	}
 	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
+	resp.Schema.Attributes["maintenance_window"] = schema.SingleNestedAttribute{
+		Description: "The recurring weekly window for disruptive platform updates to this cluster (a control-plane " +
+			"replacement, with an API outage on a single control-plane node, and worker replacement, which restarts " +
+			"every pod without a drain). Every cluster has exactly one. Leave this unset to keep the window the " +
+			"platform assigned; removing it from the configuration keeps the stored window, with no change planned. " +
+			"**The platform does not schedule by this window yet**: the `frostmoln_kubernetes_cluster` data source's " +
+			"`maintenance.enforced` is false until it does, so treat the value as what applies from then. " +
+			"Changing it needs the `" + maintenanceWindowOperation + "` operation. " + maintenanceWindowHolders + " " +
+			"The provider sends it only when the planned value differs from the stored one, so an apply that changes " +
+			"something else works without the operation. The exception: if the stored window has moved away from a " +
+			"configured one, every apply wants to restore it and is refused without the operation until the " +
+			"configuration is edited. A replacement of the cluster destroys the old one first, then creates the new " +
+			"one with this value, and that create is refused without the operation if the configuration names it. " +
+			"The provider warns at plan time when an attribute change causes the replacement; it cannot see " +
+			"`-replace` or a taint, so check before either.",
+		Optional:      true,
+		Computed:      true,
+		PlanModifiers: []planmodifier.Object{objectplanmodifier.UseStateForUnknown()},
+		Validators: []validator.Object{objectvalidator.AlsoRequires(
+			path.MatchRelative().AtName("days"), path.MatchRelative().AtName("start_time"),
+			path.MatchRelative().AtName("duration_hours"), path.MatchRelative().AtName("time_zone"),
+		)},
+		// 🔴 The children are Optional+Computed with all four required by the validator
+		// above, NOT Required. Terraform core reads a non-computed child with a stored
+		// value as a configuration that used to set the object, so an unset attribute
+		// would propose null and every cluster on the server's default would plan an
+		// update forever (TestAccMaintenanceWindowPlans, step 1).
+		Attributes: map[string]schema.Attribute{
+			"days": schema.SetAttribute{
+				Description: "Required in the object. The local days an occurrence starts on: any of `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, `sun`.",
+				Optional:    true,
+				Computed:    true,
+				ElementType: types.StringType,
+				Validators: []validator.Set{
+					setvalidator.SizeAtLeast(1),
+					setvalidator.ValueStringsAre(stringvalidator.OneOf("mon", "tue", "wed", "thu", "fri", "sat", "sun")),
+				},
+			},
+			"start_time": schema.StringAttribute{
+				Description: "Required in the object. Local start, `HH:MM`, 24-hour.",
+				Optional:    true,
+				Computed:    true,
+				Validators: []validator.String{
+					stringvalidator.RegexMatches(regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]$`), "must be HH:MM, 24-hour"),
+				},
+			},
+			"duration_hours": schema.Int64Attribute{
+				Description: "Required in the object. Elapsed hours from the start, 6 to 12.",
+				Optional:    true,
+				Computed:    true,
+				Validators:  []validator.Int64{int64validator.Between(6, 12)},
+			},
+			"time_zone": schema.StringAttribute{
+				Description: "Required in the object. An IANA time zone name, such as `Europe/Stockholm`. Not `Local`.",
+				Optional:    true,
+				Computed:    true,
+				Validators:  []validator.String{stringvalidator.LengthAtLeast(1), stringvalidator.NoneOf("Local")},
+			},
+		},
+	}
 }
 
 func (r *kubernetesClusterResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -780,7 +845,9 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 	}
 	apiResp, err := r.client.Post(ctx, r.client.TenantPath("/kubernetes-clusters"), createReq)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to create Kubernetes cluster", err.Error())
+		if !addMaintenanceWindowRefusal(&resp.Diagnostics, err, maintenanceWindowCreateRefused) {
+			resp.Diagnostics.AddError("Failed to create Kubernetes cluster", err.Error())
+		}
 		return
 	}
 	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
@@ -796,6 +863,7 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 	// values must not be persisted.
 	plan.fromAPI(created)
 	plan.tagsFromAPI(ctx, created, &resp.Diagnostics)
+	plan.MaintenanceWindow = settledMaintenanceWindow(plan.MaintenanceWindow, created.MaintenanceWindow)
 	plan.Kubeconfig = types.StringNull()
 	// addon_versions keeps the configured pins (fromAPI never touches it): the create request
 	// that just succeeded carried them, so state claims nothing the platform did not accept.
@@ -870,6 +938,7 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 
 	plan.fromAPI(final)
 	plan.tagsFromAPI(ctx, final, &resp.Diagnostics)
+	plan.MaintenanceWindow = settledMaintenanceWindow(plan.MaintenanceWindow, final.MaintenanceWindow)
 	plan.setInitialNodePool(ctx, finalPool, plan.InitialNodePool.Tags, &resp.Diagnostics)
 	if kcErr != nil {
 		resp.Diagnostics.AddWarning(
@@ -917,6 +986,11 @@ func (r *kubernetesClusterResource) Read(ctx context.Context, req resource.ReadR
 	// prior state).
 	state.fromAPI(cluster)
 	state.tagsFromAPI(ctx, cluster, &resp.Diagnostics)
+	// The server always holds a window, so this is what shows drift; a server from
+	// before the field leaves the prior value alone.
+	if cluster.MaintenanceWindow != nil {
+		state.MaintenanceWindow = maintenanceWindowFromAPI(cluster.MaintenanceWindow)
+	}
 	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 
 	// Pins are read back only for keys state already records (see refreshPins); no pins,
@@ -1028,9 +1102,15 @@ func (r *kubernetesClusterResource) Update(ctx context.Context, req resource.Upd
 		return
 	}
 	meta.Tags = tags
-	if meta.Name != nil || meta.Tags != nil {
+	meta.MaintenanceWindow = maintenanceWindowToSend(plan.MaintenanceWindow, state.MaintenanceWindow)
+	if meta.Name != nil || meta.Tags != nil || meta.MaintenanceWindow != nil {
 		if _, err := r.client.Put(ctx, r.clusterPath(id), meta); err != nil {
-			if meta.Name != nil {
+			if addMaintenanceWindowRefusal(&resp.Diagnostics, err, maintenanceWindowUpdateRefused) {
+				return
+			}
+			if meta.MaintenanceWindow != nil {
+				resp.Diagnostics.AddError("Failed to update Kubernetes cluster", err.Error())
+			} else if meta.Name != nil {
 				resp.Diagnostics.AddError("Failed to update Kubernetes cluster name or tags", err.Error())
 			} else {
 				resp.Diagnostics.AddError("Failed to update Kubernetes cluster tags", err.Error())
@@ -1171,6 +1251,7 @@ func (r *kubernetesClusterResource) Update(ctx context.Context, req resource.Upd
 	}
 	plan.fromAPI(final)
 	plan.tagsFromAPI(ctx, final, &resp.Diagnostics)
+	plan.MaintenanceWindow = settledMaintenanceWindow(plan.MaintenanceWindow, final.MaintenanceWindow)
 
 	if scaled {
 		pool, err := r.findInitialNodePool(ctx, id)

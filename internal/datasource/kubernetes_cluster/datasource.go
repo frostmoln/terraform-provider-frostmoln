@@ -98,6 +98,45 @@ type kubernetesClusterModel struct {
 	UpdatedAt        types.String `tfsdk:"updated_at"`
 	TenantID         types.String `tfsdk:"tenant_id"`
 	Tags             types.Map    `tfsdk:"tags"`
+	// MaintenanceWindow and Maintenance are null only on a server from before the fields.
+	MaintenanceWindow types.Object `tfsdk:"maintenance_window"`
+	Maintenance       types.Object `tfsdk:"maintenance"`
+}
+
+var (
+	maintenanceWindowAttrTypes = map[string]attr.Type{
+		"days":           types.SetType{ElemType: types.StringType},
+		"start_time":     types.StringType,
+		"duration_hours": types.Int64Type,
+		"time_zone":      types.StringType,
+	}
+	maintenancePendingAttrTypes = map[string]attr.Type{
+		"kind":     types.StringType,
+		"deadline": types.StringType,
+	}
+	maintenanceAttrTypes = map[string]attr.Type{
+		"enforced":          types.BoolType,
+		"next_window_start": types.StringType,
+		"pending":           types.ListType{ElemType: types.ObjectType{AttrTypes: maintenancePendingAttrTypes}},
+	}
+)
+
+// apiMaintenanceWindow is the cluster's recurring weekly window on the wire.
+type apiMaintenanceWindow struct {
+	Days          []string `json:"days"`
+	StartTime     string   `json:"startTime"`
+	DurationHours int64    `json:"durationHours"`
+	TimeZone      string   `json:"timeZone"`
+}
+
+// apiMaintenance is the read-only maintenance state on the wire.
+type apiMaintenance struct {
+	Enforced        bool   `json:"enforced"`
+	NextWindowStart string `json:"nextWindowStart,omitempty"`
+	Pending         []struct {
+		Kind     string `json:"kind"`
+		Deadline string `json:"deadline,omitempty"`
+	} `json:"pending"`
 }
 
 // apiCluster is the API representation of one managed Kubernetes cluster —
@@ -135,9 +174,11 @@ type apiCluster struct {
 	// in plan output and state — the secret material is not on this read.
 	CACertHash string `json:"caCertHash,omitempty"`
 	// Tags are the cluster's customer resource tags ({} when untagged).
-	Tags      map[string]string `json:"tags"`
-	CreatedAt string            `json:"createdAt"`
-	UpdatedAt string            `json:"updatedAt,omitempty"`
+	Tags              map[string]string     `json:"tags"`
+	MaintenanceWindow *apiMaintenanceWindow `json:"maintenanceWindow,omitempty"`
+	Maintenance       *apiMaintenance       `json:"maintenance,omitempty"`
+	CreatedAt         string                `json:"createdAt"`
+	UpdatedAt         string                `json:"updatedAt,omitempty"`
 }
 
 // apiClusterList is the API response for listing a tenant's clusters. There
@@ -289,6 +330,49 @@ func (d *kubernetesClusterDataSource) Schema(_ context.Context, _ datasource.Sch
 					"(the initial pool got a one-time copy of these at create).",
 				Computed:    true,
 				ElementType: types.StringType,
+			},
+			"maintenance_window": schema.SingleNestedAttribute{
+				Description: "The cluster's recurring weekly window for disruptive platform updates. The platform does " +
+					"not schedule by it while `maintenance.enforced` is false, so treat it as what applies from then.",
+				Computed: true,
+				Attributes: map[string]schema.Attribute{
+					"days": schema.SetAttribute{
+						Description: "The local days an occurrence starts on (`mon` to `sun`).",
+						Computed:    true,
+						ElementType: types.StringType,
+					},
+					"start_time":     schema.StringAttribute{Description: "Local start, `HH:MM`, 24-hour.", Computed: true},
+					"duration_hours": schema.Int64Attribute{Description: "Elapsed hours from the start.", Computed: true},
+					"time_zone":      schema.StringAttribute{Description: "An IANA time zone name.", Computed: true},
+				},
+			},
+			"maintenance": schema.SingleNestedAttribute{
+				Description: "The cluster's read-only maintenance state.",
+				Computed:    true,
+				Attributes: map[string]schema.Attribute{
+					"enforced": schema.BoolAttribute{
+						Description: "Whether the platform schedules disruptive updates by `maintenance_window`. " +
+							"While false, the window is not in force.",
+						Computed: true,
+					},
+					"next_window_start": schema.StringAttribute{
+						Description: "When the next occurrence starts (RFC 3339). Null if the platform can no longer load the time zone.",
+						Computed:    true,
+					},
+					"pending": schema.ListNestedAttribute{
+						Description: "Updates eligible from the next window. This does not promise they run then. Empty while `enforced` is false.",
+						Computed:    true,
+						NestedObject: schema.NestedAttributeObject{
+							Attributes: map[string]schema.Attribute{
+								"kind": schema.StringAttribute{Description: "`control_plane` or `workers`.", Computed: true},
+								"deadline": schema.StringAttribute{
+									Description: "When the platform updates the cluster regardless of the window (RFC 3339), if set.",
+									Computed:    true,
+								},
+							},
+						},
+					},
+				},
 			},
 		},
 	}
@@ -588,6 +672,43 @@ func setInstanceState(state *kubernetesClusterModel, cluster *apiCluster) {
 		tags[k] = types.StringValue(v)
 	}
 	state.Tags = types.MapValueMust(types.StringType, tags)
+	state.MaintenanceWindow = maintenanceWindowState(cluster.MaintenanceWindow)
+	state.Maintenance = maintenanceState(cluster.Maintenance)
+}
+
+func maintenanceWindowState(w *apiMaintenanceWindow) types.Object {
+	if w == nil {
+		return types.ObjectNull(maintenanceWindowAttrTypes)
+	}
+	days := make([]attr.Value, 0, len(w.Days))
+	for _, d := range w.Days {
+		days = append(days, types.StringValue(d))
+	}
+	return types.ObjectValueMust(maintenanceWindowAttrTypes, map[string]attr.Value{
+		"days":           types.SetValueMust(types.StringType, days),
+		"start_time":     types.StringValue(w.StartTime),
+		"duration_hours": types.Int64Value(w.DurationHours),
+		"time_zone":      types.StringValue(w.TimeZone),
+	})
+}
+
+func maintenanceState(m *apiMaintenance) types.Object {
+	if m == nil {
+		return types.ObjectNull(maintenanceAttrTypes)
+	}
+	pendingType := types.ObjectType{AttrTypes: maintenancePendingAttrTypes}
+	pending := make([]attr.Value, 0, len(m.Pending))
+	for _, p := range m.Pending {
+		pending = append(pending, types.ObjectValueMust(maintenancePendingAttrTypes, map[string]attr.Value{
+			"kind":     types.StringValue(p.Kind),
+			"deadline": stringFromWire(p.Deadline),
+		}))
+	}
+	return types.ObjectValueMust(maintenanceAttrTypes, map[string]attr.Value{
+		"enforced":          types.BoolValue(m.Enforced),
+		"next_window_start": stringFromWire(m.NextWindowStart),
+		"pending":           types.ListValueMust(pendingType, pending),
+	})
 }
 
 // stringFromWire maps an empty optional string to null, not "".

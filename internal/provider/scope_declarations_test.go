@@ -475,6 +475,9 @@ func scopeObjectValue(t *testing.T, attrPath string, objType types.ObjectType, s
 
 func scopeElementValue(t *testing.T, attrPath string, elemType attr.Type, seed string) attr.Value {
 	t.Helper()
+	if set, ok := elemType.(types.SetType); ok {
+		return types.SetValueMust(set.ElemType, []attr.Value{scopeElementValue(t, attrPath, set.ElemType, seed)})
+	}
 	switch elemType {
 	case types.StringType:
 		return types.StringValue("scope-" + seed)

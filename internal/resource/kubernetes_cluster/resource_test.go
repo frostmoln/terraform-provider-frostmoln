@@ -603,6 +603,7 @@ func buildState(t *testing.T, model KubernetesClusterModel) tfsdk.State {
 	model.AddonVersions = typedPins(model.AddonVersions)
 	nullUnsetTags(&model.Tags, &model.TagsAll)
 	nullUnsetPoolTags(&model)
+	nullUnsetMaintenanceWindow(&model)
 	if diags := state.Set(context.Background(), &model); diags.HasError() {
 		t.Fatalf("failed to set state: %v", diags.Errors())
 	}
@@ -619,6 +620,7 @@ func buildPlan(t *testing.T, model KubernetesClusterModel) tfsdk.Plan {
 	model.AddonVersions = typedPins(model.AddonVersions)
 	nullUnsetTags(&model.Tags, &model.TagsAll)
 	nullUnsetPoolTags(&model)
+	nullUnsetMaintenanceWindow(&model)
 	if diags := plan.Set(context.Background(), &model); diags.HasError() {
 		t.Fatalf("failed to set plan: %v", diags.Errors())
 	}

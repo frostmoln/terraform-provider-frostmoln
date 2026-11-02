@@ -177,6 +177,8 @@ func readWith(t *testing.T, serverURL string, id, name *string) readResult {
 		"updated_at":         tftypes.NewValue(tftypes.String, nil),
 		"tenant_id":          tftypes.NewValue(tftypes.String, nil),
 		"tags":               tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"maintenance_window": tftypes.NewValue(s.Type().TerraformType(context.Background()).(tftypes.Object).AttributeTypes["maintenance_window"], nil),
+		"maintenance":        tftypes.NewValue(s.Type().TerraformType(context.Background()).(tftypes.Object).AttributeTypes["maintenance"], nil),
 	})
 
 	var readResp datasource.ReadResponse
@@ -675,5 +677,67 @@ func TestReadByIDRendersWhyAnErrorClusterFailed(t *testing.T) {
 	if m.StatusReason.ValueString() != "InvalidState" || m.StatusMessage.ValueString() != "boom" ||
 		m.FailedStep.ValueString() != "api_endpoint" {
 		t.Errorf("detail is %v/%v/%v", m.StatusReason, m.StatusMessage, m.FailedStep)
+	}
+}
+
+func TestReadExposesTheMaintenanceWindowAndState(t *testing.T) {
+	server := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cluster-1","name":"c","status":"running",
+			"maintenanceWindow":{"days":["thu"],"startTime":"00:00","durationHours":6,"timeZone":"Europe/Stockholm"},
+			"maintenance":{"window":{"days":["thu"],"startTime":"00:00","durationHours":6,"timeZone":"Europe/Stockholm"},
+				"enforced":false,"nextWindowStart":"2026-11-05T00:00:00+01:00","pending":[{"kind":"workers","deadline":"2026-11-09T00:00:00Z"}]}}`))
+	})
+	defer server.Close()
+
+	id := "cluster-1"
+	got := readWith(t, server.URL, &id, nil)
+	if got.diagnostics.HasError() {
+		t.Fatalf("read: %v", got.diagnostics.Errors())
+	}
+	w := got.model.MaintenanceWindow.Attributes()
+	if w["start_time"].(types.String).ValueString() != "00:00" || w["duration_hours"].(types.Int64).ValueInt64() != 6 ||
+		w["time_zone"].(types.String).ValueString() != "Europe/Stockholm" || len(w["days"].(types.Set).Elements()) != 1 {
+		t.Errorf("maintenance_window = %v", got.model.MaintenanceWindow)
+	}
+	m := got.model.Maintenance.Attributes()
+	if m["enforced"].(types.Bool).ValueBool() || m["next_window_start"].(types.String).ValueString() != "2026-11-05T00:00:00+01:00" {
+		t.Errorf("maintenance = %v", got.model.Maintenance)
+	}
+	pending := m["pending"].(types.List).Elements()
+	if len(pending) != 1 || pending[0].(types.Object).Attributes()["kind"].(types.String).ValueString() != "workers" {
+		t.Errorf("pending = %v", pending)
+	}
+}
+
+// pending is an empty list when the server sends none, and both are null on a server
+// from before the fields.
+func TestReadMaintenanceEmptyPendingAndAnOlderServer(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"empty", `{"id":"cluster-1","name":"c","status":"running","maintenance":{"enforced":false,"pending":null}}`},
+		{"older", `{"id":"cluster-1","name":"c","status":"running"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			})
+			defer server.Close()
+			id := "cluster-1"
+			got := readWith(t, server.URL, &id, nil)
+			if got.diagnostics.HasError() {
+				t.Fatalf("read: %v", got.diagnostics.Errors())
+			}
+			if tc.name == "older" {
+				if !got.model.Maintenance.IsNull() || !got.model.MaintenanceWindow.IsNull() {
+					t.Errorf("want null, got %v / %v", got.model.Maintenance, got.model.MaintenanceWindow)
+				}
+				return
+			}
+			pending := got.model.Maintenance.Attributes()["pending"].(types.List)
+			if pending.IsNull() || len(pending.Elements()) != 0 {
+				t.Errorf("pending = %v, want an empty list", pending)
+			}
+		})
 	}
 }

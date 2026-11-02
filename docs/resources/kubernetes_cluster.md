@@ -8,8 +8,9 @@ description: |-
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — control_plane_tier, initial_node_pool.flavor_id, initial_node_pool.name, region, subnet_id, version, vpc_id: the platform has no in-place migration for it — a change destroys and re-creates the cluster.
   Create-immutable — public_ip_id: retained and deprecated: every new cluster's apiserver is a private VIP and the API refuses any value with a 400 — the attribute exists so a stale configuration is told so.
-  Not enacted state — addon_versions: a refresh reads a pin back only for an addon this attribute already names, and only when the platform can report pins (not while the cluster is still being created, or during a platform deployment or outage, when the recorded value is kept); a pin set outside Terraform for any other addon is neither read into state nor sent.
+  Not enacted state — addon_versions: a refresh reads a pin back only for an addon this attribute already names, and only when the platform can report pins (not while the cluster is still being created, or during a platform deployment or outage, when the recorded value is kept); a pin set outside Terraform for any other addon is neither read into state nor sent. maintenance_window: stored and read back, but the platform does not schedule by it while the data source's maintenance.enforced is false.
   Observed, not enacted — endpoint: platform-issued once the apiserver is up. kubeconfig: platform-issued once the apiserver is up. load_balancer_id: the platform provisions the load balancer the cluster rides on.
+  Platform-invented default — maintenance window assigned at create when maintenance_window is unset: keep-with-docs. Every cluster has exactly one, so removing the attribute keeps the stored window; it only changes when you set another.
 ---
 
 # frostmoln_kubernetes_cluster (Resource)
@@ -24,9 +25,11 @@ Manages a managed Kubernetes cluster in the Frostmoln platform. The cluster owns
 
 **Create-immutable** — `public_ip_id`: retained and deprecated: every new cluster's apiserver is a private VIP and the API refuses any value with a 400 — the attribute exists so a stale configuration is told so.
 
-**Not enacted state** — `addon_versions`: a refresh reads a pin back only for an addon this attribute already names, and only when the platform can report pins (not while the cluster is still being created, or during a platform deployment or outage, when the recorded value is kept); a pin set outside Terraform for any other addon is neither read into state nor sent.
+**Not enacted state** — `addon_versions`: a refresh reads a pin back only for an addon this attribute already names, and only when the platform can report pins (not while the cluster is still being created, or during a platform deployment or outage, when the recorded value is kept); a pin set outside Terraform for any other addon is neither read into state nor sent. `maintenance_window`: stored and read back, but the platform does not schedule by it while the data source's `maintenance.enforced` is false.
 
 **Observed, not enacted** — `endpoint`: platform-issued once the apiserver is up. `kubeconfig`: platform-issued once the apiserver is up. `load_balancer_id`: the platform provisions the load balancer the cluster rides on.
+
+**Platform-invented default** — maintenance window assigned at create when `maintenance_window` is unset: **keep-with-docs**. Every cluster has exactly one, so removing the attribute keeps the stored window; it only changes when you set another.
 
 ## Example Usage
 
@@ -51,6 +54,19 @@ resource "frostmoln_kubernetes_cluster" "main" {
   # provisions a load balancer per Service and reports its address in
   # .status.loadBalancer.ingress. The cluster itself provisions none — `endpoint`
   # below is the Kubernetes API endpoint, for kubectl, not for traffic.
+
+  # Optional. The recurring weekly window for disruptive platform updates. Omit it to
+  # keep the window the platform assigned. Changing it needs the update-maintenance-window
+  # operation: the Owner and Admin roles hold it, as does a group document that names it
+  # or a custom role with kubernetes:*; an API key needs an access policy that names it.
+  # The platform does not schedule by it until the data source's maintenance.enforced is
+  # true.
+  # maintenance_window = {
+  #   days           = ["wed"]
+  #   start_time     = "03:00"
+  #   duration_hours = 6
+  #   time_zone      = "Europe/Stockholm"
+  # }
 
   # Cluster addons. Adding OR removing a key is applied in place to a running
   # cluster and reaches it within minutes — the accepted change starts its own
@@ -136,6 +152,7 @@ output "kubeconfig" {
 - `addon_versions` (Map of String) Pins addons to published versions, keyed by addon key (at most 32). Every key must also be in addons, which must be set explicitly. List an addon's pinnable versions with the frostmoln_kubernetes_addon_versions data source and use one of those strings verbatim. Pins given when the cluster is created are sent in the create request, so the cluster starts on those versions and a pin the platform refuses when the request is made fails the create before anything exists. Changing a pin later is applied IN PLACE and reaches the cluster within minutes, on the reconciliation the accepted change starts, falling back to the platform's own addon reconciliation period if that cannot be started. Only pins whose value differs from state are sent, so an addon not pinned here keeps whatever version it is pinned to, including a pin set outside Terraform. An addon being ADDED to addons without a pin gets its recommended version; an addon that is already selected keeps its current pin. After an import, or whenever state records no pins, every configured pin is sent. A refresh reads back the pin of each addon named here, so a configured pin moved outside Terraform is reported as drift and the next apply restores it; pins of addons not named here are never read into state. When the platform cannot report pins (for example during a platform deployment) the refresh keeps the recorded values and warns. Removing a key stops Terraform managing that pin — the addon stays on its current version, as there is no unpin. Read each addon's pinned and applied version with the frostmoln_kubernetes_cluster_addons data source.
 - `addons` (Set of String) The set of cluster-addon catalog keys for this cluster (see the frostmoln_kubernetes_addons data source for available keys). ADDING a key is applied IN PLACE to a running cluster: the accepted change starts its own reconciliation, so it reaches the cluster within minutes rather than immediately, and falls back to the platform's own addon reconciliation period if that cannot be started. REMOVING a key is ALSO applied in place and DELETES the objects that addon installed; a cluster whose control plane predates the platform's ability to remove an addon is refused with an error saying so, and must be recreated to gain it. When you SET this attribute, note that it is refreshed from the API before every plan, so an addon added outside Terraform (the portal, the fm CLI) appears in state and will be REMOVED on the next apply, as ordinary configuration drift — terraform plan shows the removal before anything happens. Leaving the attribute unset keeps such an addon, since nothing in configuration asks for its removal. Removal leaves behind what the platform will not delete for you: the addon's namespace, any CustomResourceDefinition, StorageClass or CSIDriver it created, and anything you put in that namespace yourself. Leave it unset to apply the platform default addons (the frostmoln_kubernetes_addons data source reports which are defaulted); set it to an explicit empty set ([]) to select none. An addon's upstream container images are pulled from a public registry when its pods start rather than preloaded onto your nodes, so the addon needs your worker nodes to have outbound HTTPS to that registry; where an addon has such a prerequisite its catalog description states it (external-dns: registry.k8s.io, which redirects image downloads to cloud-hosted backing stores on other domains, so allowing that hostname alone is not enough if you filter egress by name). That reachability is a property of your own VPC at the moment of the pull, and every new node pulls again, so the platform does not validate it: applying a key your nodes cannot pull succeeds here and leaves the addon's pods in ImagePullBackOff. Nothing about the cluster itself depends on it.
 - `control_plane_tier` (String) The control-plane tier key (see the frostmoln_kubernetes_tiers data source for canonical keys). Defaults to the platform default tier.
+- `maintenance_window` (Attributes) The recurring weekly window for disruptive platform updates to this cluster (a control-plane replacement, with an API outage on a single control-plane node, and worker replacement, which restarts every pod without a drain). Every cluster has exactly one. Leave this unset to keep the window the platform assigned; removing it from the configuration keeps the stored window, with no change planned. **The platform does not schedule by this window yet**: the `frostmoln_kubernetes_cluster` data source's `maintenance.enforced` is false until it does, so treat the value as what applies from then. Changing it needs the `kubernetes:kubernetes-clusters:update-maintenance-window` operation. The Owner and Admin roles hold it, as does a group document that names it or a custom role with kubernetes:*; an API key needs an access policy that names it. The provider sends it only when the planned value differs from the stored one, so an apply that changes something else works without the operation. The exception: if the stored window has moved away from a configured one, every apply wants to restore it and is refused without the operation until the configuration is edited. A replacement of the cluster destroys the old one first, then creates the new one with this value, and that create is refused without the operation if the configuration names it. The provider warns at plan time when an attribute change causes the replacement; it cannot see `-replace` or a taint, so check before either. (see [below for nested schema](#nestedatt--maintenance_window))
 - `public_ip_id` (String, Deprecated) REMOVED. Any value is rejected by the API with a 400, on every account — remove this attribute from your configuration.
 
 It supplied a bring-your-own address for the cluster API endpoint's public load balancer. Clusters no longer have one: the API endpoint takes no address of yours, and workload exposure is chosen per Service — create a Kubernetes Service of type LoadBalancer and the platform provisions a load balancer for it.
@@ -190,6 +207,17 @@ Read-Only:
 - `status_message` (String) A human-readable description of why the initial node pool failed. Set only when `status` is `error`.
 - `status_reason` (String) Why the initial node pool failed, as a failure class (e.g. `QuotaExceeded`). Set only when `status` is `error`.
 - `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
+
+
+<a id="nestedatt--maintenance_window"></a>
+### Nested Schema for `maintenance_window`
+
+Optional:
+
+- `days` (Set of String) Required in the object. The local days an occurrence starts on: any of `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, `sun`.
+- `duration_hours` (Number) Required in the object. Elapsed hours from the start, 6 to 12.
+- `start_time` (String) Required in the object. Local start, `HH:MM`, 24-hour.
+- `time_zone` (String) Required in the object. An IANA time zone name, such as `Europe/Stockholm`. Not `Local`.
 
 
 <a id="nestedblock--timeouts"></a>

@@ -41,6 +41,11 @@ type tagsAPI struct {
 	poolTags map[string]string
 	// patchFailures are the statuses the next pool PATCHes answer before one succeeds.
 	patchFailures []int
+	// window is the stored maintenance window; refuseWindow answers a body carrying
+	// the field the way the API does for a caller without the operation.
+	window       *apiMaintenanceWindow
+	refuseWindow bool
+	refusalBody  map[string]string
 
 	mu      sync.Mutex
 	posts   []map[string]json.RawMessage
@@ -57,6 +62,7 @@ func (a *tagsAPI) serve(w http.ResponseWriter, r *http.Request) {
 	cluster := func() apiKubernetesCluster {
 		c := runningCluster()
 		c.Tags = a.tags
+		c.MaintenanceWindow = a.window
 		return c
 	}
 	pool := func() apiNodePool {
@@ -69,6 +75,9 @@ func (a *tagsAPI) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodPost && r.URL.Path == base:
 		a.posts = append(a.posts, body)
+		if a.refuseWindowIfSent(w, body) {
+			return
+		}
 		a.tags = map[string]string{}
 		_ = json.Unmarshal(body["tags"], &a.tags)
 		a.poolTags = map[string]string{}
@@ -79,6 +88,13 @@ func (a *tagsAPI) serve(w http.ResponseWriter, r *http.Request) {
 		writeJSON(a.t, w, cluster())
 	case r.Method == http.MethodPut && r.URL.Path == base+"/c-1":
 		a.puts = append(a.puts, body)
+		if a.refuseWindowIfSent(w, body) {
+			return
+		}
+		if v, ok := body["maintenanceWindow"]; ok {
+			a.window = &apiMaintenanceWindow{}
+			_ = json.Unmarshal(v, a.window)
+		}
 		if v, ok := body["tags"]; ok && string(v) != "null" {
 			next := map[string]string{}
 			_ = json.Unmarshal(v, &next)

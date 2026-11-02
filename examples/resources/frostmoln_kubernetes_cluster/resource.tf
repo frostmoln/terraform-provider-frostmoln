@@ -19,6 +19,19 @@ resource "frostmoln_kubernetes_cluster" "main" {
   # .status.loadBalancer.ingress. The cluster itself provisions none — `endpoint`
   # below is the Kubernetes API endpoint, for kubectl, not for traffic.
 
+  # Optional. The recurring weekly window for disruptive platform updates. Omit it to
+  # keep the window the platform assigned. Changing it needs the update-maintenance-window
+  # operation: the Owner and Admin roles hold it, as does a group document that names it
+  # or a custom role with kubernetes:*; an API key needs an access policy that names it.
+  # The platform does not schedule by it until the data source's maintenance.enforced is
+  # true.
+  # maintenance_window = {
+  #   days           = ["wed"]
+  #   start_time     = "03:00"
+  #   duration_hours = 6
+  #   time_zone      = "Europe/Stockholm"
+  # }
+
   # Cluster addons. Adding OR removing a key is applied in place to a running
   # cluster and reaches it within minutes — the accepted change starts its own
   # reconciliation, and falls back to the platform's addon reconciliation period

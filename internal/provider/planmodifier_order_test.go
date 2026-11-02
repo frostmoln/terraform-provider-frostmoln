@@ -433,8 +433,8 @@ func replayModifiers(t *testing.T, attrPath string, a schema.Attribute) (onChang
 		return run(changed), run(types.MapUnknown(a.ElementType))
 
 	case schema.SingleNestedAttribute:
-		// Its children are walked separately. Object-level modifiers on the
-		// nested attribute itself are unused here and would be ignored.
+		// Its children are walked separately; a modifier on the object itself is
+		// replayed here.
 		//
 		// NOTE for whoever hits this next: this walk only reaches an attribute
 		// that is Optional+COMPUTED, and it replays with a NULL ConfigValue
@@ -444,10 +444,32 @@ func replayModifiers(t *testing.T, attrPath string, a schema.Attribute) (onChang
 		// instead, which replays with the config SET. Extending this arm means
 		// giving it a non-null-config pass too, or it will report "checked"
 		// while checking nothing.
-		if len(a.PlanModifiers) > 0 {
-			t.Fatalf("%s: object-level plan modifiers are not replayed — extend replayModifiers", attrPath)
+		if len(a.PlanModifiers) == 0 {
+			return false, false
 		}
-		return false, false
+		objType, ok := a.GetType().(types.ObjectType)
+		if !ok {
+			t.Fatalf("%s: object-level modifiers on a custom object type %T are not replayed — extend replayModifiers", attrPath, a.GetType())
+		}
+		state, changed := scopeObjectValue(t, attrPath, objType, "a"), scopeObjectValue(t, attrPath, objType, "b")
+		run := func(planValue types.Object) bool {
+			req := planmodifier.ObjectRequest{
+				Path: path.Root(attrPath), State: updateState, Plan: updatePlan,
+				StateValue: state, PlanValue: planValue, ConfigValue: types.ObjectNull(objType.AttrTypes),
+			}
+			replace := false
+			for _, m := range a.PlanModifiers {
+				resp := &planmodifier.ObjectResponse{PlanValue: req.PlanValue}
+				m.PlanModifyObject(context.Background(), req, resp)
+				if resp.Diagnostics.HasError() {
+					t.Fatalf("%s: plan modifier errored under the synthetic replay: %v", attrPath, resp.Diagnostics)
+				}
+				req.PlanValue = resp.PlanValue
+				replace = replace || resp.RequiresReplace
+			}
+			return replace
+		}
+		return run(changed), run(types.ObjectUnknown(objType.AttrTypes))
 
 	default:
 		t.Fatalf("%s: unsupported attribute type %T — extend replayModifiers", attrPath, a)

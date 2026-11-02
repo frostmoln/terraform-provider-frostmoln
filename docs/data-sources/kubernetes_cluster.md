@@ -71,6 +71,8 @@ data "frostmoln_kubernetes_cluster" "by_id" {
 - `failed_step` (String) The provisioning phase the cluster failed in: one of `validation`, `control_plane`, `api_endpoint`, `addons`, `node_pool` or `provisioning`. Set only when `status` is `error`, and may be absent even then.
 - `ha_enabled` (Boolean) Whether the dedicated control plane is high-availability.
 - `load_balancer_id` (String) Always null: the id of the load balancer behind the API endpoint is internal, has no public form, and the API no longer returns it.
+- `maintenance` (Attributes) The cluster's read-only maintenance state. (see [below for nested schema](#nestedatt--maintenance))
+- `maintenance_window` (Attributes) The cluster's recurring weekly window for disruptive platform updates. The platform does not schedule by it while `maintenance.enforced` is false, so treat it as what applies from then. (see [below for nested schema](#nestedatt--maintenance_window))
 - `pod_cidr` (String) The cluster's per-cluster pod CIDR, allocated from the managed pool. Null while the platform has not allocated one.
 - `public_ip` (String) The public IP of the API endpoint, null when the endpoint is not internet-reachable (an enclave cluster's private VIP has none).
 - `region` (String) The region the cluster lives in.
@@ -84,3 +86,32 @@ data "frostmoln_kubernetes_cluster" "by_id" {
 - `updated_at` (String) The timestamp when the cluster was last updated, null when the platform has not recorded one.
 - `version` (String) The Kubernetes version (the wire's kubernetesVersion).
 - `vpc_id` (String) The VPC the cluster's nodes run in.
+
+<a id="nestedatt--maintenance"></a>
+### Nested Schema for `maintenance`
+
+Read-Only:
+
+- `enforced` (Boolean) Whether the platform schedules disruptive updates by `maintenance_window`. While false, the window is not in force.
+- `next_window_start` (String) When the next occurrence starts (RFC 3339). Null if the platform can no longer load the time zone.
+- `pending` (Attributes List) Updates eligible from the next window. This does not promise they run then. Empty while `enforced` is false. (see [below for nested schema](#nestedatt--maintenance--pending))
+
+<a id="nestedatt--maintenance--pending"></a>
+### Nested Schema for `maintenance.pending`
+
+Read-Only:
+
+- `deadline` (String) When the platform updates the cluster regardless of the window (RFC 3339), if set.
+- `kind` (String) `control_plane` or `workers`.
+
+
+
+<a id="nestedatt--maintenance_window"></a>
+### Nested Schema for `maintenance_window`
+
+Read-Only:
+
+- `days` (Set of String) The local days an occurrence starts on (`mon` to `sun`).
+- `duration_hours` (Number) Elapsed hours from the start.
+- `start_time` (String) Local start, `HH:MM`, 24-hour.
+- `time_zone` (String) An IANA time zone name.
