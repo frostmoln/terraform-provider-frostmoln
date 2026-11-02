@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.99.0] - 2026-11-02
+
+### 🚀 Features
+
+- *(kubernetes_cluster)* Add maintenance_window, sent only when it changes (#779)
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.35 (#759)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.36 (#763)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.37 (#767)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.38 (#771)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.39 (#775)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.40 (#782)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency hashicorp/terraform to v1.17.0 (#755)
+- *(deps)* Update dependency frostmoln/workflows to v0.14.8 (#757)
+- *(deps)* Update dependency frostmoln/workflows to v0.14.9 (#761)
+- *(deps)* Update dependency frostmoln/workflows to v0.15.0 (#765)
+- *(ai-review)* Run the shared AI PR review (#769)
+- *(deps)* Update dependency frostmoln/workflows to v0.15.1 (#773)
+- *(deps)* Update dependency hashicorp/terraform to v1.17.1 (#777)
+- *(deps)* Update dependency frostmoln/workflows to v0.16.1 (#780)
+
 ## [0.98.5] - 2026-10-23
 
 ### 🐛 Bug Fixes
