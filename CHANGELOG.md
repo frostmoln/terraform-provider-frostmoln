@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.99.1] - 2026-11-03
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.41 (#787)
+
+### 📚 Documentation
+
+- *(kubernetes-cluster)* Pending is computed while enforced is false (#789)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.16.2 (#785)
+
 ## [0.99.0] - 2026-11-02
 
 ### 🚀 Features
