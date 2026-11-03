@@ -360,13 +360,13 @@ func (d *kubernetesClusterDataSource) Schema(_ context.Context, _ datasource.Sch
 						Computed:    true,
 					},
 					"pending": schema.ListNestedAttribute{
-						Description: "Updates eligible from the next window. This does not promise they run then. Empty while `enforced` is false.",
+						Description: "Window-bound updates the platform has not recorded on this cluster. Once `enforced` is true they are eligible from the next window, which does not promise they run then.",
 						Computed:    true,
 						NestedObject: schema.NestedAttributeObject{
 							Attributes: map[string]schema.Attribute{
 								"kind": schema.StringAttribute{Description: "`control_plane` or `workers`.", Computed: true},
 								"deadline": schema.StringAttribute{
-									Description: "When the platform updates the cluster regardless of the window (RFC 3339), if set.",
+									Description: "When this update becomes eligible in a slot the platform assigned, whatever the window says (RFC 3339), if you have been told of a deadline.",
 									Computed:    true,
 								},
 							},

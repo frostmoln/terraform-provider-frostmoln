@@ -94,14 +94,14 @@ Read-Only:
 
 - `enforced` (Boolean) Whether the platform schedules disruptive updates by `maintenance_window`. While false, the window is not in force.
 - `next_window_start` (String) When the next occurrence starts (RFC 3339). Null if the platform can no longer load the time zone.
-- `pending` (Attributes List) Updates eligible from the next window. This does not promise they run then. Empty while `enforced` is false. (see [below for nested schema](#nestedatt--maintenance--pending))
+- `pending` (Attributes List) Window-bound updates the platform has not recorded on this cluster. Once `enforced` is true they are eligible from the next window, which does not promise they run then. (see [below for nested schema](#nestedatt--maintenance--pending))
 
 <a id="nestedatt--maintenance--pending"></a>
 ### Nested Schema for `maintenance.pending`
 
 Read-Only:
 
-- `deadline` (String) When the platform updates the cluster regardless of the window (RFC 3339), if set.
+- `deadline` (String) When this update becomes eligible in a slot the platform assigned, whatever the window says (RFC 3339), if you have been told of a deadline.
 - `kind` (String) `control_plane` or `workers`.
 
 
