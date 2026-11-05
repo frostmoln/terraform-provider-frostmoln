@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.99.2] - 2026-11-05
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.16.4 (#791)
+
 ## [0.99.1] - 2026-11-03
 
 ### 🐛 Bug Fixes
