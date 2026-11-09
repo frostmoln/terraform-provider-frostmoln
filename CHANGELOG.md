@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.99.3] - 2026-11-09
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.42 (#794)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.43 (#797)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.44 (#802)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.45 (#805)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.46 (#811)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.16.5 (#793)
+- *(deps)* Update dependency frostmoln/workflows to v0.16.6 (#799)
+- *(deps)* Update dependency frostmoln/workflows to v0.16.7 (#801)
+- *(deps)* Update dependency goreleaser/goreleaser to v2.20.0 (#807)
+- *(deps)* Update dependency frostmoln/workflows to v0.16.8 (#809)
+
 ## [0.99.2] - 2026-11-05
 
 ### ⚙️ Miscellaneous Tasks
