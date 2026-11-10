@@ -83,7 +83,7 @@ func (d *kubernetesVersionsDataSource) Schema(_ context.Context, _ datasource.Sc
 							Computed:    true,
 						},
 						"status": schema.StringAttribute{
-							Description: "The support status of this version (\"current\", \"supported\", or \"deprecated\").",
+							Description: "The lifecycle status of this version: \"current\", \"supported\", \"deprecated\", \"eol\" or \"innovation\". Every status is returned; only current, supported and deprecated can be used for a new cluster (eol and innovation are refused on create), so filter on this when choosing a version.",
 							Computed:    true,
 						},
 						"is_default": schema.BoolAttribute{
