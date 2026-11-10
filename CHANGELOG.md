@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.99.4] - 2026-11-10
+
+### 📚 Documentation
+
+- *(kubernetes_versions)* Document the five-value status vocabulary (#813)
+
 ## [0.99.3] - 2026-11-09
 
 ### 🐛 Bug Fixes
