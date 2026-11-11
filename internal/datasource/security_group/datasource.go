@@ -19,7 +19,7 @@
 // resolves.
 //
 // Two visibility facts this package pins. Offer-internal groups — the ones
-// carrying the reserved nlmeta tag — never appear in the customer list, so a
+// carrying the reserved resourcemeta tag — never appear in the customer list, so a
 // name lookup cannot resolve one. But the tenant-VISIBLE platform-managed
 // groups (the ones for a managed database, cache, webserver or messaging
 // instance) DO appear and read fine from this data source; only their rules

@@ -199,7 +199,7 @@ func (m *VPCModel) fromAPI(ctx context.Context, vpc *apiVPC, diags *diag.Diagnos
 	// network's REST plane refuses a frostmoln_* key on write, so a key that IS
 	// on a resource cannot be removed by any client -- and once the pending
 	// network change lands (subnet/router rejectReservedTag plus
-	// nlmeta.MergePlatformOwnedTags on update, branch
+	// resourcemeta.MergePlatformOwnedTags on update, branch
 	// fix/subnet-router-reserved-tags) omitting it stops removing it too.
 	// Copying such a key into state fails "inconsistent result after apply"
 	// against a config that does not mention it. Correct either way: today the

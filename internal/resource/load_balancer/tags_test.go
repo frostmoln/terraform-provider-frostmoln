@@ -60,7 +60,7 @@ func tagTestLBPlan(t *testing.T, m LoadBalancerModel) tfsdk.Plan {
 // The bare LB PUT is served by network, which acts on tags only when the field
 // is non-nil and then merges: the incoming map replaces the customer's tags
 // while platform-owned keys are carried over (network/internal/service/impl/
-// load_balancer_service.go, Update → nlmeta.MergePlatformOwnedTags). The
+// load_balancer_service.go, Update → resourcemeta.MergePlatformOwnedTags). The
 // provider sent nothing for a removed block and an `omitempty`-dropped {} for
 // an emptied one, so the old tags survived and the apply failed with an
 // inconsistent result.
@@ -246,7 +246,7 @@ func TestUpdateWithoutTagChangeSendsNoTags(t *testing.T) {
 // TestReadFiltersPlatformTags: platform-owned `frostmoln_*` tags (the ADR-0115
 // cluster-owned pair, frostmoln_enclave_key, ...) must never reach state.
 // network refuses them on every customer write and carries them across every
-// tag update (nlmeta.MergePlatformOwnedTags), so no config can ever converge on
+// tag update (resourcemeta.MergePlatformOwnedTags), so no config can ever converge on
 // them: copying them into state is a permanent diff.
 func TestReadFiltersPlatformTags(t *testing.T) {
 	empty := types.MapValueMust(types.StringType, map[string]attr.Value{})

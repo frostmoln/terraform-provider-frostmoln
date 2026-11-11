@@ -333,7 +333,7 @@ func TestPoolReadEmptyTagsRoundTrips(t *testing.T) {
 }
 
 // TestPoolReadFiltersPlatformTags: platform-owned `frostmoln_*` tags must never reach state. network
-// refuses them on every customer write (nlmeta.IsReservedTagKey), so no config
+// refuses them on every customer write (resourcemeta.IsReservedTagKey), so no config
 // can converge on one: copying it into state is a permanent diff. Filtering
 // runs before the empty/non-empty decision, so a read carrying only platform
 // keys is "no tags".

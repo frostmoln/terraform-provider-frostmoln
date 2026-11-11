@@ -147,7 +147,7 @@ func (m *SecurityGroupModel) fromAPI(ctx context.Context, sg *apiSecurityGroup, 
 
 	// Platform-owned frostmoln_* keys are filtered first: network refuses them on
 	// every customer write and carries them across every tag update
-	// (nlmeta.MergePlatformOwnedTags), so no config can converge on one.
+	// (resourcemeta.MergePlatformOwnedTags), so no config can converge on one.
 	m.Tags, m.TagsAll = tftags.ReadBack(ctx, sg.customerTags(), m.Tags, diags)
 
 	// delete_default_egress is create-time behaviour the API knows nothing

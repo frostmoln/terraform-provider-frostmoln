@@ -20,7 +20,7 @@
 // (every sibling list answers `totalCount`). And the network service hides
 // offer-internal load balancers from the customer REST plane: the
 // guardManagedLB middleware 404s any id route that resolves to a load
-// balancer carrying the reserved nlmeta tag, and filters them from the list.
+// balancer carrying the reserved resourcemeta tag, and filters them from the list.
 // So a 404 on the id path can be a managed offer's load balancer rather than
 // empty space — the not-found diagnostic says so.
 //

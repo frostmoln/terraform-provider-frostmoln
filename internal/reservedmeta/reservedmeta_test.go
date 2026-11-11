@@ -121,7 +121,7 @@ func TestIsReservedNetwork(t *testing.T) {
 		"frostmoln_managed_by",
 		"frostmoln_cluster_id",
 		// The key a named list already missed — the reason the predicate is a
-		// prefix rather than three names (network nlmeta.ReservedTagPrefix).
+		// prefix rather than three names (network resourcemeta.ReservedTagPrefix).
 		"frostmoln_enclave_key",
 		"frostmoln_",
 	}

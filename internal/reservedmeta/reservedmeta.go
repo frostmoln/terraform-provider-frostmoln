@@ -43,7 +43,7 @@ func IsReservedInstance(k string) bool {
 // IsReservedNetwork reports whether a key is platform-owned for network
 // resources (VPCs, subnets, public IPs, security groups, load balancers and
 // their pools and health monitors). Mirrors network's
-// nlmeta.ReservedTagPrefix: the frostmoln_ prefix and nothing else.
+// resourcemeta.ReservedTagPrefix: the frostmoln_ prefix and nothing else.
 //
 // Network does NOT reserve the bare *-id keys and does NOT reserve the
 // `frostmoln-` hyphen spelling, so neither is filtered here — using the volume
@@ -61,7 +61,7 @@ func IsReservedInstance(k string) bool {
 // to converge.
 //
 // The pending network change (branch fix/subnet-router-reserved-tags) closes
-// the mirror half — `nlmeta.MergePlatformOwnedTags` stops an omitting body from
+// the mirror half — `resourcemeta.MergePlatformOwnedTags` stops an omitting body from
 // STRIPPING such a key — which makes the situation permanent rather than
 // merely likely. This filter is correct before and after it lands.
 func IsReservedNetwork(k string) bool {

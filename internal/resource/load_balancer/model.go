@@ -84,7 +84,7 @@ type apiCreateLoadBalancerRequest struct {
 //
 // Tags is a *map so the key can be absent: network acts on tags whenever the
 // field is non-nil, replacing the customer's tags while keeping platform-owned
-// ones (nlmeta.MergePlatformOwnedTags). So {} is how they are cleared — a plain
+// ones (resourcemeta.MergePlatformOwnedTags). So {} is how they are cleared — a plain
 // map with omitempty dropped exactly that — while an update that does not
 // change tags must not send the key at all, or every rename would be a tag
 // write. Set only when the tag set the platform should hold differs from the
