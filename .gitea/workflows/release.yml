@@ -19,6 +19,6 @@ on:
 
 jobs:
   release:
-    uses: frostmoln/workflows/.gitea/workflows/release.yml@v0.16.10
+    uses: frostmoln/workflows/.gitea/workflows/release.yml@v0.16.11
     secrets:
       RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
