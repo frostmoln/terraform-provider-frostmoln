@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.100.1] - 2026-11-13
+
+### 📚 Documentation
+
+- Trim CLAUDE.md to purpose and non-obvious traps (#837)
+- *(postgres_instance)* Raise timeouts.create for a restore_from restore (#839)
+
 ## [0.100.0] - 2026-11-13
 
 ### 🚀 Features
