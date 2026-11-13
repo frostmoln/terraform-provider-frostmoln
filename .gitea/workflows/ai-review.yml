@@ -21,6 +21,6 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    uses: frostmoln/workflows/.gitea/workflows/ai-review.yml@v0.16.12
+    uses: frostmoln/workflows/.gitea/workflows/ai-review.yml@v0.16.13
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
