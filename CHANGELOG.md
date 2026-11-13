@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.100.0] - 2026-11-13
+
+### 🚀 Features
+
+- *(kubernetes)* Expose running control-plane and node-pool patch versions (#834)
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.47 (#817)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.48 (#824)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.49 (#827)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.50 (#831)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.16.9 (#815)
+- Purge NordicLight naming (#819)
+- *(deps)* Update dependency frostmoln/workflows to v0.16.10 (#821)
+- *(deps)* Update dependency frostmoln/workflows to v0.16.11 (#823)
+- *(deps)* Update dependency frostmoln/workflows to v0.16.12 (#829)
+- *(deps)* Update dependency frostmoln/workflows to v0.16.13 (#833)
+
 ## [0.99.4] - 2026-11-10
 
 ### 📚 Documentation
