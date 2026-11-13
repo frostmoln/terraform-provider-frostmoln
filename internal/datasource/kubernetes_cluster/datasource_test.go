@@ -45,7 +45,7 @@ func listingSchema(t *testing.T) schema.Schema {
 func TestSchemaAttributes(t *testing.T) {
 	s := listingSchema(t)
 	for _, attr := range []string{
-		"id", "name", "status", "version", "control_plane_tier", "ha_enabled",
+		"id", "name", "status", "version", "control_plane_version", "control_plane_tier", "ha_enabled",
 		"region", "vpc_id", "subnet_id", "pod_cidr", "service_cidr", "endpoint",
 		"load_balancer_id", "public_ip", "ca_cert_hash", "created_at",
 		"updated_at", "tenant_id", "tags",
@@ -60,7 +60,7 @@ func TestSchemaAttributes(t *testing.T) {
 	if name, ok := s.Attributes["name"].(schema.StringAttribute); !ok || !name.Optional {
 		t.Error("name must be an optional string attribute")
 	}
-	for _, attr := range []string{"status", "version", "control_plane_tier", "ha_enabled", "endpoint", "ca_cert_hash"} {
+	for _, attr := range []string{"status", "version", "control_plane_version", "control_plane_tier", "ha_enabled", "endpoint", "ca_cert_hash"} {
 		if a, ok := s.Attributes[attr]; !ok || !a.IsComputed() {
 			t.Errorf("%s must be computed", attr)
 		}
@@ -155,30 +155,31 @@ func readWith(t *testing.T, serverURL string, id, name *string) readResult {
 		return tftypes.NewValue(tftypes.String, *v)
 	}
 	config := tftypes.NewValue(objType, map[string]tftypes.Value{
-		"id":                 stringOr(id),
-		"name":               stringOr(name),
-		"status":             tftypes.NewValue(tftypes.String, nil),
-		"status_reason":      tftypes.NewValue(tftypes.String, nil),
-		"status_message":     tftypes.NewValue(tftypes.String, nil),
-		"failed_step":        tftypes.NewValue(tftypes.String, nil),
-		"version":            tftypes.NewValue(tftypes.String, nil),
-		"control_plane_tier": tftypes.NewValue(tftypes.String, nil),
-		"ha_enabled":         tftypes.NewValue(tftypes.Bool, nil),
-		"region":             tftypes.NewValue(tftypes.String, nil),
-		"vpc_id":             tftypes.NewValue(tftypes.String, nil),
-		"subnet_id":          tftypes.NewValue(tftypes.String, nil),
-		"pod_cidr":           tftypes.NewValue(tftypes.String, nil),
-		"service_cidr":       tftypes.NewValue(tftypes.String, nil),
-		"endpoint":           tftypes.NewValue(tftypes.String, nil),
-		"load_balancer_id":   tftypes.NewValue(tftypes.String, nil),
-		"public_ip":          tftypes.NewValue(tftypes.String, nil),
-		"ca_cert_hash":       tftypes.NewValue(tftypes.String, nil),
-		"created_at":         tftypes.NewValue(tftypes.String, nil),
-		"updated_at":         tftypes.NewValue(tftypes.String, nil),
-		"tenant_id":          tftypes.NewValue(tftypes.String, nil),
-		"tags":               tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"maintenance_window": tftypes.NewValue(s.Type().TerraformType(context.Background()).(tftypes.Object).AttributeTypes["maintenance_window"], nil),
-		"maintenance":        tftypes.NewValue(s.Type().TerraformType(context.Background()).(tftypes.Object).AttributeTypes["maintenance"], nil),
+		"id":                    stringOr(id),
+		"name":                  stringOr(name),
+		"status":                tftypes.NewValue(tftypes.String, nil),
+		"status_reason":         tftypes.NewValue(tftypes.String, nil),
+		"status_message":        tftypes.NewValue(tftypes.String, nil),
+		"failed_step":           tftypes.NewValue(tftypes.String, nil),
+		"version":               tftypes.NewValue(tftypes.String, nil),
+		"control_plane_version": tftypes.NewValue(tftypes.String, nil),
+		"control_plane_tier":    tftypes.NewValue(tftypes.String, nil),
+		"ha_enabled":            tftypes.NewValue(tftypes.Bool, nil),
+		"region":                tftypes.NewValue(tftypes.String, nil),
+		"vpc_id":                tftypes.NewValue(tftypes.String, nil),
+		"subnet_id":             tftypes.NewValue(tftypes.String, nil),
+		"pod_cidr":              tftypes.NewValue(tftypes.String, nil),
+		"service_cidr":          tftypes.NewValue(tftypes.String, nil),
+		"endpoint":              tftypes.NewValue(tftypes.String, nil),
+		"load_balancer_id":      tftypes.NewValue(tftypes.String, nil),
+		"public_ip":             tftypes.NewValue(tftypes.String, nil),
+		"ca_cert_hash":          tftypes.NewValue(tftypes.String, nil),
+		"created_at":            tftypes.NewValue(tftypes.String, nil),
+		"updated_at":            tftypes.NewValue(tftypes.String, nil),
+		"tenant_id":             tftypes.NewValue(tftypes.String, nil),
+		"tags":                  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"maintenance_window":    tftypes.NewValue(s.Type().TerraformType(context.Background()).(tftypes.Object).AttributeTypes["maintenance_window"], nil),
+		"maintenance":           tftypes.NewValue(s.Type().TerraformType(context.Background()).(tftypes.Object).AttributeTypes["maintenance"], nil),
 	})
 
 	var readResp datasource.ReadResponse
@@ -287,7 +288,7 @@ func TestReadByID(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"id":"cluster-1","name":"billing-prod","tenantId":"tenant-1","status":"running",
-			"kubernetesVersion":"1.35","controlPlaneTier":"production","haEnabled":true,
+			"kubernetesVersion":"1.35","controlPlaneVersion":"1.35.3","controlPlaneTier":"production","haEnabled":true,
 			"region":"arl1","vpcId":"vpc-1","subnetId":"subnet-1",
 			"podCidr":"10.200.0.0/16","serviceCidr":"10.210.0.0/18",
 			"endpoint":"https://api.billing.k8s.frostmoln.cloud:6443",
@@ -313,6 +314,9 @@ func TestReadByID(t *testing.T) {
 	}
 	if m.Status.ValueString() != "running" || m.Version.ValueString() != "1.35" {
 		t.Errorf("status/version is %s/%s", m.Status.ValueString(), m.Version.ValueString())
+	}
+	if m.ControlPlaneVersion.ValueString() != "1.35.3" {
+		t.Errorf("control_plane_version is %s, want the wire's controlPlaneVersion", m.ControlPlaneVersion)
 	}
 	if m.ControlPlaneTier.ValueString() != "production" || !m.HAEnabled.ValueBool() {
 		t.Errorf("tier/ha are %s/%t", m.ControlPlaneTier.ValueString(), m.HAEnabled.ValueBool())
@@ -650,6 +654,8 @@ func TestReadMapsAbsentOptionalsToNull(t *testing.T) {
 		"ca_cert_hash":     m.CACertHash.IsNull,
 		"updated_at":       m.UpdatedAt.IsNull,
 		"tenant_id":        m.TenantID.IsNull,
+		// Absent = unknown: never "" and never guessed from kubernetesVersion.
+		"control_plane_version": m.ControlPlaneVersion.IsNull,
 	} {
 		if !check() {
 			t.Errorf("%s must render as null when the wire omits it", name)

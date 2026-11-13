@@ -15,14 +15,17 @@ import (
 
 // KubernetesClusterModel is the Terraform state model for a managed Kubernetes cluster.
 type KubernetesClusterModel struct {
-	ID               types.String `tfsdk:"id"`
-	Name             types.String `tfsdk:"name"`
-	Version          types.String `tfsdk:"version"`
-	ControlPlaneTier types.String `tfsdk:"control_plane_tier"`
-	Region           types.String `tfsdk:"region"`
-	VPCID            types.String `tfsdk:"vpc_id"`
-	SubnetID         types.String `tfsdk:"subnet_id"`
-	PublicIPID       types.String `tfsdk:"public_ip_id"`
+	ID      types.String `tfsdk:"id"`
+	Name    types.String `tfsdk:"name"`
+	Version types.String `tfsdk:"version"`
+	// ControlPlaneVersion is READ-ONLY and platform-moving: the patch the control
+	// plane runs, rolled by the platform. Null while the API does not know it.
+	ControlPlaneVersion types.String `tfsdk:"control_plane_version"`
+	ControlPlaneTier    types.String `tfsdk:"control_plane_tier"`
+	Region              types.String `tfsdk:"region"`
+	VPCID               types.String `tfsdk:"vpc_id"`
+	SubnetID            types.String `tfsdk:"subnet_id"`
+	PublicIPID          types.String `tfsdk:"public_ip_id"`
 	// Neither `scheme` nor the ingress_* attributes exist on this model any more.
 	// The Kubernetes API endpoint's exposure is not configurable, and the
 	// platform-provisioned worker ingress load balancer is gone — a Service of
@@ -85,6 +88,9 @@ type InitialNodePoolModel struct {
 	StatusReason  types.String `tfsdk:"status_reason"`
 	StatusMessage types.String `tfsdk:"status_message"`
 	FailedStep    types.String `tfsdk:"failed_step"`
+	// KubernetesVersion is READ-ONLY and platform-moving: the oldest patch the
+	// pool's nodes run. Null while the API does not know it.
+	KubernetesVersion types.String `tfsdk:"kubernetes_version"`
 	// Tags / TagsAll are the initial pool's customer resource tags (internal/tftags),
 	// managed like any taggable resource's but with their own private-state scope
 	// (initialPoolTagsScope). The create body never carries them: the platform
@@ -111,11 +117,13 @@ type apiKubernetesCluster struct {
 	StatusMessage     string `json:"statusMessage,omitempty"`
 	FailedStep        string `json:"failedStep,omitempty"`
 	KubernetesVersion string `json:"kubernetesVersion"`
-	ControlPlaneTier  string `json:"controlPlaneTier"`
-	HAEnabled         bool   `json:"haEnabled"`
-	Region            string `json:"region"`
-	VPCID             string `json:"vpcId"`
-	SubnetID          string `json:"subnetId"`
+	// ControlPlaneVersion is absent while the platform does not know it (no backfill).
+	ControlPlaneVersion string `json:"controlPlaneVersion,omitempty"`
+	ControlPlaneTier    string `json:"controlPlaneTier"`
+	HAEnabled           bool   `json:"haEnabled"`
+	Region              string `json:"region"`
+	VPCID               string `json:"vpcId"`
+	SubnetID            string `json:"subnetId"`
 	// The load balancer below is the Kubernetes API ENDPOINT's, the only one this
 	// resource reports. The worker ingress load balancer is retired, and the
 	// backend no longer returns ingressScheme / ingressEndpoint /
@@ -165,8 +173,10 @@ type apiNodePool struct {
 	FlavorID      string `json:"flavorId"`
 	NodeCount     int    `json:"nodeCount"`
 	IsInitial     bool   `json:"isInitial"`
-	CreatedAt     string `json:"createdAt"`
-	UpdatedAt     string `json:"updatedAt,omitempty"`
+	// KubernetesVersion is absent while the platform does not know it.
+	KubernetesVersion string `json:"kubernetesVersion,omitempty"`
+	CreatedAt         string `json:"createdAt"`
+	UpdatedAt         string `json:"updatedAt,omitempty"`
 	// Tags are the pool's customer resource tags ({} when untagged).
 	Tags map[string]string `json:"tags"`
 }
@@ -309,6 +319,7 @@ func (m *KubernetesClusterModel) fromAPI(c *apiKubernetesCluster) {
 	m.ID = types.StringValue(c.ID)
 	m.Name = types.StringValue(c.Name)
 	m.Version = stringOrNull(c.KubernetesVersion)
+	m.ControlPlaneVersion = stringOrNull(c.ControlPlaneVersion)
 	m.ControlPlaneTier = stringOrNull(c.ControlPlaneTier)
 	m.Region = stringOrNull(c.Region)
 	m.VPCID = types.StringValue(c.VPCID)
@@ -361,16 +372,17 @@ func poolCustomerTags(p *apiNodePool) map[string]string {
 func (m *KubernetesClusterModel) setInitialNodePool(ctx context.Context, p *apiNodePool, priorTags types.Map, diags *diag.Diagnostics) {
 	tags, tagsAll := tftags.ReadBack(ctx, poolCustomerTags(p), priorTags, diags)
 	m.InitialNodePool = &InitialNodePoolModel{
-		Tags:          tags,
-		TagsAll:       tagsAll,
-		ID:            types.StringValue(p.ID),
-		Name:          types.StringValue(p.Name),
-		FlavorID:      types.StringValue(p.FlavorID),
-		NodeCount:     types.Int64Value(int64(p.NodeCount)),
-		Status:        types.StringValue(p.Status),
-		StatusReason:  stringOrNull(p.StatusReason),
-		StatusMessage: stringOrNull(p.StatusMessage),
-		FailedStep:    stringOrNull(p.FailedStep),
+		Tags:              tags,
+		TagsAll:           tagsAll,
+		ID:                types.StringValue(p.ID),
+		Name:              types.StringValue(p.Name),
+		FlavorID:          types.StringValue(p.FlavorID),
+		NodeCount:         types.Int64Value(int64(p.NodeCount)),
+		Status:            types.StringValue(p.Status),
+		StatusReason:      stringOrNull(p.StatusReason),
+		StatusMessage:     stringOrNull(p.StatusMessage),
+		FailedStep:        stringOrNull(p.FailedStep),
+		KubernetesVersion: stringOrNull(p.KubernetesVersion),
 	}
 }
 

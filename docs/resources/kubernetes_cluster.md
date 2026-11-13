@@ -9,7 +9,7 @@ description: |-
   Create-immutable — control_plane_tier, initial_node_pool.flavor_id, initial_node_pool.name, region, subnet_id, version, vpc_id: the platform has no in-place migration for it — a change destroys and re-creates the cluster.
   Create-immutable — public_ip_id: retained and deprecated: every new cluster's apiserver is a private VIP and the API refuses any value with a 400 — the attribute exists so a stale configuration is told so.
   Not enacted state — addon_versions: a refresh reads a pin back only for an addon this attribute already names, and only when the platform can report pins (not while the cluster is still being created, or during a platform deployment or outage, when the recorded value is kept); a pin set outside Terraform for any other addon is neither read into state nor sent. maintenance_window: stored and read back, but the platform does not schedule by it while the data source's maintenance.enforced is false.
-  Observed, not enacted — endpoint: platform-issued once the apiserver is up. kubeconfig: platform-issued once the apiserver is up. load_balancer_id: the platform provisions the load balancer the cluster rides on.
+  Observed, not enacted — control_plane_version: the platform chooses Kubernetes patches and rolls them in the maintenance window. endpoint: platform-issued once the apiserver is up. initial_node_pool.kubernetes_version: the platform chooses Kubernetes patches and rolls them in the maintenance window. kubeconfig: platform-issued once the apiserver is up. load_balancer_id: the platform provisions the load balancer the cluster rides on.
   Platform-invented default — maintenance window assigned at create when maintenance_window is unset: keep-with-docs. Every cluster has exactly one, so removing the attribute keeps the stored window; it only changes when you set another.
 ---
 
@@ -27,7 +27,7 @@ Manages a managed Kubernetes cluster in the Frostmoln platform. The cluster owns
 
 **Not enacted state** — `addon_versions`: a refresh reads a pin back only for an addon this attribute already names, and only when the platform can report pins (not while the cluster is still being created, or during a platform deployment or outage, when the recorded value is kept); a pin set outside Terraform for any other addon is neither read into state nor sent. `maintenance_window`: stored and read back, but the platform does not schedule by it while the data source's `maintenance.enforced` is false.
 
-**Observed, not enacted** — `endpoint`: platform-issued once the apiserver is up. `kubeconfig`: platform-issued once the apiserver is up. `load_balancer_id`: the platform provisions the load balancer the cluster rides on.
+**Observed, not enacted** — `control_plane_version`: the platform chooses Kubernetes patches and rolls them in the maintenance window. `endpoint`: platform-issued once the apiserver is up. `initial_node_pool.kubernetes_version`: the platform chooses Kubernetes patches and rolls them in the maintenance window. `kubeconfig`: platform-issued once the apiserver is up. `load_balancer_id`: the platform provisions the load balancer the cluster rides on.
 
 **Platform-invented default** — maintenance window assigned at create when `maintenance_window` is unset: **keep-with-docs**. Every cluster has exactly one, so removing the attribute keeps the stored window; it only changes when you set another.
 
@@ -169,6 +169,7 @@ An existing cluster created with a BYO public IP is unaffected and keeps its add
 ### Read-Only
 
 - `ca_cert_hash` (String) The cluster CA certificate hash.
+- `control_plane_version` (String) The Kubernetes patch version the control plane runs (e.g. `1.35.3`). Read-only: the platform chooses patches and rolls them in the maintenance window, so this changes without any change to your configuration. Null while the platform does not know it (a cluster not created, rolled or updated since it started recording it).
 - `created_at` (String) The timestamp when the cluster was created.
 - `endpoint` (String) The Kubernetes API endpoint URL.
 - `failed_step` (String) The provisioning phase the cluster failed in: one of `validation`, `control_plane`, `api_endpoint`, `addons`, `node_pool` or `provisioning`. Set only when `status` is `error`, and may be absent even then.
@@ -203,6 +204,7 @@ Read-Only:
 
 - `failed_step` (String) The provisioning phase the initial node pool failed in, e.g. `node_pool`. Set only when `status` is `error`, and may be absent even then.
 - `id` (String) The unique identifier of the initial node pool.
+- `kubernetes_version` (String) The oldest Kubernetes patch version the initial pool's nodes run (e.g. `1.35.3`). Read-only: the platform rolls patches, and mid-update this can differ from `control_plane_version`. Null while the platform does not know it.
 - `status` (String) The current status of the initial node pool.
 - `status_message` (String) A human-readable description of why the initial node pool failed. Set only when `status` is `error`.
 - `status_reason` (String) Why the initial node pool failed, as a failure class (e.g. `QuotaExceeded`). Set only when `status` is `error`.

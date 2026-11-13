@@ -76,28 +76,30 @@ type kubernetesClusterDataSource struct {
 // kubernetesVersion, control_plane_tier, …), so a data source read can be fed
 // straight into a reference without translating names.
 type kubernetesClusterModel struct {
-	ID               types.String `tfsdk:"id"`
-	Name             types.String `tfsdk:"name"`
-	Status           types.String `tfsdk:"status"`
-	StatusReason     types.String `tfsdk:"status_reason"`
-	StatusMessage    types.String `tfsdk:"status_message"`
-	FailedStep       types.String `tfsdk:"failed_step"`
-	Version          types.String `tfsdk:"version"`
-	ControlPlaneTier types.String `tfsdk:"control_plane_tier"`
-	HAEnabled        types.Bool   `tfsdk:"ha_enabled"`
-	Region           types.String `tfsdk:"region"`
-	VPCID            types.String `tfsdk:"vpc_id"`
-	SubnetID         types.String `tfsdk:"subnet_id"`
-	PodCIDR          types.String `tfsdk:"pod_cidr"`
-	ServiceCIDR      types.String `tfsdk:"service_cidr"`
-	Endpoint         types.String `tfsdk:"endpoint"`
-	LoadBalancerID   types.String `tfsdk:"load_balancer_id"`
-	PublicIP         types.String `tfsdk:"public_ip"`
-	CACertHash       types.String `tfsdk:"ca_cert_hash"`
-	CreatedAt        types.String `tfsdk:"created_at"`
-	UpdatedAt        types.String `tfsdk:"updated_at"`
-	TenantID         types.String `tfsdk:"tenant_id"`
-	Tags             types.Map    `tfsdk:"tags"`
+	ID            types.String `tfsdk:"id"`
+	Name          types.String `tfsdk:"name"`
+	Status        types.String `tfsdk:"status"`
+	StatusReason  types.String `tfsdk:"status_reason"`
+	StatusMessage types.String `tfsdk:"status_message"`
+	FailedStep    types.String `tfsdk:"failed_step"`
+	Version       types.String `tfsdk:"version"`
+	// ControlPlaneVersion is the patch the control plane runs; null while unknown.
+	ControlPlaneVersion types.String `tfsdk:"control_plane_version"`
+	ControlPlaneTier    types.String `tfsdk:"control_plane_tier"`
+	HAEnabled           types.Bool   `tfsdk:"ha_enabled"`
+	Region              types.String `tfsdk:"region"`
+	VPCID               types.String `tfsdk:"vpc_id"`
+	SubnetID            types.String `tfsdk:"subnet_id"`
+	PodCIDR             types.String `tfsdk:"pod_cidr"`
+	ServiceCIDR         types.String `tfsdk:"service_cidr"`
+	Endpoint            types.String `tfsdk:"endpoint"`
+	LoadBalancerID      types.String `tfsdk:"load_balancer_id"`
+	PublicIP            types.String `tfsdk:"public_ip"`
+	CACertHash          types.String `tfsdk:"ca_cert_hash"`
+	CreatedAt           types.String `tfsdk:"created_at"`
+	UpdatedAt           types.String `tfsdk:"updated_at"`
+	TenantID            types.String `tfsdk:"tenant_id"`
+	Tags                types.Map    `tfsdk:"tags"`
 	// MaintenanceWindow and Maintenance are null only on a server from before the fields.
 	MaintenanceWindow types.Object `tfsdk:"maintenance_window"`
 	Maintenance       types.Object `tfsdk:"maintenance"`
@@ -158,16 +160,18 @@ type apiCluster struct {
 	StatusMessage     string `json:"statusMessage,omitempty"`
 	FailedStep        string `json:"failedStep,omitempty"`
 	KubernetesVersion string `json:"kubernetesVersion"`
-	ControlPlaneTier  string `json:"controlPlaneTier"`
-	HAEnabled         bool   `json:"haEnabled"`
-	Region            string `json:"region"`
-	VPCID             string `json:"vpcId"`
-	SubnetID          string `json:"subnetId"`
-	PodCIDR           string `json:"podCidr,omitempty"`
-	ServiceCIDR       string `json:"serviceCidr,omitempty"`
-	Endpoint          string `json:"endpoint,omitempty"`
-	LoadBalancerID    string `json:"loadBalancerId,omitempty"`
-	PublicIP          string `json:"publicIp,omitempty"`
+	// ControlPlaneVersion is absent while the platform does not know it (no backfill).
+	ControlPlaneVersion string `json:"controlPlaneVersion,omitempty"`
+	ControlPlaneTier    string `json:"controlPlaneTier"`
+	HAEnabled           bool   `json:"haEnabled"`
+	Region              string `json:"region"`
+	VPCID               string `json:"vpcId"`
+	SubnetID            string `json:"subnetId"`
+	PodCIDR             string `json:"podCidr,omitempty"`
+	ServiceCIDR         string `json:"serviceCidr,omitempty"`
+	Endpoint            string `json:"endpoint,omitempty"`
+	LoadBalancerID      string `json:"loadBalancerId,omitempty"`
+	PublicIP            string `json:"publicIp,omitempty"`
 	// CACertHash is a non-secret reference to the cluster CA: the server only
 	// ever serves the hash, never the CA itself (the kubeconfig and its
 	// private key material live in Vault, ADR-0020). A hash is safe to render
@@ -252,6 +256,13 @@ func (d *kubernetesClusterDataSource) Schema(_ context.Context, _ datasource.Sch
 			"version": schema.StringAttribute{
 				Description: "The Kubernetes version (the wire's kubernetesVersion).",
 				Computed:    true,
+			},
+			"control_plane_version": schema.StringAttribute{
+				Description: "The Kubernetes patch version the control plane runs (e.g. `1.35.3`). " +
+					"The platform chooses patches and rolls them in the maintenance window, so this " +
+					"changes without any change to your configuration. Null while the platform does " +
+					"not know it (a cluster not created, rolled or updated since it started recording it).",
+				Computed: true,
 			},
 			"control_plane_tier": schema.StringAttribute{
 				Description: "The named control-plane plan (`development`, `production`, …) " +
@@ -651,6 +662,7 @@ func setInstanceState(state *kubernetesClusterModel, cluster *apiCluster) {
 	state.StatusMessage = stringFromWire(cluster.StatusMessage)
 	state.FailedStep = stringFromWire(cluster.FailedStep)
 	state.Version = stringFromWire(cluster.KubernetesVersion)
+	state.ControlPlaneVersion = stringFromWire(cluster.ControlPlaneVersion)
 	state.ControlPlaneTier = stringFromWire(cluster.ControlPlaneTier)
 	state.HAEnabled = types.BoolValue(cluster.HAEnabled)
 	state.Region = stringFromWire(cluster.Region)

@@ -26,8 +26,11 @@ type KubernetesNodePoolModel struct {
 	StatusReason  types.String `tfsdk:"status_reason"`
 	StatusMessage types.String `tfsdk:"status_message"`
 	FailedStep    types.String `tfsdk:"failed_step"`
-	CreatedAt     types.String `tfsdk:"created_at"`
-	UpdatedAt     types.String `tfsdk:"updated_at"`
+	// KubernetesVersion is READ-ONLY and platform-moving: the oldest patch the
+	// pool's nodes run. Null while the API does not know it.
+	KubernetesVersion types.String `tfsdk:"kubernetes_version"`
+	CreatedAt         types.String `tfsdk:"created_at"`
+	UpdatedAt         types.String `tfsdk:"updated_at"`
 	// Tags / TagsAll are the pool's customer resource tags (internal/tftags) — not
 	// Kubernetes node labels.
 	Tags    types.Map `tfsdk:"tags"`
@@ -54,6 +57,8 @@ type apiNodePool struct {
 	FlavorID      string `json:"flavorId"`
 	NodeCount     int    `json:"nodeCount"`
 	IsInitial     bool   `json:"isInitial"`
+	// KubernetesVersion is absent while the platform does not know it.
+	KubernetesVersion string `json:"kubernetesVersion,omitempty"`
 	// Tags are the pool's customer resource tags; the backend always sends an
 	// object ({} when untagged).
 	Tags      map[string]string `json:"tags"`
@@ -114,6 +119,7 @@ func (m *KubernetesNodePoolModel) fromAPI(p *apiNodePool) {
 	m.StatusReason = stringOrNull(p.StatusReason)
 	m.StatusMessage = stringOrNull(p.StatusMessage)
 	m.FailedStep = stringOrNull(p.FailedStep)
+	m.KubernetesVersion = stringOrNull(p.KubernetesVersion)
 	m.CreatedAt = types.StringValue(p.CreatedAt)
 	m.UpdatedAt = stringOrNull(p.UpdatedAt)
 }

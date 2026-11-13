@@ -66,6 +66,7 @@ data "frostmoln_kubernetes_cluster" "by_id" {
 
 - `ca_cert_hash` (String) A NON-SECRET reference to the cluster CA (a hash). The server only ever returns the hash, never the CA itself, so this attribute is not secret and not sensitive. The actual credential material — the kubeconfig with its client key — lives on `frostmoln_kubernetes_cluster_kubeconfig`, not here.
 - `control_plane_tier` (String) The named control-plane plan (`development`, `production`, …) that sizes the cluster's dedicated control plane — its HA shape, not a customer tenancy.
+- `control_plane_version` (String) The Kubernetes patch version the control plane runs (e.g. `1.35.3`). The platform chooses patches and rolls them in the maintenance window, so this changes without any change to your configuration. Null while the platform does not know it (a cluster not created, rolled or updated since it started recording it).
 - `created_at` (String) The timestamp when the cluster was created.
 - `endpoint` (String) The load-balancer VIP fronting the API server — the address kube clients reach the cluster on. Null while provisioning has not produced one.
 - `failed_step` (String) The provisioning phase the cluster failed in: one of `validation`, `control_plane`, `api_endpoint`, `addons`, `node_pool` or `provisioning`. Set only when `status` is `error`, and may be absent even then.

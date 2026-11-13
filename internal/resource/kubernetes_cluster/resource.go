@@ -220,6 +220,13 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
+			"control_plane_version": schema.StringAttribute{
+				Description: "The Kubernetes patch version the control plane runs (e.g. `1.35.3`). Read-only: " +
+					"the platform chooses patches and rolls them in the maintenance window, so this changes " +
+					"without any change to your configuration. Null while the platform does not know it " +
+					"(a cluster not created, rolled or updated since it started recording it).",
+				Computed: true,
+			},
 			"control_plane_tier": schema.StringAttribute{
 				Description: "The control-plane tier key (see the frostmoln_kubernetes_tiers data source for canonical keys). " +
 					"Defaults to the platform default tier.",
@@ -420,6 +427,12 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 					"failed_step": schema.StringAttribute{
 						Description: "The provisioning phase the initial node pool failed in, e.g. `node_pool`. Set only when `status` is `error`, and may be absent even then.",
 						Computed:    true,
+					},
+					"kubernetes_version": schema.StringAttribute{
+						Description: "The oldest Kubernetes patch version the initial pool's nodes run (e.g. `1.35.3`). " +
+							"Read-only: the platform rolls patches, and mid-update this can differ from " +
+							"`control_plane_version`. Null while the platform does not know it.",
+						Computed: true,
 					},
 					"tags": schema.MapAttribute{
 						Description: "Resource tags on the initial node pool: your own key/value metadata for search and " +
@@ -874,6 +887,7 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 	plan.InitialNodePool.StatusReason = types.StringNull()
 	plan.InitialNodePool.StatusMessage = types.StringNull()
 	plan.InitialNodePool.FailedStep = types.StringNull()
+	plan.InitialNodePool.KubernetesVersion = types.StringNull()
 	plan.InitialNodePool.TagsAll = types.MapNull(types.StringType)
 	if plan.InitialNodePool.Name.IsUnknown() {
 		plan.InitialNodePool.Name = types.StringNull()

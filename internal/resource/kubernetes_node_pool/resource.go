@@ -261,6 +261,12 @@ func (r *kubernetesNodePoolResource) Schema(_ context.Context, _ resource.Schema
 				Description: "The timestamp when the node pool was last updated.",
 				Computed:    true,
 			},
+			"kubernetes_version": schema.StringAttribute{
+				Description: "The oldest Kubernetes patch version the pool's nodes run (e.g. `1.35.3`). " +
+					"Read-only: the platform rolls patches, and mid-update this can differ from the " +
+					"cluster's `control_plane_version`. Null while the platform does not know it.",
+				Computed: true,
+			},
 			"tags": schema.MapAttribute{
 				Description: "Resource tags on the node pool: your own key/value metadata for search and " +
 					"filtering, stored by the platform only. They are NOT Kubernetes node labels and never " +

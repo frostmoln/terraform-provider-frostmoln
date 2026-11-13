@@ -131,7 +131,7 @@ func k8sInitialPool() tftypes.Value {
 	str := tftypes.String
 	ot := tftypes.Object{AttributeTypes: map[string]tftypes.Type{
 		"id": str, "name": str, "flavor_id": str, "node_count": tftypes.Number,
-		"status": str, "status_reason": str, "status_message": str, "failed_step": str,
+		"status": str, "status_reason": str, "status_message": str, "failed_step": str, "kubernetes_version": str,
 		"tags": tftypes.Map{ElementType: str}, "tags_all": tftypes.Map{ElementType: str},
 	}}
 	vals := map[string]tftypes.Value{}

@@ -272,7 +272,9 @@ var Declarations = map[string]Decl{
 			},
 		},
 		Observes: []Field{
+			{Path: "control_plane_version", Why: "the platform chooses Kubernetes patches and rolls them in the maintenance window"},
 			{Path: "endpoint", Why: "platform-issued once the apiserver is up"},
+			{Path: "initial_node_pool.kubernetes_version", Why: "the platform chooses Kubernetes patches and rolls them in the maintenance window"},
 			{Path: "kubeconfig", Why: "platform-issued once the apiserver is up"},
 			{Path: "load_balancer_id", Why: "the platform provisions the load balancer the cluster rides on"},
 		},
@@ -282,6 +284,9 @@ var Declarations = map[string]Decl{
 			{Path: "cluster_id", Why: "the pool belongs to its cluster; moving it is a different pool"},
 			{Path: "flavor_id", Why: "the platform does not re-flavor a pool in place"},
 			{Path: "name", Why: "the pool's name is its identity within the cluster"},
+		},
+		Observes: []Field{
+			{Path: "kubernetes_version", Why: "the platform chooses Kubernetes patches and rolls them in the maintenance window"},
 		},
 	},
 	"frostmoln_launch_template": {

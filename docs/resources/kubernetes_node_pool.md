@@ -9,6 +9,7 @@ description: |-
   Create-immutable — cluster_id: the pool belongs to its cluster; moving it is a different pool.
   Create-immutable — flavor_id: the platform does not re-flavor a pool in place.
   Create-immutable — name: the pool's name is its identity within the cluster.
+  Observed, not enacted — kubernetes_version: the platform chooses Kubernetes patches and rolls them in the maintenance window.
 ---
 
 # frostmoln_kubernetes_node_pool (Resource)
@@ -24,6 +25,8 @@ Manages an additional node pool on a managed Kubernetes cluster. The cluster's I
 **Create-immutable** — `flavor_id`: the platform does not re-flavor a pool in place.
 
 **Create-immutable** — `name`: the pool's name is its identity within the cluster.
+
+**Observed, not enacted** — `kubernetes_version`: the platform chooses Kubernetes patches and rolls them in the maintenance window.
 
 ## Example Usage
 
@@ -67,6 +70,7 @@ resource "frostmoln_kubernetes_node_pool" "workers" {
 - `created_at` (String) The timestamp when the node pool was created.
 - `failed_step` (String) The provisioning phase the node pool failed in: one of `validation`, `control_plane`, `api_endpoint`, `addons`, `node_pool` or `provisioning`. Set only when `status` is `error`, and may be absent even then.
 - `id` (String) The unique identifier of the node pool.
+- `kubernetes_version` (String) The oldest Kubernetes patch version the pool's nodes run (e.g. `1.35.3`). Read-only: the platform rolls patches, and mid-update this can differ from the cluster's `control_plane_version`. Null while the platform does not know it.
 - `status` (String) The current status of the node pool.
 - `status_message` (String) A human-readable description of why the node pool failed. Set only when `status` is `error`.
 - `status_reason` (String) Why the node pool failed, as a failure class (e.g. `QuotaExceeded`). Set only when `status` is `error`.
