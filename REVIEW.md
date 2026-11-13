@@ -38,7 +38,7 @@ what a defect is HERE, and what is not worth a comment.
 - **Wire drift with api-gateway.** A new request/response `json` tag is camelCase and matches
   the backend (`typeVersion`, `typeConfig`, `flavorId`); `retry_after` and `required_permission`
   in `client.go` mirror gateway bodies. Tenant-scoped calls use `/v1/tenants/{t}/...` - a bare
-  `/v1/api-keys` or `/v1/images` acts on the caller's HOME tenant (`CLAUDE.md` endpoint table).
+  `/v1/api-keys` or `/v1/images` acts on the caller's HOME tenant (`CLAUDE.md` "API Endpoints Reference").
 - **Managed-offer HCL drift.** Type-specific resources (no generic `*_instance`), bare
   `version`, `config` (Map of String), `flavor_id`; references point at computed attributes,
   never literal addresses (`CLAUDE.md` "Managed-service instance resource conventions",

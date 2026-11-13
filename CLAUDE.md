@@ -1,389 +1,132 @@
 # terraform-provider-frostmoln Development Guide
 
-For project-wide conventions and architecture details, see:
-- [Shared project context](../claude-config/CLAUDE.md)
-- [Architecture & service map](../claude-config/architecture.md)
+> See [shared project context](../claude-config/CLAUDE.md) for platform-wide guidelines.
 
-## Module
-`go.frostmoln.internal/terraform-provider-frostmoln`
+Module: `go.frostmoln.internal/terraform-provider-frostmoln`
 
-- **OIDC refresh** for the fm-session credential source comes from the shared
-  `go.frostmoln.internal/oidc` module, never a hand copy; its rules are in [oidc/CLAUDE.md](../oidc/CLAUDE.md).
+Terraform provider `frostmoln` (resources `frostmoln_*`), built on terraform-plugin-framework,
+talking to api-gateway. Review rules: `REVIEW.md`.
 
-## Project Overview
-
-Terraform provider for the Frostmoln Cloud Platform. Enables infrastructure-as-code management of compute instances, VPCs, subnets, security groups, public IPs, volumes, buckets, snapshots, SSH keys, S3 credentials, and API keys.
-
-Provider name: `frostmoln`. Resource prefix: `frostmoln_` (e.g., `frostmoln_vpc`, `frostmoln_instance`).
-
-## Architecture
-
-### Technology Stack
+## Layout
 
 ```
-Go 1.25+                          → Programming language
-terraform-plugin-framework         → Provider framework
-terraform-plugin-testing           → Acceptance test framework
-terraform-plugin-docs              → Documentation generation
+cmd/terraform-provider-frostmoln/   entry point
+internal/provider/                  schema, Configure, registration, provider-wide contract tests
+internal/client/                    HTTP client, auth, error envelopes, poller
+internal/resource/<name>/           one package per resource (resource.go, model.go)
+internal/datasource/<name>/         one package per data source
+internal/scopedecl/ idform/ pubid/ planmod/ stateupgrade/   shared schema machinery
+examples/  templates/  docs/        HCL examples, tfplugindocs templates, generated docs
 ```
 
-### Directory Structure
-
-```
-terraform-provider-frostmoln/
-├── cmd/terraform-provider-frostmoln/
-│   └── main.go                    # Entry point
-├── internal/
-│   ├── provider/
-│   │   ├── provider.go            # Schema, Configure, resource/datasource registration
-│   │   └── provider_test.go
-│   ├── client/
-│   │   ├── client.go              # HTTP client, auth, error parsing, tenant path helper
-│   │   ├── client_test.go
-│   │   ├── poller.go              # WaitForState async polling
-│   │   └── poller_test.go
-│   ├── resource/
-│   │   └── <resource_name>/       # Each resource in its own package
-│   │       ├── resource.go        # CRUD + schema
-│   │       ├── model.go           # TF model <-> API conversion
-│   │       └── resource_test.go
-│   └── datasource/
-│       └── <datasource_name>/     # Each data source in its own package
-│           ├── datasource.go      # Read + schema
-│           └── datasource_test.go
-├── examples/
-│   ├── provider/provider.tf
-│   ├── resources/frostmoln_*/resource.tf
-│   └── data-sources/frostmoln_*/data-source.tf
-├── templates/index.md.tmpl
-├── tools/tools.go
-├── .gitea/workflows/
-│   ├── ci.yml, pre-commit.yml, docs.yml (docs drift), ai-review.yml
-│   └── acceptance.yml (nightly/dispatch), release.yml, goreleaser.yml
-├── Makefile
-└── go.mod
-```
-
-## Common Commands
+## Commands
 
 ```bash
-# Development
-go build ./...            # Build provider binary
-go test ./...             # Run unit tests
-TF_ACC=1 go test ./...          # Run acceptance tests (requires TF_ACC=1)
-golangci-lint run             # Run linter
-gofumpt -w .              # Format code
-
-# Installation
-go install ./...          # Install provider locally for dev testing
-
-# Documentation
-make generate         # Generate provider docs with tfplugindocs
-
-# Maintenance
-go mod tidy             # Update dependencies
-rm -rf bin/            # Clean build artifacts
+go build ./... && go test ./...
+TF_ACC=1 go test -v -timeout 30m ./internal/...   # acceptance, real API
+make generate                                     # docs/ via scripts/gen-docs.sh (not plain tfplugindocs)
 ```
+
+A new resource also needs: registration in `provider.go`, a `scopedecl` declaration (below), an
+`examples/resources/frostmoln_<name>/resource.tf`.
+
+OIDC refresh for the fm-session credential source comes from the shared `go.frostmoln.internal/oidc`
+module ([oidc/CLAUDE.md](../oidc/CLAUDE.md)); never a hand copy. The provider stamps
+`X-FM-Provider-Version` and handles the 426 via the shared `oidc` `VersionGate` /
+`NewUpgradeRequiredError`; gateway side: api-gateway `CLAUDE.md` "Client minimum-version gate".
 
 ## Release and distribution
 
-Governing decision: ADR-0079 (public client distribution; the Terraform Registry is its one
-byte-host exception). The provider rules:
+Governing decision: ADR-0079 (the Terraform Registry is its one byte-host exception).
 
-- **Canonical source, review and CI stay on `git.sm.internal`.** The shared release workflow
-  (`.gitea/workflows/release.yml`) cuts `vX.Y.Z`; the tag-triggered `.gitea/workflows/goreleaser.yml`
-  publishes to `registry.terraform.io/frostmoln/frostmoln`.
-- **The public GitHub repo `Frostmoln/terraform-provider-frostmoln` is a full-source mirror,**
-  pushed at release (tagged tree plus tag); no PRs land there. The registry reads `docs/`,
-  `LICENSE` and `terraform-registry-manifest.json` from the tag and the signed assets from the
-  GitHub Release.
-- **Signing is GPG, not minisign** (the registry accepts only GPG): a dedicated passphrase-less
-  key in `GPG_PRIVATE_KEY_B64`, its public key uploaded to the registry publisher account. Never
-  rotated without operator approval (claude-config/CLAUDE.md rule 12).
-- **Pushes use a per-run `frostmoln-goreleaser` GitHub App token** scoped to `contents:write` on
-  this repo; never a user PAT or deploy key.
-- **License is MPL-2.0; the manifest declares protocol 6.0** (terraform-plugin-framework).
-- **`enforce_siv_path` stays off** in `release.yml`: the provider is a leaf plugin binary, never
-  an imported Go module.
+- Canonical source, review and CI stay on `git.sm.internal`. `.gitea/workflows/release.yml` cuts
+  `vX.Y.Z`; the tag-triggered `goreleaser.yml` publishes to `registry.terraform.io/frostmoln/frostmoln`.
+- The public GitHub repo `Frostmoln/terraform-provider-frostmoln` is a full-source mirror pushed at
+  release; no PRs land there. The registry reads `docs/`, `LICENSE`,
+  `terraform-registry-manifest.json` from the tag and signed assets from the GitHub Release.
+- **Signing is GPG, not minisign** (the registry accepts only GPG): passphrase-less key in
+  `GPG_PRIVATE_KEY_B64`. Never rotated without operator approval.
+- Pushes use a per-run `frostmoln-goreleaser` GitHub App token; never a PAT or deploy key.
+- MPL-2.0; manifest declares protocol 6.0. **`enforce_siv_path` stays off** in `release.yml`: the
+  provider is a leaf plugin binary, never an imported module.
 
-## Testing
+## Plan modifier order: `UseStateForUnknown()` before `RequiresReplace()`
 
-### Running Tests
+On an **Optional+Computed** attribute, `UseStateForUnknown()` goes FIRST. The framework marks a
+null-config Computed attribute unknown on update; reversed, `RequiresReplace` compares unknown
+against state and plans a destroy/recreate on any unrelated change. Enforced by
+`internal/provider/planmodifier_order_test.go`; a new create-only Optional+Computed attribute goes
+in its `mustReplaceOnRealChange` table.
 
-```bash
-# Run all unit tests
-go test ./...
+- A `RequiresReplaceIf` whose predicate reads `ConfigValue` cannot be held by that table
+  (`replayModifiers` passes a null config); `TestScopeDeclarations` covers it instead
+  (`frostmoln_postgres_instance` `restore_from`). Do not add it to the table.
+- Exception: `frostmoln_secret`'s `content_type`, `max_versions`, `recovery_window_days` are
+  create-only but must NOT replace: a soft-deleted secret keeps its name for up to 30 days, so the
+  recreate 409s. They use `planmod.*UseStateOrDefault` (never a schema `Default`, which overrides
+  an imported value) plus a `ModifyPlan` refusal. Copy this for anything not recreatable by name.
+- Exempt: attributes with a schema `Default`, and create-time behaviour flags with a `Default`
+  and no `RequiresReplace` (`frostmoln_security_group` `delete_default_egress`, warned in `ModifyPlan`).
 
-# Run specific package tests
-go test -v ./internal/client/...
-go test -v ./internal/resource/vpc/...
+## Surface Contract doctrine
 
-# Run acceptance tests (requires real API)
-TF_ACC=1 go test -v -timeout 30m ./internal/...
-```
+A parent resource owns each child collection authoritatively; members are separate per-id
+resources. Never inline a child collection into a parent schema or mix both shapes. References
+point at computed attributes, never literal addresses. Every platform-invented default has an
+explicit policy (delete-on-create / adopt / keep-with-docs). Full doctrine:
+`templates/guides/surface-contract.md.tmpl`. `TestSurfaceContract` is default-deny over
+`allowedInlineCollections`.
 
-### Writing Tests
+## Authoritative-scope declarations
 
-Unit tests use `httptest` for HTTP mocking. Each resource test should:
-1. Create a mock HTTP server simulating the API
-2. Configure the provider client with the mock server URL
-3. Test CRUD operations
-4. Verify TF state matches expected values
+Every resource has an entry in `internal/scopedecl/declarations.go` (create-immutable fields WITH a
+reason, platform-mutable computed fields, `ImmutableWithoutReplace` refusals, default policies) and
+its `Description` carries `scopedecl.Summary("frostmoln_<name>")`. `TestScopeDeclarations` checks
+both directions. A new resource ships only with its declaration.
 
-## Code Conventions
+## Managed-service instance resource conventions
 
-### Adding New Resources
+- **"Engine" is retired; a managed offer's implementations are TYPES** (only the Application
+  Gateway's WAF inspection engine keeps the word). `no_engine_vocabulary_test.go` enforces it.
+- Type-specific resources (`frostmoln_redis_instance`, ...), never a generic `*_instance`.
+- Bare `version` (wire `typeVersion`), `config` Map of String (wire `typeConfig`), `flavor_id`
+  (wire `flavorId`) everywhere.
+- **Renaming an HCL attribute requires a schema `Version` bump and an upgrader**
+  (`stateupgrade.RenameStringAttr`); without it a Default-bearing attribute plans a DESTROY.
+- **Removing one also bumps `Version`**, and every older upgrader drops it too. Prove it with a
+  literal prior-version state row through the real RPCs at the WIRE version (idform adds one):
+  `internal/resource/load_balancer/upgrade_rpc_test.go`.
 
-1. Create a new directory under `internal/resource/<name>/`
-2. Create `model.go` with the TF model struct and API conversion functions
-3. Create `resource.go` implementing `resource.Resource` interface (Metadata, Schema, Create, Read, Update, Delete)
-4. Create `resource_test.go` with unit tests
-5. Register the resource in `internal/provider/provider.go` `Resources()` method
-6. Declare its authoritative scope: add an entry to
-   `internal/scopedecl/declarations.go` (create-immutable fields with their
-   reasons, platform-mutable computed fields, platform-invented defaults) and
-   append `scopedecl.Summary("frostmoln_<name>")` to the resource-level
-   `Description` — `TestScopeDeclarations` fails on a missing entry, a
-   replacing attribute without a declared reason, or a `Description` that
-   does not carry the summary.
-7. Add example HCL in `examples/resources/frostmoln_<name>/resource.tf`
-8. For any Optional+Computed attribute that is create-only, follow *Plan modifier
-   order* below and add it to `mustReplaceOnRealChange`
+## Policy documents: FRN read-back fold
 
-### Plan modifier order: `UseStateForUnknown()` before `RequiresReplace()`
+`frostmoln_iam_policy` compares configured vs stored documents via `sameServerDoc`
+(`frn_compare.go`), which undoes exactly identity's canonical-FRN rewrite and nothing more.
+`internal/resource/iam_policy/iam_nouns.json` changes in lockstep with identity's
+`TestNormaliseFRN_NounsMatchTheTerraformProviderTable`. Never widen the fold to a name-keyed noun or
+another prefix (it would hide drift). Config-to-config comparisons (`onlyTagsDiffer`) stay exact.
 
-On an **Optional+Computed** attribute the two modifiers must be ordered
-`UseStateForUnknown()` first, `RequiresReplace()` second:
+## Public ids (ADR-0129): `internal/idform` and `internal/pubid`
 
-```go
-PlanModifiers: []planmodifier.String{
-    stringplanmodifier.UseStateForUnknown(),
-    stringplanmodifier.RequiresReplace(),
-},
-```
+The provider requests public ids and keeps them in state. `internal/pubid` copies the servicekit
+codec, tested against verbatim copies of servicekit `pubid/testdata/` `vectors.json`/`kinds.json`.
+Every resource/data source is registered through `idform.Wrap`/`WrapDataSource`, which adds one
+schema version with an id-rewriting upgrader and suppresses spelling-only diffs and replacements.
 
-The framework marks every Computed attribute whose *config* value is null as
-unknown on update, attribute plan modifiers run in slice order chaining their
-PlanValue, and `RequiresReplace` is sticky once set. Reversed, it compares that
-unknown against the state value, they differ, and it records a replacement — so
-for a practitioner who omits the attribute (the intended usage for a
-server-defaulted Computed attribute) *any* unrelated change plans a full
-destroy/recreate: the VM, the volume and its data.
+- **Compare ids with `pubid.Equal`, never `==`.**
+- A new resource holding Frostmoln UUID ids gets an `idform.Kinds` entry (`TestIDFormKinds`).
+- **Never list an id whose kind depends on a sibling field, or one the API does not encode**: a
+  wrong kind plans a REPLACEMENT.
+- **Never bump a resource's own `Version` without its own upgrader**; the wrapper adds one on top.
 
-`UseStateForUnknown()` alone is safe here: it was already running before the fix,
-just one modifier too late, so the planned value was pinned to state either way —
-the ordering decides only whether a replacement is recorded.
+## Provider configuration
 
-**A `RequiresReplaceIf` whose predicate reads `ConfigValue` cannot be held by
-`mustReplaceOnRealChange`.** `replayModifiers` passes a NULL config on every arm
-— that is the "practitioner omitted the attribute" case the ordering trap lives
-in — so such a predicate never fires there and `onChange` comes back false
-however the modifiers are written. Do not conclude the guard is broken and do
-not add the attribute to the table: `TestScopeDeclarations` holds that direction
-instead, because its own replay sets the config to the new value.
-`frostmoln_postgres_instance`'s `restore_from` is the example.
-
-`internal/provider/planmodifier_order_test.go` enforces this behaviourally for
-every Optional+Computed attribute of every resource. A new create-only
-Optional+Computed attribute goes in its `mustReplaceOnRealChange` table, which
-guards the other direction (that `RequiresReplace()` was not simply dropped); the
-test fails if an attribute replaces without an entry, so the table cannot drift.
-
-**Exception — `frostmoln_secret`'s `content_type`, `max_versions` and
-`recovery_window_days`.** They are create-only but deliberately do NOT replace,
-so they are absent from `mustReplaceOnRealChange`. `RequiresReplace()` there
-would destroy a live secret and then FAIL to recreate it: a delete is a soft
-delete, and `UNIQUE(tenant_id, name)` in the secrets schema has no partial
-predicate, so the name stays taken for `recovery_window_days` (up to 30) and the
-create 409s. They use `planmod.*UseStateOrDefault` (never a schema `Default`,
-which `TransformDefaults` would substitute over an imported secret's real value)
-plus a `ModifyPlan` refusal. Copy that pattern for any attribute whose resource
-cannot be recreated under the same name.
-
-An attribute with a schema `Default` is exempt: `MarkComputedNilsAsUnknown`
-returns a default-bearing attribute untouched, so a null config never makes its
-plan value unknown. (An unknown *config expression* still can, but no ordering
-helps there — `UseStateForUnknown` bails on an unknown config value by design.)
-
-A second exempt class: a create-time behaviour flag carried in state, with a
-schema `Default` and no `RequiresReplace`, whose change on an existing resource
-is a documented no-op — `frostmoln_security_group`'s `delete_default_egress`
-is the example. It takes no `mustReplaceOnRealChange` entry (nothing replaces)
-and no plan modifiers (the Default covers the null-config case); its
-plan-time honesty is a `ModifyPlan` warning instead.
-
-### Surface Contract doctrine
-
-One collection, one owner, one shape: a parent resource owns each child
-collection authoritatively and the child members are separate per-ID resources
-— never inline a child collection into a parent schema, never mix the two
-shapes on one collection. References between resources point at computed
-attributes (`frostmoln_instance.x.private_ip`), never literal addresses the
-graph cannot see. Platform-invented defaults carry an explicit per-default
-policy (delete-on-create vs adopt-as-managed vs keep-with-docs) — the
-security-group default egress pair is delete-on-create via
-`delete_default_egress` (opt-in; the default flips to true at v2). The full
-doctrine with its big-3 evidence and the per-family honesty matrix:
-`templates/guides/surface-contract.md.tmpl` (rendered to
-`docs/guides/surface-contract.md`). Enforced by `TestSurfaceContract` in
-`internal/provider/surface_contract_test.go`, which walks every resource's
-schema and fails on ANY inline child collection (nested list/set/map of
-objects, attribute or block) not in its two-way-checked
-`allowedInlineCollections` — default-deny, so the shape cannot return under a
-novel name.
-
-### Authoritative-scope declarations
-
-Every resource declares who owns what: `internal/scopedecl/declarations.go`
-maps each type to its create-immutable fields WITH the reason (the schema's
-`RequiresReplace` carries no reason), the computed fields the platform may
-assign or change under the customer (OBSERVES — the managed-webserver security
-group, platform-assigned addresses), refusals-instead-of-replacements
-(`ImmutableWithoutReplace` — the frostmoln_secret pattern), and the policy on
-each platform-invented default. `scopedecl.Summary` renders it into every
-resource's page; `TestScopeDeclarations` asserts it against the live schema in
-both directions (every replacing attribute declared with a reason, every
-declared path real) and fails if a resource's `Description` does not carry
-its summary — from which the generated page is rendered.
-A new resource ships only with its declaration.
-
-### Managed-service instance resource conventions
-
-Managed-service offers (databases, caches, web servers, messaging, and the
-coming managed Kubernetes) follow one HCL surface — keep new ones consistent:
-
-- **THE WORD "ENGINE" IS RETIRED. A managed offer's implementations are TYPES.**
-  PostgreSQL and MySQL share neither a wire protocol, a dialect, a parameter
-  vocabulary nor a backup format; Apache and Nginx take different configuration.
-  "Engine" tells a customer they are interchangeable. It survives ONLY for things
-  that are not a customer's choice between implementations — the Application
-  Gateway's WAF *inspection engine*. `no_engine_vocabulary_test.go` enforces this
-  over `docs/`, `examples/` and every schema description.
-- **Type-specific resources, no generic `*_instance`.** Each type gets its own
-  resource (`frostmoln_redis_instance`, `frostmoln_valkey_instance`, …). There is
-  no generic `frostmoln_cache_instance`-style umbrella resource (the one that
-  existed was removed in #91).
-- **Expose `version`, never a type-prefixed name.** Use the bare `version`
-  attribute — not `type_version` / `mysql_version` / `postgres_version`. The
-  backend JSON wire tag is `typeVersion` (postgres keeps the Go field name
-  `PostgresVersion`, but its tag is `typeVersion` too); the model's
-  `toCreateRequest`/`fromAPI` map `version` ↔ the wire tag.
-- **Freeform config is `config` (Map of String)**, not `type_config`, sent as the
-  `typeConfig` object on the wire.
-- **Renaming an HCL attribute REQUIRES a schema `Version` bump and a state
-  upgrader** — `stateupgrade.RenameStringAttr`. Skipping it on an attribute that
-  carries a Default makes `terraform plan -refresh=false` propose a DESTROY: the
-  old key is dropped from state, the Default plans against null, and
-  `RequiresReplace` fires. See `messaging_instance` (engine → type),
-  `load_balancer` (provider_type → type) and `mysql_instance` (flavor → flavor_id).
-- **Removing an HCL attribute also bumps `Version`** with an upgrader that
-  drops it, and every older upgrader must drop it too (each upgrades straight
-  to the current schema). Prove it with a literal prior-version state row
-  through the real `UpgradeResourceState` + `PlanResourceChange` RPCs, at the
-  WIRE versions (idform adds one, so the last release's rows sit at own+1 and
-  reach idform's id-rewrite step, not your new upgrader): see `load_balancer`
-  own v1 → v2 (flavor_id retired), `upgrade_rpc_test.go`.
-- **Flavor is `flavor_id` everywhere.** All managed-service resources expose
-  `flavor_id` (the value is a flavor id, e.g. `db.gp1.small`; the wire tag is
-  `flavorId`). The db/web resources (mysql/postgres/apache/nginx) were
-  normalized from `flavor` to `flavor_id` in a breaking release (Ambix
-  019f132b-db61), matching the flagship `frostmoln_instance` and the
-  cache/messaging offers. Each bumped its schema `Version` to 1 with a
-  `flavor`→`flavor_id` StateUpgrader via the shared `internal/stateupgrade`
-  helper, so existing state upgrades cleanly (no spurious diff).
-
-### Policy documents: FRN read-back fold
-
-identity stores every policy document in canonical public FRN form (ADR-0129, PUBLIC-IDS-PLAN
-3b). `frostmoln_iam_policy` compares a configured document with the stored one through
-`sameServerDoc`, which undoes exactly identity's rewrite and nothing more (`frn_compare.go`):
-the tenant segment, string `frn:tenant` values, and the id segment of the nouns in
-`internal/resource/iam_policy/iam_nouns.json`, each only for a UUID or that kind's own prefix.
-That table is identity's `pubid.IAMNouns`/`KindForNoun` output and changes in lockstep with
-identity's `TestNormaliseFRN_NounsMatchTheTerraformProviderTable`. Never widen the fold to a
-name-keyed noun or another prefix: two documents the evaluator tells apart would compare equal
-and hide drift. Config-to-config comparisons (`onlyTagsDiffer`) stay exact.
-
-### Public ids (ADR-0129): `internal/idform` and `internal/pubid`
-
-The provider asks for public ids (`Frostmoln-Id-Format: public`, `internal/client`) and keeps
-them in state. `internal/pubid` is a copy of the servicekit codec, tested against verbatim
-copies of servicekit's `vectors.json` and `kinds.json` (refresh both from servicekit
-origin/main `pubid/testdata/`). Every resource and data source is registered through
-`idform.Wrap` / `idform.WrapDataSource` in `provider.go`. Those wrappers:
-
-- bump each resource's schema version by one, with a state upgrader that rewrites the ids
-  named in `idform.Kinds` (chained after the resource's own upgraders);
-- wrap every attribute plan modifier, so a replacement is dropped when plan and state name
-  the same id in two spellings (bytes, and kind when both are public);
-- keep a planned (Create/Update) or prior (Read, except computed-only attributes) id spelling
-  the API echoes in the other form, and keep a data source's configured spelling;
-- return from Update without an API call when plan and state differ only in id spelling.
-
-Rules for new code:
-- **Compare ids with `pubid.Equal`, never `==`**: state, config and the API can spell one id
-  two ways.
-- **A new resource holding Frostmoln UUID ids gets an `idform.Kinds` entry**, checked against
-  what the backend's pubidhttp specs render. `TestIDFormKinds` holds every entry to the live
-  schema and the registry. An id left out stays a UUID in state, which is safe but cosmetic.
-- **Never list an id whose kind depends on a sibling field, or one the API does not encode.**
-  A wrong kind on a referenced id makes the replace guard plan a REPLACEMENT.
-- **Never bump a resource's own schema `Version` without its own upgrader.** The wrapper adds
-  one on top, and chains your upgraders for every older version.
-
-### Adding New Data Sources
-
-1. Create a new directory under `internal/datasource/<name>/`
-2. Create `datasource.go` implementing `datasource.DataSource` interface
-3. Create `datasource_test.go` with unit tests
-4. Register in `internal/provider/provider.go` `DataSources()` method
-5. Add example HCL in `examples/data-sources/frostmoln_<name>/data-source.tf`
-
-### API Client
-
-The client in `internal/client/client.go` has no dependency on fm CLI or servicekit (it does import `go.frostmoln.internal/oidc`). Auth is `Authorization: Bearer` for a CLI-session credential, else the `X-API-Key` header. Tenant ID is resolved once via `GET /v1/me` and cached.
-
-### Async Resources
-
-Resources that return HTTP 202 (VPCs, volumes) use the poller in `internal/client/poller.go` to wait for completion. The poller is generic and configurable per resource.
-
-## Provider Configuration
-
-```hcl
-provider "frostmoln" {
-  api_endpoint = "https://api.frostmoln.cloud/api"  # or FROSTMOLN_API_ENDPOINT
-  api_key      = var.frostmoln_api_key              # or FROSTMOLN_API_KEY
-}
-```
-
-**The `/api` suffix is mandatory** — the gateway mounts every customer route
-under `/api` (`/api/v1/me`, …), so a bare `https://api.frostmoln.cloud` 404s at
-the edge with `NOT_FOUND: the requested resource was not found` while the
-provider configures. It is also what the `fm` CLI stores in `~/.fm/config.yaml`,
-and the default when `api_endpoint` is unset.
-
-The provider stamps its build version as `X-FM-Provider-Version` on its API and OIDC calls,
-for the gateway's minimum-version gate (426 `PROVIDER_UPGRADE_REQUIRED`). The stamp and the 426
-handling come from the shared `oidc` `VersionGate` / `NewUpgradeRequiredError` (terminal-safe
-message); never hand-copy a gate here. Gateway side: api-gateway `CLAUDE.md` "Client
-minimum-version gate".
+`api_endpoint` must include the `/api` suffix (`https://api.frostmoln.cloud/api`, the default);
+a bare host 404s at the edge with `NOT_FOUND` during Configure.
 
 ## API Endpoints Reference
 
-| Resource | Base Path | Notes |
-|----------|-----------|-------|
-| SSH Keys | `/v1/tenants/{t}/sshkeys` | Tenant-scoped |
-| Buckets | `/v1/tenants/{t}/buckets` | Name-based ID |
-| S3 Credentials | `/v1/tenants/{t}/credentials` | Secret only on create |
-| VPCs | `/v1/tenants/{t}/vpcs` | Async create (HTTP 202) |
-| Subnets | `/v1/tenants/{t}/subnets` | Most fields ForceNew |
-| Security Groups | `/v1/tenants/{t}/security-groups` | Rules are separate resource |
-| Security Group Rules | `/v1/tenants/{t}/security-groups/{sg}/rules` | All fields ForceNew |
-| Public IPs | `/v1/tenants/{t}/public-ips` | Associate/disassociate actions |
-| Volumes | `/v1/tenants/{t}/volumes` | Async create, resize support |
-| Snapshots | `/v1/tenants/{t}/snapshots` | Immutable after create |
-| Instances | `/v1/tenants/{t}/instances` | Async, resize via actions |
-| API Keys | `/v1/tenants/{t}/api-keys` | Key only on create. TENANT-SCOPED — the gateway re-scopes the signed auth context only on a `/tenants/{id}/` path, so the bare `/v1/api-keys` alias binds the key to the caller's HOME tenant, and an org-invited user has none (identity then resolves no org role and refuses every scope) |
-| Images | `/v1/tenants/{t}/images` | Reads public; writes (BYOI custom images) open to every tenant since 2026-08-22 (the `custom-images` entitlement was removed). TENANT-SCOPED — the gateway re-scopes the signed auth context only on a `/tenants/{id}/` path, so a bare `/v1/images` call silently acts on the caller's home tenant. Create → mint upload form → upload to object storage → import → poll, all on the same tenant path |
-| Flavors | `/v1/flavors` | Read-only, public |
-| Messaging vhosts / users / permissions | `/v1/tenants/{t}/messaging/{id}/vhosts`, `.../users`, `.../users/{u}/permissions/{v}` | Every mutation 202 (delete may be 204); poll the OBJECT, never `/v1/operations`; `ready`+`failureReason` is a FAILED change. All three resources share the per-instance mutation lock in `internal/messagingobj` (the guest runs one operation per instance at a time) |
+- Tenant-scoped calls use `/v1/tenants/{t}/...`. The gateway re-scopes the auth context only on that
+  path, so a bare `/v1/api-keys` or `/v1/images` silently acts on the caller's HOME tenant (an
+  org-invited user has none, and every scope is refused).
+- Messaging vhosts/users/permissions: poll the OBJECT, never `/v1/operations`; `ready` with a
+  `failureReason` is a FAILED change. All three share the per-instance lock in `internal/messagingobj`.
