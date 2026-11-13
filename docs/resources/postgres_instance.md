@@ -142,6 +142,13 @@ resource "frostmoln_postgres_instance" "recovered" {
     source_instance_id = frostmoln_postgres_instance.main.id
     point_in_time      = "2026-09-20T14:30:00Z"
   }
+
+  # A point-in-time restore can take hours, longer than the 30m default wait.
+  # 6h suits a source with daily base backups; from a weekly base a restore can
+  # take a day or more, so raise it (e.g. "30h").
+  timeouts {
+    create = "6h"
+  }
 }
 ```
 
@@ -175,7 +182,9 @@ resource "frostmoln_postgres_instance" "recovered" {
 
     The platform builds the target from the source's own shape, so the source must be a PostgreSQL instance and this resource's `version`, `flavor_id`, `vpc_id`, `subnet_id` and `ha_enabled` must equal the source's. Terraform reads the source first and refuses with the mismatch named, rather than quietly creating a plain empty database instead. `storage_gb` may be larger than the source's and is grown in place after the restore; it may not be smaller.
 
-    Create-only, and it records what Terraform asked for rather than anything the platform reports — there is no API field that says how an instance came to exist. Removing it afterwards clears that record in a single in-place update that changes nothing on the platform, and the plan then stays clean. Importing a restored instance records nothing, and plans nothing. Changing it to a DIFFERENT source or instant REPLACES this resource, which destroys the database it created — treat it as you would `vpc_id`. Adding it to an instance that already exists is refused: an instance cannot be un-created into a restore. (see [below for nested schema](#nestedatt--restore_from))
+    Create-only, and it records what Terraform asked for rather than anything the platform reports — there is no API field that says how an instance came to exist. Removing it afterwards clears that record in a single in-place update that changes nothing on the platform, and the plan then stays clean. Importing a restored instance records nothing, and plans nothing. Changing it to a DIFFERENT source or instant REPLACES this resource, which destroys the database it created — treat it as you would `vpc_id`. Adding it to an instance that already exists is refused: an instance cannot be un-created into a restore.
+
+    Each wait during the restore is bounded by `timeouts.create`, which defaults to 30 minutes, the same budget as a plain create. A restore can take longer: a `point_in_time` restore can take hours from a daily base backup and a day or more from a weekly one, because its time grows with the source's interval between base backups (see the managed database documentation for restore times). Raise `timeouts.create` on the resource carrying `restore_from` before you apply, sized to that interval. If the wait runs out first, the apply ends with a warning rather than an error: the target stays in state and may still be restoring, so check its status in the portal or with `fm` before acting on it. (see [below for nested schema](#nestedatt--restore_from))
 - `tags` (Map of String) Resource tags on the instance: your own key/value metadata for search and filtering (`?tag=key=value` in the API, `--tag` in the fm CLI), stored by the platform only and never applied to the database server. Changing them updates the instance in place and does not restart or reconfigure it. A restore target (`restore_from`) is created with these tags. At most 32 keys including the tenant's default tags, which the platform merges in at create; a key is 1-64 bytes matching `^[a-zA-Z0-9]([a-zA-Z0-9._:/-]*[a-zA-Z0-9])?$`, a value at most 256 bytes; keys beginning `frostmoln_` or `frostmoln-` (any case) are reserved. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 

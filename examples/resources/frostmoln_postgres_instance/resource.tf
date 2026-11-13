@@ -100,4 +100,11 @@ resource "frostmoln_postgres_instance" "recovered" {
     source_instance_id = frostmoln_postgres_instance.main.id
     point_in_time      = "2026-09-20T14:30:00Z"
   }
+
+  # A point-in-time restore can take hours, longer than the 30m default wait.
+  # 6h suits a source with daily base backups; from a weekly base a restore can
+  # take a day or more, so raise it (e.g. "30h").
+  timeouts {
+    create = "6h"
+  }
 }
