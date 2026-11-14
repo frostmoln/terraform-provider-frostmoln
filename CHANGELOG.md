@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.100.2] - 2026-11-14
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.52 (#842)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.53 (#845)
+
+### 📚 Documentation
+
+- *(kubernetes)* Describe the version list as it is since kubernetes v6.29.0 (#851)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.16.14 (#841)
+- *(deps)* Update dependency goreleaser/goreleaser to v2.20.1 (#847)
+- *(deps)* Update dependency hashicorp/terraform to v1.17.2 (#849)
+
 ## [0.100.1] - 2026-11-13
 
 ### 📚 Documentation
