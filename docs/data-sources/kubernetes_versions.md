@@ -20,7 +20,7 @@ output "default_version" {
   value = [for v in data.frostmoln_kubernetes_versions.available.versions : v.version if v.is_default][0]
 }
 
-# Versions a new cluster can use: every status is returned, so filter on it
+# Versions a new cluster can use: an eol version may still be returned, so filter on it
 output "launchable_versions" {
   value = [
     for v in data.frostmoln_kubernetes_versions.available.versions : v.version
@@ -44,5 +44,5 @@ Read-Only:
 - `end_of_life` (String) The end-of-life date for this version, if known.
 - `id` (String) The unique identifier of the version entry.
 - `is_default` (Boolean) Whether this version is the default used when a cluster is created without an explicit version.
-- `status` (String) The lifecycle status of this version: "current", "supported", "deprecated", "eol" or "innovation". Every status is returned; only current, supported and deprecated can be used for a new cluster (eol and innovation are refused on create), so filter on this when choosing a version.
+- `status` (String) The lifecycle status of this version: "current", "supported", "deprecated", "eol" or "innovation". Only the versions on offer are returned, and never an innovation version; an eol version may still be returned and is refused on create. Only current, supported and deprecated can be used for a new cluster, so filter on this when choosing a version.
 - `version` (String) The Kubernetes version string (e.g. "1.35").
