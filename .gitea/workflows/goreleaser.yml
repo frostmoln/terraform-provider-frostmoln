@@ -70,8 +70,8 @@ jobs:
           # github-release-attachments makes Renovate move the digest WITH the version
           # (renovate-config's release-attachment manager); keep the two lines adjacent.
           # renovate: datasource=github-release-attachments depName=goreleaser/goreleaser
-          GORELEASER_VERSION=v2.20.1
-          GORELEASER_SHA256=79e0589ca9efd70e8db85158a21334cbb57811d4034b39b61d55789f361341a5
+          GORELEASER_VERSION=v2.20.2
+          GORELEASER_SHA256=f3d24969a7389a46613875711d15a96d8f6ef1553d84c6ace09d69ac1e7d44c0
           base="https://github.com/goreleaser/goreleaser/releases/download/${GORELEASER_VERSION}"
           f=goreleaser_Linux_x86_64.tar.gz
           tmp="$(mktemp -d)"; cd "$tmp"
