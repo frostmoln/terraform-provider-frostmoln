@@ -138,14 +138,6 @@
       "prefix": "key"
     },
     {
-      "name": "KontorGroup",
-      "prefix": "kg"
-    },
-    {
-      "name": "KontorMigration",
-      "prefix": "kmg"
-    },
-    {
       "name": "KontorTenant",
       "prefix": "kt"
     },
@@ -172,10 +164,6 @@
     {
       "name": "LaunchTemplate",
       "prefix": "lt"
-    },
-    {
-      "name": "Mailbox",
-      "prefix": "mbx"
     },
     {
       "name": "Messaging",
