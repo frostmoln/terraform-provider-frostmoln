@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.100.3] - 2026-11-18
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.54 (#856)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.55 (#859)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.56 (#865)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.57 (#871)
+
+### 📚 Documentation
+
+- Point fm hints at fm network load-balancer and fm network appgw (#873)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.16.15 (#853)
+- *(deps)* Update dependency frostmoln/workflows to v0.16.16 (#855)
+- *(deps)* Update dependency goreleaser/goreleaser to v2.20.2 (#861)
+- *(deps)* Update dependency frostmoln/workflows to v0.16.17 (#863)
+- *(pubid)* Drop the never-minted earlier Kontor kinds from the kinds copy (#867)
+- *(deps)* Update dependency frostmoln/workflows to v0.17.0 (#869)
+
 ## [0.100.2] - 2026-11-14
 
 ### 🐛 Bug Fixes
