@@ -39,6 +39,7 @@ type clusterAddonItemModel struct {
 	AppliedVersion types.String `tfsdk:"applied_version"`
 	State          types.String `tfsdk:"state"`
 	PinnedStatus   types.String `tfsdk:"pinned_status"`
+	Readiness      types.String `tfsdk:"readiness"`
 }
 
 type apiClusterAddonState struct {
@@ -47,6 +48,7 @@ type apiClusterAddonState struct {
 	AppliedVersion string `json:"appliedVersion"`
 	State          string `json:"state"`
 	PinnedStatus   string `json:"pinnedStatus"`
+	Readiness      string `json:"readiness"`
 }
 
 type apiClusterAddonStateList struct {
@@ -59,6 +61,7 @@ var addonStateAttrTypes = map[string]attr.Type{
 	"applied_version": types.StringType,
 	"state":           types.StringType,
 	"pinned_status":   types.StringType,
+	"readiness":       types.StringType,
 }
 
 // noVersionData maps the statuses that mean "the platform has no version answer for
@@ -119,6 +122,14 @@ func (d *clusterAddonsDataSource) Schema(_ context.Context, _ datasource.SchemaR
 							Description: "The lifecycle status of pinned_version now (for example current, " +
 								"supported, deprecated or eol) — how a pin that went stale is noticed. Empty when " +
 								"there is no pin or the version is no longer published. New values may appear.",
+							Computed: true,
+						},
+						"readiness": schema.StringAttribute{
+							Description: "Whether the addon is actually serving, as the cluster's own control plane " +
+								"reports it (for example ready, starting, not_ready or unknown); state converged only " +
+								"means an apply succeeded. Reporting only, never a gate: this provider does not wait " +
+								"on it. New values may appear and are stored verbatim. Empty when the platform does " +
+								"not report it.",
 							Computed: true,
 						},
 					},
@@ -183,6 +194,7 @@ func (d *clusterAddonsDataSource) Read(ctx context.Context, req datasource.ReadR
 			AppliedVersion: types.StringValue(a.AppliedVersion),
 			State:          types.StringValue(a.State),
 			PinnedStatus:   types.StringValue(a.PinnedStatus),
+			Readiness:      types.StringValue(a.Readiness),
 		})
 	}
 	addons, diags := types.ListValueFrom(ctx, objType, items)

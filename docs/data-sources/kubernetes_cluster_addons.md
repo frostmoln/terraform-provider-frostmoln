@@ -48,4 +48,5 @@ Read-Only:
 - `key` (String) The addon's catalog key.
 - `pinned_status` (String) The lifecycle status of pinned_version now (for example current, supported, deprecated or eol) — how a pin that went stale is noticed. Empty when there is no pin or the version is no longer published. New values may appear.
 - `pinned_version` (String) The version the cluster is pinned to. Empty for an addon with nothing to pin.
+- `readiness` (String) Whether the addon is actually serving, as the cluster's own control plane reports it (for example ready, starting, not_ready or unknown); state converged only means an apply succeeded. Reporting only, never a gate: this provider does not wait on it. New values may appear and are stored verbatim. Empty when the platform does not report it.
 - `state` (String) How the pin and the applied version relate (for example converged, converging, removing or unsupported). New values may appear.

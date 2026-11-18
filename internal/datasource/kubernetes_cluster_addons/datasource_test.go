@@ -79,9 +79,9 @@ func read(t *testing.T, handler http.HandlerFunc) (datasource.ReadResponse, clus
 // open vocabularies stored verbatim, including values no enum knows.
 func TestRead_PlatformOrderAndOpenVocabulary(t *testing.T) {
 	want := []apiClusterAddonState{
-		{Key: "external-secrets", PinnedVersion: "v0.22.0-1", AppliedVersion: "v0.22.0", State: "converging", PinnedStatus: "deprecated"},
+		{Key: "external-secrets", PinnedVersion: "v0.22.0-1", AppliedVersion: "v0.22.0", State: "converging", PinnedStatus: "deprecated", Readiness: "starting"},
 		{Key: "cert-manager", State: "unsupported"},
-		{Key: "external-dns", PinnedVersion: "weird", AppliedVersion: "v0.21.0", State: "hibernating-from-the-future", PinnedStatus: "lts-from-the-future"},
+		{Key: "external-dns", PinnedVersion: "weird", AppliedVersion: "v0.21.0", State: "hibernating-from-the-future", PinnedStatus: "lts-from-the-future", Readiness: "dozing-from-the-future"},
 	}
 	resp, m := read(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/tenants/t-1/kubernetes-clusters/c-1/addons" {
@@ -103,9 +103,27 @@ func TestRead_PlatformOrderAndOpenVocabulary(t *testing.T) {
 		g := got[i]
 		if g.Key.ValueString() != w.Key || g.PinnedVersion.ValueString() != w.PinnedVersion ||
 			g.AppliedVersion.ValueString() != w.AppliedVersion || g.State.ValueString() != w.State ||
-			g.PinnedStatus.ValueString() != w.PinnedStatus {
+			g.PinnedStatus.ValueString() != w.PinnedStatus || g.Readiness.ValueString() != w.Readiness {
 			t.Errorf("addons[%d] = %+v, want %+v verbatim", i, g, w)
 		}
+	}
+}
+
+// An older server omits readiness: the read still succeeds and readiness is empty,
+// never a guessed value.
+func TestRead_ReadinessOmittedByOlderServerIsEmpty(t *testing.T) {
+	resp, m := read(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"addons":[{"key":"external-dns","pinnedVersion":"v1","appliedVersion":"v1","state":"converged","pinnedStatus":"current"}]}`))
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("read failed: %v", resp.Diagnostics.Errors())
+	}
+	var got []clusterAddonItemModel
+	if diags := m.Addons.ElementsAs(context.Background(), &got, false); diags.HasError() {
+		t.Fatalf("elements: %v", diags.Errors())
+	}
+	if len(got) != 1 || got[0].Readiness.ValueString() != "" || got[0].State.ValueString() != "converged" {
+		t.Fatalf("addons = %+v, want one entry with empty readiness", got)
 	}
 }
 
