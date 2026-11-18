@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.101.0] - 2026-11-18
+
+### 🚀 Features
+
+- *(kubernetes_cluster_addons)* Readiness attribute (#875)
+
 ## [0.100.3] - 2026-11-18
 
 ### 🐛 Bug Fixes
