@@ -8,7 +8,7 @@
 // `config_generation`; it does NOT reach the appliance. The appliance keeps
 // serving the configuration it last acknowledged (`config_revision`) until
 // something dispatches an apply. That is deliberate — the portal has an Apply
-// action and the CLI has `fm appgw apply` — but it left Terraform recording
+// action and the CLI has `fm network appgw apply` — but it left Terraform recording
 // intent while reporting success, which is not what `terraform apply` means.
 //
 // Why this is a resource rather than something each child does after its own
@@ -536,7 +536,7 @@ func (r *applyResource) dispatch(ctx context.Context, m *Model, diags *diag.Diag
 	if superseded {
 		diags.AddWarning("Another Client Applied A Newer Configuration",
 			fmt.Sprintf("Revision %d was dispatched, but the appliance acknowledged revision %d — "+
-				"a portal edit, `fm appgw apply`, or another workspace applied while this one was "+
+				"a portal edit, `fm network appgw apply`, or another workspace applied while this one was "+
 				"in flight. The gateway renders its CURRENT authored state, so that newer revision "+
 				"carries this configuration forward; it also carries whatever else was authored. "+
 				"Re-run a plan if you need to see agreement.",

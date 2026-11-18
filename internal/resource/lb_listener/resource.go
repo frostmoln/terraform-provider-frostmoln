@@ -287,7 +287,7 @@ func (r *listenerResource) Create(ctx context.Context, req resource.CreateReques
 func (r *listenerResource) adoptCreatedObject(ctx context.Context, plan ListenerModel, lbID string, floor time.Time, defaults tftags.Defaults, waitErr error, resp *resource.CreateResponse) {
 	id := orphan.AdoptCreateOnTimeout(ctx, &resp.Diagnostics, orphan.CreateParams{
 		ResourceName: "Listener",
-		FMList:       "`fm lb listener list`",
+		FMList:       "`fm network lb listener list`",
 		WaitErr:      waitErr,
 		Resolve: func(ctx context.Context) (string, error) {
 			apiResp, err := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf("/load-balancers/%s/listeners", lbID)), nil)

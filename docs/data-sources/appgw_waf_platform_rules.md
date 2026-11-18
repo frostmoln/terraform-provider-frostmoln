@@ -4,7 +4,7 @@ page_title: "frostmoln_appgw_waf_platform_rules Data Source - Frostmoln"
 subcategory: ""
 description: |-
   The platform-owned rules in an Application Gateway WAF policy: the gateway's own self-protection, and any emergency virtual patch in force.
-  Read-only. You cannot create, edit or delete one. Where opt_out_allowed is true you may turn it off for this gateway — which is the one write a tenant may make to a rule they do not own, and is not expressible in Terraform today; use fm appgw waf rule opt-out or the portal.
+  Read-only. You cannot create, edit or delete one. Where opt_out_allowed is true you may turn it off for this gateway — which is the one write a tenant may make to a rule they do not own, and is not expressible in Terraform today; use fm network appgw waf rule opt-out or the portal.
   Worth reading in a configuration to assert on: a rule appearing here that you did not expect is the platform having shipped a patch, which is exactly the thing to notice.
 ---
 
@@ -12,7 +12,7 @@ description: |-
 
 The **platform-owned** rules in an Application Gateway WAF policy: the gateway's own self-protection, and any emergency virtual patch in force.
 
-Read-only. You cannot create, edit or delete one. Where `opt_out_allowed` is true you may turn it off for this gateway — which is the one write a tenant may make to a rule they do not own, and is not expressible in Terraform today; use `fm appgw waf rule opt-out` or the portal.
+Read-only. You cannot create, edit or delete one. Where `opt_out_allowed` is true you may turn it off for this gateway — which is the one write a tenant may make to a rule they do not own, and is not expressible in Terraform today; use `fm network appgw waf rule opt-out` or the portal.
 
 Worth reading in a configuration to assert on: a rule appearing here that you did not expect is the platform having shipped a patch, which is exactly the thing to notice.
 

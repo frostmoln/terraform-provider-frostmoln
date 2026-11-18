@@ -300,7 +300,7 @@ func (r *memberResource) adoptCreatedObject(ctx context.Context, plan MemberMode
 	protocolPort := int(plan.ProtocolPort.ValueInt64())
 	id := orphan.AdoptCreateOnTimeout(ctx, &resp.Diagnostics, orphan.CreateParams{
 		ResourceName: "Member",
-		FMList:       "`fm lb member list`",
+		FMList:       "`fm network lb member list`",
 		WaitErr:      waitErr,
 		Resolve: func(ctx context.Context) (string, error) {
 			apiResp, err := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf("/load-balancers/%s/pools/%s/members", lbID, poolID)), nil)

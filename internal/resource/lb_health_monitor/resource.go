@@ -276,7 +276,7 @@ func (r *healthMonitorResource) Create(ctx context.Context, req resource.CreateR
 func (r *healthMonitorResource) adoptCreatedObject(ctx context.Context, plan HealthMonitorModel, lbID, poolID string, floor time.Time, defaults tftags.Defaults, waitErr error, resp *resource.CreateResponse) {
 	id := orphan.AdoptCreateOnTimeout(ctx, &resp.Diagnostics, orphan.CreateParams{
 		ResourceName: "Health Monitor",
-		FMList:       "`fm lb pool list`",
+		FMList:       "`fm network lb pool list`",
 		WaitErr:      waitErr,
 		Resolve: func(ctx context.Context) (string, error) {
 			apiResp, err := r.client.Get(ctx, r.monitorPath(lbID, poolID), nil)

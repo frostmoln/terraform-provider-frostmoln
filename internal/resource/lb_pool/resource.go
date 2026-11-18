@@ -294,7 +294,7 @@ func (r *poolResource) Create(ctx context.Context, req resource.CreateRequest, r
 func (r *poolResource) adoptCreatedObject(ctx context.Context, plan PoolModel, lbID string, floor time.Time, defaults tftags.Defaults, waitErr error, resp *resource.CreateResponse) {
 	id := orphan.AdoptCreateOnTimeout(ctx, &resp.Diagnostics, orphan.CreateParams{
 		ResourceName: "Pool",
-		FMList:       "`fm lb pool list`",
+		FMList:       "`fm network lb pool list`",
 		WaitErr:      waitErr,
 		Resolve: func(ctx context.Context) (string, error) {
 			apiResp, err := r.client.Get(ctx, r.client.TenantPath(fmt.Sprintf("/load-balancers/%s/pools", lbID)), nil)

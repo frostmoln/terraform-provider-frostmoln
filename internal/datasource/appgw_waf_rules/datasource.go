@@ -126,7 +126,7 @@ func (d *rulesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 			"self-protection, and any emergency virtual patch in force.\n\n" +
 			"Read-only. You cannot create, edit or delete one. Where `opt_out_allowed` is true you " +
 			"may turn it off for this gateway — which is the one write a tenant may make to a rule " +
-			"they do not own, and is not expressible in Terraform today; use `fm appgw waf rule " +
+			"they do not own, and is not expressible in Terraform today; use `fm network appgw waf rule " +
 			"opt-out` or the portal.\n\n" +
 			"Worth reading in a configuration to assert on: a rule appearing here that you did not " +
 			"expect is the platform having shipped a patch, which is exactly the thing to notice."

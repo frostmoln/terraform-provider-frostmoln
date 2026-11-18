@@ -565,7 +565,7 @@ func (r *ruleResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 						"emergency virtual patch, and it cannot be created, edited or deleted by a "+
 						"tenant.\n\nRead platform rules with the "+
 						"frostmoln_appgw_waf_platform_rules data source. Where one may be turned "+
-						"off for your gateway it reports opt_out_allowed = true; use `fm appgw waf "+
+						"off for your gateway it reports opt_out_allowed = true; use `fm network appgw waf "+
 						"rule opt-out` or the portal to do so.", want))
 				return
 			}

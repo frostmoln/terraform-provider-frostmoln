@@ -375,7 +375,7 @@ func (r *loadBalancerResource) Create(ctx context.Context, req resource.CreateRe
 		resp.Diagnostics.AddError(
 			"Load Balancer Operation Returned No Resource ID",
 			"The load balancer create operation completed but returned no resource ID. "+
-				"The load balancer may exist in the backend without being tracked in Terraform state - check `fm lb list` and import it if necessary.",
+				"The load balancer may exist in the backend without being tracked in Terraform state - check `fm network lb list` and import it if necessary.",
 		)
 		return
 	}
@@ -403,7 +403,7 @@ func (r *loadBalancerResource) Create(ctx context.Context, req resource.CreateRe
 func (r *loadBalancerResource) adoptCreatedObject(ctx context.Context, plan LoadBalancerModel, floor time.Time, waitErr error, resp *resource.CreateResponse) {
 	id := orphan.AdoptCreateOnTimeout(ctx, &resp.Diagnostics, orphan.CreateParams{
 		ResourceName: "Load Balancer",
-		FMList:       "`fm lb list`",
+		FMList:       "`fm network lb list`",
 		WaitErr:      waitErr,
 		Resolve: func(ctx context.Context) (string, error) {
 			apiResp, err := r.client.Get(ctx, r.client.TenantPath("/load-balancers"), nil)
