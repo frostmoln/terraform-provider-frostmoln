@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.102.0] - 2026-11-19
+
+### 🚀 Features
+
+- *(kubernetes)* Node pool labels and taints (#881)
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.58 (#879)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.17.1 (#877)
+
 ## [0.101.0] - 2026-11-18
 
 ### 🚀 Features
