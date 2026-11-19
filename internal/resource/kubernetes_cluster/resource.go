@@ -223,7 +223,8 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 			},
 			"control_plane_version": schema.StringAttribute{
 				Description: "The Kubernetes patch version the control plane runs (e.g. `1.35.3`). Read-only: " +
-					"the platform chooses patches and rolls them in the maintenance window, so this changes " +
+					"the platform chooses patches and rolls them (in the maintenance window on a single control-plane " +
+					"node), so this changes " +
 					"without any change to your configuration. Null while the platform does not know it " +
 					"(a cluster not created, rolled or updated since it started recording it).",
 				Computed: true,
@@ -599,11 +600,15 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 	resp.Schema.Attributes["tags_all"] = tftags.TagsAllAttribute()
 	resp.Schema.Attributes["maintenance_window"] = schema.SingleNestedAttribute{
 		Description: "The recurring weekly window for disruptive platform updates to this cluster (a control-plane " +
-			"replacement, with an API outage on a single control-plane node, and worker replacement, which restarts " +
+			"update, with an API outage on a single control-plane node, and worker replacement, which restarts " +
 			"every pod without a drain). Every cluster has exactly one. Leave this unset to keep the window the " +
 			"platform assigned; removing it from the configuration keeps the stored window, with no change planned. " +
-			"**The platform does not schedule by this window yet**: the `frostmoln_kubernetes_cluster` data source's " +
-			"`maintenance.enforced` is false until it does, so treat the value as what applies from then. " +
+			"The platform runs these updates inside this window: worker replacement on every cluster, and the " +
+			"control-plane update on a single control-plane node (on three control-plane nodes it runs at any " +
+			"time, with no outage). A run that has started can finish after the window ends, and a security deadline, " +
+			"an urgent update, or a window too short for the update can start one outside it. The `frostmoln_kubernetes_cluster` data source's read-only " +
+			"`maintenance.enforced` reports whether the window is in force; while it is false, updates can run " +
+			"outside it. " +
 			"Changing it needs the `" + maintenanceWindowOperation + "` operation. " + maintenanceWindowHolders + " " +
 			"The provider sends it only when the planned value differs from the stored one, so an apply that changes " +
 			"something else works without the operation. The exception: if the stored window has moved away from a " +

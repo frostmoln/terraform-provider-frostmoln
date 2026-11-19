@@ -263,7 +263,6 @@ var Declarations = map[string]Decl{
 			{Path: "vpc_id"},
 		},
 		EnactsExcept: []Field{
-			{Path: "maintenance_window", Why: "stored and read back, but the platform does not schedule by it while the data source's `maintenance.enforced` is false"},
 			{Path: "addon_versions", Why: "a refresh reads a pin back only for an addon this attribute already names, and only when the platform can report pins (not while the cluster is still being created, or during a platform deployment or outage, when the recorded value is kept); a pin set outside Terraform for any other addon is neither read into state nor sent"},
 		},
 		Defaults: []PlatformDefault{
@@ -274,7 +273,7 @@ var Declarations = map[string]Decl{
 			},
 		},
 		Observes: []Field{
-			{Path: "control_plane_version", Why: "the platform chooses Kubernetes patches and rolls them in the maintenance window"},
+			{Path: "control_plane_version", Why: "the platform chooses Kubernetes patches and rolls them, in the maintenance window on a single control-plane node"},
 			{Path: "endpoint", Why: "platform-issued once the apiserver is up"},
 			{Path: "initial_node_pool.kubernetes_version", Why: "the platform chooses Kubernetes patches and rolls them in the maintenance window"},
 			{Path: "kubeconfig", Why: "platform-issued once the apiserver is up"},

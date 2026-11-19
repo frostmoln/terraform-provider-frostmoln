@@ -23,8 +23,8 @@ resource "frostmoln_kubernetes_cluster" "main" {
   # keep the window the platform assigned. Changing it needs the update-maintenance-window
   # operation: the Owner and Admin roles hold it, as does a group document that names it
   # or a custom role with kubernetes:*; an API key needs an access policy that names it.
-  # The platform does not schedule by it until the data source's maintenance.enforced is
-  # true.
+  # The platform schedules disruptive updates by it while the data source's
+  # maintenance.enforced is true; see the data source for runs that fall outside it.
   # maintenance_window = {
   #   days           = ["wed"]
   #   start_time     = "03:00"

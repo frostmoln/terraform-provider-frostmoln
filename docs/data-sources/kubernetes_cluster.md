@@ -66,14 +66,14 @@ data "frostmoln_kubernetes_cluster" "by_id" {
 
 - `ca_cert_hash` (String) A NON-SECRET reference to the cluster CA (a hash). The server only ever returns the hash, never the CA itself, so this attribute is not secret and not sensitive. The actual credential material — the kubeconfig with its client key — lives on `frostmoln_kubernetes_cluster_kubeconfig`, not here.
 - `control_plane_tier` (String) The named control-plane plan (`development`, `production`, …) that sizes the cluster's dedicated control plane — its HA shape, not a customer tenancy.
-- `control_plane_version` (String) The Kubernetes patch version the control plane runs (e.g. `1.35.3`). The platform chooses patches and rolls them in the maintenance window, so this changes without any change to your configuration. Null while the platform does not know it (a cluster not created, rolled or updated since it started recording it).
+- `control_plane_version` (String) The Kubernetes patch version the control plane runs (e.g. `1.35.3`). The platform chooses patches and rolls them (in the maintenance window on a single control-plane node), so this changes without any change to your configuration. Null while the platform does not know it (a cluster not created, rolled or updated since it started recording it).
 - `created_at` (String) The timestamp when the cluster was created.
 - `endpoint` (String) The load-balancer VIP fronting the API server — the address kube clients reach the cluster on. Null while provisioning has not produced one.
 - `failed_step` (String) The provisioning phase the cluster failed in: one of `validation`, `control_plane`, `api_endpoint`, `addons`, `node_pool` or `provisioning`. Set only when `status` is `error`, and may be absent even then.
 - `ha_enabled` (Boolean) Whether the dedicated control plane is high-availability.
 - `load_balancer_id` (String) Always null: the id of the load balancer behind the API endpoint is internal, has no public form, and the API no longer returns it.
 - `maintenance` (Attributes) The cluster's read-only maintenance state. (see [below for nested schema](#nestedatt--maintenance))
-- `maintenance_window` (Attributes) The cluster's recurring weekly window for disruptive platform updates. The platform does not schedule by it while `maintenance.enforced` is false, so treat it as what applies from then. (see [below for nested schema](#nestedatt--maintenance_window))
+- `maintenance_window` (Attributes) The cluster's recurring weekly window for disruptive platform updates. While `maintenance.enforced` is true, the platform schedules them by it: a started run can finish after the window ends, and a security deadline, an urgent update, or a window too short for the update can start one outside it. On three control-plane nodes the control-plane update is not tied to the window. (see [below for nested schema](#nestedatt--maintenance_window))
 - `pod_cidr` (String) The cluster's per-cluster pod CIDR, allocated from the managed pool. Null while the platform has not allocated one.
 - `public_ip` (String) The public IP of the API endpoint, null when the endpoint is not internet-reachable (an enclave cluster's private VIP has none).
 - `region` (String) The region the cluster lives in.
@@ -93,9 +93,9 @@ data "frostmoln_kubernetes_cluster" "by_id" {
 
 Read-Only:
 
-- `enforced` (Boolean) Whether the platform schedules disruptive updates by `maintenance_window`. While false, the window is not in force.
+- `enforced` (Boolean) Whether the platform schedules disruptive updates by `maintenance_window`. While false, the window is not in force and updates can run outside it.
 - `next_window_start` (String) When the next occurrence starts (RFC 3339). Null if the platform can no longer load the time zone.
-- `pending` (Attributes List) Window-bound updates the platform has not recorded on this cluster. Once `enforced` is true they are eligible from the next window, which does not promise they run then. (see [below for nested schema](#nestedatt--maintenance--pending))
+- `pending` (Attributes List) Window-bound updates that have not reached this cluster yet. While `enforced` is true each is eligible from the next window, which does not promise it runs then: the platform can defer a rollout. (see [below for nested schema](#nestedatt--maintenance--pending))
 
 <a id="nestedatt--maintenance--pending"></a>
 ### Nested Schema for `maintenance.pending`

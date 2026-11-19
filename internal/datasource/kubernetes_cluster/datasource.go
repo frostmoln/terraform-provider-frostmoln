@@ -259,7 +259,8 @@ func (d *kubernetesClusterDataSource) Schema(_ context.Context, _ datasource.Sch
 			},
 			"control_plane_version": schema.StringAttribute{
 				Description: "The Kubernetes patch version the control plane runs (e.g. `1.35.3`). " +
-					"The platform chooses patches and rolls them in the maintenance window, so this " +
+					"The platform chooses patches and rolls them (in the maintenance window on a single control-plane " +
+					"node), so this " +
 					"changes without any change to your configuration. Null while the platform does " +
 					"not know it (a cluster not created, rolled or updated since it started recording it).",
 				Computed: true,
@@ -343,8 +344,11 @@ func (d *kubernetesClusterDataSource) Schema(_ context.Context, _ datasource.Sch
 				ElementType: types.StringType,
 			},
 			"maintenance_window": schema.SingleNestedAttribute{
-				Description: "The cluster's recurring weekly window for disruptive platform updates. The platform does " +
-					"not schedule by it while `maintenance.enforced` is false, so treat it as what applies from then.",
+				Description: "The cluster's recurring weekly window for disruptive platform updates. While " +
+					"`maintenance.enforced` is true, the platform schedules them by it: a started run can finish after " +
+					"the window ends, and a security deadline, an urgent update, or a window too short for the update " +
+					"can start one outside it. On three " +
+					"control-plane nodes the control-plane update is not tied to the window.",
 				Computed: true,
 				Attributes: map[string]schema.Attribute{
 					"days": schema.SetAttribute{
@@ -363,7 +367,7 @@ func (d *kubernetesClusterDataSource) Schema(_ context.Context, _ datasource.Sch
 				Attributes: map[string]schema.Attribute{
 					"enforced": schema.BoolAttribute{
 						Description: "Whether the platform schedules disruptive updates by `maintenance_window`. " +
-							"While false, the window is not in force.",
+							"While false, the window is not in force and updates can run outside it.",
 						Computed: true,
 					},
 					"next_window_start": schema.StringAttribute{
@@ -371,7 +375,7 @@ func (d *kubernetesClusterDataSource) Schema(_ context.Context, _ datasource.Sch
 						Computed:    true,
 					},
 					"pending": schema.ListNestedAttribute{
-						Description: "Window-bound updates the platform has not recorded on this cluster. Once `enforced` is true they are eligible from the next window, which does not promise they run then.",
+						Description: "Window-bound updates that have not reached this cluster yet. While `enforced` is true each is eligible from the next window, which does not promise it runs then: the platform can defer a rollout.",
 						Computed:    true,
 						NestedObject: schema.NestedAttributeObject{
 							Attributes: map[string]schema.Attribute{
