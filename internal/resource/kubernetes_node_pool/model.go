@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/nodemeta"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
@@ -35,6 +36,9 @@ type KubernetesNodePoolModel struct {
 	// Kubernetes node labels.
 	Tags    types.Map `tfsdk:"tags"`
 	TagsAll types.Map `tfsdk:"tags_all"`
+	// Labels / Taints are Kubernetes node metadata, fixed at create (internal/nodemeta).
+	Labels types.Map `tfsdk:"labels"`
+	Taints types.Set `tfsdk:"taints"`
 
 	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
 	// absent block, which resolves to the resource's hardcoded defaults.
@@ -61,9 +65,11 @@ type apiNodePool struct {
 	KubernetesVersion string `json:"kubernetesVersion,omitempty"`
 	// Tags are the pool's customer resource tags; the backend always sends an
 	// object ({} when untagged).
-	Tags      map[string]string `json:"tags"`
-	CreatedAt string            `json:"createdAt"`
-	UpdatedAt string            `json:"updatedAt,omitempty"`
+	Tags      map[string]string   `json:"tags"`
+	Labels    map[string]string   `json:"labels,omitempty"`
+	Taints    []nodemeta.APITaint `json:"taints,omitempty"`
+	CreatedAt string              `json:"createdAt"`
+	UpdatedAt string              `json:"updatedAt,omitempty"`
 }
 
 // apiCreateNodePoolRequest is the API request to create a standalone node pool.
@@ -76,6 +82,9 @@ type apiCreateNodePoolRequest struct {
 	FlavorID  string            `json:"flavorId"`
 	NodeCount int               `json:"nodeCount"`
 	Tags      map[string]string `json:"tags,omitempty"`
+	// Labels and Taints are fixed at create; omitted when unset.
+	Labels map[string]string   `json:"labels,omitempty"`
+	Taints []nodemeta.APITaint `json:"taints,omitempty"`
 }
 
 // apiUpdateNodePoolRequest is PATCH .../node-pools/{poolId}: only the fields
@@ -93,11 +102,12 @@ type apiScaleNodePoolRequest struct {
 }
 
 // toCreateRequest converts the Terraform model to an API create request.
-func (m *KubernetesNodePoolModel) toCreateRequest() apiCreateNodePoolRequest {
+func (m *KubernetesNodePoolModel) toCreateRequest(ctx context.Context, diags *diag.Diagnostics) apiCreateNodePoolRequest {
 	req := apiCreateNodePoolRequest{
 		FlavorID:  m.FlavorID.ValueString(),
 		NodeCount: int(m.NodeCount.ValueInt64()),
 	}
+	req.Labels, req.Taints = nodemeta.ToAPI(ctx, m.Labels, m.Taints, diags)
 	if !m.Name.IsNull() && !m.Name.IsUnknown() {
 		req.Name = m.Name.ValueString()
 	}
@@ -124,11 +134,12 @@ func (m *KubernetesNodePoolModel) fromAPI(p *apiNodePool) {
 	m.UpdatedAt = stringOrNull(p.UpdatedAt)
 }
 
-// tagsFromAPI renders the API's tags into `tags` (the keys the prior value names)
+// metaFromAPI renders the API's tags into `tags` (the keys the prior value names)
 // and `tags_all` (every key). m.Tags must hold the prior value: the configuration
-// on a create or update, the state on a refresh.
-func (m *KubernetesNodePoolModel) tagsFromAPI(ctx context.Context, p *apiNodePool, diags *diag.Diagnostics) {
+// on a create or update, the state on a refresh; labels/taints follow the same rule.
+func (m *KubernetesNodePoolModel) metaFromAPI(ctx context.Context, p *apiNodePool, diags *diag.Diagnostics) {
 	m.Tags, m.TagsAll = tftags.ReadBack(ctx, customerTags(p), m.Tags, diags)
+	m.Labels, m.Taints = nodemeta.FromAPI(p.Labels, p.Taints, m.Labels, m.Taints, diags)
 }
 
 // customerTags is the tag set the platform holds on a pool, minus the namespace

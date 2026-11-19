@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
+
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -285,10 +287,12 @@ func walkScopeAttributes(t *testing.T, prefix string, attrs map[string]schema.At
 			}
 			walkScopeAttributes(t, attrPath, nested.NestedObject.Attributes, fn)
 		case schema.SetNestedAttribute:
-			if len(nested.PlanModifiers) > 0 {
-				t.Fatalf("%s: object-level plan modifiers are not replayed — extend scopeReplacesOnChange", attrPath)
-			}
 			walkScopeAttributes(t, attrPath, nested.NestedObject.Attributes, fn)
+			// A set replaced as one value (node-pool `taints`) gets its own verdict,
+			// like a SingleNestedAttribute with modifiers.
+			if len(nested.PlanModifiers) > 0 {
+				fn(attrPath, a)
+			}
 		case schema.MapNestedAttribute:
 			if len(nested.PlanModifiers) > 0 {
 				t.Fatalf("%s: object-level plan modifiers are not replayed — extend scopeReplacesOnChange", attrPath)
@@ -384,6 +388,36 @@ func scopeReplacesOnChange(t *testing.T, attrPath string, a schema.Attribute) bo
 			m.PlanModifyList(context.Background(), req, resp)
 			if resp.Diagnostics.HasError() {
 				t.Fatalf("%s: plan modifier errored under the synthetic replay — it likely reads sibling attributes this walk does not populate; extend the replay before trusting the replacement verdict", attrPath)
+			}
+			req.PlanValue = resp.PlanValue
+			replace = replace || resp.RequiresReplace
+		}
+		return replace
+
+	case schema.SetNestedAttribute:
+		// A member added is a real change: state holds one all-null member, the plan none.
+		elemType := a.GetType().(types.SetType).ElemType
+		objType := elemType.(types.ObjectType)
+		nulls := map[string]attr.Value{}
+		for name, at := range objType.AttrTypes {
+			v, err := at.ValueFromTerraform(context.Background(), tftypes.NewValue(at.TerraformType(context.Background()), nil))
+			if err != nil {
+				t.Fatalf("%s: %v", attrPath, err)
+			}
+			nulls[name] = v
+		}
+		req := planmodifier.SetRequest{
+			Path: path.Root(attrPath), State: updateState, Plan: updatePlan,
+			StateValue: types.SetValueMust(elemType, []attr.Value{types.ObjectValueMust(objType.AttrTypes, nulls)}),
+			PlanValue:  types.SetValueMust(elemType, []attr.Value{}),
+		}
+		req.ConfigValue = req.PlanValue
+		replace := false
+		for _, m := range a.PlanModifiers {
+			resp := &planmodifier.SetResponse{PlanValue: req.PlanValue}
+			m.PlanModifySet(context.Background(), req, resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("%s: plan modifier errored under the synthetic replay", attrPath)
 			}
 			req.PlanValue = resp.PlanValue
 			replace = replace || resp.RequiresReplace

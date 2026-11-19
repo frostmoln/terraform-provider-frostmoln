@@ -31,6 +31,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/docs"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/nodemeta"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
@@ -450,6 +451,8 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 						Validators:  []validator.Map{tftags.OfferTagsValidator()},
 					},
 					"tags_all": tftags.TagsAllAttribute(),
+					"labels":   nodemeta.LabelsAttribute("cluster"),
+					"taints":   nodemeta.TaintsAttribute("cluster", true),
 				},
 			},
 			"status": schema.StringAttribute{
@@ -841,6 +844,8 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 	// cannot honour with a 400 BEFORE anything is created, so a 201 means they were taken.
 	defaults := r.client.DefaultTags()
 	createReq := plan.toCreateRequest()
+	createReq.InitialNodePool.Labels, createReq.InitialNodePool.Taints = nodemeta.ToAPI(ctx,
+		plan.InitialNodePool.Labels, plan.InitialNodePool.Taints, &resp.Diagnostics)
 	createReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
@@ -1357,6 +1362,9 @@ func carryInitialPool(prior, planned *InitialNodePoolModel) *InitialNodePoolMode
 	next := *prior
 	if planned != nil {
 		next.Tags = planned.Tags
+		// Labels/taints changed only between unset and empty here (any real change
+		// replaces), so state takes the configured form.
+		next.Labels, next.Taints = planned.Labels, planned.Taints
 	}
 	return &next
 }

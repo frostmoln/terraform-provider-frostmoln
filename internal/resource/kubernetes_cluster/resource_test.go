@@ -21,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/nodemeta"
 )
 
 // --- Model unit tests ---
@@ -1551,6 +1552,7 @@ func nullUnsetPoolTags(m *KubernetesClusterModel) {
 	if m.InitialNodePool != nil {
 		pool := *m.InitialNodePool
 		nullUnsetTags(&pool.Tags, &pool.TagsAll)
+		nodemeta.NullUnset(&pool.Labels, &pool.Taints)
 		m.InitialNodePool = &pool
 	}
 }

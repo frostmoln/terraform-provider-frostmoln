@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/nodemeta"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
@@ -98,6 +99,10 @@ type InitialNodePoolModel struct {
 	// tags instead, so the provider PATCHes the pool right after the create.
 	Tags    types.Map `tfsdk:"tags"`
 	TagsAll types.Map `tfsdk:"tags_all"`
+	// Labels / Taints are Kubernetes node metadata, fixed at create (internal/nodemeta).
+	// The initial pool takes soft (PreferNoSchedule) taints only.
+	Labels types.Map `tfsdk:"labels"`
+	Taints types.Set `tfsdk:"taints"`
 }
 
 // initialPoolTagsScope prefixes the private-state keys of the initial pool's tag
@@ -178,7 +183,9 @@ type apiNodePool struct {
 	CreatedAt         string `json:"createdAt"`
 	UpdatedAt         string `json:"updatedAt,omitempty"`
 	// Tags are the pool's customer resource tags ({} when untagged).
-	Tags map[string]string `json:"tags"`
+	Tags   map[string]string   `json:"tags"`
+	Labels map[string]string   `json:"labels,omitempty"`
+	Taints []nodemeta.APITaint `json:"taints,omitempty"`
 }
 
 // apiUpdateNodePoolRequest is a tags-only PATCH of a node pool: it REPLACES the
@@ -198,6 +205,9 @@ type apiCreateNodePoolRequest struct {
 	Name      string `json:"name,omitempty"`
 	FlavorID  string `json:"flavorId"`
 	NodeCount int    `json:"nodeCount"`
+	// Labels and Taints are fixed at create; omitted when unset (Create fills them).
+	Labels map[string]string   `json:"labels,omitempty"`
+	Taints []nodemeta.APITaint `json:"taints,omitempty"`
 }
 
 // apiCreateClusterRequest is the API request to create a managed Kubernetes cluster.
@@ -371,7 +381,15 @@ func poolCustomerTags(p *apiNodePool) map[string]string {
 // update) or state (refresh), which decides the keys `tags` keeps (tftags.ReadBack).
 func (m *KubernetesClusterModel) setInitialNodePool(ctx context.Context, p *apiNodePool, priorTags types.Map, diags *diag.Diagnostics) {
 	tags, tagsAll := tftags.ReadBack(ctx, poolCustomerTags(p), priorTags, diags)
+	var priorLabels types.Map
+	var priorTaints types.Set
+	if m.InitialNodePool != nil {
+		priorLabels, priorTaints = m.InitialNodePool.Labels, m.InitialNodePool.Taints
+	}
+	labels, taints := nodemeta.FromAPI(p.Labels, p.Taints, priorLabels, priorTaints, diags)
 	m.InitialNodePool = &InitialNodePoolModel{
+		Labels:            labels,
+		Taints:            taints,
 		Tags:              tags,
 		TagsAll:           tagsAll,
 		ID:                types.StringValue(p.ID),

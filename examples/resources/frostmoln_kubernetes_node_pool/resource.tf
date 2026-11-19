@@ -15,3 +15,25 @@ resource "frostmoln_kubernetes_node_pool" "workers" {
     env = "prod"
   }
 }
+
+# A pool dedicated to one workload: every node it boots gets this label and
+# taint, so only pods that tolerate the taint (and select the label) run there.
+# Labels and taints are fixed at create; changing them replaces the pool. Keep
+# another pool without a NoSchedule/NoExecute taint: the cluster's DNS, storage
+# and metrics components run there.
+resource "frostmoln_kubernetes_node_pool" "sensors" {
+  cluster_id = frostmoln_kubernetes_cluster.main.id
+  name       = "sensors"
+  flavor_id  = data.frostmoln_kubernetes_flavors.available.flavors[0].id
+  node_count = 2
+
+  labels = {
+    workload = "sensors"
+  }
+
+  taints = [{
+    key    = "dedicated"
+    value  = "sensors"
+    effect = "NoSchedule"
+  }]
+}

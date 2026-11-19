@@ -10,12 +10,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/nodemeta"
 )
 
 // --- Model unit tests ---
@@ -28,7 +30,7 @@ func TestToCreateRequestMinimal(t *testing.T) {
 		NodeCount: types.Int64Value(1),
 	}
 
-	req := m.toCreateRequest()
+	req := m.toCreateRequest(context.Background(), &diag.Diagnostics{})
 	if req.FlavorID != "k8s.gp1.medium" || req.NodeCount != 1 {
 		t.Errorf("unexpected create request: %+v", req)
 	}
@@ -52,7 +54,7 @@ func TestToCreateRequestNamed(t *testing.T) {
 		NodeCount: types.Int64Value(3),
 	}
 
-	req := m.toCreateRequest()
+	req := m.toCreateRequest(context.Background(), &diag.Diagnostics{})
 	if req.Name != "workers" || req.FlavorID != "k8s.gp1.large" || req.NodeCount != 3 {
 		t.Errorf("unexpected create request: %+v", req)
 	}
@@ -156,6 +158,7 @@ func buildState(t *testing.T, model KubernetesNodePoolModel) tfsdk.State {
 
 	state := tfsdk.State{Schema: schemaResp.Schema}
 	nullUnsetTags(&model.Tags, &model.TagsAll)
+	nodemeta.NullUnset(&model.Labels, &model.Taints)
 	if diags := state.Set(context.Background(), &model); diags.HasError() {
 		t.Fatalf("failed to set state: %v", diags.Errors())
 	}
@@ -170,6 +173,7 @@ func buildPlan(t *testing.T, model KubernetesNodePoolModel) tfsdk.Plan {
 
 	plan := tfsdk.Plan{Schema: schemaResp.Schema}
 	nullUnsetTags(&model.Tags, &model.TagsAll)
+	nodemeta.NullUnset(&model.Labels, &model.Taints)
 	if diags := plan.Set(context.Background(), &model); diags.HasError() {
 		t.Fatalf("failed to set plan: %v", diags.Errors())
 	}

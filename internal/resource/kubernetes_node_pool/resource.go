@@ -23,6 +23,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/nodemeta"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
@@ -287,6 +288,8 @@ func (r *kubernetesNodePoolResource) Schema(_ context.Context, _ resource.Schema
 				},
 			},
 			"tags_all": tftags.TagsAllAttribute(),
+			"labels":   nodemeta.LabelsAttribute("pool"),
+			"taints":   nodemeta.TaintsAttribute("pool", false),
 		},
 		Blocks: map[string]schema.Block{
 			// Customer-tunable wait budgets: defaults keep the values this
@@ -392,7 +395,7 @@ func (r *kubernetesNodePoolResource) Create(ctx context.Context, req resource.Cr
 
 	clusterID := plan.ClusterID.ValueString()
 	createPath := r.poolsPath(clusterID)
-	createReq := plan.toCreateRequest()
+	createReq := plan.toCreateRequest(ctx, &resp.Diagnostics)
 	defaults := r.client.DefaultTags()
 	createReq.Tags = tftags.ForCreate(ctx, defaults, plan.Tags, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
@@ -424,7 +427,8 @@ func (r *kubernetesNodePoolResource) Create(ctx context.Context, req resource.Cr
 		}
 	}
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to create Kubernetes node pool", err.Error())
+		// A node-meta refusal (e.g. only_tainted_nodes) is permanent: the request must change.
+		nodemeta.AddError(&resp.Diagnostics, "Failed to create Kubernetes node pool", err)
 		return
 	}
 	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
@@ -437,7 +441,7 @@ func (r *kubernetesNodePoolResource) Create(ctx context.Context, req resource.Cr
 	// Save state immediately so the ID is tracked even if polling fails
 	// (orphan guard).
 	plan.fromAPI(created)
-	plan.tagsFromAPI(ctx, created, &resp.Diagnostics)
+	plan.metaFromAPI(ctx, created, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -454,7 +458,7 @@ func (r *kubernetesNodePoolResource) Create(ctx context.Context, req resource.Cr
 		return
 	}
 	plan.fromAPI(final)
-	plan.tagsFromAPI(ctx, final, &resp.Diagnostics)
+	plan.metaFromAPI(ctx, final, &resp.Diagnostics)
 	// node_count is a KNOWN planned value; a concurrent out-of-band scale
 	// landing between the active-poll and this final read must not make the
 	// applied state diverge from the plan (Terraform core hard-errors
@@ -511,7 +515,7 @@ func (r *kubernetesNodePoolResource) Read(ctx context.Context, req resource.Read
 	}
 
 	state.fromAPI(pool)
-	state.tagsFromAPI(ctx, pool, &resp.Diagnostics)
+	state.metaFromAPI(ctx, pool, &resp.Diagnostics)
 	tftags.FinishRead(ctx, req.Private, resp.Private, r.client.DefaultTags(), &state.Tags, state.TagsAll, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -534,9 +538,9 @@ func (r *kubernetesNodePoolResource) Update(ctx context.Context, req resource.Up
 		return
 	}
 
-	// node_count is the only in-place-updatable attribute (everything else
-	// RequiresReplace). The backend gates /scale on both the cluster and the
-	// pool being serviceable: a soft-deleted pool is 404, any other
+	// node_count and tags are the only in-place-updatable attributes (everything
+	// else, labels and taints included, RequiresReplace; no PATCH sends them).
+	// The backend gates /scale on both the cluster and the pool being serviceable: a soft-deleted pool is 404, any other
 	// non-scalable state is 409 — both surface with tailored or raw
 	// diagnostics. The 409 "a scale operation ... is already in progress" is
 	// the one the server documents as retryable ("retry when it completes",
@@ -615,7 +619,7 @@ func (r *kubernetesNodePoolResource) Update(ctx context.Context, req resource.Up
 				)
 				return
 			}
-			resp.Diagnostics.AddError("Failed to scale Kubernetes node pool", err.Error())
+			nodemeta.AddError(&resp.Diagnostics, "Failed to scale Kubernetes node pool", err)
 			return
 		}
 		if err := r.pollPool(ctx, clusterID, poolID, []string{statusActive}, []string{statusError, statusDeleted}, budgets.Update); err != nil {
@@ -631,7 +635,7 @@ func (r *kubernetesNodePoolResource) Update(ctx context.Context, req resource.Up
 	}
 	planned := plan.NodeCount
 	plan.fromAPI(final)
-	plan.tagsFromAPI(ctx, final, &resp.Diagnostics)
+	plan.metaFromAPI(ctx, final, &resp.Diagnostics)
 	// Same planned-value guard as Create: node_count is known in the plan, so
 	// the final read must not adopt a concurrently-amended live count.
 	plan.NodeCount = planned
@@ -673,12 +677,13 @@ func (r *kubernetesNodePoolResource) Delete(ctx context.Context, req resource.De
 	}
 
 	// The backend refuses to delete a cluster's last node pool (409) — surface
-	// that as-is: the practitioner must delete the cluster instead.
+	// that as-is: the practitioner must delete the cluster instead. It also refuses
+	// deleting the last untainted pool (409 only_tainted_nodes), explained by nodemeta.
 	if _, err := r.client.Delete(ctx, r.poolPath(clusterID, poolID)); err != nil {
 		if client.IsNotFound(err) {
 			return
 		}
-		resp.Diagnostics.AddError("Failed to delete Kubernetes node pool", err.Error())
+		nodemeta.AddError(&resp.Diagnostics, "Failed to delete Kubernetes node pool", err)
 		return
 	}
 

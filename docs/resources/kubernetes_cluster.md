@@ -7,6 +7,8 @@ description: |-
   Authoritative scope — who owns what on this resource, declared in internal/scopedecl and machine-checked against the schema.
   Enacted and reconciled — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
   Create-immutable — control_plane_tier, initial_node_pool.flavor_id, initial_node_pool.name, region, subnet_id, version, vpc_id: the platform has no in-place migration for it — a change destroys and re-creates the cluster.
+  Create-immutable — initial_node_pool.labels: node labels are fixed when the pool is created; the platform applies them only as each node registers.
+  Create-immutable — initial_node_pool.taints: node taints are fixed when the pool is created; the platform applies them only as each node registers.
   Create-immutable — public_ip_id: retained and deprecated: every new cluster's apiserver is a private VIP and the API refuses any value with a 400 — the attribute exists so a stale configuration is told so.
   Not enacted state — addon_versions: a refresh reads a pin back only for an addon this attribute already names, and only when the platform can report pins (not while the cluster is still being created, or during a platform deployment or outage, when the recorded value is kept); a pin set outside Terraform for any other addon is neither read into state nor sent. maintenance_window: stored and read back, but the platform does not schedule by it while the data source's maintenance.enforced is false.
   Observed, not enacted — control_plane_version: the platform chooses Kubernetes patches and rolls them in the maintenance window. endpoint: platform-issued once the apiserver is up. initial_node_pool.kubernetes_version: the platform chooses Kubernetes patches and rolls them in the maintenance window. kubeconfig: platform-issued once the apiserver is up. load_balancer_id: the platform provisions the load balancer the cluster rides on.
@@ -22,6 +24,10 @@ Manages a managed Kubernetes cluster in the Frostmoln platform. The cluster owns
 **Enacted and reconciled** — every configurable attribute not listed below: the platform applies it, and a refresh reads the truth back.
 
 **Create-immutable** — `control_plane_tier`, `initial_node_pool.flavor_id`, `initial_node_pool.name`, `region`, `subnet_id`, `version`, `vpc_id`: the platform has no in-place migration for it — a change destroys and re-creates the cluster.
+
+**Create-immutable** — `initial_node_pool.labels`: node labels are fixed when the pool is created; the platform applies them only as each node registers.
+
+**Create-immutable** — `initial_node_pool.taints`: node taints are fixed when the pool is created; the platform applies them only as each node registers.
 
 **Create-immutable** — `public_ip_id`: retained and deprecated: every new cluster's apiserver is a private VIP and the API refuses any value with a 400 — the attribute exists so a stale configuration is told so.
 
@@ -196,9 +202,11 @@ Required:
 
 Optional:
 
+- `labels` (Map of String) Kubernetes node labels the platform applies to every node the pool boots (create, scale, worker replacement, upgrade). NOT resource tags. Keys follow Kubernetes label syntax; a prefix that is or ends in `kubernetes.io`, `k8s.io`, `frostmoln.se`, `frostmoln.cloud` or `cilium.io` is reserved. At most 32. Fixed when the pool is created: changing it REPLACES the whole cluster, which is destroyed (with its workloads) before the replacement is created. Unset and empty are the same set.
 - `name` (String) The name of the initial node pool. Defaults to "default".
 - `node_count` (Number) The number of worker nodes in the initial pool (1-100). Scaled in-place. Omitting it manages the pool at 1 node — an out-of-band scale will be reverted on the next apply.
 - `tags` (Map of String) Resource tags on the initial node pool: your own key/value metadata for search and filtering, stored by the platform only. They are NOT Kubernetes node labels and never reach a node. At create the platform gives the pool a copy of the cluster's merged tags (the cluster's `tags`, the provider's `default_tags` and the tenant's default tags); the keys set here are then written onto the pool, and the copied keys are kept as keys this configuration does not manage. The provider's `default_tags` apply to the pool as to any resource, so a cluster `tags` key that overrides a default stays the cluster's only: set it here too to keep it on the pool. Later changes to the cluster's `tags` do not reach the pool. Changing them updates the pool in place and touches no node. The same limits as the cluster's `tags` apply. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
+- `taints` (Attributes Set) Kubernetes node taints the platform applies to every node the pool boots. The key follows label-key syntax with the same reserved prefixes; `ToBeDeletedByClusterAutoscaler` and `DeletionCandidateOfClusterAutoscaler` are reserved too. At most 16. A cluster must keep one running pool with nodes and no `NoSchedule`/`NoExecute` taint: the cluster's DNS, storage and metrics components run there. The initial pool takes `PreferNoSchedule` only; put a `NoSchedule`/`NoExecute` taint on a frostmoln_kubernetes_node_pool. Fixed when the pool is created: changing it REPLACES the whole cluster, which is destroyed (with its workloads) before the replacement is created. Unset and empty are the same set. (see [below for nested schema](#nestedatt--initial_node_pool--taints))
 
 Read-Only:
 
@@ -209,6 +217,19 @@ Read-Only:
 - `status_message` (String) A human-readable description of why the initial node pool failed. Set only when `status` is `error`.
 - `status_reason` (String) Why the initial node pool failed, as a failure class (e.g. `QuotaExceeded`). Set only when `status` is `error`.
 - `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
+
+<a id="nestedatt--initial_node_pool--taints"></a>
+### Nested Schema for `initial_node_pool.taints`
+
+Required:
+
+- `effect` (String) One of PreferNoSchedule.
+- `key` (String) The taint key.
+
+Optional:
+
+- `value` (String) The taint value (optional; label-value syntax).
+
 
 
 <a id="nestedatt--maintenance_window"></a>

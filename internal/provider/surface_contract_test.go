@@ -21,6 +21,11 @@ import (
 var allowedInlineCollections = map[string][]string{
 	"frostmoln_bucket_cors_configuration":      {"rules"},
 	"frostmoln_bucket_lifecycle_configuration": {"rules"},
+	// Node taints are VALUES of the pool (Kubernetes node metadata the kubelet
+	// applies at registration), fixed at create; no taint has an id or an API of
+	// its own, so there is no per-ID resource to separate them into.
+	"frostmoln_kubernetes_cluster":   {"initial_node_pool.taints"},
+	"frostmoln_kubernetes_node_pool": {"taints"},
 }
 
 // TestSurfaceContract walks every registered resource's schema (the

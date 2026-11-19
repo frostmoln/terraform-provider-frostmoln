@@ -253,7 +253,9 @@ var Declarations = map[string]Decl{
 		Immutable: []Field{
 			{Path: "control_plane_tier"},
 			{Path: "initial_node_pool.flavor_id"},
+			{Path: "initial_node_pool.labels", Why: "node labels are fixed when the pool is created; the platform applies them only as each node registers"},
 			{Path: "initial_node_pool.name"},
+			{Path: "initial_node_pool.taints", Why: "node taints are fixed when the pool is created; the platform applies them only as each node registers"},
 			{Path: "public_ip_id", Why: "retained and deprecated: every new cluster's apiserver is a private VIP and the API refuses any value with a 400 — the attribute exists so a stale configuration is told so"},
 			{Path: "region"},
 			{Path: "subnet_id"},
@@ -283,7 +285,9 @@ var Declarations = map[string]Decl{
 		Immutable: []Field{
 			{Path: "cluster_id", Why: "the pool belongs to its cluster; moving it is a different pool"},
 			{Path: "flavor_id", Why: "the platform does not re-flavor a pool in place"},
+			{Path: "labels", Why: "node labels are fixed when the pool is created; the platform applies them only as each node registers"},
 			{Path: "name", Why: "the pool's name is its identity within the cluster"},
+			{Path: "taints", Why: "node taints are fixed when the pool is created; the platform applies them only as each node registers"},
 		},
 		Observes: []Field{
 			{Path: "kubernetes_version", Why: "the platform chooses Kubernetes patches and rolls them in the maintenance window"},
