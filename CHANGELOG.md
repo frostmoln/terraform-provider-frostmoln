@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.102.1] - 2026-11-19
+
+### 📚 Documentation
+
+- *(kubernetes_cluster)* The maintenance window is in force (#883)
+
 ## [0.102.0] - 2026-11-19
 
 ### 🚀 Features
