@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.103.0] - 2026-11-20
+
+### 🚀 Features
+
+- *(kubernetes_cluster)* Upgrade version in place, never replace (#887)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.17.2 (#885)
+
 ## [0.102.1] - 2026-11-19
 
 ### 📚 Documentation
