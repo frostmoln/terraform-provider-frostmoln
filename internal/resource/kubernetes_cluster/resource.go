@@ -150,6 +150,7 @@ func (r *kubernetesClusterResource) ModifyPlan(ctx context.Context, req resource
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	planVersionChange(ctx, req, resp, plan)
 	warnReplaceWithoutRetainedChoice(ctx, req, plan, &resp.Diagnostics)
 	warnReplaceWithMaintenanceWindow(ctx, req, plan, &resp.Diagnostics)
 	resp.Diagnostics.Append(r.checkConfiguredAddonVersions(ctx, req.Config, plan.AddonVersions)...)
@@ -212,13 +213,18 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 				Required:    true,
 			},
 			"version": schema.StringAttribute{
-				Description: "The Kubernetes version (e.g. \"1.35\"). Defaults to the platform default version. " +
-					"Changing it currently REPLACES the cluster — in-place upgrade is not available yet.",
+				Description: "The Kubernetes minor version (e.g. \"1.35\"). Defaults to the platform default version. " +
+					"Raising it UPGRADES the cluster in place, never replaces it: one minor version at a time, to a " +
+					"version the platform offers for upgrades, and the apply waits for the upgrade (timeouts.update; 6 hours when unset). " +
+					upgradeEffects + " Lowering it is never applied: the plan warns and the apply is refused before it changes anything. If the upgrade stops, the apply fails, " +
+					"the version stays at what the cluster runs, and applying again resumes it (or, when it stopped " +
+					"before anything ran the new version, starts it again). A cluster upgraded " +
+					"outside Terraform keeps its recorded version while this is set, and a warning asks you to set it " +
+					"to what the cluster runs. Unset, it follows the cluster once an apply has updated this resource.",
 				Optional: true,
 				Computed: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
-					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"control_plane_version": schema.StringAttribute{
@@ -874,6 +880,7 @@ func (r *kubernetesClusterResource) Create(ctx context.Context, req resource.Cre
 		return
 	}
 	tftags.RecordDefaults(ctx, resp.Private, defaults, &resp.Diagnostics)
+	recordVersionConfigured(ctx, req.Config, resp.Private, &resp.Diagnostics)
 	created, err := client.ParseResponse[apiKubernetesCluster](apiResp)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to parse Kubernetes cluster response", err.Error())
@@ -1008,7 +1015,11 @@ func (r *kubernetesClusterResource) Read(ctx context.Context, req resource.ReadR
 
 	// fromAPI leaves public_ip_id and kubeconfig untouched (preserved from
 	// prior state).
+	recordedVersion := state.Version
 	state.fromAPI(cluster)
+	if versionConfigured(ctx, req.Private, &resp.Diagnostics) {
+		keepRecordedVersion(&state, recordedVersion, &resp.Diagnostics)
+	}
 	state.tagsFromAPI(ctx, cluster, &resp.Diagnostics)
 	// The server always holds a window, so this is what shows drift; a server from
 	// before the field leaves the prior value alone.
@@ -1083,6 +1094,10 @@ func (r *kubernetesClusterResource) Update(ctx context.Context, req resource.Upd
 	id := state.ID.ValueString()
 	if id == "" {
 		resp.Diagnostics.AddError("Missing cluster ID", "The state contains no cluster ID; the state may be corrupt.")
+		return
+	}
+
+	if r.refuseDowngrade(ctx, plan, state, &resp.Diagnostics) {
 		return
 	}
 
@@ -1268,12 +1283,27 @@ func (r *kubernetesClusterResource) Update(ctx context.Context, req resource.Upd
 		scaled = true
 	}
 
+	// THE VERSION, LAST: in place (upgrade.go). A stopped or refused upgrade is an error, but the
+	// read-back below still runs, so state records what the cluster runs and every change above,
+	// never the configured version; applying again resumes. The planned value is unknown-free here
+	// only when the configuration names it (UseStateForUnknown carries state otherwise).
+	wantVersion := plan.Version
+	if !plan.Version.IsUnknown() && !plan.Version.IsNull() && !plan.Version.Equal(state.Version) {
+		upgradeDeadline := time.Now().Add(r.upgradeBudget(plan.Timeouts))
+		if err := r.upgradeCluster(ctx, id, plan.Version.ValueString(), upgradeDeadline); err != nil {
+			resp.Diagnostics.AddAttributeError(path.Root("version"), "Kubernetes Cluster Was Not Upgraded", err.Error())
+			wantVersion = types.StringNull()
+		}
+	}
+
 	final, err := r.getCluster(ctx, id)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to read Kubernetes cluster after update", err.Error())
 		return
 	}
 	plan.fromAPI(final)
+	keepRecordedVersion(&plan, wantVersion, &resp.Diagnostics)
+	recordVersionConfigured(ctx, req.Config, resp.Private, &resp.Diagnostics)
 	plan.tagsFromAPI(ctx, final, &resp.Diagnostics)
 	plan.MaintenanceWindow = settledMaintenanceWindow(plan.MaintenanceWindow, final.MaintenanceWindow)
 

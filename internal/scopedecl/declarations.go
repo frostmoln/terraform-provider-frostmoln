@@ -259,10 +259,10 @@ var Declarations = map[string]Decl{
 			{Path: "public_ip_id", Why: "retained and deprecated: every new cluster's apiserver is a private VIP and the API refuses any value with a 400 — the attribute exists so a stale configuration is told so"},
 			{Path: "region"},
 			{Path: "subnet_id"},
-			{Path: "version"},
 			{Path: "vpc_id"},
 		},
 		EnactsExcept: []Field{
+			{Path: "version", Why: "enacted by an in-place upgrade, one minor at a time, and never lowered (a lower value is warned about at plan and refused at apply, before anything changes); while it is set, a refresh does not raise it when the cluster was upgraded outside Terraform, and warns instead (unset, it follows the cluster once an apply has updated this resource)"},
 			{Path: "addon_versions", Why: "a refresh reads a pin back only for an addon this attribute already names, and only when the platform can report pins (not while the cluster is still being created, or during a platform deployment or outage, when the recorded value is kept); a pin set outside Terraform for any other addon is neither read into state nor sent"},
 		},
 		Defaults: []PlatformDefault{

@@ -125,10 +125,13 @@ type apiKubernetesCluster struct {
 	// ControlPlaneVersion is absent while the platform does not know it (no backfill).
 	ControlPlaneVersion string `json:"controlPlaneVersion,omitempty"`
 	ControlPlaneTier    string `json:"controlPlaneTier"`
-	HAEnabled           bool   `json:"haEnabled"`
-	Region              string `json:"region"`
-	VPCID               string `json:"vpcId"`
-	SubnetID            string `json:"subnetId"`
+	// TargetKubernetesVersion and UpgradeFailure describe a minor upgrade (upgrade.go); absent when none.
+	TargetKubernetesVersion string `json:"targetKubernetesVersion,omitempty"`
+	UpgradeFailure          string `json:"upgradeFailure,omitempty"`
+	HAEnabled               bool   `json:"haEnabled"`
+	Region                  string `json:"region"`
+	VPCID                   string `json:"vpcId"`
+	SubnetID                string `json:"subnetId"`
 	// The load balancer below is the Kubernetes API ENDPOINT's, the only one this
 	// resource reports. The worker ingress load balancer is retired, and the
 	// backend no longer returns ingressScheme / ingressEndpoint /

@@ -802,6 +802,22 @@ func (c *Client) WaitForOperation(ctx context.Context, operationID string, inter
 	return lastOp, nil
 }
 
+// WaitForStateWoken is WaitForState driven the way WaitForOperation is: the tenant
+// event stream wakes the poll, pushHeartbeat is the backstop while the stream is
+// live, and fallback is the timer cadence while it is not. For a wait whose record
+// is the resource itself, not an operation (a Kubernetes minor upgrade, which can
+// end with no operation to read: a command refused before any workflow ran).
+func (c *Client) WaitForStateWoken(ctx context.Context, cfg PollConfig, fallback time.Duration) (string, error) {
+	if cfg.Timeout == 0 {
+		cfg.Timeout = 5 * time.Minute
+	}
+	watchCtx, stopWatch := context.WithTimeout(ctx, cfg.Timeout)
+	defer stopWatch()
+	cfg.Interval = pushHeartbeat
+	cfg.Wake = c.newEventWatcher(watchCtx, fallback)
+	return WaitForState(ctx, cfg)
+}
+
 type acceptLanguageKey struct{}
 
 // WithAcceptLanguage returns a context whose requests carry Accept-Language:

@@ -69,7 +69,7 @@ var mustReplaceOnRealChange = map[string][]string{
 	// platform gained a bounded prune, and the RequiresReplace that used to fire on a
 	// removal was deleted rather than kept — it would have destroyed a cluster and every
 	// workload on it to perform a background operation.
-	"frostmoln_kubernetes_cluster":    {"version", "control_plane_tier", "region", "initial_node_pool.name"},
+	"frostmoln_kubernetes_cluster":    {"control_plane_tier", "region", "initial_node_pool.name"},
 	"frostmoln_kubernetes_node_pool":  {"name"},
 	"frostmoln_load_balancer":         {"scheme", "type"},
 	"frostmoln_messaging_instance":    {"require_tls", "type", "version"},

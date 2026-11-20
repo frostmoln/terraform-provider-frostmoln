@@ -8,7 +8,12 @@ variable "external_dns_version" {
 data "frostmoln_kubernetes_flavors" "available" {}
 
 resource "frostmoln_kubernetes_cluster" "main" {
-  name      = "my-cluster"
+  name = "my-cluster"
+  # The platform default, read on every plan. When the default moves to the next minor, the
+  # next apply UPGRADES this cluster in place (control plane first, then every node drained and
+  # replaced; the apply waits up to timeouts.update, 6 hours when unset). An upgrade moves one
+  # minor at a time, so a default two minors ahead is refused until you step through. To upgrade
+  # on your own schedule, write the version as a literal instead.
   version   = [for v in data.frostmoln_kubernetes_versions.available.versions : v.version if v.is_default][0]
   vpc_id    = frostmoln_vpc.main.id
   subnet_id = frostmoln_subnet.nodes.id
