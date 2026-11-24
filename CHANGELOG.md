@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.103.1] - 2026-11-24
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.59 (#889)
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.60 (#893)
+- *(kubernetes_cluster)* A version change is never reported as a replacement (#913)
+
+### 📚 Documentation
+
+- *(postgres_instance)* Pitr_enabled works on high-availability instances (#911)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.17.3 (#891)
+- *(deps)* Update module github.com/yuin/goldmark to v1.7.17 [security] (#896)
+- *(deps)* Update module golang.org/x/sys to v0.44.0 [security] (#900)
+- *(deps)* Update module golang.org/x/crypto to v0.59.0 [security] (#897)
+- *(deps)* Update module google.golang.org/grpc to v1.83.1 [security] (#902)
+- *(deps)* Update dependency goreleaser/goreleaser to v2.20.3 (#908)
+- *(deps)* Update module google.golang.org/grpc to v1.83.2 [security] (#907)
+
 ## [0.103.0] - 2026-11-20
 
 ### 🚀 Features
