@@ -18,8 +18,8 @@ resource "frostmoln_postgres_instance" "main" {
   # Point-in-time recovery: any second inside the restorable window, restored
   # onto a NEW instance. Write it EXPLICITLY — the platform stamps it at
   # create and the stamp is permanent, so an instance created without it can
-  # never be given it. PostgreSQL only, needs backup_enabled, not available
-  # with ha_enabled.
+  # never be given it. PostgreSQL only, needs backup_enabled; works with
+  # ha_enabled too.
   pitr_enabled = true
 
   # Extensions are platform catalog names, checked against the live catalog
