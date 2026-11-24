@@ -324,12 +324,15 @@ func TestModifyPlan_WarnsOfAReplacementWithAConfiguredWindow(t *testing.T) {
 		name     string
 		config   types.Object
 		replace  bool
+		upgrade  bool
 		wantWarn bool
 	}{
-		{"replacement, window configured", configured, true, true},
-		{"replacement, window left to the server, plan still holds one", nullMaintenanceWindow(), true, false},
-		{"no replacement, window configured", configured, false, false},
-		{"replacement, window from an unknown expression", types.ObjectUnknown(maintenanceWindowAttrTypes), true, true},
+		{"replacement, window configured", configured, true, false, true},
+		{"replacement, window left to the server, plan still holds one", nullMaintenanceWindow(), true, false, false},
+		{"no replacement, window configured", configured, false, false, false},
+		{"replacement, window from an unknown expression", types.ObjectUnknown(maintenanceWindowAttrTypes), true, false, true},
+		// A version change upgrades in place: nothing is destroyed.
+		{"upgrade, window configured", configured, false, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api := &tagsAPI{t: t}
@@ -341,6 +344,9 @@ func TestModifyPlan_WarnsOfAReplacementWithAConfiguredWindow(t *testing.T) {
 			planM.MaintenanceWindow = configured
 			if tc.replace {
 				planM.SubnetID = types.StringValue("sn-2")
+			}
+			if tc.upgrade {
+				planM.Version = types.StringValue("1.36")
 			}
 			configM := planM
 			configM.MaintenanceWindow = tc.config

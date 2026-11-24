@@ -285,6 +285,10 @@ func TestModifyPlanWarnsOnReplaceWithoutRetainedChoice(t *testing.T) {
 		"in-place, unset":      {types.StringNull(), func(m *KubernetesClusterModel) { m.Name = types.StringValue("renamed") }, false},
 		"no change, unset":     {types.StringNull(), func(*KubernetesClusterModel) {}, false},
 		"version unknown, set": {types.StringValue("delete"), func(m *KubernetesClusterModel) { m.Version = types.StringUnknown() }, false},
+		// A version change upgrades in place (or is refused): never a replacement.
+		"upgrade, unset":         {types.StringNull(), func(m *KubernetesClusterModel) { m.Version = types.StringValue("1.36") }, false},
+		"lower version, unset":   {types.StringNull(), func(m *KubernetesClusterModel) { m.Version = types.StringValue("1.34") }, false},
+		"version unknown, unset": {types.StringNull(), func(m *KubernetesClusterModel) { m.Version = types.StringUnknown() }, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			sm := stateModel()

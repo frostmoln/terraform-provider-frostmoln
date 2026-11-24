@@ -240,10 +240,11 @@ func warnReplaceWithoutRetainedChoice(ctx context.Context, req resource.ModifyPl
 }
 
 // plannedReplacement reports whether any RequiresReplace attribute changes. An
-// unknown planned value counts: RequiresReplace replaces on it too.
+// unknown planned value counts: RequiresReplace replaces on it too. version is not
+// one: a change upgrades in place or is refused (upgrade.go), never a replacement.
 func plannedReplacement(plan, state KubernetesClusterModel) bool {
 	changed := func(p, s types.String) bool { return p.IsUnknown() || !p.Equal(s) }
-	if changed(plan.Version, state.Version) || changed(plan.ControlPlaneTier, state.ControlPlaneTier) ||
+	if changed(plan.ControlPlaneTier, state.ControlPlaneTier) ||
 		changed(plan.Region, state.Region) || changed(plan.VPCID, state.VPCID) ||
 		changed(plan.SubnetID, state.SubnetID) || changed(plan.PublicIPID, state.PublicIPID) {
 		return true
