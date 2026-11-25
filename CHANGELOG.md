@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.104.0] - 2026-11-25
+
+### 🚀 Features
+
+- *(kubernetes_cluster)* Say who may upgrade, and refuse a 403 upgrade with a clear diagnostic (#915)
+
 ## [0.103.1] - 2026-11-24
 
 ### 🐛 Bug Fixes
