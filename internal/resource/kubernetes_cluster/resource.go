@@ -216,7 +216,8 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 				Description: "The Kubernetes minor version (e.g. \"1.35\"). Defaults to the platform default version. " +
 					"Raising it UPGRADES the cluster in place, never replaces it: one minor version at a time, to a " +
 					"version the platform offers for upgrades, and the apply waits for the upgrade (timeouts.update; 6 hours when unset). " +
-					upgradeEffects + " Lowering it is never applied: the plan warns and the apply is refused before it changes anything. If the upgrade stops, the apply fails, " +
+					upgradeEffects + " " + upgradeAccess + " See https://docs.frostmoln.se/kubernetes/version-lifecycle." +
+					" Lowering it is never applied: the plan warns and the apply is refused before it changes anything. If the upgrade stops, the apply fails, " +
 					"the version stays at what the cluster runs, and applying again resumes it (or, when it stopped " +
 					"before anything ran the new version, starts it again). A cluster upgraded " +
 					"outside Terraform keeps its recorded version while this is set, and a warning asks you to set it " +

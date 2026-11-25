@@ -355,6 +355,12 @@ func wellFormedDemand(perm string) bool {
 		!strings.HasPrefix(perm, "unclassified:")
 }
 
+// IsOperationDemand reports whether perm is a well-formed 3-part operation demand
+// (family:resource:action), for a diagnostic that names only that shape.
+func IsOperationDemand(perm string) bool {
+	return wellFormedDemand(perm) && strings.Count(perm, ":") == 2
+}
+
 // Error renders code and message — plus, for the two org-role refusal codes
 // carrying a well-formed demanded permission, that permission. Details is still
 // machine-readable context for a caller that branches on it, not practitioner

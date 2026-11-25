@@ -348,6 +348,37 @@ func upgradeRefusal(err error, have, target string) error {
 		return fmt.Errorf("%s %s This request started nothing", apiErr.Error(), upgradeHints[apiErr.Code])
 	case http.StatusServiceUnavailable:
 		return fmt.Errorf("%s. This is temporary: apply again. %s", apiErr.Error(), keep)
+	case http.StatusForbidden:
+		if upgradeDenyCodes[apiErr.Code] {
+			named := "" // not apiErr.Error() below: it echoes the demand again, 2-part shapes included
+			if client.IsOperationDemand(apiErr.RequiredPermission) {
+				named = " (required permission: " + apiErr.RequiredPermission + ")"
+			}
+			return fmt.Errorf("the version change to %s was not applied: this credential may not upgrade the cluster%s. "+
+				"%s %s\n\n%s: %s", target, named, upgradeAccess, keep, apiErr.Code, apiErr.Message)
+		}
 	}
+	// Every other status and code, a gate's 403 (a suspended account) included: the server's own message.
 	return fmt.Errorf("%s. %s", apiErr.Error(), keep)
+}
+
+// upgradeAccess says who may upgrade, in the attribute text and the 403 diagnostic alike. It names
+// no role as the only way: a group document or custom role grants the operations too. Provisioning
+// refuses an access-policy API key or workload identity on every command path today (servicekit
+// provcmd), so the usual "add it to the key's policy" advice would mislead.
+const upgradeAccess = "Upgrading needs kubernetes:kubernetes-clusters:upgrade and kubernetes:kubernetes-clusters:create " +
+	"on the cluster: the Owner and Admin roles hold them, and a group document or custom role that names them grants " +
+	"them too. An access-policy API key cannot start or resume an upgrade today: run that apply signed in with " +
+	"`fm auth login`, with no API key in the provider's api_key, FROSTMOLN_API_KEY or the fm CLI configuration. " +
+	"Never copy an fm sign-in into CI or other automation."
+
+// upgradeDenyCodes are the IAM and scope denials, plus kubernetes' refusal of a policy-granted
+// principal (command_authorization.go), which is what an access-policy API key whose policy does
+// grant the operations gets. Not "forbidden": on this route kubernetes sends it for a credential
+// that cannot manage the enclave (requireEnclaveOrgClaim), whose own message says what to do. A
+// gate's 403 (a suspended account) carries another code too.
+var upgradeDenyCodes = map[string]bool{
+	"insufficient_scope": true, "INSUFFICIENT_SCOPE": true,
+	"insufficient_permission": true, "INSUFFICIENT_PERMISSIONS": true,
+	"policy_granted_not_supported": true,
 }

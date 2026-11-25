@@ -90,6 +90,7 @@ func (a *upgradeAPI) handler() http.Handler {
 		"501": {http.StatusNotImplemented, "not_implemented", "kubernetes upgrades are not available"},
 		"400": {http.StatusBadRequest, "invalid_input", "unsupported kubernetes upgrade target"},
 		"409": {http.StatusConflict, "pool_not_active", "a node pool of this cluster is not active"},
+		"403": {http.StatusForbidden, "insufficient_permission", "permission denied"},
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
@@ -111,7 +112,11 @@ func (a *upgradeAPI) handler() http.Handler {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			a.upgrades = append(a.upgrades, body.KubernetesVersion)
 			if ref, ok := refusals[a.answer]; ok {
-				write(ref[0].(int), map[string]any{"code": ref[1], "message": ref[2]})
+				body := map[string]any{"code": ref[1], "message": ref[2]}
+				if a.answer == "403" {
+					body["required_permission"] = "kubernetes:kubernetes-clusters:upgrade"
+				}
+				write(ref[0].(int), body)
 				return
 			}
 			opID := fmt.Sprintf("upgrade-k8s-enclave-cluster-c-1@%d", len(a.ops)+1)
@@ -275,6 +280,34 @@ func TestAccClusterVersionUpgradesInPlace(t *testing.T) {
 					resource.TestCheckResourceAttr(versionAddr, "version", "1.38")),
 			},
 			{Config: versionConfig("1.38"), PlanOnly: true},
+		},
+	})
+}
+
+// K8S-VERSION-UPGRADES-PLAN §3.1f decision 10: a version change refused 403 plans an in-place
+// update (never a replace), fails the apply with the access diagnostic, and leaves state on 1.35.
+func TestAccClusterVersionUpgradeForbidden(t *testing.T) {
+	api := newUpgradeAPI("1.35")
+	serveUpgradeAPI(t, api)
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: acctest.TestAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: versionConfig("1.35")},
+			{
+				PreConfig: api.do(func() { api.answer = "403" }), Config: versionConfig("1.36"), ConfigPlanChecks: inPlace(),
+				ExpectError: errs("the version change to 1.36 was not applied: this credential may not upgrade the cluster (required permission: kubernetes:kubernetes-clusters:upgrade). " +
+					"Upgrading needs kubernetes:kubernetes-clusters:upgrade and kubernetes:kubernetes-clusters:create on the cluster"),
+			},
+			// Nothing changed: state still says 1.35 (a 1.35 config plans nothing, and the id is the same).
+			{
+				Config: versionConfig("1.35"), ConfigPlanChecks: noChange(),
+				Check: resource.ComposeAggregateTestCheckFunc(api.posted("1.36"),
+					resource.TestCheckResourceAttr(versionAddr, "version", "1.35"),
+					resource.TestCheckResourceAttr(versionAddr, "id", "c-1")),
+			},
+			// Asked again, it still plans an in-place update (never a replace) and is refused the same way.
+			{Config: versionConfig("1.36"), ConfigPlanChecks: inPlace(), ExpectError: errs("the version change to 1.36 was not applied")},
+			{Config: versionConfig("1.35"), ConfigPlanChecks: noChange(), Check: api.posted("1.36")},
 		},
 	})
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -164,6 +165,64 @@ func TestUpgradeRefusal(t *testing.T) {
 	}
 }
 
+// A 403 for an IAM or scope deny, or for a policy-granted principal, says the change was not
+// applied, who may upgrade, and that an access-policy API key cannot; it names the demanded
+// permission only in the 3-part shape. A gate's 403 keeps the server's own message.
+func TestUpgradeRefusalForbidden(t *testing.T) {
+	const perm = "kubernetes:kubernetes-clusters:upgrade"
+	common := []string{
+		"version change to 1.36 was not applied", "kubernetes:kubernetes-clusters:upgrade and kubernetes:kubernetes-clusters:create",
+		"the Owner and Admin roles hold them, and a group document or custom role", "access-policy API key cannot start or resume an upgrade",
+		"fm auth login", "Never copy an fm sign-in into CI", "stays on 1.35",
+	}
+	for _, tc := range []struct {
+		err          *client.APIError
+		named, never bool // named: the permission is echoed in our sentence; never: the deny copy must not appear
+		want         []string
+	}{
+		{err: &client.APIError{StatusCode: 403, Code: "insufficient_permission", Message: "denied", RequiredPermission: perm}, named: true},
+		{err: &client.APIError{StatusCode: 403, Code: "INSUFFICIENT_PERMISSIONS", Message: "denied", RequiredPermission: "kubernetes:write"}},
+		{err: &client.APIError{StatusCode: 403, Code: "insufficient_scope", Message: "denied", RequiredPermission: "kubernetes:x:<script>"}},
+		{err: &client.APIError{StatusCode: 403, Code: "insufficient_permission", Message: "denied", RequiredPermission: "kubernetes:kubernetes-clusters:unclassified"}},
+		{err: &client.APIError{StatusCode: 403, Code: "insufficient_permission", Message: "denied", RequiredPermission: "unclassified:kubernetes-clusters:upgrade"}},
+		{err: &client.APIError{StatusCode: 403, Code: "policy_granted_not_supported", Message: "this operation cannot be requested by a policy-granted principal"}},
+		{err: &client.APIError{StatusCode: 403, Code: "ACCOUNT_SUSPENDED", Message: "the account is suspended"}, never: true, want: []string{"ACCOUNT_SUSPENDED: the account is suspended", "stays on 1.35"}},
+		{err: &client.APIError{StatusCode: 403, Code: "forbidden", Message: "retry from the portal"}, never: true, want: []string{"forbidden: retry from the portal", "stays on 1.35"}},
+	} {
+		got := upgradeRefusal(tc.err, "1.35", "1.36").Error()
+		want := tc.want
+		if !tc.never {
+			want = append(common, tc.err.Message)
+		}
+		for _, w := range want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s: %q lacks %q", tc.err.Code, got, w)
+			}
+		}
+		if tc.never && strings.Contains(got, "access-policy API key") {
+			t.Errorf("%s: a gate 403 got the deny copy: %q", tc.err.Code, got)
+		}
+		if n := strings.Contains(got, "upgrade the cluster (required permission: "+perm+")"); n != tc.named {
+			t.Errorf("%s: names permission = %v, want %v: %q", tc.err.Code, n, tc.named, got)
+		}
+		if strings.Count(got, "required permission:") > 1 || strings.Contains(got, "kubernetes:write") {
+			t.Errorf("%s: the demand is echoed twice or in the 2-part shape: %q", tc.err.Code, got)
+		}
+		if strings.Contains(got, "unclassified") {
+			t.Errorf("%s: echoed the gate's unclassified marker: %q", tc.err.Code, got)
+		}
+		if strings.Contains(got, "<script>") {
+			t.Errorf("%s: echoed a malformed permission: %q", tc.err.Code, got)
+		}
+	}
+}
+
+func TestUpgradeRefusalTransport(t *testing.T) {
+	if got := upgradeRefusal(errors.New("dial tcp: refused"), "1.35", "1.36").Error(); !strings.Contains(got, "may or may not have started") {
+		t.Errorf("transport error: %q", got)
+	}
+}
+
 func TestUpgradeStopped(t *testing.T) {
 	for _, tc := range []struct {
 		status, failure, want string
@@ -185,16 +244,15 @@ func TestUpgradeStopped(t *testing.T) {
 // An earlier apply timed out while the upgrade ran on: the next one waits on it and never
 // requests it again (a POST would answer upgrade_in_progress).
 func TestUpgradeCluster_AttachesToARunningUpgrade(t *testing.T) {
-	var gets, posts int
+	var gets, posts atomic.Int32 // the handler runs on the server's goroutines
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
-			posts++
+			posts.Add(1)
 			w.WriteHeader(http.StatusConflict)
 			return
 		}
-		gets++
 		c := map[string]any{"id": "c-1", "status": "upgrading", "kubernetesVersion": "1.35", "targetKubernetesVersion": "1.36"}
-		if gets > 2 {
+		if gets.Add(1) > 2 {
 			c = map[string]any{"id": "c-1", "status": "running", "kubernetesVersion": "1.36"}
 		}
 		writeJSON(t, w, c)
@@ -205,7 +263,7 @@ func TestUpgradeCluster_AttachesToARunningUpgrade(t *testing.T) {
 	if err := testResource(c).upgradeCluster(context.Background(), "c-1", "1.36", time.Now().Add(5*time.Second)); err != nil {
 		t.Fatalf("upgradeCluster: %v", err)
 	}
-	if posts != 0 || gets < 3 {
-		t.Errorf("posts = %d (want 0), gets = %d (want >= 3)", posts, gets)
+	if posts.Load() != 0 || gets.Load() < 3 {
+		t.Errorf("posts = %d (want 0), gets = %d (want >= 3)", posts.Load(), gets.Load())
 	}
 }
