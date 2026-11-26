@@ -84,7 +84,7 @@ func (r *dnsRecordResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				},
 			},
 			"records": schema.SetAttribute{
-				Description: "The record values. For MX/SRV the priority is part of the value string (e.g. \"10 mail.example.com.\").",
+				Description: "The record values. For MX/SRV the priority is part of the value string (e.g. \"10 mail.example.com.\"). A CAA value may be quoted as in a zone file (`0 issue \"letsencrypt.org\"`); the platform stores it unquoted and the configured spelling is kept in state.",
 				Required:    true,
 				ElementType: types.StringType,
 			},

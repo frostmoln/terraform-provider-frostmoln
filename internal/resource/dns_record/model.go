@@ -3,6 +3,7 @@ package dns_record
 
 import (
 	"context"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -118,9 +119,14 @@ func (m *DNSRecordModel) fromAPI(ctx context.Context, rec *apiDNSRecord, diags *
 	m.TTL = types.Int64Value(int64(rec.TTL))
 	m.CreatedAt = types.StringValue(rec.CreatedAt)
 
-	values, d := types.SetValueFrom(ctx, types.StringType, rec.Records)
-	diags.Append(d...)
-	m.Records = values
+	// m.Records holds the prior value (configuration or state, as for tags).
+	// Keep its spelling when it is the same value set the platform returned:
+	// a quoted CAA value is stored and returned bare.
+	if !sameValuesAsStored(ctx, rec.Type, m.Records, rec.Records) {
+		values, d := types.SetValueFrom(ctx, types.StringType, rec.Records)
+		diags.Append(d...)
+		m.Records = values
+	}
 
 	if rec.Comment != "" {
 		m.Comment = types.StringValue(rec.Comment)
@@ -144,4 +150,49 @@ func (m *DNSRecordModel) fromAPI(ctx context.Context, rec *apiDNSRecord, diags *
 // tags alone, which the platform applies without touching the zone.
 func (m *DNSRecordModel) recordFieldsChanged(state *DNSRecordModel) bool {
 	return !m.Records.Equal(state.Records) || !m.TTL.Equal(state.TTL) || !m.Comment.Equal(state.Comment)
+}
+
+// sameValuesAsStored reports whether prior, normalized as the platform stores
+// it, is exactly the stored value set.
+func sameValuesAsStored(ctx context.Context, rtype string, prior types.Set, stored []string) bool {
+	if prior.IsNull() || prior.IsUnknown() {
+		return false
+	}
+	var values []string
+	if prior.ElementsAs(ctx, &values, false).HasError() || len(values) != len(stored) {
+		return false
+	}
+	norm := make(map[string]bool, len(values))
+	for _, v := range values {
+		norm[storedValue(rtype, v)] = true
+	}
+	if len(norm) != len(stored) {
+		return false
+	}
+	for _, v := range stored {
+		if !norm[v] {
+			return false
+		}
+	}
+	return true
+}
+
+// storedValue mirrors network's domain.NormalizeDNSRecordValues: a CAA
+// property value wrapped in one pair of double quotes (zone-file form) is
+// stored bare. Keep in lockstep with network's TestNormalizeDNSRecordValues.
+func storedValue(rtype, v string) string {
+	if rtype != "CAA" {
+		return v
+	}
+	f := strings.Fields(v)
+	if len(f) < 3 {
+		return v
+	}
+	rest := strings.TrimSpace(v)
+	rest = strings.TrimSpace(strings.TrimPrefix(rest, f[0]))
+	rest = strings.TrimSpace(strings.TrimPrefix(rest, f[1]))
+	if len(rest) < 3 || rest[0] != '"' || rest[len(rest)-1] != '"' || strings.Contains(rest[1:len(rest)-1], `"`) {
+		return v
+	}
+	return f[0] + " " + f[1] + " " + rest[1:len(rest)-1]
 }

@@ -61,7 +61,7 @@ resource "frostmoln_dns_record" "mx" {
 ### Required
 
 - `name` (String) The record name relative to the zone, or "@" for the zone apex. Must be lowercase.
-- `records` (Set of String) The record values. For MX/SRV the priority is part of the value string (e.g. "10 mail.example.com.").
+- `records` (Set of String) The record values. For MX/SRV the priority is part of the value string (e.g. "10 mail.example.com."). A CAA value may be quoted as in a zone file (`0 issue "letsencrypt.org"`); the platform stores it unquoted and the configured spelling is kept in state.
 - `type` (String) The record type: A, AAAA, CNAME, MX, TXT, NS, SRV, CAA, or PTR.
 - `zone_id` (String) The ID of the zone this record belongs to.
 
