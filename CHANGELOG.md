@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.105.0] - 2026-11-26
+
+### 🚀 Features
+
+- *(storage)* Add size_bytes and state sizes as GB (10^9 bytes) (#917)
+
 ## [0.104.0] - 2026-11-25
 
 ### 🚀 Features
