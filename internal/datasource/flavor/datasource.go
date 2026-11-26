@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 )
 
 var _ datasource.DataSource = &flavorDataSource{}
@@ -32,6 +33,7 @@ type flavorModel struct {
 	VCPUs          types.Int64   `tfsdk:"vcpus"`
 	RAMMB          types.Int64   `tfsdk:"ram_mb"`
 	DiskGB         types.Int64   `tfsdk:"disk_gb"`
+	DiskBytes      types.Int64   `tfsdk:"disk_bytes"`
 	Category       types.String  `tfsdk:"category"`
 	Family         types.String  `tfsdk:"family"`
 	Generation     types.Int64   `tfsdk:"generation"`
@@ -48,6 +50,7 @@ type apiFlavor struct {
 	VCPUs          int     `json:"vcpus"`
 	RAMMB          int     `json:"memory"`
 	DiskGB         int     `json:"disk"`
+	DiskBytes      int64   `json:"diskBytes"` // 0 from a release that does not send it
 	Category       string  `json:"category,omitempty"`
 	Family         string  `json:"family"`
 	Generation     int     `json:"generation"`
@@ -90,6 +93,10 @@ func (d *flavorDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 			},
 			"disk_gb": schema.Int64Attribute{
 				Description: "The root disk size as a whole-GiB count (units of 2^30 bytes), as the flavor defines it: 20 is 21.47 GB (1 GB = 10^9 bytes).",
+				Computed:    true,
+			},
+			"disk_bytes": schema.Int64Attribute{
+				Description: "The true root disk size in bytes (1 GB = 10^9 bytes): a `disk_gb` of 20 is 21,474,836,480 bytes (21.47 GB). Null when the platform does not report it.",
 				Computed:    true,
 			},
 			"category": schema.StringAttribute{
@@ -207,6 +214,7 @@ func (d *flavorDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 	state.VCPUs = types.Int64Value(int64(found.VCPUs))
 	state.RAMMB = types.Int64Value(int64(found.RAMMB))
 	state.DiskGB = types.Int64Value(int64(found.DiskGB))
+	state.DiskBytes = planmod.SizeBytesValue(found.DiskBytes)
 	state.Category = types.StringValue(found.Category)
 	state.Family = types.StringValue(found.Family)
 	state.Generation = types.Int64Value(int64(found.Generation))

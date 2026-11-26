@@ -110,6 +110,7 @@ func createPlanAttrs(sourceFile string) map[string]tftypes.Value {
 		"architecture":     tftypes.NewValue(tftypes.String, nil),
 		"default_user":     tftypes.NewValue(tftypes.String, nil),
 		"min_disk_gb":      tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"min_disk_bytes":   tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"min_ram_mb":       tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
 		"status":           tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"size":             tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
@@ -153,6 +154,7 @@ func stateAttrs(imageID string) map[string]tftypes.Value {
 		"architecture":     tftypes.NewValue(tftypes.String, nil),
 		"default_user":     tftypes.NewValue(tftypes.String, nil),
 		"min_disk_gb":      tftypes.NewValue(tftypes.Number, 0),
+		"min_disk_bytes":   tftypes.NewValue(tftypes.Number, nil),
 		"min_ram_mb":       tftypes.NewValue(tftypes.Number, 0),
 		"status":           tftypes.NewValue(tftypes.String, "active"),
 		"size":             tftypes.NewValue(tftypes.Number, 1024),
@@ -1946,4 +1948,20 @@ func diagError(hasError bool) error {
 		return errors.New("the operation reported an error diagnostic")
 	}
 	return nil
+}
+
+// min_disk_gb is the requested decimal GB the API reads back; min_disk_bytes the
+// true minimum, null when there is none (or an older compute sends none).
+func TestFromAPIMinDiskBytes(t *testing.T) {
+	m := &ImageModel{}
+	m.fromAPI(&apiImage{ID: "img-1", MinDisk: 20, MinDiskBytes: 19 << 30})
+	if m.MinDiskGB.ValueInt64() != 20 || m.MinDiskBytes.ValueInt64() != 19<<30 {
+		t.Errorf("min_disk_gb %v, min_disk_bytes %v; want 20, %d", m.MinDiskGB, m.MinDiskBytes, int64(19<<30))
+	}
+
+	m = &ImageModel{}
+	m.fromAPI(&apiImage{ID: "img-1"})
+	if !m.MinDiskBytes.IsNull() {
+		t.Errorf("no minimum: min_disk_bytes = %v, want null", m.MinDiskBytes)
+	}
 }

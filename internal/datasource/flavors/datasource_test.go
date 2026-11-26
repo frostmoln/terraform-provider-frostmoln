@@ -89,6 +89,21 @@ func TestApiFlavorDecodesBackendKeys(t *testing.T) {
 	}
 }
 
+// compute sends the flavor disk's true size beside the whole-GiB count; an older
+// release sends none, which reads null rather than a size of 0.
+func TestApiFlavorDecodesDiskBytes(t *testing.T) {
+	var f apiFlavor
+	if err := json.Unmarshal([]byte(`{"id":"flv-1","disk":20,"diskBytes":21474836480}`), &f); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if f.DiskBytes != 21474836480 {
+		t.Errorf("DiskBytes = %d, want 21474836480", f.DiskBytes)
+	}
+	if _, ok := flavorItemAttrTypes["disk_bytes"]; !ok {
+		t.Error("disk_bytes missing from flavorItemAttrTypes")
+	}
+}
+
 func newTestServer(t *testing.T, flavors []apiFlavor) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()

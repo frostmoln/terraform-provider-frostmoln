@@ -33,7 +33,8 @@ output "ubuntu_image_id" {
 ### Read-Only
 
 - `created_at` (String) The timestamp when the image was created.
-- `min_disk_gb` (Number) Minimum disk size in GB required by the image.
+- `min_disk_bytes` (Number) The image's true minimum root disk in bytes (1 GB = 10^9 bytes): a `min_disk_gb` of 20 requested is 20,401,094,656 bytes (20.40 GB). Null when the image has no minimum or the platform does not report it.
+- `min_disk_gb` (Number) The image's minimum root disk in GB (10^9 bytes), as it was requested. The platform stores it in whole units of 2^30 bytes, the smallest that holds the request, so the true minimum is `min_disk_bytes`. An image whose minimum was set before it was requested in GB, or set by an import to the image's expanded size, reports its 2^30-byte count here.
 - `min_ram_mb` (Number) Minimum RAM in MB required by the image.
 - `os_distro` (String) The OS distribution of the image.
 - `os_version` (String) The OS version of the image.

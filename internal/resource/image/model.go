@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
@@ -41,6 +42,7 @@ type ImageModel struct {
 	Architecture    types.String `tfsdk:"architecture"`
 	DefaultUser     types.String `tfsdk:"default_user"`
 	MinDiskGB       types.Int64  `tfsdk:"min_disk_gb"`
+	MinDiskBytes    types.Int64  `tfsdk:"min_disk_bytes"`
 	MinRAMMB        types.Int64  `tfsdk:"min_ram_mb"`
 	Status          types.String `tfsdk:"status"`
 	Size            types.Int64  `tfsdk:"size"`
@@ -136,6 +138,7 @@ type apiImage struct {
 	Size            int64  `json:"size"`
 	VirtualSize     int64  `json:"virtualSize"`
 	MinDisk         int64  `json:"minDisk"`
+	MinDiskBytes    int64  `json:"minDiskBytes"` // 0 from a release that does not send it
 	MinRAM          int64  `json:"minRam"`
 	Checksum        string `json:"checksum,omitempty"`
 	OSDistro        string `json:"osDistro,omitempty"`
@@ -273,6 +276,7 @@ func (m *ImageModel) fromAPI(img *apiImage) {
 	m.Size = types.Int64Value(img.Size)
 	m.VirtualSize = types.Int64Value(img.VirtualSize)
 	m.MinDiskGB = types.Int64Value(img.MinDisk)
+	m.MinDiskBytes = planmod.SizeBytesValue(img.MinDiskBytes)
 	m.MinRAMMB = types.Int64Value(img.MinRAM)
 	m.Visibility = types.StringValue(img.Visibility)
 	m.Owner = types.StringValue(img.Owner)

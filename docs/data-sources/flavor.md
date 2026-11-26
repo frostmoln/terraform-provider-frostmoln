@@ -36,6 +36,7 @@ output "medium_flavor_specs" {
 
 - `base_vcpu_ratio` (Number) Base vCPU to physical CPU ratio
 - `category` (String) The category of the flavor.
+- `disk_bytes` (Number) The true root disk size in bytes (1 GB = 10^9 bytes): a `disk_gb` of 20 is 21,474,836,480 bytes (21.47 GB). Null when the platform does not report it.
 - `disk_gb` (Number) The root disk size as a whole-GiB count (units of 2^30 bytes), as the flavor defines it: 20 is 21.47 GB (1 GB = 10^9 bytes).
 - `generation` (Number) Flavor generation number
 - `ram_mb` (Number) The amount of RAM in MB.

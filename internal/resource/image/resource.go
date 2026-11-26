@@ -27,6 +27,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
@@ -261,14 +262,27 @@ func (r *imageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				},
 			},
 			"min_disk_gb": schema.Int64Attribute{
-				Description: "Minimum root disk size in GB an instance must have to boot this image. Can be " +
-					"changed in place. The platform may RAISE this value after an import completes, to match " +
-					"the image's actual expanded size — a configured value is kept in state as written, so a " +
-					"later refresh can surface the platform's larger figure as a diff.",
+				Description: "Minimum root disk size in GB (10^9 bytes) an instance must have to boot this image. " +
+					"Can be changed in place. The platform stores it in whole units of 2^30 bytes, the smallest " +
+					"that holds the request, so `min_disk_bytes` can be slightly larger than requested; this " +
+					"attribute keeps the value requested. An image whose minimum was set before it was " +
+					"requested in GB keeps its recorded value, so its state does not drift. The platform may " +
+					"RAISE the minimum after an import completes, to match the image's actual expanded size " +
+					"(reported then as a count of 2^30-byte units) — a configured value is kept in state as " +
+					"written, so a later refresh can surface the platform's larger figure as a diff.",
 				Optional: true,
 				Computed: true,
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.UseStateForUnknown(),
+				},
+			},
+			"min_disk_bytes": schema.Int64Attribute{
+				Description: "The image's true minimum root disk in bytes (1 GB = 10^9 bytes): a `min_disk_gb` " +
+					"of 20 is 20,401,094,656 bytes (20.40 GB). Null when the image has no minimum or the " +
+					"platform does not report it.",
+				Computed: true,
+				PlanModifiers: []planmodifier.Int64{
+					planmod.Int64SizeBytes("min_disk_gb"),
 				},
 			},
 			"min_ram_mb": schema.Int64Attribute{

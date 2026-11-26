@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 )
 
 var _ datasource.DataSource = &imagesDataSource{}
@@ -35,25 +36,27 @@ type imagesModel struct {
 
 // imageItemModel represents a single image in the list.
 type imageItemModel struct {
-	ID        types.String `tfsdk:"id"`
-	Name      types.String `tfsdk:"name"`
-	OSDistro  types.String `tfsdk:"os_distro"`
-	OSVersion types.String `tfsdk:"os_version"`
-	MinDiskGB types.Int64  `tfsdk:"min_disk_gb"`
-	MinRAMMB  types.Int64  `tfsdk:"min_ram_mb"`
-	Status    types.String `tfsdk:"status"`
+	ID           types.String `tfsdk:"id"`
+	Name         types.String `tfsdk:"name"`
+	OSDistro     types.String `tfsdk:"os_distro"`
+	OSVersion    types.String `tfsdk:"os_version"`
+	MinDiskGB    types.Int64  `tfsdk:"min_disk_gb"`
+	MinDiskBytes types.Int64  `tfsdk:"min_disk_bytes"`
+	MinRAMMB     types.Int64  `tfsdk:"min_ram_mb"`
+	Status       types.String `tfsdk:"status"`
 }
 
 // apiImage is the API representation of an image.
 type apiImage struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	OSDistro  string `json:"osDistro,omitempty"`
-	OSVersion string `json:"osVersion,omitempty"`
-	MinDiskGB int    `json:"minDisk"`
-	MinRAMMB  int    `json:"minRam"`
-	Status    string `json:"status"`
-	CreatedAt string `json:"createdAt"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	OSDistro     string `json:"osDistro,omitempty"`
+	OSVersion    string `json:"osVersion,omitempty"`
+	MinDiskGB    int    `json:"minDisk"`
+	MinDiskBytes int64  `json:"minDiskBytes"` // 0 from a release that does not send it
+	MinRAMMB     int    `json:"minRam"`
+	Status       string `json:"status"`
+	CreatedAt    string `json:"createdAt"`
 }
 
 // apiImageList is the API response for listing images.
@@ -62,13 +65,14 @@ type apiImageList struct {
 }
 
 var imageItemAttrTypes = map[string]attr.Type{
-	"id":          types.StringType,
-	"name":        types.StringType,
-	"os_distro":   types.StringType,
-	"os_version":  types.StringType,
-	"min_disk_gb": types.Int64Type,
-	"min_ram_mb":  types.Int64Type,
-	"status":      types.StringType,
+	"id":             types.StringType,
+	"name":           types.StringType,
+	"os_distro":      types.StringType,
+	"os_version":     types.StringType,
+	"min_disk_gb":    types.Int64Type,
+	"min_disk_bytes": types.Int64Type,
+	"min_ram_mb":     types.Int64Type,
+	"status":         types.StringType,
 }
 
 func (d *imagesDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -109,7 +113,11 @@ func (d *imagesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 							Computed:    true,
 						},
 						"min_disk_gb": schema.Int64Attribute{
-							Description: "Minimum disk size in GB required by the image.",
+							Description: "The image's minimum root disk in GB (10^9 bytes), as it was requested. The platform stores it in whole units of 2^30 bytes, the smallest that holds the request, so the true minimum is `min_disk_bytes`. An image whose minimum was set before it was requested in GB, or set by an import to the image's expanded size, reports its 2^30-byte count here.",
+							Computed:    true,
+						},
+						"min_disk_bytes": schema.Int64Attribute{
+							Description: "The image's true minimum root disk in bytes (1 GB = 10^9 bytes): a `min_disk_gb` of 20 requested is 20,401,094,656 bytes (20.40 GB). Null when the image has no minimum or the platform does not report it.",
 							Computed:    true,
 						},
 						"min_ram_mb": schema.Int64Attribute{
@@ -191,13 +199,14 @@ func (d *imagesDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 			continue
 		}
 		items = append(items, imageItemModel{
-			ID:        types.StringValue(img.ID),
-			Name:      types.StringValue(img.Name),
-			OSDistro:  types.StringValue(img.OSDistro),
-			OSVersion: types.StringValue(img.OSVersion),
-			MinDiskGB: types.Int64Value(int64(img.MinDiskGB)),
-			MinRAMMB:  types.Int64Value(int64(img.MinRAMMB)),
-			Status:    types.StringValue(img.Status),
+			ID:           types.StringValue(img.ID),
+			Name:         types.StringValue(img.Name),
+			OSDistro:     types.StringValue(img.OSDistro),
+			OSVersion:    types.StringValue(img.OSVersion),
+			MinDiskGB:    types.Int64Value(int64(img.MinDiskGB)),
+			MinDiskBytes: planmod.SizeBytesValue(img.MinDiskBytes),
+			MinRAMMB:     types.Int64Value(int64(img.MinRAMMB)),
+			Status:       types.StringValue(img.Status),
 		})
 	}
 

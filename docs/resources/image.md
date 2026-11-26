@@ -170,7 +170,7 @@ resource "frostmoln_instance" "app" {
 - `container_format` (String) The container format of source_file. Customer images must be "bare" (the default).
 - `default_user` (String) The login user this image creates (e.g. "debian"). Only needed when the platform cannot infer it from os_distro: for an unknown distribution, launching an instance with a console password is REFUSED rather than degraded until this is set. Stored as the default_user image property and changeable in place — NOT create-only.
 - `description` (String) A human-readable description of the image.
-- `min_disk_gb` (Number) Minimum root disk size in GB an instance must have to boot this image. Can be changed in place. The platform may RAISE this value after an import completes, to match the image's actual expanded size — a configured value is kept in state as written, so a later refresh can surface the platform's larger figure as a diff.
+- `min_disk_gb` (Number) Minimum root disk size in GB (10^9 bytes) an instance must have to boot this image. Can be changed in place. The platform stores it in whole units of 2^30 bytes, the smallest that holds the request, so `min_disk_bytes` can be slightly larger than requested; this attribute keeps the value requested. An image whose minimum was set before it was requested in GB keeps its recorded value, so its state does not drift. The platform may RAISE the minimum after an import completes, to match the image's actual expanded size (reported then as a count of 2^30-byte units) — a configured value is kept in state as written, so a later refresh can surface the platform's larger figure as a diff.
 - `min_ram_mb` (Number) Minimum RAM in MB an instance must have to boot this image. Can be changed in place.
 - `os_distro` (String) The OS distribution of the image (e.g. "ubuntu", "debian"). Recorded as an image property at creation and cannot be changed afterwards.
 - `os_version` (String) The OS version of the image (e.g. "24.04"). Recorded as an image property at creation and cannot be changed afterwards.
@@ -183,6 +183,7 @@ resource "frostmoln_instance" "app" {
 - `checksum` (String) The MD5 checksum of the STORED image data, set by the platform once the image is active. It is not the value to check a vendor download against: it is an MD5 while vendors publish SHA-256, and for a qcow2 upload it describes the image AFTER the import has converted it to raw, so it cannot equal a digest of source_file. (For a disk_format of "raw" there is no conversion, so only the algorithm differs.) To verify a download, compare filesha256 of the local path against the vendor's published value before you apply — see the example. The provider also checks, at upload time, that the bytes the storage edge received match the bytes it sent, and fails the apply if they do not.
 - `created_at` (String) The timestamp when the image was created.
 - `id` (String) The unique identifier of the image.
+- `min_disk_bytes` (Number) The image's true minimum root disk in bytes (1 GB = 10^9 bytes): a `min_disk_gb` of 20 is 20,401,094,656 bytes (20.40 GB). Null when the image has no minimum or the platform does not report it.
 - `owner` (String) The owning project of the image.
 - `size` (Number) The stored size of the image in bytes.
 - `status` (String) The status of the image ("active" once the import has completed).

@@ -245,14 +245,15 @@ func TestTFSDK_ReadImageByID(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":          tftypes.NewValue(tftypes.String, "img-1"),
-		"name":        tftypes.NewValue(tftypes.String, nil),
-		"os_distro":   tftypes.NewValue(tftypes.String, nil),
-		"os_version":  tftypes.NewValue(tftypes.String, nil),
-		"min_disk_gb": tftypes.NewValue(tftypes.Number, nil),
-		"min_ram_mb":  tftypes.NewValue(tftypes.Number, nil),
-		"status":      tftypes.NewValue(tftypes.String, nil),
-		"created_at":  tftypes.NewValue(tftypes.String, nil),
+		"id":             tftypes.NewValue(tftypes.String, "img-1"),
+		"name":           tftypes.NewValue(tftypes.String, nil),
+		"os_distro":      tftypes.NewValue(tftypes.String, nil),
+		"os_version":     tftypes.NewValue(tftypes.String, nil),
+		"min_disk_gb":    tftypes.NewValue(tftypes.Number, nil),
+		"min_disk_bytes": tftypes.NewValue(tftypes.Number, nil),
+		"min_ram_mb":     tftypes.NewValue(tftypes.Number, nil),
+		"status":         tftypes.NewValue(tftypes.String, nil),
+		"created_at":     tftypes.NewValue(tftypes.String, nil),
 	})
 
 	readReq := datasource.ReadRequest{
@@ -305,14 +306,15 @@ func TestTFSDK_ReadImageByName(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":          tftypes.NewValue(tftypes.String, nil),
-		"name":        tftypes.NewValue(tftypes.String, "Debian 12"),
-		"os_distro":   tftypes.NewValue(tftypes.String, nil),
-		"os_version":  tftypes.NewValue(tftypes.String, nil),
-		"min_disk_gb": tftypes.NewValue(tftypes.Number, nil),
-		"min_ram_mb":  tftypes.NewValue(tftypes.Number, nil),
-		"status":      tftypes.NewValue(tftypes.String, nil),
-		"created_at":  tftypes.NewValue(tftypes.String, nil),
+		"id":             tftypes.NewValue(tftypes.String, nil),
+		"name":           tftypes.NewValue(tftypes.String, "Debian 12"),
+		"os_distro":      tftypes.NewValue(tftypes.String, nil),
+		"os_version":     tftypes.NewValue(tftypes.String, nil),
+		"min_disk_gb":    tftypes.NewValue(tftypes.Number, nil),
+		"min_disk_bytes": tftypes.NewValue(tftypes.Number, nil),
+		"min_ram_mb":     tftypes.NewValue(tftypes.Number, nil),
+		"status":         tftypes.NewValue(tftypes.String, nil),
+		"created_at":     tftypes.NewValue(tftypes.String, nil),
 	})
 
 	readReq := datasource.ReadRequest{
@@ -352,14 +354,15 @@ func TestTFSDK_ReadImageBothIDAndName(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":          tftypes.NewValue(tftypes.String, "img-1"),
-		"name":        tftypes.NewValue(tftypes.String, "Ubuntu"),
-		"os_distro":   tftypes.NewValue(tftypes.String, nil),
-		"os_version":  tftypes.NewValue(tftypes.String, nil),
-		"min_disk_gb": tftypes.NewValue(tftypes.Number, nil),
-		"min_ram_mb":  tftypes.NewValue(tftypes.Number, nil),
-		"status":      tftypes.NewValue(tftypes.String, nil),
-		"created_at":  tftypes.NewValue(tftypes.String, nil),
+		"id":             tftypes.NewValue(tftypes.String, "img-1"),
+		"name":           tftypes.NewValue(tftypes.String, "Ubuntu"),
+		"os_distro":      tftypes.NewValue(tftypes.String, nil),
+		"os_version":     tftypes.NewValue(tftypes.String, nil),
+		"min_disk_gb":    tftypes.NewValue(tftypes.Number, nil),
+		"min_disk_bytes": tftypes.NewValue(tftypes.Number, nil),
+		"min_ram_mb":     tftypes.NewValue(tftypes.Number, nil),
+		"status":         tftypes.NewValue(tftypes.String, nil),
+		"created_at":     tftypes.NewValue(tftypes.String, nil),
 	})
 
 	readReq := datasource.ReadRequest{
@@ -392,14 +395,15 @@ func TestTFSDK_ReadImageNotFound(t *testing.T) {
 	tfType := schemaResp.Schema.Type().TerraformType(ctx)
 
 	configVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":          tftypes.NewValue(tftypes.String, nil),
-		"name":        tftypes.NewValue(tftypes.String, "nonexistent"),
-		"os_distro":   tftypes.NewValue(tftypes.String, nil),
-		"os_version":  tftypes.NewValue(tftypes.String, nil),
-		"min_disk_gb": tftypes.NewValue(tftypes.Number, nil),
-		"min_ram_mb":  tftypes.NewValue(tftypes.Number, nil),
-		"status":      tftypes.NewValue(tftypes.String, nil),
-		"created_at":  tftypes.NewValue(tftypes.String, nil),
+		"id":             tftypes.NewValue(tftypes.String, nil),
+		"name":           tftypes.NewValue(tftypes.String, "nonexistent"),
+		"os_distro":      tftypes.NewValue(tftypes.String, nil),
+		"os_version":     tftypes.NewValue(tftypes.String, nil),
+		"min_disk_gb":    tftypes.NewValue(tftypes.Number, nil),
+		"min_disk_bytes": tftypes.NewValue(tftypes.Number, nil),
+		"min_ram_mb":     tftypes.NewValue(tftypes.Number, nil),
+		"status":         tftypes.NewValue(tftypes.String, nil),
+		"created_at":     tftypes.NewValue(tftypes.String, nil),
 	})
 
 	readReq := datasource.ReadRequest{
@@ -531,14 +535,15 @@ func TestImageLookupIsTenantScoped(t *testing.T) {
 
 	ctx := context.Background()
 	configVal := tftypes.NewValue(schemaResp.Schema.Type().TerraformType(ctx), map[string]tftypes.Value{
-		"id":          tftypes.NewValue(tftypes.String, "img-1"),
-		"name":        tftypes.NewValue(tftypes.String, nil),
-		"os_distro":   tftypes.NewValue(tftypes.String, nil),
-		"os_version":  tftypes.NewValue(tftypes.String, nil),
-		"min_disk_gb": tftypes.NewValue(tftypes.Number, nil),
-		"min_ram_mb":  tftypes.NewValue(tftypes.Number, nil),
-		"status":      tftypes.NewValue(tftypes.String, nil),
-		"created_at":  tftypes.NewValue(tftypes.String, nil),
+		"id":             tftypes.NewValue(tftypes.String, "img-1"),
+		"name":           tftypes.NewValue(tftypes.String, nil),
+		"os_distro":      tftypes.NewValue(tftypes.String, nil),
+		"os_version":     tftypes.NewValue(tftypes.String, nil),
+		"min_disk_gb":    tftypes.NewValue(tftypes.Number, nil),
+		"min_disk_bytes": tftypes.NewValue(tftypes.Number, nil),
+		"min_ram_mb":     tftypes.NewValue(tftypes.Number, nil),
+		"status":         tftypes.NewValue(tftypes.String, nil),
+		"created_at":     tftypes.NewValue(tftypes.String, nil),
 	})
 	readResp := datasource.ReadResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
 	ds.Read(ctx, datasource.ReadRequest{Config: tfsdk.Config{Schema: schemaResp.Schema, Raw: configVal}}, &readResp)
