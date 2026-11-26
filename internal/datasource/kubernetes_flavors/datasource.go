@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 )
 
 var _ datasource.DataSource = &kubernetesFlavorsDataSource{}
@@ -38,17 +39,20 @@ type kubernetesFlavorItemModel struct {
 	VCPUs       types.Int64  `tfsdk:"vcpus"`
 	RAMMB       types.Int64  `tfsdk:"ram_mb"`
 	DiskGB      types.Int64  `tfsdk:"disk_gb"`
+	DiskBytes   types.Int64  `tfsdk:"disk_bytes"`
 	PricingTier types.String `tfsdk:"pricing_tier"`
 }
 
 // apiKubernetesFlavor is the API representation of a node flavor.
 type apiKubernetesFlavor struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Family      string `json:"family"`
-	VCPUs       int    `json:"vcpus"`
-	RAMMB       int    `json:"ramMb"`
-	DiskGB      int    `json:"diskGb"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Family string `json:"family"`
+	VCPUs  int    `json:"vcpus"`
+	RAMMB  int    `json:"ramMb"`
+	DiskGB int    `json:"diskGb"`
+	// DiskBytes is the true disk size; 0 from a release that does not send it.
+	DiskBytes   int64  `json:"diskBytes"`
 	PricingTier string `json:"pricingTier,omitempty"`
 }
 
@@ -64,6 +68,7 @@ var flavorItemAttrTypes = map[string]attr.Type{
 	"vcpus":        types.Int64Type,
 	"ram_mb":       types.Int64Type,
 	"disk_gb":      types.Int64Type,
+	"disk_bytes":   types.Int64Type,
 	"pricing_tier": types.StringType,
 }
 
@@ -101,7 +106,11 @@ func (d *kubernetesFlavorsDataSource) Schema(_ context.Context, _ datasource.Sch
 							Computed:    true,
 						},
 						"disk_gb": schema.Int64Attribute{
-							Description: "The disk size per node in GB.",
+							Description: "The disk size per node as a whole-GiB count (units of 2^30 bytes), as the flavor defines it: 20 is 21.47 GB (1 GB = 10^9 bytes).",
+							Computed:    true,
+						},
+						"disk_bytes": schema.Int64Attribute{
+							Description: "The true disk size per node in bytes (1 GB = 10^9 bytes): a `disk_gb` of 20 is 21,474,836,480 bytes (21.47 GB). Null when the platform does not report it.",
 							Computed:    true,
 						},
 						"pricing_tier": schema.StringAttribute{
@@ -153,6 +162,7 @@ func (d *kubernetesFlavorsDataSource) Read(ctx context.Context, _ datasource.Rea
 			RAMMB:  types.Int64Value(int64(f.RAMMB)),
 			DiskGB: types.Int64Value(int64(f.DiskGB)),
 		}
+		item.DiskBytes = planmod.SizeBytesValue(f.DiskBytes)
 		if f.PricingTier != "" {
 			item.PricingTier = types.StringValue(f.PricingTier)
 		} else {

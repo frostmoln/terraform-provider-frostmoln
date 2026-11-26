@@ -36,5 +36,5 @@ output "vcpu_available" {
 Read-Only:
 
 - `limit` (Number) The tenant's limit for this resource type, in `unit`. 0 means no allowance.
-- `unit` (String) The counter's unit: `count`, `gb` (gigabytes as the platform reports them; block-storage sizes follow the volume size unit) or `mb` (megabytes; only `ram`, where 1 GB = 1024 MB).
+- `unit` (String) The counter's unit: `count`, `gb` (GB, 10^9 bytes, the unit volume sizes are requested in) or `mb` (megabytes; only `ram`, where 1 GB = 1024 MB).
 - `used` (Number) Current usage, in `unit`. Null when the platform cannot currently report usage for this resource type; null means unknown and is never zero.

@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
@@ -18,6 +19,7 @@ type VolumeModel struct {
 	Name        types.String `tfsdk:"name"`
 	Description types.String `tfsdk:"description"`
 	SizeGB      types.Int64  `tfsdk:"size_gb"`
+	SizeBytes   types.Int64  `tfsdk:"size_bytes"`
 	VolumeType  types.String `tfsdk:"volume_type"`
 	Zone        types.String `tfsdk:"zone"`
 	SnapshotID  types.String `tfsdk:"snapshot_id"`
@@ -48,12 +50,15 @@ type apiVolumeAttachment struct {
 // storage service serializes (see storage/internal/domain/volume.go): the size
 // is `size` (int64 GB), user tags live under `metadata`, the snapshot source is
 // `sourceSnapshotId`, attachment state is the `attachments[]` array, and there
-// is no top-level region/attachedTo/devicePath.
+// is no top-level region/attachedTo/devicePath. `size` is the size requested in
+// GB (10^9 bytes), or a pre-GB volume's whole-GiB count, never rewritten so state
+// does not drift; `sizeBytes` is the true allocated size.
 type apiVolume struct {
 	ID               string                `json:"id"`
 	Name             string                `json:"name"`
 	Description      string                `json:"description,omitempty"`
 	Size             int64                 `json:"size"`
+	SizeBytes        int64                 `json:"sizeBytes"`
 	VolumeType       string                `json:"volumeType"`
 	Zone             string                `json:"availabilityZone,omitempty"`
 	SourceSnapshotID string                `json:"sourceSnapshotId,omitempty"`
@@ -132,6 +137,7 @@ func (m *VolumeModel) fromAPI(ctx context.Context, vol *apiVolume, diags *diag.D
 	m.ID = types.StringValue(vol.ID)
 	m.Name = types.StringValue(vol.Name)
 	m.SizeGB = types.Int64Value(vol.Size)
+	m.SizeBytes = planmod.SizeBytesValue(vol.SizeBytes)
 	m.VolumeType = types.StringValue(vol.VolumeType)
 	m.Encrypted = types.BoolValue(vol.Encrypted)
 	m.Status = types.StringValue(vol.Status)

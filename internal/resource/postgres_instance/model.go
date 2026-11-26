@@ -8,8 +8,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
-
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
 
@@ -47,6 +47,7 @@ type PostgresInstanceModel struct {
 	Version   types.String `tfsdk:"version"`
 	FlavorID  types.String `tfsdk:"flavor_id"`
 	StorageGB types.Int64  `tfsdk:"storage_gb"`
+	SizeBytes types.Int64  `tfsdk:"size_bytes"`
 	VPCID     types.String `tfsdk:"vpc_id"`
 	SubnetID  types.String `tfsdk:"subnet_id"`
 	HAEnabled types.Bool   `tfsdk:"ha_enabled"`
@@ -121,6 +122,7 @@ type apiPostgresInstance struct {
 	PostgresVersion     string `json:"typeVersion"`
 	FlavorID            string `json:"flavorId"`
 	StorageGB           int    `json:"storageGb"`
+	SizeBytes           int64  `json:"sizeBytes"`
 	VPCID               string `json:"vpcId"`
 	SubnetID            string `json:"subnetId"`
 	HAEnabled           bool   `json:"haEnabled"`
@@ -370,6 +372,7 @@ func (m *PostgresInstanceModel) fromAPI(ctx context.Context, inst *apiPostgresIn
 	m.Version = types.StringValue(inst.PostgresVersion)
 	m.FlavorID = types.StringValue(inst.FlavorID)
 	m.StorageGB = types.Int64Value(int64(inst.StorageGB))
+	m.SizeBytes = planmod.SizeBytesValue(inst.SizeBytes)
 	m.VPCID = types.StringValue(inst.VPCID)
 	m.SubnetID = types.StringValue(inst.SubnetID)
 	m.HAEnabled = types.BoolValue(inst.HAEnabled)

@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
@@ -22,7 +23,11 @@ type SnapshotModel struct {
 	TagsAll     types.Map    `tfsdk:"tags_all"`
 	Status      types.String `tfsdk:"status"`
 	SizeGB      types.Int64  `tfsdk:"size_gb"`
-	CreatedAt   types.String `tfsdk:"created_at"`
+	SizeBytes   types.Int64  `tfsdk:"size_bytes"`
+	// MinVolumeSizeGB is the smallest size_gb a volume created from this
+	// snapshot accepts.
+	MinVolumeSizeGB types.Int64  `tfsdk:"min_volume_size_gb"`
+	CreatedAt       types.String `tfsdk:"created_at"`
 
 	// Timeouts carries the customer-tunable wait budgets; a nil pointer is an
 	// absent block, which resolves to the resource's hardcoded defaults.
@@ -30,17 +35,23 @@ type SnapshotModel struct {
 }
 
 // apiSnapshot is the API representation of a snapshot. Field names match the
-// storage service (storage/internal/domain/snapshot.go): size is `size` (int64),
+// storage service (storage/internal/domain/snapshot.go): size is `size` (the
+// whole-GiB count allocated), the true size `sizeBytes`, the smallest volume
+// request it restores into `minVolumeSizeGb`,
 // user tags live under `metadata`, and there is no region.
 type apiSnapshot struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Description string            `json:"description,omitempty"`
-	VolumeID    string            `json:"volumeId"`
-	Status      string            `json:"status"`
-	Size        int64             `json:"size"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
-	CreatedAt   string            `json:"createdAt"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	VolumeID    string `json:"volumeId"`
+	Status      string `json:"status"`
+	Size        int64  `json:"size"`
+	SizeBytes   int64  `json:"sizeBytes"`
+	// MinVolumeSizeGB is read-only, ceil(sizeBytes / 10^9). Absent (0) from a
+	// storage release that predates it; minVolumeSizeGB then derives it.
+	MinVolumeSizeGB int64             `json:"minVolumeSizeGb"`
+	Metadata        map[string]string `json:"metadata,omitempty"`
+	CreatedAt       string            `json:"createdAt"`
 }
 
 // apiCreateSnapshotRequest is the API request to create a snapshot. User tags
@@ -89,6 +100,8 @@ func (m *SnapshotModel) fromAPI(ctx context.Context, snap *apiSnapshot, diags *d
 	m.VolumeID = types.StringValue(snap.VolumeID)
 	m.Status = types.StringValue(snap.Status)
 	m.SizeGB = types.Int64Value(snap.Size)
+	m.SizeBytes = planmod.SizeBytesValue(snap.SizeBytes)
+	m.MinVolumeSizeGB = snap.minVolumeSizeGB()
 	m.CreatedAt = types.StringValue(snap.CreatedAt)
 
 	// description is Optional-only, so a null plan MUST read back null. The snapshot
@@ -109,6 +122,21 @@ func (m *SnapshotModel) fromAPI(ctx context.Context, snap *apiSnapshot, diags *d
 	// tags — filter them out (same storage set as volumes), otherwise a null/unset
 	// tags plan reads back the system keys ("inconsistent result after apply").
 	m.Tags, m.TagsAll = tftags.ReadBack(ctx, snap.customerTags(), m.Tags, diags)
+}
+
+// minVolumeSizeGB is the smallest size_gb, in GB (10^9 bytes), a volume created
+// from the snapshot accepts: the platform's `minVolumeSizeGb`, or, from a
+// release that does not send it, the same ceil(sizeBytes / 10^9) worked out
+// here. Null when neither is reported.
+func (a *apiSnapshot) minVolumeSizeGB() types.Int64 {
+	if a.MinVolumeSizeGB > 0 {
+		return types.Int64Value(a.MinVolumeSizeGB)
+	}
+	if a.SizeBytes > 0 {
+		const bytesPerGB = 1_000_000_000
+		return types.Int64Value((a.SizeBytes + bytesPerGB - 1) / bytesPerGB)
+	}
+	return types.Int64Null()
 }
 
 // customerTags is the tag set the platform holds on the object, as Terraform

@@ -159,7 +159,7 @@ resource "frostmoln_postgres_instance" "recovered" {
 
 - `flavor_id` (String) The flavor ID/size for the database instance (e.g. "db.gp1.small", "db.gp1.medium").
 - `name` (String) The name of the PostgreSQL instance.
-- `storage_gb` (Number) The storage size in gigabytes. Can be increased in place (online resize); decreasing it is not supported.
+- `storage_gb` (Number) The storage size requested, in GB (10^9 bytes). The platform allocates storage in whole units of 2^30 bytes, the smallest that holds the request, so `size_bytes` can be slightly larger than requested. An instance created before storage was requested in GB keeps the value it was created with, so its state does not drift. Can be increased in place (online resize); decreasing it is not supported.
 - `subnet_id` (String) The subnet ID where the database instance will be deployed.
 - `version` (String) The PostgreSQL version (e.g. "15", "16").
 - `vpc_id` (String) The VPC ID where the database instance will be deployed.
@@ -202,6 +202,7 @@ resource "frostmoln_postgres_instance" "recovered" {
 - `port` (Number) The port number the PostgreSQL instance is listening on.
 - `private_ip` (String) The private IP address of the PostgreSQL instance.
 - `public_ip` (String) The public IP address, if assigned.
+- `size_bytes` (Number) The true allocated storage in bytes (1 GB = 10^9 bytes): a 100 GB request allocates 100,931,731,456 bytes (100.93 GB). Null when the platform does not report it.
 - `status` (String) The current status of the PostgreSQL instance.
 - `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `tenant_id` (String) The tenant ID that owns this instance.

@@ -286,7 +286,7 @@ func TestReadByID(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"id":"vol-1","name":"billing-data","description":"data disk for billing",
-			"tenantId":"tenant-1","size":100,"status":"in-use","volumeType":"ssd",
+			"tenantId":"tenant-1","size":100,"sizeBytes":107374182400,"status":"in-use","volumeType":"ssd",
 			"availabilityZone":"falkenberg-1","bootable":false,"encrypted":true,
 			"attachments":[
 				{"id":"att-1","volumeId":"vol-1","instanceId":"inst-7","device":"/dev/vdb","attachedAt":"2026-03-01T00:00:00Z"}
@@ -312,6 +312,9 @@ func TestReadByID(t *testing.T) {
 	}
 	if m.Description.ValueString() != "data disk for billing" {
 		t.Errorf("description is %q", m.Description.ValueString())
+	}
+	if m.SizeBytes.ValueInt64() != 107374182400 {
+		t.Errorf("size_bytes is %v, want 107374182400 from sizeBytes", m.SizeBytes)
 	}
 	if m.Size.ValueInt64() != 100 {
 		t.Errorf("size is %d", m.Size.ValueInt64())

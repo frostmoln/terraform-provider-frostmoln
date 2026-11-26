@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
 )
@@ -21,6 +22,7 @@ type MessagingInstanceModel struct {
 	VPCID           types.String `tfsdk:"vpc_id"`
 	SubnetID        types.String `tfsdk:"subnet_id"`
 	PersistenceMode types.String `tfsdk:"persistence_mode"`
+	SizeBytes       types.Int64  `tfsdk:"size_bytes"`
 	Status          types.String `tfsdk:"status"`
 	PrivateIP       types.String `tfsdk:"private_ip"`
 	Port            types.Int64  `tfsdk:"port"`
@@ -54,6 +56,7 @@ type apiMessagingInstance struct {
 	VPCID           string `json:"vpcId"`
 	SubnetID        string `json:"subnetId"`
 	PersistenceMode string `json:"persistenceMode"`
+	SizeBytes       int64  `json:"sizeBytes"`
 	Status          string `json:"status"`
 	PrivateIP       string `json:"privateIp,omitempty"`
 	Port            int    `json:"port,omitempty"`
@@ -157,6 +160,7 @@ func (m *MessagingInstanceModel) fromAPI(ctx context.Context, inst *apiMessaging
 	m.VPCID = types.StringValue(inst.VPCID)
 	m.SubnetID = types.StringValue(inst.SubnetID)
 	m.PersistenceMode = types.StringValue(inst.PersistenceMode)
+	m.SizeBytes = planmod.SizeBytesValue(inst.SizeBytes)
 	m.Status = types.StringValue(inst.Status)
 	m.CreatedAt = types.StringValue(inst.CreatedAt)
 

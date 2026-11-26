@@ -39,7 +39,7 @@ output "compute_flavors" {
 Read-Only:
 
 - `category` (String) The category of the flavor.
-- `disk_gb` (Number) The disk size in GB.
+- `disk_gb` (Number) The root disk size as a whole-GiB count (units of 2^30 bytes), as the flavor defines it: 20 is 21.47 GB (1 GB = 10^9 bytes).
 - `id` (String) The unique identifier of the flavor.
 - `name` (String) The name of the flavor.
 - `ram_mb` (Number) The amount of RAM in MB.

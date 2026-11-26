@@ -2,6 +2,7 @@ package planmod
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -157,4 +158,158 @@ func TestInt64UseStateOrDefault(t *testing.T) {
 			}
 		})
 	}
+}
+
+// sizeObj builds a state/plan Raw holding a requested size_gb (nil = null).
+func sizeObj(sizeGB *int64) tftypes.Value {
+	objType := tftypes.Object{AttributeTypes: map[string]tftypes.Type{"size_gb": tftypes.Number}}
+	var v tftypes.Value
+	if sizeGB == nil {
+		v = tftypes.NewValue(tftypes.Number, tftypes.UnknownValue)
+	} else {
+		v = tftypes.NewValue(tftypes.Number, *sizeGB)
+	}
+	return tftypes.NewValue(objType, map[string]tftypes.Value{"size_gb": v})
+}
+
+func TestInt64SizeBytes(t *testing.T) {
+	m := Int64SizeBytes("size_gb")
+	gb := func(n int64) *int64 { return &n }
+	nullObj := tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{"size_gb": tftypes.Number}}, nil)
+	const allocated = int64(94) << 30
+	tests := []struct {
+		name  string
+		state tftypes.Value
+		plan  tftypes.Value
+		prior types.Int64
+		want  types.Int64
+	}{
+		{"unchanged request keeps state", sizeObj(gb(100)), sizeObj(gb(100)), types.Int64Value(allocated), types.Int64Value(allocated)},
+		{"resize is known after apply", sizeObj(gb(100)), sizeObj(gb(200)), types.Int64Value(allocated), types.Int64Unknown()},
+		{"unknown request is known after apply", sizeObj(gb(100)), sizeObj(nil), types.Int64Value(allocated), types.Int64Unknown()},
+		{"create is known after apply", nullObj, sizeObj(gb(100)), types.Int64Null(), types.Int64Unknown()},
+		{"state predating size_bytes is known after apply", sizeObj(gb(100)), sizeObj(gb(100)), types.Int64Null(), types.Int64Unknown()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &planmodifier.Int64Response{PlanValue: types.Int64Unknown()}
+			m.PlanModifyInt64(context.Background(), planmodifier.Int64Request{
+				Path:       path.Root("size_bytes"),
+				State:      tfsdk.State{Raw: tt.state},
+				Plan:       tfsdk.Plan{Raw: tt.plan},
+				StateValue: tt.prior,
+				PlanValue:  types.Int64Unknown(),
+			}, resp)
+			if !resp.PlanValue.Equal(tt.want) {
+				t.Errorf("plan = %v, want %v", resp.PlanValue, tt.want)
+			}
+		})
+	}
+}
+
+// TestInt64SizeBytesOptionalComputedSize pins the redis/valkey shape: storage_gb
+// is Optional+Computed, so with it left out of the configuration the plan this
+// modifier sees holds it unknown (its own UseStateForUnknown has not run yet).
+// A null config value keeps the server's size, so size_bytes keeps its state.
+func TestInt64SizeBytesOptionalComputedSize(t *testing.T) {
+	m := Int64SizeBytes("storage_gb", "flavor_id", "persistence_mode")
+	objType := tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"storage_gb": tftypes.Number, "flavor_id": tftypes.String, "persistence_mode": tftypes.String,
+	}}
+	obj := func(storage, flavor, mode tftypes.Value) tftypes.Value {
+		return tftypes.NewValue(objType, map[string]tftypes.Value{"storage_gb": storage, "flavor_id": flavor, "persistence_mode": mode})
+	}
+	num := func(n int64) tftypes.Value { return tftypes.NewValue(tftypes.Number, n) }
+	str := func(s string) tftypes.Value { return tftypes.NewValue(tftypes.String, s) }
+	unknownNum := tftypes.NewValue(tftypes.Number, tftypes.UnknownValue)
+	unknownStr := tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
+	nullNum := tftypes.NewValue(tftypes.Number, nil)
+	nullStr := tftypes.NewValue(tftypes.String, nil)
+	const allocated = int64(10) << 30
+	state := obj(num(10), str("cache.mo1.small"), str("rdb"))
+	tests := []struct {
+		name   string
+		plan   tftypes.Value
+		config tftypes.Value
+		want   types.Int64
+	}{
+		{"storage_gb and persistence_mode unset keeps state",
+			obj(unknownNum, str("cache.mo1.small"), unknownStr), obj(nullNum, str("cache.mo1.small"), nullStr), types.Int64Value(allocated)},
+		{"storage_gb from an unresolved reference is known after apply",
+			obj(unknownNum, str("cache.mo1.small"), str("rdb")), obj(unknownNum, str("cache.mo1.small"), str("rdb")), types.Int64Unknown()},
+		{"a flavor change is known after apply",
+			obj(unknownNum, str("cache.mo1.medium"), str("rdb")), obj(nullNum, str("cache.mo1.medium"), str("rdb")), types.Int64Unknown()},
+		{"a configured resize is known after apply",
+			obj(num(20), str("cache.mo1.small"), str("rdb")), obj(num(20), str("cache.mo1.small"), str("rdb")), types.Int64Unknown()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &planmodifier.Int64Response{PlanValue: types.Int64Unknown()}
+			m.PlanModifyInt64(context.Background(), planmodifier.Int64Request{
+				Path:       path.Root("size_bytes"),
+				State:      tfsdk.State{Raw: state},
+				Plan:       tfsdk.Plan{Raw: tt.plan},
+				Config:     tfsdk.Config{Raw: tt.config},
+				StateValue: types.Int64Value(allocated),
+				PlanValue:  types.Int64Unknown(),
+			}, resp)
+			if !resp.PlanValue.Equal(tt.want) {
+				t.Errorf("plan = %v, want %v", resp.PlanValue, tt.want)
+			}
+		})
+	}
+}
+
+func TestInt64GrowExceedsAllocation(t *testing.T) {
+	m := Int64GrowExceedsAllocation()
+	objType := tftypes.Object{AttributeTypes: map[string]tftypes.Type{"storage_gb": tftypes.Number, "size_bytes": tftypes.Number}}
+	stateWith := func(sizeBytes any) tftypes.Value {
+		return tftypes.NewValue(objType, map[string]tftypes.Value{
+			"storage_gb": tftypes.NewValue(tftypes.Number, int64(100)),
+			"size_bytes": tftypes.NewValue(tftypes.Number, sizeBytes),
+		})
+	}
+	legacy := stateWith(int64(100) << 30) // 100 GiB = 107.37 GB
+	tests := []struct {
+		name     string
+		state    tftypes.Value
+		plan     types.Int64
+		wantWarn bool
+	}{
+		{"a grow below the true size warns", legacy, types.Int64Value(105), true},
+		{"a grow to the floor of the true size warns", legacy, types.Int64Value(107), true},
+		{"a grow past the true size is fine", legacy, types.Int64Value(108), false},
+		{"unchanged is fine", legacy, types.Int64Value(100), false},
+		{"a shrink is left to Int64GrowOnly", legacy, types.Int64Value(50), false},
+		{"a GB-native resource grows freely", stateWith(int64(94) << 30), types.Int64Value(101), false},
+		{"no size_bytes in state is fine", stateWith(nil), types.Int64Value(105), false},
+		{"an unknown plan is fine", legacy, types.Int64Unknown(), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &planmodifier.Int64Response{}
+			m.PlanModifyInt64(context.Background(), planmodifier.Int64Request{
+				Path:       path.Root("storage_gb"),
+				State:      tfsdk.State{Raw: tt.state},
+				StateValue: types.Int64Value(100),
+				PlanValue:  tt.plan,
+			}, resp)
+			if got := resp.Diagnostics.WarningsCount() > 0; got != tt.wantWarn {
+				t.Errorf("warned = %v, want %v (%v)", got, tt.wantWarn, resp.Diagnostics)
+			}
+			if resp.Diagnostics.HasError() {
+				t.Errorf("must never error: %v", resp.Diagnostics)
+			}
+		})
+	}
+	t.Run("the warning names the smallest accepted request", func(t *testing.T) {
+		resp := &planmodifier.Int64Response{}
+		m.PlanModifyInt64(context.Background(), planmodifier.Int64Request{
+			Path: path.Root("storage_gb"), State: tfsdk.State{Raw: legacy},
+			StateValue: types.Int64Value(100), PlanValue: types.Int64Value(105),
+		}, resp)
+		if d := resp.Diagnostics.Warnings()[0].Detail(); !strings.Contains(d, "107.37 GB") || !strings.Contains(d, "at least 108 GB") {
+			t.Errorf("detail = %q", d)
+		}
+	})
 }

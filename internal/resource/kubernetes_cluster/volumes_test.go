@@ -21,7 +21,7 @@ import (
 const (
 	tfVolToken  = "ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12" // pragma: allowlist secret
 	tfVolDelete = `{"volumeId":"11111111-1111-4111-8111-111111111111","name":"pvc-scratch","sizeGb":10,"pvcNamespace":"default","pvcName":"scratch","reclaimPolicy":"Delete","disposition":"delete"}`
-	tfVolRetain = `{"volumeId":"22222222-2222-4222-8222-222222222222","name":"pvc-db","sizeGb":50,"pvcNamespace":"prod","pvcName":"db-data","reclaimPolicy":"Retain","disposition":"ask"}`
+	tfVolRetain = `{"volumeId":"22222222-2222-4222-8222-222222222222","name":"pvc-db","sizeGb":50,"sizeBytes":53687091200,"pvcNamespace":"prod","pvcName":"db-data","reclaimPolicy":"Retain","disposition":"ask"}`
 	tfVolUnknwn = `{"volumeId":"33333333-3333-4333-8333-333333333333","name":"pvc-old","sizeGb":5,"pvcNamespace":"","pvcName":"","reclaimPolicy":"Unknown","disposition":"ask"}`
 )
 
@@ -127,8 +127,8 @@ func TestDeleteRetainedVolumesUnsetFailsListingThem(t *testing.T) {
 		t.Fatal("destroy with retained volumes and no retained_volumes_on_destroy must fail")
 	}
 	detail := resp.Diagnostics.Errors()[0].Detail()
-	for _, want := range []string{"22222222-2222-4222-8222-222222222222", "pvc-db", "50 GB", "prod/db-data", "Retain",
-		"33333333-3333-4333-8333-333333333333", "Unknown", "retained_volumes_on_destroy", "Nothing was deleted"} {
+	for _, want := range []string{"22222222-2222-4222-8222-222222222222", "pvc-db", "53.69 GB", "prod/db-data", "Retain",
+		"33333333-3333-4333-8333-333333333333", "Unknown", "5 GB", "retained_volumes_on_destroy", "Nothing was deleted"} {
 		if !strings.Contains(detail, want) {
 			t.Errorf("diagnostic does not name %q:\n%s", want, detail)
 		}
@@ -358,5 +358,19 @@ func TestSchemaRetainedVolumesOnDestroy(t *testing.T) {
 	}
 	if len(a.Validators) != 1 {
 		t.Fatalf("want the keep|delete validator, got %d", len(a.Validators))
+	}
+}
+
+// TestClusterVolumeSizeLabel pins the true size from sizeBytes (50 GiB =
+// 53.69 GB), and sizeGb as sent when a response carries no sizeBytes.
+func TestClusterVolumeSizeLabel(t *testing.T) {
+	if got := (apiClusterVolume{SizeGB: 50, SizeBytes: 50 << 30}).sizeLabel(); got != "53.69 GB" {
+		t.Errorf("with sizeBytes: %q", got)
+	}
+	if got := (apiClusterVolume{SizeGB: 10}).sizeLabel(); got != "10 GB" {
+		t.Errorf("without sizeBytes: %q", got)
+	}
+	if got := describeVolumes([]apiClusterVolume{{VolumeID: "v", SizeBytes: 100_000_000_000, ReclaimPolicy: "Retain"}}); !strings.Contains(got, ", 100.00 GB, reclaimPolicy Retain") {
+		t.Errorf("describeVolumes: %q", got)
 	}
 }

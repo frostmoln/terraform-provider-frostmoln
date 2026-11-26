@@ -59,7 +59,9 @@ resource "frostmoln_snapshot" "backup" {
 
 - `created_at` (String) The timestamp when the snapshot was created.
 - `id` (String) The unique identifier of the snapshot.
-- `size_gb` (Number) The size of the snapshot in gigabytes.
+- `min_volume_size_gb` (Number) The smallest size, in GB (10^9 bytes), of a volume created from this snapshot: ceil(`size_bytes` / 10^9). A `frostmoln_volume` with this `snapshot_id` needs a `size_gb` of at least this value. Null when the platform does not report the snapshot's size.
+- `size_bytes` (Number) The true size of the snapshot in bytes (1 GB = 10^9 bytes). Null when the platform does not report it.
+- `size_gb` (Number) The size of the snapshot as the whole-GiB count (units of 2^30 bytes) it was allocated. Use `size_bytes` for its true size; 1 GB = 10^9 bytes.
 - `status` (String) The current status of the snapshot.
 - `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 

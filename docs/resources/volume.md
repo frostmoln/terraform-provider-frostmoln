@@ -34,6 +34,9 @@ Manages a block storage volume in the Frostmoln platform.
 resource "frostmoln_volume" "data" {
   name        = "app-data-volume"
   description = "Persistent data volume for application"
+  # Requested in GB (10^9 bytes). The volume is allocated the smallest whole
+  # unit of 2^30 bytes that holds it, so size_bytes reads 100931731456
+  # (100.93 GB) while size_gb stays 100.
   size_gb     = 100
   volume_type = "ssd"
   zone        = "falkenberg"
@@ -41,6 +44,10 @@ resource "frostmoln_volume" "data" {
   tags = {
     purpose = "data"
   }
+}
+
+output "data_volume_size_bytes" {
+  value = frostmoln_volume.data.size_bytes
 }
 ```
 
@@ -50,13 +57,13 @@ resource "frostmoln_volume" "data" {
 ### Required
 
 - `name` (String) The name of the volume.
-- `size_gb` (Number) The size of the volume in gigabytes. Can be increased after creation (resize).
+- `size_gb` (Number) The size requested, in GB (10^9 bytes). The platform allocates volumes in whole units of 2^30 bytes, the smallest that holds the request, so `size_bytes` can be slightly larger than requested. A volume created before sizes were requested in GB keeps the value it was created with, so its state does not drift. Can be increased after creation (resize); a new size must be larger than the volume's current true size.
 
 ### Optional
 
 - `description` (String) A human-readable description of the volume.
 - `encrypted` (Boolean) Whether the volume is encrypted. Volume encryption is not available yet — setting this to true is rejected at apply time.
-- `snapshot_id` (String) The snapshot ID to create the volume from.
+- `snapshot_id` (String) The snapshot ID to create the volume from. `size_gb` must be at least the snapshot's `min_volume_size_gb` (its true size in GB, rounded up).
 - `tags` (Map of String) Key-value tags for the volume. Merged with the provider's `default_tags` on every write (a key set here wins). Holds only the keys this configuration sets; the full set is in `tags_all`.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `volume_type` (String) The volume tier key (e.g. "ssd"). The set of selectable tiers is server-defined and may change without a provider release — read it from the frostmoln_volume_tiers data source (only tiers with status "offered" are accepted; a non-offered tier is rejected by the API). Defaults to the platform default tier when omitted.
@@ -69,6 +76,7 @@ resource "frostmoln_volume" "data" {
 - `device_path` (String) The device path on the instance, if attached.
 - `id` (String) The unique identifier of the volume.
 - `iops` (Number) The provisioned IOPS of the volume.
+- `size_bytes` (Number) The true allocated size of the volume in bytes (1 GB = 10^9 bytes): a 100 GB request allocates 100,931,731,456 bytes (100.93 GB). Null when the platform does not report it.
 - `status` (String) The current status of the volume.
 - `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `throughput` (Number) The throughput of the volume in MB/s.

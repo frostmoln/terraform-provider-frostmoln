@@ -74,7 +74,7 @@ func TestRead(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(apiKubernetesFlavorList{
 			Flavors: []apiKubernetesFlavor{
-				{ID: "k8s.gp1.medium", Name: "K8s GP1 Medium", Family: "general-purpose", VCPUs: 2, RAMMB: 8192, DiskGB: 40, PricingTier: "k8s-gp1-medium"},
+				{ID: "k8s.gp1.medium", Name: "K8s GP1 Medium", Family: "general-purpose", VCPUs: 2, RAMMB: 8192, DiskGB: 40, DiskBytes: 40 << 30, PricingTier: "k8s-gp1-medium"},
 				{ID: "k8s.gp1.large", Name: "K8s GP1 Large", Family: "general-purpose", VCPUs: 4, RAMMB: 16384, DiskGB: 80},
 			},
 		})
@@ -107,6 +107,12 @@ func TestRead(t *testing.T) {
 	}
 	if !items[1].PricingTier.IsNull() {
 		t.Error("expected null pricing_tier for flavor without one")
+	}
+	if items[0].DiskBytes.ValueInt64() != 42949672960 {
+		t.Errorf("expected disk_bytes 42949672960 from diskBytes, got %v", items[0].DiskBytes)
+	}
+	if !items[1].DiskBytes.IsNull() {
+		t.Errorf("expected null disk_bytes when the platform sends none, got %v", items[1].DiskBytes)
 	}
 }
 

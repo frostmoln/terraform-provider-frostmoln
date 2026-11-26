@@ -16,6 +16,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
@@ -96,8 +97,18 @@ func (r *volumeResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Optional:    true,
 			},
 			"size_gb": schema.Int64Attribute{
-				Description: "The size of the volume in gigabytes. Can be increased after creation (resize).",
+				Description: "The size requested, in GB (10^9 bytes). The platform allocates volumes in whole units of 2^30 bytes, the smallest that holds the request, so `size_bytes` can be slightly larger than requested. A volume created before sizes were requested in GB keeps the value it was created with, so its state does not drift. Can be increased after creation (resize); a new size must be larger than the volume's current true size.",
 				Required:    true,
+				PlanModifiers: []planmodifier.Int64{
+					planmod.Int64GrowExceedsAllocation(),
+				},
+			},
+			"size_bytes": schema.Int64Attribute{
+				Description: "The true allocated size of the volume in bytes (1 GB = 10^9 bytes): a 100 GB request allocates 100,931,731,456 bytes (100.93 GB). Null when the platform does not report it.",
+				Computed:    true,
+				PlanModifiers: []planmodifier.Int64{
+					planmod.Int64SizeBytes("size_gb"),
+				},
 			},
 			"volume_type": schema.StringAttribute{
 				Description: "The volume tier key (e.g. \"ssd\"). The set of selectable tiers is server-defined and may change without a provider release — read it from the frostmoln_volume_tiers data source (only tiers with status \"offered\" are accepted; a non-offered tier is rejected by the API). Defaults to the platform default tier when omitted.",
@@ -118,7 +129,7 @@ func (r *volumeResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				},
 			},
 			"snapshot_id": schema.StringAttribute{
-				Description: "The snapshot ID to create the volume from.",
+				Description: "The snapshot ID to create the volume from. `size_gb` must be at least the snapshot's `min_volume_size_gb` (its true size in GB, rounded up).",
 				Optional:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),

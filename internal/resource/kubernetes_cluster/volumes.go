@@ -39,9 +39,13 @@ const (
 
 // apiClusterVolume / apiClusterVolumePlan are GET .../kubernetes-clusters/{id}/persistent-volumes.
 type apiClusterVolume struct {
-	VolumeID      string `json:"volumeId"`
-	Name          string `json:"name"`
-	SizeGB        int    `json:"sizeGb"`
+	VolumeID string `json:"volumeId"`
+	Name     string `json:"name"`
+	SizeGB   int    `json:"sizeGb"`
+	// SizeBytes is the volume's true allocated size (1 GB = 10^9 bytes). 0 from
+	// a kubernetes release that does not send it; sizeLabel then falls back to
+	// sizeGb.
+	SizeBytes     int64  `json:"sizeBytes"`
 	PVCNamespace  string `json:"pvcNamespace"`
 	PVCName       string `json:"pvcName"`
 	ReclaimPolicy string `json:"reclaimPolicy"`
@@ -108,6 +112,15 @@ func (r *kubernetesClusterResource) listClusterVolumes(ctx context.Context, id s
 	return &plan, nil
 }
 
+// sizeLabel is the volume's true size in GB (10^9 bytes), two decimals, from
+// sizeBytes; a response without sizeBytes shows sizeGb as the server sent it.
+func (v apiClusterVolume) sizeLabel() string {
+	if v.SizeBytes > 0 {
+		return fmt.Sprintf("%.2f GB", float64(v.SizeBytes)/1e9)
+	}
+	return fmt.Sprintf("%d GB", v.SizeGB)
+}
+
 // describeVolumes renders volumes for a diagnostic, one per line.
 func describeVolumes(vols []apiClusterVolume) string {
 	var b strings.Builder
@@ -116,7 +129,7 @@ func describeVolumes(vols []apiClusterVolume) string {
 		if v.Name != "" {
 			fmt.Fprintf(&b, " (%s)", v.Name)
 		}
-		fmt.Fprintf(&b, ", %d GB, reclaimPolicy %s", v.SizeGB, v.ReclaimPolicy)
+		fmt.Fprintf(&b, ", %s, reclaimPolicy %s", v.sizeLabel(), v.ReclaimPolicy)
 		if v.PVCName != "" {
 			fmt.Fprintf(&b, ", PVC %s/%s", v.PVCNamespace, v.PVCName)
 		}

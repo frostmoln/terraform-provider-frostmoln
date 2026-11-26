@@ -121,6 +121,7 @@ func TestVolumeModel_fromAPI(t *testing.T) {
 		Name:        "my-volume",
 		Description: "test description",
 		Size:        100,
+		SizeBytes:   94 << 30,
 		VolumeType:  "ssd",
 		Zone:        "falkenberg",
 		Encrypted:   true,
@@ -151,6 +152,10 @@ func TestVolumeModel_fromAPI(t *testing.T) {
 	}
 	if model.SizeGB.ValueInt64() != 100 {
 		t.Errorf("expected sizeGb 100, got %d", model.SizeGB.ValueInt64())
+	}
+	// size_gb stays the requested GB (no drift); size_bytes is the true 94 GiB allocation.
+	if model.SizeBytes.ValueInt64() != 100931731456 {
+		t.Errorf("expected size_bytes 100931731456, got %v", model.SizeBytes)
 	}
 	if model.VolumeType.ValueString() != "ssd" {
 		t.Errorf("expected volumeType ssd, got %s", model.VolumeType.ValueString())
@@ -555,6 +560,7 @@ func TestVolumeResource_TFSDKCreate(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "new-volume"),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
 		"zone":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -670,6 +676,7 @@ func TestVolumeResource_TFSDKCreate_SnapshotIDOnTheWire(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "restored"),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
 		"zone":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"snapshot_id": tftypes.NewValue(tftypes.String, "vsn_snap1"),
@@ -756,6 +763,7 @@ func TestVolumeResource_TFSDKRead(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "read-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(200)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, "nvme"),
 		"zone":        tftypes.NewValue(tftypes.String, nil),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -827,6 +835,7 @@ func TestVolumeResource_TFSDKReadNotFound(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "gone-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(50)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
 		"zone":        tftypes.NewValue(tftypes.String, nil),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -922,6 +931,7 @@ func TestVolumeResource_TFSDKUpdate_PatchAndResize(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "old-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
 		"zone":        tftypes.NewValue(tftypes.String, nil),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -942,6 +952,7 @@ func TestVolumeResource_TFSDKUpdate_PatchAndResize(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "updated-vol"),
 		"description": tftypes.NewValue(tftypes.String, "new desc"),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(200)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
 		"zone":        tftypes.NewValue(tftypes.String, nil),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -1034,6 +1045,7 @@ func TestVolumeResource_TFSDKDelete(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "del-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(50)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
 		"zone":        tftypes.NewValue(tftypes.String, nil),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -1130,6 +1142,7 @@ func TestVolumeResource_TFSDKCreateAPIError(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "fail-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
 		"zone":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -1189,6 +1202,7 @@ func TestVolumeResource_TFSDKCreateBadResponseBody(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "bad-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(50)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, nil),
 		"zone":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -1258,6 +1272,7 @@ func TestVolumeResource_TFSDKCreatePollingErrorState(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "error-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, nil),
 		"zone":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -1330,6 +1345,7 @@ func TestVolumeResource_TFSDKCreateFinalReadError(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "fre-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, nil),
 		"zone":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -1389,6 +1405,7 @@ func TestVolumeResource_TFSDKReadAPIError(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "err-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(50)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
 		"zone":        tftypes.NewValue(tftypes.String, nil),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -1449,6 +1466,7 @@ func TestVolumeResource_TFSDKReadBadJSON(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "bj-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(50)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
 		"zone":        tftypes.NewValue(tftypes.String, nil),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -1510,6 +1528,7 @@ func TestVolumeResource_TFSDKUpdatePatchError(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "old-name"),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
 		"zone":        tftypes.NewValue(tftypes.String, nil),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -1530,6 +1549,7 @@ func TestVolumeResource_TFSDKUpdatePatchError(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "new-name"),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
 		"zone":        tftypes.NewValue(tftypes.String, nil),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -1592,6 +1612,7 @@ func TestVolumeResource_TFSDKUpdateResizeError(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "same-name"),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
 		"zone":        tftypes.NewValue(tftypes.String, nil),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -1612,6 +1633,7 @@ func TestVolumeResource_TFSDKUpdateResizeError(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "same-name"),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(200)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
 		"zone":        tftypes.NewValue(tftypes.String, nil),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -1675,6 +1697,7 @@ func TestVolumeResource_TFSDKUpdateReadError(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "same"),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
 		"zone":        tftypes.NewValue(tftypes.String, nil),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -1733,6 +1756,7 @@ func TestVolumeResource_TFSDKDeleteNotFound(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "gone-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(50)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
 		"zone":        tftypes.NewValue(tftypes.String, nil),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -1791,6 +1815,7 @@ func TestVolumeResource_TFSDKDeleteAPIError(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, "err-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(50)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
 		"zone":        tftypes.NewValue(tftypes.String, nil),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -1830,6 +1855,7 @@ func TestVolumeResource_TFSDKImportState(t *testing.T) {
 		"name":        tftypes.NewValue(tftypes.String, nil),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, nil),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, nil),
 		"zone":        tftypes.NewValue(tftypes.String, nil),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -1987,6 +2013,7 @@ func volumeOrphanPlan(t *testing.T, schemaResp resource.SchemaResponse) tftypes.
 		"name":        tftypes.NewValue(tftypes.String, "adopt-vol"),
 		"description": tftypes.NewValue(tftypes.String, nil),
 		"size_gb":     tftypes.NewValue(tftypes.Number, big.NewFloat(100)),
+		"size_bytes":  tftypes.NewValue(tftypes.Number, nil),
 		"volume_type": tftypes.NewValue(tftypes.String, "ssd"),
 		"zone":        tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 		"snapshot_id": tftypes.NewValue(tftypes.String, nil),
@@ -2231,5 +2258,18 @@ func TestVolumeResource_TFSDKCreateVerifiedAbsentIsSafeToReApply(t *testing.T) {
 	}
 	if !strings.Contains(text, "safe to re-apply") {
 		t.Errorf("verified absence must say re-applying is safe:\n%s", text)
+	}
+}
+
+// An API without sizeBytes leaves size_bytes null, never a size of 0.
+func TestVolumeModel_fromAPIWithoutSizeBytes(t *testing.T) {
+	var diags diag.Diagnostics
+	model := &VolumeModel{TagsAll: types.MapNull(types.StringType)}
+	model.fromAPI(context.Background(), &apiVolume{ID: "vol-1", Size: 40}, &diags)
+	if !model.SizeBytes.IsNull() {
+		t.Errorf("size_bytes = %v, want null", model.SizeBytes)
+	}
+	if model.SizeGB.ValueInt64() != 40 {
+		t.Errorf("size_gb = %v, want 40", model.SizeGB)
 	}
 }

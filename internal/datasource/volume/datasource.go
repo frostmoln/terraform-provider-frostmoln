@@ -40,6 +40,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/reservedmeta"
 )
@@ -63,6 +64,7 @@ type volumeModel struct {
 	Name             types.String `tfsdk:"name"`
 	Description      types.String `tfsdk:"description"`
 	Size             types.Int64  `tfsdk:"size"`
+	SizeBytes        types.Int64  `tfsdk:"size_bytes"`
 	Status           types.String `tfsdk:"status"`
 	VolumeType       types.String `tfsdk:"volume_type"`
 	AvailabilityZone types.String `tfsdk:"availability_zone"`
@@ -103,6 +105,7 @@ type apiVolume struct {
 	Description      string                `json:"description,omitempty"`
 	TenantID         string                `json:"tenantId"`
 	Size             int64                 `json:"size"`
+	SizeBytes        int64                 `json:"sizeBytes"`
 	Status           string                `json:"status"`
 	VolumeType       string                `json:"volumeType"`
 	AvailabilityZone string                `json:"availabilityZone,omitempty"`
@@ -179,7 +182,11 @@ func (d *volumeDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 				Computed: true,
 			},
 			"size": schema.Int64Attribute{
-				Description: "The size of the volume in GiB.",
+				Description: "The size requested for the volume, in GB (10^9 bytes). A volume created before sizes were requested in GB reports the value it was created with.",
+				Computed:    true,
+			},
+			"size_bytes": schema.Int64Attribute{
+				Description: "The true allocated size of the volume in bytes (1 GB = 10^9 bytes). Volumes are allocated in whole units of 2^30 bytes, the smallest that holds the request, so it can be slightly larger than `size`. Null when the platform does not report it.",
 				Computed:    true,
 			},
 			"status": schema.StringAttribute{
@@ -516,6 +523,7 @@ func setInstanceState(ctx context.Context, state *volumeModel, vol *apiVolume, d
 	state.Name = types.StringValue(vol.Name)
 	state.Description = stringFromWire(vol.Description)
 	state.Size = types.Int64Value(vol.Size)
+	state.SizeBytes = planmod.SizeBytesValue(vol.SizeBytes)
 	state.Status = types.StringValue(vol.Status)
 	state.VolumeType = types.StringValue(vol.VolumeType)
 	state.AvailabilityZone = stringFromWire(vol.AvailabilityZone)

@@ -36,7 +36,8 @@ output "two_vcpu_flavors" {
 
 Read-Only:
 
-- `disk_gb` (Number) The disk size per node in GB.
+- `disk_bytes` (Number) The true disk size per node in bytes (1 GB = 10^9 bytes): a `disk_gb` of 20 is 21,474,836,480 bytes (21.47 GB). Null when the platform does not report it.
+- `disk_gb` (Number) The disk size per node as a whole-GiB count (units of 2^30 bytes), as the flavor defines it: 20 is 21.47 GB (1 GB = 10^9 bytes).
 - `family` (String) The flavor family (e.g. "general-purpose").
 - `id` (String) The unique identifier of the flavor (used as `flavor_id` on node pools).
 - `name` (String) The human-readable flavor name.

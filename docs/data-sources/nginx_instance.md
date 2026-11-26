@@ -56,8 +56,9 @@ output "nginx_existing_tls" {
 - `public_ip` (String) The public IP address associated with the instance while it is exposed (empty when not public).
 - `require_tls` (Boolean) Whether port 80 only redirects to https (the site served over HTTPS only). False: the site is served on port 80 beside HTTPS. Fixed at create; false on instances created before the setting existed.
 - `security_group_id` (String) The platform-managed security group attached to this instance. The platform creates and owns it: the group is not intended for customer modification, and changes to it are normally rejected. Do not import it as a frostmoln_security_group -- reads succeed, but applies including destroy are refused. It allows inbound tcp/80 and tcp/443 from any source (0.0.0.0/0), and outbound is unrestricted. Empty until the instance has finished provisioning.
+- `size_bytes` (Number) The true allocated storage in bytes (1 GB = 10^9 bytes). Storage is allocated in whole units of 2^30 bytes, the smallest that holds the request, so it can be slightly larger than `storage_gb`. Null when the platform does not report it.
 - `status` (String) The current status of the Nginx instance.
-- `storage_gb` (Number) The storage size in gigabytes.
+- `storage_gb` (Number) The storage size requested, in GB (10^9 bytes). An instance created before storage was requested in GB reports the value it was created with.
 - `subnet_id` (String) The subnet ID where the instance is deployed.
 - `tags` (Map of String) Every resource tag on the Nginx instance — the same set as the resource's `tags_all`: your own key/value metadata, never applied to the service itself. An empty map when it has none.
 - `tenant_id` (String) The tenant ID that owns this instance.

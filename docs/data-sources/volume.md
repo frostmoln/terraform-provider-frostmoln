@@ -70,7 +70,8 @@ check "billing_data_disk_is_attached" {
 - `encrypted` (Boolean) Whether the volume is encrypted.
 - `iops` (Number) The provisioned IOPS, null when the volume has no provisioned IOPS floor.
 - `metadata` (Map of String) The customer key-value metadata stored on the volume — the platform's reserved keys (the frostmoln_ namespace) are filtered out, matching the resource's read-back, so `metadata` means the same thing on both surfaces. Null when the volume carries none.
-- `size` (Number) The size of the volume in GiB.
+- `size` (Number) The size requested for the volume, in GB (10^9 bytes). A volume created before sizes were requested in GB reports the value it was created with.
+- `size_bytes` (Number) The true allocated size of the volume in bytes (1 GB = 10^9 bytes). Volumes are allocated in whole units of 2^30 bytes, the smallest that holds the request, so it can be slightly larger than `size`. Null when the platform does not report it.
 - `source_image_id` (String) The ID of the image this volume was created from, null when it was not.
 - `source_snapshot_id` (String) The ID of the snapshot this volume was created from, null when it was not.
 - `source_volume_id` (String) The ID of the source volume when this volume was cloned from one, null otherwise.

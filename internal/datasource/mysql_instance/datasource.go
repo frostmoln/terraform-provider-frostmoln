@@ -38,6 +38,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/pubid"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 )
@@ -66,6 +67,7 @@ type mysqlInstanceModel struct {
 	Version             types.String `tfsdk:"version"`
 	FlavorID            types.String `tfsdk:"flavor_id"`
 	StorageGB           types.Int64  `tfsdk:"storage_gb"`
+	SizeBytes           types.Int64  `tfsdk:"size_bytes"`
 	VPCID               types.String `tfsdk:"vpc_id"`
 	SubnetID            types.String `tfsdk:"subnet_id"`
 	PrivateIP           types.String `tfsdk:"private_ip"`
@@ -100,6 +102,7 @@ type apiDatabaseInstance struct {
 	TypeVersion         string `json:"typeVersion"`
 	FlavorID            string `json:"flavorId"`
 	StorageGB           int    `json:"storageGb"`
+	SizeBytes           int64  `json:"sizeBytes"`
 	VPCID               string `json:"vpcId"`
 	SubnetID            string `json:"subnetId"`
 	PrivateIP           string `json:"privateIp,omitempty"`
@@ -180,7 +183,11 @@ func (d *mysqlInstanceDataSource) Schema(_ context.Context, _ datasource.SchemaR
 				Computed:    true,
 			},
 			"storage_gb": schema.Int64Attribute{
-				Description: "The storage size in gigabytes.",
+				Description: "The storage size requested, in GB (10^9 bytes). An instance created before storage was requested in GB reports the value it was created with.",
+				Computed:    true,
+			},
+			"size_bytes": schema.Int64Attribute{
+				Description: "The true allocated storage in bytes (1 GB = 10^9 bytes). Storage is allocated in whole units of 2^30 bytes, the smallest that holds the request, so it can be slightly larger than `storage_gb`. Null when the platform does not report it.",
 				Computed:    true,
 			},
 			"vpc_id": schema.StringAttribute{
@@ -552,6 +559,7 @@ func setInstanceState(state *mysqlInstanceModel, inst *apiDatabaseInstance) {
 	state.Version = types.StringValue(inst.TypeVersion)
 	state.FlavorID = types.StringValue(inst.FlavorID)
 	state.StorageGB = types.Int64Value(int64(inst.StorageGB))
+	state.SizeBytes = planmod.SizeBytesValue(inst.SizeBytes)
 	state.VPCID = types.StringValue(inst.VPCID)
 	state.SubnetID = types.StringValue(inst.SubnetID)
 	state.PrivateIP = stringFromWire(inst.PrivateIP)

@@ -116,6 +116,7 @@ func configVal(t *testing.T, id string) tftypes.Value {
 		"version":           tftypes.NewValue(tftypes.String, nil),
 		"flavor_id":         tftypes.NewValue(tftypes.String, nil),
 		"storage_gb":        tftypes.NewValue(tftypes.Number, nil),
+		"size_bytes":        tftypes.NewValue(tftypes.Number, nil),
 		"vpc_id":            tftypes.NewValue(tftypes.String, nil),
 		"subnet_id":         tftypes.NewValue(tftypes.String, nil),
 		"tls_enabled":       tftypes.NewValue(tftypes.Bool, nil),
@@ -148,6 +149,7 @@ func TestReadByID(t *testing.T) {
 				TypeVersion:     "2.4",
 				FlavorID:        "web.small",
 				StorageGB:       20,
+				SizeBytes:       19 << 30,
 				VPCID:           "vpc-1",
 				SubnetID:        "sn-1",
 				TLSEnabled:      true,
@@ -192,6 +194,9 @@ func TestReadByID(t *testing.T) {
 	var state apacheInstanceModel
 	readResp.State.Get(ctx, &state)
 
+	if state.SizeBytes.ValueInt64() != 20401094656 {
+		t.Errorf("expected size_bytes 20401094656 from sizeBytes, got %v", state.SizeBytes)
+	}
 	if state.ID.ValueString() != "ws-1" {
 		t.Errorf("expected ID ws-1, got %s", state.ID.ValueString())
 	}

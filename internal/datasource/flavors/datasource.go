@@ -99,7 +99,7 @@ func (d *flavorsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 							Computed:    true,
 						},
 						"disk_gb": schema.Int64Attribute{
-							Description: "The disk size in GB.",
+							Description: "The root disk size as a whole-GiB count (units of 2^30 bytes), as the flavor defines it: 20 is 21.47 GB (1 GB = 10^9 bytes).",
 							Computed:    true,
 						},
 						"category": schema.StringAttribute{

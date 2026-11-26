@@ -468,16 +468,18 @@ func TestSnapshotResource_Create_TFSDK(t *testing.T) {
 	tfType := snapshotTFType(t)
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
-		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"name":        tftypes.NewValue(tftypes.String, "test-snap"),
-		"description": tftypes.NewValue(tftypes.String, nil),
-		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
-		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"size_gb":     tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
-		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":           tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                 tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":               tftypes.NewValue(tftypes.String, "test-snap"),
+		"description":        tftypes.NewValue(tftypes.String, nil),
+		"volume_id":          tftypes.NewValue(tftypes.String, "vol-123"),
+		"tags":               tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":           tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":             tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"size_gb":            tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"size_bytes":         tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"min_volume_size_gb": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"created_at":         tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 	})
 
 	createReq := resource.CreateRequest{
@@ -524,16 +526,18 @@ func TestSnapshotResource_Create_APIError(t *testing.T) {
 	tfType := snapshotTFType(t)
 
 	planVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
-		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"name":        tftypes.NewValue(tftypes.String, "test-snap"),
-		"description": tftypes.NewValue(tftypes.String, nil),
-		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
-		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"size_gb":     tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
-		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":           tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                 tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":               tftypes.NewValue(tftypes.String, "test-snap"),
+		"description":        tftypes.NewValue(tftypes.String, nil),
+		"volume_id":          tftypes.NewValue(tftypes.String, "vol-123"),
+		"tags":               tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":           tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":             tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"size_gb":            tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"size_bytes":         tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"min_volume_size_gb": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"created_at":         tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 	})
 
 	createReq := resource.CreateRequest{
@@ -582,16 +586,18 @@ func TestSnapshotResource_Read_TFSDK(t *testing.T) {
 	tfType := snapshotTFType(t)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
-		"id":          tftypes.NewValue(tftypes.String, "snap-abc"),
-		"name":        tftypes.NewValue(tftypes.String, "test-snap"),
-		"description": tftypes.NewValue(tftypes.String, nil),
-		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
-		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":      tftypes.NewValue(tftypes.String, "available"),
-		"size_gb":     tftypes.NewValue(tftypes.Number, int64(100)),
-		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"timeouts":           tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                 tftypes.NewValue(tftypes.String, "snap-abc"),
+		"name":               tftypes.NewValue(tftypes.String, "test-snap"),
+		"description":        tftypes.NewValue(tftypes.String, nil),
+		"volume_id":          tftypes.NewValue(tftypes.String, "vol-123"),
+		"tags":               tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":           tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":             tftypes.NewValue(tftypes.String, "available"),
+		"size_gb":            tftypes.NewValue(tftypes.Number, int64(100)),
+		"size_bytes":         tftypes.NewValue(tftypes.Number, nil),
+		"min_volume_size_gb": tftypes.NewValue(tftypes.Number, nil),
+		"created_at":         tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
 	readReq := resource.ReadRequest{
@@ -630,16 +636,18 @@ func TestSnapshotResource_Read_NotFound_TFSDK(t *testing.T) {
 	tfType := snapshotTFType(t)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
-		"id":          tftypes.NewValue(tftypes.String, "nonexistent"),
-		"name":        tftypes.NewValue(tftypes.String, "snap"),
-		"description": tftypes.NewValue(tftypes.String, nil),
-		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
-		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":      tftypes.NewValue(tftypes.String, "available"),
-		"size_gb":     tftypes.NewValue(tftypes.Number, int64(50)),
-		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"timeouts":           tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                 tftypes.NewValue(tftypes.String, "nonexistent"),
+		"name":               tftypes.NewValue(tftypes.String, "snap"),
+		"description":        tftypes.NewValue(tftypes.String, nil),
+		"volume_id":          tftypes.NewValue(tftypes.String, "vol-123"),
+		"tags":               tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":           tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":             tftypes.NewValue(tftypes.String, "available"),
+		"size_gb":            tftypes.NewValue(tftypes.Number, int64(50)),
+		"size_bytes":         tftypes.NewValue(tftypes.Number, nil),
+		"min_volume_size_gb": tftypes.NewValue(tftypes.Number, nil),
+		"created_at":         tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
 	readReq := resource.ReadRequest{
@@ -674,16 +682,18 @@ func TestSnapshotResource_Read_APIError(t *testing.T) {
 	tfType := snapshotTFType(t)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
-		"id":          tftypes.NewValue(tftypes.String, "snap-abc"),
-		"name":        tftypes.NewValue(tftypes.String, "snap"),
-		"description": tftypes.NewValue(tftypes.String, nil),
-		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
-		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":      tftypes.NewValue(tftypes.String, "available"),
-		"size_gb":     tftypes.NewValue(tftypes.Number, int64(50)),
-		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"timeouts":           tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                 tftypes.NewValue(tftypes.String, "snap-abc"),
+		"name":               tftypes.NewValue(tftypes.String, "snap"),
+		"description":        tftypes.NewValue(tftypes.String, nil),
+		"volume_id":          tftypes.NewValue(tftypes.String, "vol-123"),
+		"tags":               tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":           tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":             tftypes.NewValue(tftypes.String, "available"),
+		"size_gb":            tftypes.NewValue(tftypes.Number, int64(50)),
+		"size_bytes":         tftypes.NewValue(tftypes.Number, nil),
+		"min_volume_size_gb": tftypes.NewValue(tftypes.Number, nil),
+		"created_at":         tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
 	readReq := resource.ReadRequest{
@@ -727,16 +737,18 @@ func TestSnapshotResource_Delete_TFSDK(t *testing.T) {
 	tfType := snapshotTFType(t)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
-		"id":          tftypes.NewValue(tftypes.String, "snap-abc"),
-		"name":        tftypes.NewValue(tftypes.String, "test-snap"),
-		"description": tftypes.NewValue(tftypes.String, nil),
-		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
-		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":      tftypes.NewValue(tftypes.String, "available"),
-		"size_gb":     tftypes.NewValue(tftypes.Number, int64(100)),
-		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"timeouts":           tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                 tftypes.NewValue(tftypes.String, "snap-abc"),
+		"name":               tftypes.NewValue(tftypes.String, "test-snap"),
+		"description":        tftypes.NewValue(tftypes.String, nil),
+		"volume_id":          tftypes.NewValue(tftypes.String, "vol-123"),
+		"tags":               tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":           tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":             tftypes.NewValue(tftypes.String, "available"),
+		"size_gb":            tftypes.NewValue(tftypes.Number, int64(100)),
+		"size_bytes":         tftypes.NewValue(tftypes.Number, nil),
+		"min_volume_size_gb": tftypes.NewValue(tftypes.Number, nil),
+		"created_at":         tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -767,16 +779,18 @@ func TestSnapshotResource_Delete_NotFound_TFSDK(t *testing.T) {
 	tfType := snapshotTFType(t)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
-		"id":          tftypes.NewValue(tftypes.String, "gone"),
-		"name":        tftypes.NewValue(tftypes.String, "snap"),
-		"description": tftypes.NewValue(tftypes.String, nil),
-		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
-		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":      tftypes.NewValue(tftypes.String, "available"),
-		"size_gb":     tftypes.NewValue(tftypes.Number, int64(50)),
-		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"timeouts":           tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                 tftypes.NewValue(tftypes.String, "gone"),
+		"name":               tftypes.NewValue(tftypes.String, "snap"),
+		"description":        tftypes.NewValue(tftypes.String, nil),
+		"volume_id":          tftypes.NewValue(tftypes.String, "vol-123"),
+		"tags":               tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":           tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":             tftypes.NewValue(tftypes.String, "available"),
+		"size_gb":            tftypes.NewValue(tftypes.Number, int64(50)),
+		"size_bytes":         tftypes.NewValue(tftypes.Number, nil),
+		"min_volume_size_gb": tftypes.NewValue(tftypes.Number, nil),
+		"created_at":         tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -806,16 +820,18 @@ func TestSnapshotResource_Delete_APIError(t *testing.T) {
 	tfType := snapshotTFType(t)
 
 	stateVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
-		"id":          tftypes.NewValue(tftypes.String, "snap-abc"),
-		"name":        tftypes.NewValue(tftypes.String, "snap"),
-		"description": tftypes.NewValue(tftypes.String, nil),
-		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
-		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":      tftypes.NewValue(tftypes.String, "available"),
-		"size_gb":     tftypes.NewValue(tftypes.Number, int64(50)),
-		"created_at":  tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
+		"timeouts":           tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                 tftypes.NewValue(tftypes.String, "snap-abc"),
+		"name":               tftypes.NewValue(tftypes.String, "snap"),
+		"description":        tftypes.NewValue(tftypes.String, nil),
+		"volume_id":          tftypes.NewValue(tftypes.String, "vol-123"),
+		"tags":               tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":           tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":             tftypes.NewValue(tftypes.String, "available"),
+		"size_gb":            tftypes.NewValue(tftypes.Number, int64(50)),
+		"size_bytes":         tftypes.NewValue(tftypes.Number, nil),
+		"min_volume_size_gb": tftypes.NewValue(tftypes.Number, nil),
+		"created_at":         tftypes.NewValue(tftypes.String, "2025-06-01T12:00:00Z"),
 	})
 
 	deleteReq := resource.DeleteRequest{
@@ -837,16 +853,18 @@ func TestSnapshotResource_ImportState_TFSDK(t *testing.T) {
 
 	// Initialize state with null values so the schema type is set.
 	initVal := tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
-		"id":          tftypes.NewValue(tftypes.String, nil),
-		"name":        tftypes.NewValue(tftypes.String, nil),
-		"description": tftypes.NewValue(tftypes.String, nil),
-		"volume_id":   tftypes.NewValue(tftypes.String, nil),
-		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":      tftypes.NewValue(tftypes.String, nil),
-		"size_gb":     tftypes.NewValue(tftypes.Number, nil),
-		"created_at":  tftypes.NewValue(tftypes.String, nil),
+		"timeouts":           tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                 tftypes.NewValue(tftypes.String, nil),
+		"name":               tftypes.NewValue(tftypes.String, nil),
+		"description":        tftypes.NewValue(tftypes.String, nil),
+		"volume_id":          tftypes.NewValue(tftypes.String, nil),
+		"tags":               tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":           tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":             tftypes.NewValue(tftypes.String, nil),
+		"size_gb":            tftypes.NewValue(tftypes.Number, nil),
+		"size_bytes":         tftypes.NewValue(tftypes.Number, nil),
+		"min_volume_size_gb": tftypes.NewValue(tftypes.Number, nil),
+		"created_at":         tftypes.NewValue(tftypes.String, nil),
 	})
 
 	importReq := resource.ImportStateRequest{ID: "snap-abc"}
@@ -955,16 +973,18 @@ func snapshotOrphanPlan(t *testing.T) tftypes.Value {
 	t.Helper()
 	tfType := snapshotTFType(t)
 	return tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"timeouts":    tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
-		"id":          tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"name":        tftypes.NewValue(tftypes.String, "adopt-snap"),
-		"description": tftypes.NewValue(tftypes.String, nil),
-		"volume_id":   tftypes.NewValue(tftypes.String, "vol-123"),
-		"tags":        tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"tags_all":    tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
-		"status":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-		"size_gb":     tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
-		"created_at":  tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"timeouts":           tftypes.NewValue(tfType.(tftypes.Object).AttributeTypes["timeouts"], nil),
+		"id":                 tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"name":               tftypes.NewValue(tftypes.String, "adopt-snap"),
+		"description":        tftypes.NewValue(tftypes.String, nil),
+		"volume_id":          tftypes.NewValue(tftypes.String, "vol-123"),
+		"tags":               tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"tags_all":           tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
+		"status":             tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"size_gb":            tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"size_bytes":         tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"min_volume_size_gb": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		"created_at":         tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 	})
 }
 
@@ -1126,5 +1146,35 @@ func TestSnapshotResource_TFSDKCreateRefusedRecordsNothingCreated(t *testing.T) 
 	}
 	if strings.Contains(text, "Was Adopted After The Apply Timed Out") {
 		t.Errorf("a refusal created nothing to adopt:\n%s", text)
+	}
+}
+
+// TestSnapshotModel_fromAPIMinVolumeSizeGB pins min_volume_size_gb: the
+// platform's minVolumeSizeGb when sent, else ceil(sizeBytes / 10^9), else null.
+func TestSnapshotModel_fromAPIMinVolumeSizeGB(t *testing.T) {
+	tests := []struct {
+		name string
+		snap apiSnapshot
+		want types.Int64
+	}{
+		{"the platform's value", apiSnapshot{Size: 100, SizeBytes: 100 << 30, MinVolumeSizeGB: 108}, types.Int64Value(108)},
+		{"derived from size_bytes (100 GiB = 107.37 GB)", apiSnapshot{Size: 100, SizeBytes: 100 << 30}, types.Int64Value(108)},
+		{"an exact GB is not rounded up", apiSnapshot{SizeBytes: 5_000_000_000}, types.Int64Value(5)},
+		{"no size reported", apiSnapshot{Size: 100}, types.Int64Null()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var diags diag.Diagnostics
+			model := &SnapshotModel{TagsAll: types.MapNull(types.StringType)}
+			snap := tt.snap
+			snap.ID, snap.VolumeID, snap.Status = "snap-1", "vol-1", "available"
+			model.fromAPI(context.Background(), &snap, &diags)
+			if diags.HasError() {
+				t.Fatalf("unexpected diagnostics: %s", diags.Errors())
+			}
+			if !model.MinVolumeSizeGB.Equal(tt.want) {
+				t.Errorf("min_volume_size_gb = %v, want %v", model.MinVolumeSizeGB, tt.want)
+			}
+		})
 	}
 }

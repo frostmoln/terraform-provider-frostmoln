@@ -77,8 +77,9 @@ output "orders_tls" {
 - `public_ip` (String) The public IP address of the instance, null when the instance is not publicly reachable.
 - `require_tls` (Boolean) Whether the server accepts TLS connections only (plaintext refused). MySQL serves TLS and plaintext on the same `port`. Fixed at create; false on instances created before the setting existed. True with `tls_enabled` false means the instance has no usable endpoint.
 - `security_group_id` (String) The platform-managed security group attached to the instance. The platform creates and owns it: rule writes on it are refused (read it with `frostmoln_security_group_rules`); import it only to understand it, never to manage it.
+- `size_bytes` (Number) The true allocated storage in bytes (1 GB = 10^9 bytes). Storage is allocated in whole units of 2^30 bytes, the smallest that holds the request, so it can be slightly larger than `storage_gb`. Null when the platform does not report it.
 - `status` (String) The current status of the instance.
-- `storage_gb` (Number) The storage size in gigabytes.
+- `storage_gb` (Number) The storage size requested, in GB (10^9 bytes). An instance created before storage was requested in GB reports the value it was created with.
 - `subnet_id` (String) The subnet ID where the instance is deployed.
 - `tags` (Map of String) Every resource tag on the MySQL instance — the same set as the resource's `tags_all`: your own key/value metadata, never applied to the service itself. An empty map when it has none.
 - `tenant_id` (String) The tenant ID that owns this instance.

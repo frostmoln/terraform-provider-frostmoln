@@ -162,6 +162,13 @@ func (r *messagingInstanceResource) Schema(_ context.Context, _ resource.SchemaR
 				Computed:    true,
 				Default:     stringdefault.StaticString("persistent"),
 			},
+			"size_bytes": schema.Int64Attribute{
+				Description: "The true allocated storage of the broker's data volume in bytes (1 GB = 10^9 bytes): a 100 GB request allocates 100,931,731,456 bytes (100.93 GB). Null for a broker without a data volume, or when the platform does not report it.",
+				Computed:    true,
+				PlanModifiers: []planmodifier.Int64{
+					planmod.Int64SizeBytes("persistence_mode", "flavor_id"),
+				},
+			},
 			"status": schema.StringAttribute{
 				Description: "The current status of the messaging instance.",
 				Computed:    true,

@@ -92,8 +92,8 @@ func (d *tenantQuotasDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 							Computed: true,
 						},
 						"unit": schema.StringAttribute{
-							Description: "The counter's unit: `count`, `gb` (gigabytes as the platform reports them; block-storage " +
-								"sizes follow the volume size unit) or `mb` (megabytes; only `ram`, where 1 GB = 1024 MB).",
+							Description: "The counter's unit: `count`, `gb` (GB, 10^9 bytes, the unit volume sizes are requested in) " +
+								"or `mb` (megabytes; only `ram`, where 1 GB = 1024 MB).",
 							Computed: true,
 						},
 					},

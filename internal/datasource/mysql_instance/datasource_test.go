@@ -154,6 +154,7 @@ func readWith(t *testing.T, serverURL string, id, name *string) readResult {
 		"version":               tftypes.NewValue(tftypes.String, nil),
 		"flavor_id":             tftypes.NewValue(tftypes.String, nil),
 		"storage_gb":            tftypes.NewValue(tftypes.Number, nil),
+		"size_bytes":            tftypes.NewValue(tftypes.Number, nil),
 		"vpc_id":                tftypes.NewValue(tftypes.String, nil),
 		"subnet_id":             tftypes.NewValue(tftypes.String, nil),
 		"private_ip":            tftypes.NewValue(tftypes.String, nil),
@@ -283,7 +284,7 @@ func TestReadByID(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"id":"db-1","name":"orders","type":"mysql","typeVersion":"8.0",
-			"flavorId":"db.gp1.small","storageGb":50,"vpcId":"vpc-1","subnetId":"subnet-1",
+			"flavorId":"db.gp1.small","storageGb":50,"sizeBytes":50465865728,"vpcId":"vpc-1","subnetId":"subnet-1",
 			"privateIp":"10.0.1.5","port":3306,"status":"running",
 			"haEnabled":true,"haStatus":"healthy","backupEnabled":true,
 			"backupSchedule":"0 4 * * *","backupRetentionDays":14,
@@ -308,6 +309,9 @@ func TestReadByID(t *testing.T) {
 	}
 	if m.Type.ValueString() != "mysql" || m.Version.ValueString() != "8.0" {
 		t.Errorf("type/version is %s/%s", m.Type.ValueString(), m.Version.ValueString())
+	}
+	if m.SizeBytes.ValueInt64() != 50465865728 {
+		t.Errorf("size_bytes is %v, want 50465865728 from sizeBytes", m.SizeBytes)
 	}
 	if m.FlavorID.ValueString() != "db.gp1.small" || m.StorageGB.ValueInt64() != 50 {
 		t.Errorf("flavor/storage are %s/%d", m.FlavorID.ValueString(), m.StorageGB.ValueInt64())

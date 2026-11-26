@@ -93,6 +93,7 @@ output "broker_hostname" {
 - `port` (Number) The plaintext AMQP port. Null when `require_tls` is true (the broker refuses plaintext; connect with AMQPS on `amqps_port`).
 - `private_ip` (String) The private IP address of the messaging instance.
 - `public_name` (String) The instance's public DNS name under `mq.svc.frostmoln.cloud`. Null unless it has a public IP.
+- `size_bytes` (Number) The true allocated storage of the broker's data volume in bytes (1 GB = 10^9 bytes): a 100 GB request allocates 100,931,731,456 bytes (100.93 GB). Null for a broker without a data volume, or when the platform does not report it.
 - `status` (String) The current status of the messaging instance.
 - `tags_all` (Map of String) Every tag the platform holds on this resource: the provider's `default_tags`, this resource's own `tags` (which win on a shared key), and any key set outside Terraform — in the portal, by the fm CLI, or stamped by the platform. Keys set outside Terraform appear only here and are kept on every apply, never removed.
 - `tls_enabled` (Boolean) Whether the instance serves TLS: AMQPS on `amqps_port` and HTTPS management, with a certificate for `hostname` from the Frostmoln customer CA (see the `frostmoln_ca_bundle` data source). Plaintext AMQP and HTTP management are served beside it only when `require_tls` is false. False on an instance without a certificate.

@@ -15,6 +15,7 @@ import (
 
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/client"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/orphan"
+	"go.frostmoln.internal/terraform-provider-frostmoln/internal/planmod"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/scopedecl"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/tftags"
 	"go.frostmoln.internal/terraform-provider-frostmoln/internal/timeouts"
@@ -132,7 +133,21 @@ func (r *snapshotResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				},
 			},
 			"size_gb": schema.Int64Attribute{
-				Description: "The size of the snapshot in gigabytes.",
+				Description: "The size of the snapshot as the whole-GiB count (units of 2^30 bytes) it was allocated. Use `size_bytes` for its true size; 1 GB = 10^9 bytes.",
+				Computed:    true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
+			},
+			"size_bytes": schema.Int64Attribute{
+				Description: "The true size of the snapshot in bytes (1 GB = 10^9 bytes). Null when the platform does not report it.",
+				Computed:    true,
+				PlanModifiers: []planmodifier.Int64{
+					planmod.Int64SizeBytes(),
+				},
+			},
+			"min_volume_size_gb": schema.Int64Attribute{
+				Description: "The smallest size, in GB (10^9 bytes), of a volume created from this snapshot: ceil(`size_bytes` / 10^9). A `frostmoln_volume` with this `snapshot_id` needs a `size_gb` of at least this value. Null when the platform does not report the snapshot's size.",
 				Computed:    true,
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.UseStateForUnknown(),
