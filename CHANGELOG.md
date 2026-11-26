@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.106.0] - 2026-11-26
+
+### 🚀 Features
+
+- *(image,flavor)* Min_disk_bytes and disk_bytes at the true size (#922)
+
+### 🐛 Bug Fixes
+
+- *(dns_record)* Keep a quoted CAA value's configured spelling (#919)
+
 ## [0.105.0] - 2026-11-26
 
 ### 🚀 Features
