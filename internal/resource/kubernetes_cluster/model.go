@@ -128,10 +128,12 @@ type apiKubernetesCluster struct {
 	// TargetKubernetesVersion and UpgradeFailure describe a minor upgrade (upgrade.go); absent when none.
 	TargetKubernetesVersion string `json:"targetKubernetesVersion,omitempty"`
 	UpgradeFailure          string `json:"upgradeFailure,omitempty"`
-	HAEnabled               bool   `json:"haEnabled"`
-	Region                  string `json:"region"`
-	VPCID                   string `json:"vpcId"`
-	SubnetID                string `json:"subnetId"`
+	// AvailableUpgrades is the next minor a running cluster can take; absent when none.
+	AvailableUpgrades []string `json:"availableUpgrades,omitempty"`
+	HAEnabled         bool     `json:"haEnabled"`
+	Region            string   `json:"region"`
+	VPCID             string   `json:"vpcId"`
+	SubnetID          string   `json:"subnetId"`
 	// The load balancer below is the Kubernetes API ENDPOINT's, the only one this
 	// resource reports. The worker ingress load balancer is retired, and the
 	// backend no longer returns ingressScheme / ingressEndpoint /

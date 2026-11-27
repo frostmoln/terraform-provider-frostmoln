@@ -267,3 +267,173 @@ func TestUpgradeCluster_AttachesToARunningUpgrade(t *testing.T) {
 		t.Errorf("posts = %d (want 0), gets = %d (want >= 3)", posts.Load(), gets.Load())
 	}
 }
+
+// K8S-VERSION-UPGRADES-PLAN §3.1g decision 5: window_ended is a pause, worded by status, with a
+// target that is never empty or invented.
+func TestWindowEndedLine(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		c    apiKubernetesCluster
+		want string
+	}{
+		{
+			"upgrading",
+			apiKubernetesCluster{Status: "upgrading", TargetKubernetesVersion: "1.36"},
+			"The upgrade to 1.36 continues in your next maintenance window. You can resume it now instead.",
+		},
+		{
+			"running",
+			apiKubernetesCluster{Status: "running", AvailableUpgrades: []string{"1.36", "1.37"}},
+			"The upgrade to 1.36 did not fit in this maintenance window. It starts in your next window. You can start it now instead.",
+		},
+		{
+			"upgrading, no target",
+			apiKubernetesCluster{Status: "upgrading"},
+			"The upgrade to the next Kubernetes version continues in your next maintenance window. You can resume it now instead.",
+		},
+		// A running cluster's target is the offered next minor only, never a stale target field.
+		{
+			"running, no target",
+			apiKubernetesCluster{Status: "running", TargetKubernetesVersion: "1.36"},
+			"The upgrade to the next Kubernetes version did not fit in this maintenance window. It starts in your next window. You can start it now instead.",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := windowEndedLine(&tc.c); got != tc.want {
+				t.Errorf("got  %q\nwant %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The refresh warns of a paused platform upgrade and never errors; any other reason adds nothing
+// (Terraform's own apply reports those).
+func TestWarnWindowEnded(t *testing.T) {
+	for _, tc := range []struct {
+		c        apiKubernetesCluster
+		warnings int
+	}{
+		{apiKubernetesCluster{Status: "upgrading", TargetKubernetesVersion: "1.36", UpgradeFailure: "window_ended"}, 1},
+		{apiKubernetesCluster{Status: "running", AvailableUpgrades: []string{"1.36"}, UpgradeFailure: "window_ended"}, 1},
+		{apiKubernetesCluster{Status: "running", UpgradeFailure: "window_ended"}, 1},
+		{apiKubernetesCluster{Status: "upgrading", UpgradeFailure: "window_ended"}, 1},
+		{apiKubernetesCluster{Status: "upgrading", TargetKubernetesVersion: "1.36", UpgradeFailure: "pool_not_converged"}, 0},
+		{apiKubernetesCluster{Status: "running"}, 0},
+	} {
+		var d diag.Diagnostics
+		warnWindowEnded(&tc.c, &d)
+		for _, w := range d.Warnings() {
+			if hint := strings.Contains(w.Detail(), `set version = "1.36" and apply`); hint != (windowEndedTarget(&tc.c) != "") {
+				t.Errorf("%s: apply hint = %v with target %q: %q", tc.c.Status, hint, windowEndedTarget(&tc.c), w.Detail())
+			}
+			if strings.Contains(w.Detail(), "set version") && windowEndedTarget(&tc.c) == "" {
+				t.Errorf("%s: advises an apply with no known target: %q", tc.c.Status, w.Detail())
+			}
+		}
+		if d.HasError() || d.WarningsCount() != tc.warnings {
+			t.Errorf("%s/%s: errors=%v warnings=%d, want 0 errors and %d warnings", tc.c.Status, tc.c.UpgradeFailure, d.HasError(), d.WarningsCount(), tc.warnings)
+		}
+		for _, w := range d.Warnings() {
+			if txt := strings.ToLower(w.Summary() + w.Detail()); strings.Contains(txt, "fail") || strings.Contains(txt, "error") {
+				t.Errorf("window_ended reads as a failure: %q", txt)
+			}
+		}
+	}
+}
+
+// upgradeFailureEnum is kubernetes api/openapi.yaml's upgradeFailure enum, pinned at v6.57.0
+// (window_ended since v6.55.0). A new server value renders the generic line until it is added here.
+var upgradeFailureEnum = []string{
+	"unknown", "cp_member_missing", "pool_not_converged", "commit_not_converged", "upgrade_path_unavailable",
+	"platform_images_not_converged", "addon_not_verified", "cluster_record_incomplete", "rollout_in_progress",
+	"window_ended", "QuotaExceeded", "InsufficientCapacity", "InvalidState", "InvalidArgument", "ConfigurationError",
+	"AmbiguousState", "Unimplemented",
+}
+
+// Every pinned reason renders on both statuses; only window_ended gets the pause copy, and it never
+// reads as a failure.
+func TestUpgradeStoppedCoversThePinnedEnum(t *testing.T) {
+	for _, reason := range upgradeFailureEnum {
+		for _, status := range []string{"upgrading", "running"} {
+			c := &apiKubernetesCluster{
+				Status: status, UpgradeFailure: reason, KubernetesVersion: "1.35",
+				TargetKubernetesVersion: "1.36", AvailableUpgrades: []string{"1.36"},
+			}
+			got := upgradeStopped(c, "1.36").Error()
+			if !strings.Contains(got, "upgradeFailure: "+reason) {
+				t.Errorf("%s/%s: %q does not name the reason", status, reason, got)
+			}
+			if pause := strings.Contains(got, windowEndedLine(c)) && strings.Contains(got, " paused ("); pause != (reason == "window_ended") {
+				t.Errorf("%s/%s: pause copy = %v: %q", status, reason, pause, got)
+			}
+			if reason == "window_ended" && (strings.Contains(got, "stopped") || strings.Contains(got, "fail")) {
+				t.Errorf("%s/window_ended reads as a failure: %q", status, got)
+			}
+		}
+	}
+}
+
+// Version raised to the target while a forced run to it is running: the apply waits on that run
+// without a request, and when its window closes the apply did not reach its version, so it fails,
+// worded as a pause with the resume advice (applying again resumes it with the ordinary request).
+func TestUpgradeCluster_AttachedForcedRunPauses(t *testing.T) {
+	var gets, posts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts.Add(1)
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
+		c := map[string]any{"id": "c-1", "status": "upgrading", "kubernetesVersion": "1.35", "targetKubernetesVersion": "1.36"}
+		if gets.Add(1) > 2 {
+			c["upgradeFailure"] = "window_ended"
+		}
+		writeJSON(t, w, c)
+	}))
+	defer srv.Close()
+	c := client.NewClient(srv.URL, "test-key", client.WithHTTPClient(srv.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	err := testResource(c).upgradeCluster(context.Background(), "c-1", "1.36", time.Now().Add(5*time.Second))
+	want := "the upgrade to 1.36 paused (upgradeFailure: window_ended); the cluster is upgrading on 1.35. " +
+		"The upgrade to 1.36 continues in your next maintenance window. You can resume it now instead. " +
+		"Apply again with the same version to do that."
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v\nwant %s", err, want)
+	}
+	if posts.Load() != 0 {
+		t.Errorf("posts = %d, want 0", posts.Load())
+	}
+}
+
+// A paused upgrade resumes only with its own version: another configured version starts nothing,
+// and the refusal says paused, never stopped.
+func TestUpgradeCluster_PausedRunNeedsItsOwnVersion(t *testing.T) {
+	for _, tc := range []struct{ failure, want string }{
+		{"window_ended", "an upgrade of this cluster to 1.36 paused until the next maintenance window (upgradeFailure: window_ended), and only that version can resume it. " +
+			`Set version = "1.36" and apply again. Nothing was started`},
+		{"pool_not_converged", "an upgrade of this cluster to 1.36 stopped (upgradeFailure: pool_not_converged), and only that version can resume it."},
+	} {
+		var posts atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost {
+				posts.Add(1)
+				w.WriteHeader(http.StatusConflict)
+				return
+			}
+			writeJSON(t, w, map[string]any{
+				"id": "c-1", "status": "upgrading", "kubernetesVersion": "1.35",
+				"targetKubernetesVersion": "1.36", "upgradeFailure": tc.failure,
+			})
+		}))
+		c := client.NewClient(srv.URL, "test-key", client.WithHTTPClient(srv.Client())) // pragma: allowlist secret
+		c.SetTenantIDForTest("t-1")
+		err := testResource(c).upgradeCluster(context.Background(), "c-1", "1.37", time.Now().Add(5*time.Second))
+		srv.Close()
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want %q", tc.failure, err, tc.want)
+		}
+		if posts.Load() != 0 {
+			t.Errorf("%s: posts = %d, want 0", tc.failure, posts.Load())
+		}
+	}
+}

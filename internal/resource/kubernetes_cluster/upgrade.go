@@ -227,8 +227,12 @@ func (r *kubernetesClusterResource) upgradeCluster(ctx context.Context, id, targ
 		return nil // upgraded outside Terraform: record it, nothing to do
 	}
 	if c.Status == statusUpgrading && c.UpgradeFailure != "" && c.TargetKubernetesVersion != "" && c.TargetKubernetesVersion != target {
-		return fmt.Errorf("an upgrade of this cluster to %s stopped (upgradeFailure: %s), and only that version can resume it. "+
-			"Set version = %q and apply again. Nothing was started", c.TargetKubernetesVersion, c.UpgradeFailure, c.TargetKubernetesVersion)
+		ended := "stopped"
+		if c.UpgradeFailure == upgradeFailureWindowEnded {
+			ended = "paused until the next maintenance window"
+		}
+		return fmt.Errorf("an upgrade of this cluster to %s %s (upgradeFailure: %s), and only that version can resume it. "+
+			"Set version = %q and apply again. Nothing was started", c.TargetKubernetesVersion, ended, c.UpgradeFailure, c.TargetKubernetesVersion)
 	}
 
 	opID := ""
@@ -296,6 +300,8 @@ func upgradeStopped(c *apiKubernetesCluster, target string) error {
 	}
 	var next string
 	switch reason {
+	case upgradeFailureWindowEnded:
+		next = windowEndedLine(c) + " Apply again with the same version to do that."
 	case "commit_not_converged", "upgrade_path_unavailable", "cluster_record_incomplete":
 		next = "This needs Frostmoln support; contact them before applying again."
 	case "addon_not_verified":
@@ -312,8 +318,57 @@ func upgradeStopped(c *apiKubernetesCluster, target string) error {
 	if reason == "cp_member_missing" && c.Status != statusUpgrading {
 		next += " The control plane runs short of a member until Frostmoln repairs it."
 	}
-	return fmt.Errorf("the upgrade to %s stopped (upgradeFailure: %s); the cluster is %s on %s. %s",
-		target, reason, c.Status, c.KubernetesVersion, next)
+	ended := "stopped"
+	if reason == upgradeFailureWindowEnded {
+		ended = "paused" // a pause, never worded as a failure (decision 5)
+	}
+	return fmt.Errorf("the upgrade to %s %s (upgradeFailure: %s); the cluster is %s on %s. %s",
+		target, ended, reason, c.Status, c.KubernetesVersion, next)
+}
+
+// upgradeFailureWindowEnded is a pause, not a failure (K8S-VERSION-UPGRADES-PLAN §3.1g decision 5):
+// a platform (EOL-forced) upgrade did not fit in the cluster's maintenance window and continues, or
+// starts, in the next one.
+const upgradeFailureWindowEnded = "window_ended"
+
+// windowEndedLine is decision 5's copy, by status. The target is the upgrade's own on an
+// `upgrading` cluster and the offered next minor on a `running` one; never empty or invented.
+func windowEndedLine(c *apiKubernetesCluster) string {
+	target := windowEndedTarget(c)
+	if target == "" {
+		target = "the next Kubernetes version"
+	}
+	if c.Status == statusUpgrading {
+		return "The upgrade to " + target + " continues in your next maintenance window. You can resume it now instead."
+	}
+	return "The upgrade to " + target + " did not fit in this maintenance window. It starts in your next window. " +
+		"You can start it now instead."
+}
+
+// windowEndedTarget is the paused upgrade's version, or "" when none is known.
+func windowEndedTarget(c *apiKubernetesCluster) string {
+	if c.Status == statusUpgrading {
+		return c.TargetKubernetesVersion
+	}
+	if len(c.AvailableUpgrades) > 0 {
+		return c.AvailableUpgrades[0]
+	}
+	return ""
+}
+
+// warnWindowEnded is the refresh's notice of a paused platform upgrade. A WARNING, never an error:
+// Terraform did not start that run, and a refresh, plan or unrelated apply must not fail over it.
+// Raising `version` to the target in the configuration resumes (or starts) it at once; with no
+// known target the hint is left out, so it never advises a request the server would refuse.
+func warnWindowEnded(c *apiKubernetesCluster, diags *diag.Diagnostics) {
+	if c.UpgradeFailure != upgradeFailureWindowEnded {
+		return
+	}
+	detail := windowEndedLine(c)
+	if target := windowEndedTarget(c); target != "" {
+		detail += fmt.Sprintf(" To do that with Terraform, set version = %q and apply.", target)
+	}
+	diags.AddAttributeWarning(path.Root("version"), "Kubernetes Upgrade Paused Until The Next Maintenance Window", detail)
 }
 
 // upgradeHints adds what to do to each refusal the upgrade route can give; the server's own

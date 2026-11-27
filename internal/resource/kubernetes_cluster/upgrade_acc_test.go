@@ -391,3 +391,61 @@ func TestAccClusterVersionUpgradedOutsideTerraform(t *testing.T) {
 		},
 	})
 }
+
+// K8S-VERSION-UPGRADES-PLAN §3.1g decision 5: a platform (EOL-forced) upgrade paused window_ended
+// is not Terraform's run. Its refresh only warns: the plan is empty (never a replace), an unrelated
+// change applies, and no upgrade is requested, on both arms. Raising version to the target resumes
+// it at once with the ordinary request. (An apply that waits on a forced run and sees it pause:
+// TestUpgradeCluster_AttachedForcedRunPauses.)
+func TestAccClusterVersionWindowEndedPause(t *testing.T) {
+	api := newUpgradeAPI("1.35")
+	serveUpgradeAPI(t, api)
+	paused := func(status, target string) func() {
+		return api.do(func() {
+			api.cluster["status"], api.cluster["upgradeFailure"] = status, "window_ended"
+			delete(api.cluster, "targetKubernetesVersion")
+			delete(api.cluster, "availableUpgrades")
+			if status == "upgrading" {
+				api.cluster["targetKubernetesVersion"] = target
+			} else {
+				api.cluster["availableUpgrades"] = []string{target}
+			}
+		})
+	}
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: acctest.TestAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: versionConfig("1.35")},
+			// Past the point of no return: upgrading + window_ended.
+			{PreConfig: paused("upgrading", "1.36"), Config: versionConfig("1.35"), ConfigPlanChecks: noChange(), Check: api.posted()},
+			{
+				Config: clusterConfig("renamed", "1.35", ""), ConfigPlanChecks: inPlace(),
+				Check: resource.ComposeAggregateTestCheckFunc(api.posted(),
+					resource.TestCheckResourceAttr(versionAddr, "name", "renamed"),
+					resource.TestCheckResourceAttr(versionAddr, "version", "1.35"),
+					resource.TestCheckResourceAttr(versionAddr, "status", "upgrading"),
+					resource.TestCheckResourceAttr(versionAddr, "id", "c-1")),
+			},
+			// Before it: running + window_ended.
+			{PreConfig: paused("running", "1.36"), Config: clusterConfig("renamed", "1.35", ""), ConfigPlanChecks: noChange(), Check: api.posted()},
+			{PreConfig: paused("running", "1.36"), Config: clusterConfig("renamed", "", ""), PlanOnly: true},
+			// Resume now: the ordinary request, the same version.
+			{
+				PreConfig: paused("upgrading", "1.36"), Config: clusterConfig("renamed", "1.36", ""), ConfigPlanChecks: inPlace(),
+				Check: resource.ComposeAggregateTestCheckFunc(api.posted("1.36"),
+					resource.TestCheckResourceAttr(versionAddr, "version", "1.36"),
+					resource.TestCheckResourceAttr(versionAddr, "status", "running")),
+			},
+			// Start now from running + window_ended: version raised to the offered next minor sends
+			// the ordinary request for it, and state ends on it.
+			{PreConfig: paused("running", "1.37"), Config: clusterConfig("renamed", "1.36", ""), ConfigPlanChecks: noChange(), Check: api.posted()},
+			{
+				Config: clusterConfig("renamed", "1.37", ""), ConfigPlanChecks: inPlace(),
+				Check: resource.ComposeAggregateTestCheckFunc(api.posted("1.37"),
+					resource.TestCheckResourceAttr(versionAddr, "version", "1.37"),
+					resource.TestCheckResourceAttr(versionAddr, "status", "running")),
+			},
+			{Config: clusterConfig("renamed", "1.37", ""), PlanOnly: true},
+		},
+	})
+}

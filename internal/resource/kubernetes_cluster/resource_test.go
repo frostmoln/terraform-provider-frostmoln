@@ -1564,3 +1564,37 @@ func nullUnsetTags(maps ...*types.Map) {
 		}
 	}
 }
+
+// §3.1g decision 5: a refresh of a cluster whose platform upgrade paused window_ended warns with
+// the pause copy, never errors, and keeps the version it runs.
+func TestReadWindowEndedWarns(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/kubernetes-clusters/c-1":
+			c := runningCluster()
+			c.Status, c.TargetKubernetesVersion, c.UpgradeFailure = statusUpgrading, "1.36", "window_ended"
+			writeJSON(t, w, c)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tenants/t-1/kubernetes-clusters/c-1/node-pools":
+			writeJSON(t, w, apiNodePoolList{NodePools: []apiNodePool{initialPool(statusActive)}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := client.NewClient(server.URL, "test-key", client.WithHTTPClient(server.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	state := buildState(t, stateModel())
+	readResp := resource.ReadResponse{State: state}
+	testResource(c).Read(context.Background(), resource.ReadRequest{State: state}, &readResp)
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("read failed: %v", readResp.Diagnostics.Errors())
+	}
+	found := false
+	for _, w := range readResp.Diagnostics.Warnings() {
+		found = found || strings.Contains(w.Detail(), "The upgrade to 1.36 continues in your next maintenance window. You can resume it now instead.")
+	}
+	if !found {
+		t.Errorf("no window_ended warning: %v", readResp.Diagnostics.Warnings())
+	}
+}

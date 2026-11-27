@@ -219,7 +219,10 @@ func (r *kubernetesClusterResource) Schema(_ context.Context, _ resource.SchemaR
 					upgradeEffects + " " + upgradeAccess + " See https://docs.frostmoln.se/kubernetes/version-lifecycle." +
 					" Lowering it is never applied: the plan warns and the apply is refused before it changes anything. If the upgrade stops, the apply fails, " +
 					"the version stays at what the cluster runs, and applying again resumes it (or, when it stopped " +
-					"before anything ran the new version, starts it again). A cluster upgraded " +
+					"before anything ran the new version, starts it again). A platform upgrade of an end-of-life version " +
+					"that pauses at the end of the maintenance window (`window_ended`) is not an error: a refresh warns, " +
+					"and setting version to its target and applying resumes or starts it at once. An apply already waiting " +
+					"on such an upgrade fails if the window closes; applying again with the same version resumes it. A cluster upgraded " +
 					"outside Terraform keeps its recorded version while this is set, and a warning asks you to set it " +
 					"to what the cluster runs. Unset, it follows the cluster once an apply has updated this resource.",
 				Optional: true,
@@ -1018,6 +1021,7 @@ func (r *kubernetesClusterResource) Read(ctx context.Context, req resource.ReadR
 	// prior state).
 	recordedVersion := state.Version
 	state.fromAPI(cluster)
+	warnWindowEnded(cluster, &resp.Diagnostics)
 	if versionConfigured(ctx, req.Private, &resp.Diagnostics) {
 		keepRecordedVersion(&state, recordedVersion, &resp.Diagnostics)
 	}
