@@ -1296,7 +1296,11 @@ func (r *kubernetesClusterResource) Update(ctx context.Context, req resource.Upd
 	if !plan.Version.IsUnknown() && !plan.Version.IsNull() && !plan.Version.Equal(state.Version) {
 		upgradeDeadline := time.Now().Add(r.upgradeBudget(plan.Timeouts))
 		if err := r.upgradeCluster(ctx, id, plan.Version.ValueString(), upgradeDeadline); err != nil {
-			resp.Diagnostics.AddAttributeError(path.Root("version"), "Kubernetes Cluster Was Not Upgraded", err.Error())
+			summary := "Kubernetes Cluster Was Not Upgraded"
+			if anv := (*addonsNotVerifiedError)(nil); errors.As(err, &anv) {
+				summary = anv.Summary
+			}
+			resp.Diagnostics.AddAttributeError(path.Root("version"), summary, err.Error())
 			wantVersion = types.StringNull()
 		}
 	}

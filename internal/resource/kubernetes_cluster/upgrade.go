@@ -304,7 +304,7 @@ func upgradeStopped(c *apiKubernetesCluster, target string) error {
 		next = windowEndedLine(c) + " Apply again with the same version to do that."
 	case "commit_not_converged", "upgrade_path_unavailable", "cluster_record_incomplete":
 		next = "This needs Frostmoln support; contact them before applying again."
-	case "addon_not_verified":
+	case codeAddonNotVerified:
 		next = "A selected add-on's pinned version is not verified on " + target + ": move the pin (addon_versions) first, then apply again."
 	case "platform_images_not_converged", "rollout_in_progress":
 		next = "This clears on its own: apply again later."
@@ -397,6 +397,9 @@ func upgradeRefusal(err error, have, target string) error {
 		return fmt.Errorf("upgrades are not available to this tenant yet (%s). %s Keep version = %q until they are",
 			apiErr.Message, keep, have)
 	case http.StatusBadRequest:
+		if apiErr.Code == codeAddonNotVerified {
+			return addonsNotVerified(apiErr, target, keep)
+		}
 		return fmt.Errorf("%s is not an upgrade target for this cluster (%s). A cluster moves one minor version at a "+
 			"time, to a version the platform offers for upgrades. %s", target, apiErr.Message, keep)
 	case http.StatusConflict:
@@ -415,6 +418,90 @@ func upgradeRefusal(err error, have, target string) error {
 	}
 	// Every other status and code, a gate's 403 (a suspended account) included: the server's own message.
 	return fmt.Errorf("%s. %s", apiErr.Error(), keep)
+}
+
+// codeAddonNotVerified is the upgrade route's 400 for a selected add-on pinned to a version not
+// verified on the target (a fresh start only). It is not a bad target, so it never gets that text.
+const codeAddonNotVerified = "addon_not_verified"
+
+// addonsNotVerifiedError is that 400's diagnostic; Update shows Summary as the diagnostic's summary.
+type addonsNotVerifiedError struct {
+	Summary string
+	detail  string
+}
+
+func (e *addonsNotVerifiedError) Error() string { return e.detail }
+
+type apiUnverifiedAddon struct {
+	Key           string `json:"key"`
+	Version       string `json:"version"`
+	MoveToVersion string `json:"moveToVersion"`
+}
+
+// unverifiedAddons reads details.addons in the platform's order (never sorted). Only an entry with
+// no non-empty string key is skipped; a missing version or moveToVersion still lists the add-on.
+// Versions are opaque: shown, never compared. Every server string goes through client.Printable.
+func unverifiedAddons(details map[string]any) []apiUnverifiedAddon {
+	raw, ok := details["addons"].([]any)
+	if !ok {
+		return nil
+	}
+	out := []apiUnverifiedAddon{}
+	for _, e := range raw {
+		m, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		str := func(k string) string { v, _ := m[k].(string); return client.Printable(v) }
+		a := apiUnverifiedAddon{Key: str("key"), Version: str("version"), MoveToVersion: str("moveToVersion")}
+		if a.Key == "" {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+// addonsNotVerified names each add-on and where its pin can move. With no readable addons the
+// platform could not judge them against the target, which needs support (the API contract).
+func addonsNotVerified(apiErr *client.APIError, target, keep string) error {
+	e := &addonsNotVerifiedError{Summary: "Add-ons Not Verified On Kubernetes " + target}
+	var b strings.Builder
+	b.WriteString(client.Printable(apiErr.Message))
+	addons := unverifiedAddons(apiErr.Details)
+	if len(addons) == 0 {
+		fmt.Fprintf(&b, "\n\nThe platform could not check the cluster's add-ons against %s: contact Frostmoln support "+
+			"before applying again. %s", target, keep)
+		e.detail = b.String()
+		return e
+	}
+	fmt.Fprintf(&b, "\n\nThese add-ons are pinned to a version not verified on %s:", target)
+	movable, stuck := false, false
+	for _, a := range addons {
+		fmt.Fprintf(&b, "\n  - %s", a.Key)
+		if a.Version != "" {
+			fmt.Fprintf(&b, " (pinned %s)", a.Version)
+		}
+		if a.MoveToVersion != "" {
+			fmt.Fprintf(&b, ": move to %s", a.MoveToVersion)
+			movable = true
+		} else {
+			stuck = true
+			b.WriteString(": no verified version to move to; contact Frostmoln support")
+		}
+	}
+	b.WriteString("\n\n")
+	switch {
+	case movable && stuck:
+		b.WriteString("Set each movable add-on's pin in addon_versions (the add-on must also be listed in addons) to " +
+			"the version named, and contact Frostmoln support about the others before applying again. ")
+	case movable:
+		b.WriteString("Set each add-on's pin in addon_versions (the add-on must also be listed in addons) to the " +
+			"version named, then apply again. ")
+	}
+	b.WriteString(keep)
+	e.detail = b.String()
+	return e
 }
 
 // upgradeAccess says who may upgrade, in the attribute text and the 403 diagnostic alike. It names

@@ -165,6 +165,83 @@ func TestUpgradeRefusal(t *testing.T) {
 	}
 }
 
+// addon_not_verified is no bad target: it names each add-on in the platform's order (not sorted),
+// with its move-to version or the support line, and skips malformed entries. With no readable
+// addons it says contact support. Every other 400 code keeps the target text.
+func TestUpgradeRefusalAddonNotVerified(t *testing.T) {
+	msg := "add-ons not verified on 1.36: external-dns, cert-manager"
+	refuse := func(details map[string]any) (string, string) {
+		err := upgradeRefusal(&client.APIError{
+			StatusCode: http.StatusBadRequest, Code: "addon_not_verified",
+			Message: msg, Details: details,
+		}, "1.35", "1.36")
+		var anv *addonsNotVerifiedError
+		if !errors.As(err, &anv) {
+			t.Fatalf("not an addonsNotVerifiedError: %T %v", err, err)
+		}
+		return anv.Summary, err.Error()
+	}
+
+	summary, got := refuse(map[string]any{"targetVersion": "1.36", "addons": []any{
+		map[string]any{"key": "external-dns", "version": "v0.22.0-1", "moveToVersion": "v0.24.0-2"},
+		"not-an-object",
+		map[string]any{"version": "v9"},
+		map[string]any{"key": "cert-manager", "version": "v1.19.0-1"},
+		map[string]any{"key": "argo-cd", "version": "v3.1.0-1", "moveToVersion": "v3.2.0-1"},
+	}})
+	want := msg + "\n\nThese add-ons are pinned to a version not verified on 1.36:" +
+		"\n  - external-dns (pinned v0.22.0-1): move to v0.24.0-2" +
+		"\n  - cert-manager (pinned v1.19.0-1): no verified version to move to; contact Frostmoln support" +
+		"\n  - argo-cd (pinned v3.1.0-1): move to v3.2.0-1" +
+		"\n\nSet each movable add-on's pin in addon_versions (the add-on must also be listed in addons) to the " +
+		"version named, and contact Frostmoln support about the others before applying again. " +
+		"Nothing was started and the cluster stays on 1.35."
+	if summary != "Add-ons Not Verified On Kubernetes 1.36" || got != want {
+		t.Errorf("with addons:\nsummary %q\ngot  %q\nwant %q", summary, got, want)
+	}
+
+	// Server strings lose control and bidi characters, field by field (the list keeps its lines).
+	_, got = refuse(map[string]any{"addons": []any{
+		map[string]any{"key": "ext\x1b[31m-dns\u202e", "version": "v1\x1b[2J", "moveToVersion": "v2\u202e"},
+	}})
+	if strings.ContainsAny(got, "\x1b\u202e") || !strings.Contains(got, "\n  - ext[31m-dns (pinned v1[2J): move to v2") {
+		t.Errorf("not sanitized: %q", got)
+	}
+
+	// Nothing movable: no "set the pin" advice, only the support line per add-on.
+	_, got = refuse(map[string]any{"addons": []any{map[string]any{"key": "cert-manager", "version": "v1.19.0-1"}}})
+	want = msg + "\n\nThese add-ons are pinned to a version not verified on 1.36:" +
+		"\n  - cert-manager (pinned v1.19.0-1): no verified version to move to; contact Frostmoln support" +
+		"\n\nNothing was started and the cluster stays on 1.35."
+	if got != want {
+		t.Errorf("none movable:\ngot  %q\nwant %q", got, want)
+	}
+
+	for name, details := range map[string]map[string]any{
+		"nil":        nil,
+		"no addons":  {"targetVersion": "1.36"},
+		"empty":      {"targetVersion": "1.36", "addons": []any{}},
+		"not a list": {"addons": "external-dns"},
+		"malformed":  {"addons": []any{map[string]any{"key": 7}}},
+	} {
+		_, got := refuse(details)
+		want := msg + "\n\nThe platform could not check the cluster's add-ons against 1.36: contact Frostmoln " +
+			"support before applying again. Nothing was started and the cluster stays on 1.35."
+		if got != want {
+			t.Errorf("%s:\ngot  %q\nwant %q", name, got, want)
+		}
+	}
+
+	err := upgradeRefusal(&client.APIError{
+		StatusCode: http.StatusBadRequest, Code: "invalid_input", Message: "bad",
+		Details: map[string]any{"addons": []any{map[string]any{"key": "x"}}},
+	}, "1.35", "1.36")
+	var anv *addonsNotVerifiedError
+	if errors.As(err, &anv) || !strings.Contains(err.Error(), "1.36 is not an upgrade target") {
+		t.Errorf("invalid_input: %T %q", err, err)
+	}
+}
+
 // A 403 for an IAM or scope deny, or for a policy-granted principal, says the change was not
 // applied, who may upgrade, and that an access-policy API key cannot; it names the demanded
 // permission only in the 3-part shape. A gate's 403 keeps the server's own message.
@@ -265,6 +342,34 @@ func TestUpgradeCluster_AttachesToARunningUpgrade(t *testing.T) {
 	}
 	if posts.Load() != 0 || gets.Load() < 3 {
 		t.Errorf("posts = %d (want 0), gets = %d (want >= 3)", posts.Load(), gets.Load())
+	}
+}
+
+// The wire 400 addon_not_verified reaches the diagnostic with its details, in the server's order.
+func TestUpgradeCluster_AddonNotVerifiedFromTheWire(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"code":"addon_not_verified","message":"not verified","details":{"targetVersion":"1.36",` +
+				`"addons":[{"key":"zeta","version":"v2","moveToVersion":"v3"},{"key":"alpha","version":"v1"}]}}`))
+			return
+		}
+		writeJSON(t, w, map[string]any{"id": "c-1", "status": "running", "kubernetesVersion": "1.35"})
+	}))
+	defer srv.Close()
+	c := client.NewClient(srv.URL, "test-key", client.WithHTTPClient(srv.Client())) // pragma: allowlist secret
+	c.SetTenantIDForTest("t-1")
+	err := testResource(c).upgradeCluster(context.Background(), "c-1", "1.36", time.Now().Add(5*time.Second))
+	var anv *addonsNotVerifiedError
+	if !errors.As(err, &anv) {
+		t.Fatalf("not an addonsNotVerifiedError: %T %v", err, err)
+	}
+	got := err.Error()
+	z, a := strings.Index(got, "  - zeta (pinned v2): move to v3"), strings.Index(got,
+		"  - alpha (pinned v1): no verified version to move to; contact Frostmoln support")
+	if z < 0 || a < z || !strings.HasPrefix(got, "not verified\n\n") || strings.Contains(got, "not an upgrade target") {
+		t.Errorf("diagnostic: %q", got)
 	}
 }
 

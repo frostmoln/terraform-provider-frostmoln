@@ -161,6 +161,10 @@ func ErrorStateDetail(name, reason, message, phase string) error {
 	return errors.New(b.String())
 }
 
+// Printable drops every non-printable rune (control characters, ESC, bidi overrides) from a
+// server-provided string before it reaches a diagnostic. Apply it per field: it drops "\n" too.
+func Printable(s string) string { return printableOnly(s) }
+
 func printableOnly(s string) string {
 	return strings.Map(func(r rune) rune {
 		if !unicode.IsPrint(r) {
