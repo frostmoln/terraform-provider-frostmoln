@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.107.0] - 2026-11-27
+
+### 🚀 Features
+
+- *(kubernetes_cluster)* Window_ended upgrade pause diagnostic (#920)
+
 ## [0.106.0] - 2026-11-26
 
 ### 🚀 Features
