@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.107.1] - 2026-11-27
+
+### 🐛 Bug Fixes
+
+- *(deps)* Update module go.frostmoln.internal/oidc to v0.3.61 (#927)
+- *(kubernetes-cluster)* Tell an add-on refusal apart from a bad upgrade target (#929)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Update dependency frostmoln/workflows to v0.18.0 (#925)
+
 ## [0.107.0] - 2026-11-27
 
 ### 🚀 Features
